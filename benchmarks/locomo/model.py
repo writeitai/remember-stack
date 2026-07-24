@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v1 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v2 protocol."""
 
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v1"] = "RS-LoCoMo-Full-v1"
+    protocol_name: Literal["RS-LoCoMo-Full-v2"] = "RS-LoCoMo-Full-v2"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -123,7 +123,7 @@ class RunConfiguration(FrozenModel):
     max_agent_calls_per_question: Literal[9] = 9
     knowledge_mode: Literal["not_composed"] = "not_composed"
     answer_agent_model: Literal["openai/gpt-4o-mini"] = "openai/gpt-4o-mini"
-    judge_model: Literal["openai/gpt-4o-mini"] = "openai/gpt-4o-mini"
+    judge_model: Literal["openai/gpt-5.6-luna"] = "openai/gpt-5.6-luna"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1
@@ -315,7 +315,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v1"] = "RS-LoCoMo-Full-v1"
+    protocol_name: Literal["RS-LoCoMo-Full-v2"] = "RS-LoCoMo-Full-v2"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

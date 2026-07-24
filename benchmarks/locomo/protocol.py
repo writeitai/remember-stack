@@ -20,7 +20,7 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v1"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v2"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -41,7 +41,7 @@ EXPECTED_PIPELINE_STAGES: Final = (
 )
 EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
 ANSWER_AGENT_MODEL: Final = "openai/gpt-4o-mini"
-JUDGE_MODEL: Final = "openai/gpt-4o-mini"
+JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 TEMPERATURE: Final = 0.0
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
