@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v1
+protocol                RS-LoCoMo-Full-v2
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -29,7 +29,7 @@ answer-agent model       openai/gpt-4o-mini
 answer temperature       0
 max tool calls/question  8
 max agent calls/question 9
-judge model              openai/gpt-4o-mini
+judge model              openai/gpt-5.6-luna
 judge temperature        0
 judge repetitions        1
 primary metric           judge accuracy
@@ -40,6 +40,25 @@ diagnostic               coarse evidence-session recall
 The tool catalog hash, prompt and schema hashes, adapter and repository revisions, manifests,
 rendered documents, model identities, and component generations are stored. A change creates a
 new protocol version.
+
+### 2.1 Why v2 uses a stronger judge
+
+`RS-LoCoMo-Full-v1` used `openai/gpt-4o-mini` for both the answer agent and the judge. The
+judge is replaced with `openai/gpt-5.6-luna` in v2 and the protocol version is bumped
+accordingly; nothing else changes, and v1 numbers are not comparable to v2 numbers.
+
+Rationale. LoCoMo's weakest published property is grading, not the corpus: an independent audit
+of the benchmark reports roughly 6.4% of the answer key is wrong and that a weak LLM judge
+accepts up to 63% of deliberately incorrect answers. A judge that cheap is measuring its own
+leniency as much as the system under test, and a headline number produced that way would not
+survive third-party scrutiny under WP-8.6. The judge is also the cheapest component to
+strengthen: one call per question against nine agent calls, so upgrading it changes total run
+cost by a small fraction while materially improving grading fidelity.
+
+The answer agent deliberately stays on `openai/gpt-4o-mini`. It is the component under
+measurement alongside retrieval, and keeping it at the commodity tier keeps the comparison
+against baselines honest and cheap. Judge and answer models must never be the same family tier
+by accident: a stronger judge grading a weaker agent is the intended asymmetry.
 
 ## 3. Ingestion mapping
 
