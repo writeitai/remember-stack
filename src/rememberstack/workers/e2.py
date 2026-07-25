@@ -32,6 +32,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import SelectionCandidate
 from rememberstack.model import SelectionDropReason
+from rememberstack.model import SelectionOutcome
 from rememberstack.model import SelectionResponse
 from rememberstack.model import SelectionVerdict
 from rememberstack.ports.cost_meter import CostMeterPort
@@ -45,7 +46,7 @@ from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 
 _logger = logging.getLogger(__name__)
 
-_DROP_REASONS: Final = "|".join(reason.value for reason in SelectionDropReason)
+_OUTCOMES: Final = "|".join(outcome.value for outcome in SelectionOutcome)
 
 _SELECTION_PROMPT: Final = """You are the Selection stage of a claim extractor.
 Judge every proposition in the TARGET CHUNK: keep statements making a specific,
@@ -54,10 +55,11 @@ Drop unattributed opinions, advice, hypotheticals, generic truisms, questions,
 section intros/conclusions, and "we don't know" statements. An ATTRIBUTED
 stance ("X said/believes/opposes Y") is a KEEP. Never-drop classes even if
 phrased opinionatedly: quantities, dates, named-entity+predicate,
-change-of-state. When unsure, prefer keep_flagged over drop. Each candidate's
-source_span must be a verbatim substring of the target chunk. For a DROP,
-drop_reason must be exactly one of: {drop_reasons}. For KEEP or KEEP_FLAGGED,
-it must be null.
+change-of-state. When unsure, prefer keep_flagged over any drop_* outcome.
+Each candidate's
+source_span must be a verbatim substring of the target chunk. Report one
+outcome per candidate, exactly one of: {outcomes}. The drop_* values carry the
+reason in the value itself; there is no separate reason field.
 
 {bundle}"""
 
@@ -189,9 +191,7 @@ class ExtractClaimsHandler:
         selection_call = self._model_provider.generate(
             request=ModelRequest(
                 model=self._settings.extract_model,
-                prompt=_SELECTION_PROMPT.format(
-                    drop_reasons=_DROP_REASONS, bundle=bundle
-                ),
+                prompt=_SELECTION_PROMPT.format(outcomes=_OUTCOMES, bundle=bundle),
             ),
             response_type=SelectionResponse,
         )

@@ -139,7 +139,7 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
         if type_name == "SelectionResponse":
             if "DROP EVERYTHING" in span:
                 return {"candidates": []}  # nothing claim-worthy at all
-            return {"candidates": [{"source_span": span, "verdict": "keep"}]}
+            return {"candidates": [{"source_span": span, "outcome": "keep"}]}
         return {
             "claims": [
                 {

@@ -2,12 +2,12 @@
 
 from enum import StrEnum
 from typing import Annotated
+from typing import Final
 from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
-from pydantic import model_validator
 
 _NonEmpty = Annotated[str, Field(min_length=1)]
 
@@ -35,24 +35,66 @@ class SelectionDropReason(StrEnum):
     REFERENCES_BOILERPLATE = "references_boilerplate"
 
 
+class SelectionOutcome(StrEnum):
+    """Verdict and drop reason as one value, so they cannot contradict.
+
+    Selection previously carried `verdict` and a nullable `drop_reason` and
+    enforced their pairing in a validator. That rule is not expressible in the
+    JSON schema a provider is constrained by — worse, strict mode marks every
+    property required, so the model is told to emit `drop_reason` on every
+    candidate and then fills it inconsistently with the verdict. Roughly half of
+    Selection calls were rejected after the fact and retried at full cost.
+
+    One flat enum is the most reliable structured-output primitive there is: a
+    keep that carries a drop reason, or a drop that omits one, is now
+    unrepresentable rather than merely invalid.
+
+    This is a provider-facing wire vocabulary only. It is deliberately NOT the
+    `selection_drop_reason` PostgreSQL enum, which stores the bare reason and is
+    unchanged; `drop_reason` below is the mapping between them.
+    """
+
+    KEEP = "keep"
+    KEEP_FLAGGED = "keep_flagged"
+    DROP_OPINION = "drop_opinion"
+    DROP_ADVICE = "drop_advice"
+    DROP_HYPOTHETICAL = "drop_hypothetical"
+    DROP_GENERIC = "drop_generic"
+    DROP_QUESTION = "drop_question"
+    DROP_INTRO = "drop_intro"
+    DROP_CONCLUSION = "drop_conclusion"
+    DROP_NO_INFO = "drop_no_info"
+    DROP_AMBIGUOUS = "drop_ambiguous"
+    DROP_REFERENCES_BOILERPLATE = "drop_references_boilerplate"
+
+
+_DROP_PREFIX: Final = "drop_"
+
+
 class SelectionCandidate(BaseModel):
     """One proposition Selection judged inside the target chunk."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     source_span: _NonEmpty
-    verdict: SelectionVerdict
-    drop_reason: SelectionDropReason | None = None
+    outcome: SelectionOutcome
     protected_class: str | None = None
 
-    @model_validator(mode="after")
-    def validate_drop_reason(self) -> "SelectionCandidate":
-        """Require one controlled reason exactly when Selection drops a span."""
-        if self.verdict is SelectionVerdict.DROP and self.drop_reason is None:
-            raise ValueError("drop candidates require drop_reason")
-        if self.verdict is not SelectionVerdict.DROP and self.drop_reason is not None:
-            raise ValueError("kept candidates cannot carry drop_reason")
-        return self
+    @property
+    def verdict(self) -> SelectionVerdict:
+        """The keep/keep-flagged/drop decision this outcome encodes."""
+        if self.outcome is SelectionOutcome.KEEP:
+            return SelectionVerdict.KEEP
+        if self.outcome is SelectionOutcome.KEEP_FLAGGED:
+            return SelectionVerdict.KEEP_FLAGGED
+        return SelectionVerdict.DROP
+
+    @property
+    def drop_reason(self) -> SelectionDropReason | None:
+        """The controlled reason for a drop, or None for a kept span."""
+        if not self.outcome.value.startswith(_DROP_PREFIX):
+            return None
+        return SelectionDropReason(self.outcome.value.removeprefix(_DROP_PREFIX))
 
 
 class SelectionResponse(BaseModel):

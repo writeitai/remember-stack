@@ -96,10 +96,10 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     "ContextPrefix": {"prefix": "Sits in the staffing note."},
     "SelectionResponse": {
         "candidates": [
-            {"source_span": "Alice Novak joined Acme in 2024.", "verdict": "keep"},
+            {"source_span": "Alice Novak joined Acme in 2024.", "outcome": "keep"},
             {
                 "source_span": "Alice Novak works for Acme as an engineer.",
-                "verdict": "keep",
+                "outcome": "keep",
             },
         ]
     },
