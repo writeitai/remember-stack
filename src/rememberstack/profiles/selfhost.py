@@ -25,6 +25,7 @@ from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import PipelineStage
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
@@ -50,6 +51,20 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.RECONCILE,
     PipelineStage.LABEL_RELATION,
 )
+
+
+class BuildProvenanceSettings(BaseSettings):
+    """The source revision stamped into this image when it was built.
+
+    A filesystem checkout proves nothing about what the containers run: Compose
+    resolves a published image unless told to build, so a benchmark can record a
+    commit that never produced its numbers. This value travels inside the image
+    itself, which is why it can be trusted to answer "what code is serving".
+    """
+
+    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_", extra="ignore")
+
+    build_revision: str = ""
 
 
 class SelfHostSettings(BaseSettings):
@@ -249,8 +264,16 @@ class SelfHostProfile:
                 expected_components=_expected_components(),
                 projections=projection_catalog,
                 model_bindings=_model_bindings(),
+                build_revision=_build_revision(),
             ),
         )
+
+        @app.get("/deployment", response_model=DeploymentBuildInfo)
+        def deployment_build_info() -> DeploymentBuildInfo:
+            """Report which code and model bindings are serving, before any work."""
+            return DeploymentBuildInfo(
+                build_revision=_build_revision(), model_bindings=_model_bindings()
+            )
 
         @app.get("/healthz", include_in_schema=False)
         def healthz() -> dict[str, str]:
@@ -548,6 +571,15 @@ def _expected_components() -> dict[PipelineStage, str]:
         PipelineStage.RECONCILE: RECONCILE_VERSION,
         PipelineStage.LABEL_RELATION: FACT_LABEL_VERSION,
     }
+
+
+def _build_revision() -> str:
+    """Read the source revision stamped into this image at build time.
+
+    Empty when the image was built without the build argument. Callers that
+    need provenance treat empty as unknown rather than as agreement.
+    """
+    return BuildProvenanceSettings().build_revision
 
 
 def _model_bindings() -> dict[str, str]:

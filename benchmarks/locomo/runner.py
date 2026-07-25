@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 from typing import Final
 from uuid import UUID
@@ -35,6 +36,7 @@ from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import JudgeRecord
 from benchmarks.locomo.model import LoCoMoDataset
 from benchmarks.locomo.model import LoCoMoQuestion
+from benchmarks.locomo.model import PreflightProbe
 from benchmarks.locomo.model import PreparedDocument
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
@@ -64,7 +66,9 @@ from benchmarks.locomo.protocol import schema_sha256
 from benchmarks.locomo.protocol import session_diagnostic
 from benchmarks.locomo.protocol import TEMPERATURE
 from rememberstack.adapters.openrouter import OpenRouterProviderError
+from rememberstack.model import EmbeddingRequest
 from rememberstack.model import ModelRequest
+from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ToolDescriptor
@@ -143,6 +147,58 @@ def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfigurat
     return configuration
 
 
+_PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
+
+
+class ProviderPreflightError(BenchmarkRunError):
+    """Raised when the configured provider cannot serve the run's models."""
+
+
+def preflight_provider(
+    *, provider: ModelProviderPort, embedding_model: str
+) -> tuple[str, ...]:
+    """Prove the credential and both model kinds work before spending real time.
+
+    Ingest makes no provider calls, so a bad credential stays invisible until the
+    first pipeline stage needs a model — by which point documents are uploaded and
+    stages dead-letter one retry budget at a time. That failure reads like partial
+    progress rather than a misconfiguration, so it is checked up front.
+
+    Returns the human-readable lines describing what was verified.
+    """
+    checks: list[str] = []
+
+    try:
+        response = provider.generate(
+            request=ModelRequest(
+                model=ANSWER_AGENT_MODEL, prompt=_PREFLIGHT_PROMPT, temperature=0.0
+            ),
+            response_type=PreflightProbe,
+        )
+    except (OpenRouterProviderError, ProviderAccountingError) as error:
+        raise ProviderPreflightError(
+            f"chat model {ANSWER_AGENT_MODEL} is not usable: {error}"
+        ) from error
+    if not response.output.ok:
+        raise ProviderPreflightError(
+            f"chat model {ANSWER_AGENT_MODEL} answered the probe with ok=false;"
+            " the provider is reachable but not usable for this run"
+        )
+    checks.append(f"chat {ANSWER_AGENT_MODEL}: ok")
+
+    try:
+        provider.embed(
+            request=EmbeddingRequest(model=embedding_model, texts=("preflight",))
+        )
+    except (OpenRouterProviderError, ProviderAccountingError) as error:
+        raise ProviderPreflightError(
+            f"embedding model {embedding_model} is not usable: {error}"
+        ) from error
+    checks.append(f"embedding {embedding_model}: ok")
+
+    return tuple(checks)
+
+
 def ingest_sample(
     *,
     run_dir: Path,
@@ -151,6 +207,7 @@ def ingest_sample(
     execute: bool,
     isolated_deployment_confirmation: str | None,
     client: MemoryClient,
+    provider: ModelProviderPort,
 ) -> tuple[IngestRecord, ...]:
     """Upload one conversation's sessions through the public SDK."""
     context = _load_run(run_dir=run_dir)
@@ -164,6 +221,34 @@ def ingest_sample(
     documents = tuple(
         document for document in context.documents if document.sample_id == sample_id
     )
+    outstanding = tuple(
+        document
+        for document in documents
+        if document.source_ref not in context.state.ingests
+    )
+    if outstanding:
+        # Bind the code that will PROCESS the corpus, not just the code that
+        # later serves answers over it: a pipeline run under the wrong image
+        # cannot be repaired by rebuilding before the answer stage.
+        build = client.deployment_build_info()
+        _require_matching_revision(
+            prepared=context.configuration.repository_revision,
+            serving=build.build_revision,
+            when=_INGEST_STAGE,
+        )
+        # A bad credential must not be discovered only once the pipeline starts
+        # dead-lettering. Skipped on a full resume: nothing is left to upload.
+        # The binding the E1 stage will actually use, per the deployment.
+        embedding_model = build.model_bindings.get("chunk_embedding", "")
+        if not embedding_model:
+            raise ExecutionGuardError(
+                "the deployment did not report an embedding model binding, so the"
+                " preflight cannot check the model the pipeline will actually use"
+            )
+        for line in preflight_provider(
+            provider=provider, embedding_model=embedding_model
+        ):
+            print(f"preflight: {line}", file=sys.stderr)
     if max_documents < len(documents):
         raise ExecutionGuardError(
             f"max-documents {max_documents} is below prepared count {len(documents)}"
@@ -269,8 +354,9 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v1 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v2 pipeline and fresh P2/P3 projections"
         )
+    _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
     if prior_readiness is not None and prior_readiness != readiness:
         raise ExecutionGuardError(
@@ -588,7 +674,7 @@ def _validate_run(
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v1")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v2")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -598,14 +684,14 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v1")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v2")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if (
         configuration.answer_agent_temperature != TEMPERATURE
         or configuration.judge_temperature != TEMPERATURE
     ):
-        raise BenchmarkRunError("run temperature differs from RS-LoCoMo-Full-v1")
+        raise BenchmarkRunError("run temperature differs from RS-LoCoMo-Full-v2")
     if _models_hash(values=documents) != configuration.documents_sha256:
         raise BenchmarkRunError("prepared document manifest changed")
     if len(questions) != configuration.item_count:
@@ -780,6 +866,54 @@ def _guard_remote(
         raise ExecutionGuardError("repository revision differs from the prepared run")
     if _repository_dirty():
         raise ExecutionGuardError("real benchmark stages require a clean worktree")
+
+
+_INGEST_STAGE = "ingest time"
+_ANSWER_STAGE = "answer time"
+
+
+def _require_matching_revision(*, prepared: str, serving: str, when: str) -> None:
+    """Require the serving image to be built from the prepared revision.
+
+    ``when`` names the stage, because the two call sites answer different
+    questions: at ingest it binds the code that *processes* the corpus, at answer
+    the code that *serves* it. Checking only the latter leaves a hole — process
+    under the wrong image, fail, rebuild without re-ingesting, and the answer
+    stage then passes over data produced by other code.
+    """
+    # Answer-time drift needs only a rebuild; ingest-time drift means the corpus
+    # itself was processed by other code, so it must be ingested again.
+    remedy = " and re-ingest" if when == _INGEST_STAGE else ""
+    if not serving:
+        raise ExecutionGuardError(
+            f"the deployment did not report a build revision at {when}, so the"
+            " code cannot be shown to be the prepared code; rebuild the image"
+            " with REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD)"
+        )
+    if serving != prepared:
+        raise ExecutionGuardError(
+            f"the deployment serves revision {serving} at {when} but the run was"
+            f" prepared at {prepared}; rebuild the image from the prepared"
+            f" revision{remedy}"
+        )
+
+
+def _require_serving_revision(
+    *, context: _RunContext, readiness: PipelineReadinessReport
+) -> None:
+    """Require the serving image to be built from the prepared revision.
+
+    The other guards check the filesystem the CLI runs from, which says nothing
+    about the containers doing the work: Compose serves a published image unless
+    told to build, so a run can otherwise record a commit that never produced its
+    numbers. An unstamped image is a hard stop, not a warning — "unknown" is not
+    evidence of agreement.
+    """
+    _require_matching_revision(
+        prepared=context.configuration.repository_revision,
+        serving=readiness.build_revision,
+        when=_ANSWER_STAGE,
+    )
 
 
 def _require_sample_ingested(*, context: _RunContext, sample_id: str) -> None:

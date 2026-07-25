@@ -2631,6 +2631,28 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
+> **Amended 2026-07-24 (protocol v2 — stronger judge):** the judge is
+> `openai/gpt-5.6-luna` and the protocol is **`RS-LoCoMo-Full-v2`**. LoCoMo's
+> published weakness is grading — an independent audit reports ~6.4% of the answer
+> key is wrong and that a weak judge accepts up to 63% of deliberately incorrect
+> answers — and the judge is one call per question against nine agent calls, so it
+> is the cheapest component to strengthen. The **answer agent stays on
+> `gpt-4o-mini`**: it is under measurement, and keeping it at the commodity tier
+> keeps baseline comparison honest. No v1 result is comparable to a v2 result.
+> Everything else in D78 is unchanged. See
+> [`plan/designs/locomo_benchmark_design.md` §2.1](plan/designs/locomo_benchmark_design.md).
+>
+> **Also amended 2026-07-25 (provenance and preflight):** the image carries the
+> source revision it was built from, the readiness response reports it, and the
+> answer stage refuses a deployment whose revision differs from the prepared run
+> — an unstamped image is a hard stop, because a checkout proves nothing about
+> what the containers run. Ingest additionally preflights the provider with one
+> chat and one embedding call before uploading anything. Both follow from real
+> failures observed on 2026-07-25: a fresh host silently served the released
+> `0.1.0` image against a development checkout, and three earlier smoke runs
+> stalled at ingestion because the configured key was the `.env.example`
+> placeholder. See §§2.2–2.3 of the companion design.
+
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;
 each session is one immutable Markdown source. The deployment processes every document through

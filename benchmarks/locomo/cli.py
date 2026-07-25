@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
                     execute=args.execute,
                     isolated_deployment_confirmation=(args.confirm_isolated_deployment),
                     client=client,
+                    provider=_provider(),
                 )
             for record in records:
                 print(record.model_dump_json())
@@ -103,7 +104,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v1: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v2: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )

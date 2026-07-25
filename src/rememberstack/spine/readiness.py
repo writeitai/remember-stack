@@ -36,12 +36,14 @@ class PipelineReadinessCatalog:
         expected_components: Mapping[PipelineStage, str],
         projections: ProjectionCatalog,
         model_bindings: Mapping[str, str] | None = None,
+        build_revision: str = "",
     ) -> None:
         """Bind the spine and the component generations this process serves."""
         self._engine = engine
         self._expected = tuple(expected_components.items())
         self._projections = projections
         self._model_bindings = dict(model_bindings or {})
+        self._build_revision = build_revision
 
     def inspect(
         self,
@@ -138,6 +140,7 @@ class PipelineReadinessCatalog:
             versions=tuple(versions),
             projections=tuple(projection_states),
             model_bindings=self._model_bindings,
+            build_revision=self._build_revision,
         )
 
 

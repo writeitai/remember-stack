@@ -34,10 +34,12 @@ from benchmarks.locomo.runner import ExecutionGuardError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
+from benchmarks.locomo.runner import ProviderPreflightError
 from benchmarks.locomo.runner import summarize_run
 import httpx
 import pytest
 
+from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
@@ -186,6 +188,7 @@ def test_staged_mock_run_checks_readiness_and_resumes(
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
+            provider=_PreflightProvider(),
         )
         first_answers = answer_sample(
             run_dir=run_dir,
@@ -265,6 +268,7 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
+            provider=_PreflightProvider(),
         )
         with pytest.raises(ExecutionGuardError, match="exact completed"):
             answer_sample(
@@ -329,6 +333,7 @@ def test_remote_stage_requires_explicit_execution(
                 execute=False,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
+                provider=_PreflightProvider(),
             )
     finally:
         raw_client.close()
@@ -392,6 +397,48 @@ def _question() -> LoCoMoQuestion:
         evidence=("D1:1",),
         category=4,
     )
+
+
+class _PreflightProvider:
+    """Minimal provider that only answers the pre-ingest connectivity probe."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        """Optionally simulate an unusable credential."""
+        self.fail = fail
+        self.embed_calls = 0
+        self.generate_calls = 0
+
+    def generate(
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        """Return the tiny structured probe answer."""
+        self.generate_calls += 1
+        if self.fail:
+            raise OpenRouterProviderError("OpenRouter /chat/completions returned 401")
+        return GeneratedResponse(
+            output=response_type.model_validate({"ok": True}),
+            usage=ProviderCallUsage(
+                model_name=request.model,
+                tokens_in=1,
+                tokens_out=1,
+                cost_usd=Decimal("0"),
+                latency_ms=1,
+            ),
+        )
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Return one zero vector so the embedding path is exercised."""
+        self.embed_calls += 1
+        return EmbeddingResponse(
+            vectors=((0.0,),),
+            usage=ProviderCallUsage(
+                model_name=request.model,
+                tokens_in=1,
+                tokens_out=0,
+                cost_usd=Decimal("0"),
+                latency_ms=1,
+            ),
+        )
 
 
 class _CostProvider:
@@ -482,7 +529,17 @@ def _synthetic_dataset() -> LoCoMoDataset:
     )
 
 
+def _deployment_payload(*, build_revision: str = "a" * 40) -> dict[str, object]:
+    """Provenance the deployment reports before any work is submitted."""
+    return {
+        "build_revision": build_revision,
+        "model_bindings": {"chunk_embedding": "qwen/qwen3-embedding-8b"},
+    }
+
+
 def _run_transport(request: httpx.Request) -> httpx.Response:
+    if request.method == "GET" and request.url.path == "/deployment":
+        return httpx.Response(200, json=_deployment_payload())
     if request.method == "POST" and request.url.path == "/ingest":
         return httpx.Response(
             200,
@@ -534,6 +591,9 @@ def _complete_readiness_payload() -> dict[str, object]:
             }
             for plane in ("P2_graph", "P3_corpusfs")
         ],
+        # Must equal the revision the tests prepare with, or the serving-revision
+        # guard rejects the run.
+        "build_revision": "a" * 40,
     }
 
 
@@ -542,3 +602,203 @@ def _stock_tools() -> tuple[ToolDescriptor, ...]:
         sorted((*CANONICAL_RECIPES, *GRAPH_RECIPES), key=lambda recipe: recipe.name)
     )
     return recipe_descriptors(recipes=recipes)
+
+
+def test_preflight_failure_stops_before_any_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unusable credential must fail before documents reach the deployment.
+
+    Ingest makes no provider calls, so without this the run uploads everything
+    and only discovers the problem when stages dead-letter one retry budget at a
+    time, which reads like partial progress rather than a misconfiguration.
+    """
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    client = MemoryClient(client=raw_client)
+    provider = _PreflightProvider(fail=True)
+    try:
+        with pytest.raises(ProviderPreflightError, match="chat model"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=provider,
+            )
+    finally:
+        raw_client.close()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["ingests"] == {}
+
+
+def test_serving_revision_mismatch_is_refused_before_processing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Work is never processed by an image built from other code.
+
+    Checking only at answer time would leave a hole: process under the wrong
+    image, fail, rebuild without re-ingesting, and the answer stage then passes
+    over data produced by code that is no longer running.
+    """
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def other_revision(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/deployment":
+            return httpx.Response(
+                200, json=_deployment_payload(build_revision="b" * 40)
+            )
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(other_revision)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ExecutionGuardError, match="ingest time"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+    finally:
+        raw_client.close()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["ingests"] == {}
+
+
+def test_unstamped_image_is_refused_rather_than_assumed_to_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An image with no revision stamp is unknown provenance, not agreement."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def unstamped(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/deployment":
+            return httpx.Response(200, json=_deployment_payload(build_revision=""))
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(unstamped)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ExecutionGuardError, match="did not report a build"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+    finally:
+        raw_client.close()
+
+
+def test_answer_rechecks_revision_after_a_clean_ingest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Swapping the image between ingest and answer is still caught."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def drifting(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/readiness":
+            payload = _complete_readiness_payload()
+            payload["build_revision"] = "c" * 40
+            return httpx.Response(200, json=payload)
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(drifting)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        with pytest.raises(ExecutionGuardError, match="answer time"):
+            answer_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_questions=1,
+                max_agent_calls=9,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                client=client,
+                provider=_CostProvider(cost=Decimal("0.001")),
+            )
+    finally:
+        raw_client.close()
+
+
+def test_preflight_rejects_a_reachable_but_unusable_chat_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A schema-valid ok=false answer is a failure, not a successful probe.
+
+    The transport works and the response parses, so only an explicit check
+    distinguishes "the provider answered" from "the provider can serve this run".
+    """
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    class _RefusingProvider(_PreflightProvider):
+        def generate(
+            self, *, request: ModelRequest, response_type: type[ResponseT]
+        ) -> GeneratedResponse[ResponseT]:
+            """Answer the probe successfully but report itself unusable."""
+            return GeneratedResponse(
+                output=response_type.model_validate({"ok": False}),
+                usage=ProviderCallUsage(
+                    model_name=request.model,
+                    tokens_in=1,
+                    tokens_out=1,
+                    cost_usd=Decimal("0"),
+                    latency_ms=1,
+                ),
+            )
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ProviderPreflightError, match="ok=false"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_RefusingProvider(),
+            )
+    finally:
+        raw_client.close()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["ingests"] == {}

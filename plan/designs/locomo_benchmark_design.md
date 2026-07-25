@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v1
+protocol                RS-LoCoMo-Full-v2
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -29,7 +29,7 @@ answer-agent model       openai/gpt-4o-mini
 answer temperature       0
 max tool calls/question  8
 max agent calls/question 9
-judge model              openai/gpt-4o-mini
+judge model              openai/gpt-5.6-luna
 judge temperature        0
 judge repetitions        1
 primary metric           judge accuracy
@@ -40,6 +40,83 @@ diagnostic               coarse evidence-session recall
 The tool catalog hash, prompt and schema hashes, adapter and repository revisions, manifests,
 rendered documents, model identities, and component generations are stored. A change creates a
 new protocol version.
+
+### 2.1 Why v2 uses a stronger judge
+
+`RS-LoCoMo-Full-v1` used `openai/gpt-4o-mini` for both the answer agent and the judge. The
+judge is replaced with `openai/gpt-5.6-luna` in v2 and the protocol version is bumped
+accordingly; nothing else changes, and v1 numbers are not comparable to v2 numbers.
+
+Rationale. LoCoMo's weakest published property is grading, not the corpus: an independent audit
+of the benchmark reports roughly 6.4% of the answer key is wrong and that a weak LLM judge
+accepts up to 63% of deliberately incorrect answers. A judge that cheap is measuring its own
+leniency as much as the system under test, and a headline number produced that way would not
+survive third-party scrutiny under WP-8.6. The judge is also the cheapest component to
+strengthen: one call per question against nine agent calls, so upgrading it changes total run
+cost by a small fraction while materially improving grading fidelity.
+
+The answer agent deliberately stays on `openai/gpt-4o-mini`. It is the component under
+measurement alongside retrieval, and keeping it at the commodity tier keeps the comparison
+against baselines honest and cheap. Judge and answer models must never be the same family tier
+by accident: a stronger judge grading a weaker agent is the intended asymmetry.
+
+### 2.2 Provenance: the serving image, not the checkout
+
+`repository_revision` is read with `git rev-parse HEAD` in the directory the CLI
+runs from. The work, however, is done by containers, and Compose resolves a
+**published image unless explicitly told to build** — so a checkout at one commit
+can drive an engine built from another. Observed 2026-07-25 on a fresh host: the
+file tree was at a development branch while the running engine was the released
+`0.1.0` image, which predates the ten-stage pipeline. Eight workers exited
+immediately; had they not, the run would have recorded a commit that never
+produced its numbers.
+
+The image therefore carries its own source revision. `Dockerfile` accepts a
+`REMEMBERSTACK_BUILD_REVISION` build argument and bakes it in, and the self-host
+profile reports it — together with its model bindings — from `GET /deployment`,
+which needs no version ids and so can be read *before* any work is submitted.
+
+The revision is checked at **both** boundaries, because they answer different
+questions. At **ingest** it binds the code that will *process* the corpus; at
+**answer** it binds the code that *serves* it. Checking only the latter leaves a
+hole: process under the wrong image, fail at answer, rebuild to the prepared
+revision without re-ingesting, and the answer stage then passes over data that
+other code produced.
+
+An **unstamped image is a hard stop, not a warning**: "unknown" is not evidence of
+agreement, and a benchmark that cannot name the code it measured has no claim on
+reproducibility (WP-8.6). Build with:
+
+```bash
+REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD) docker compose build
+```
+
+Released images are stamped by the release workflow with the tag's commit, so a
+run against a published release is verifiable in exactly the same way.
+
+### 2.3 Provider preflight before ingestion
+
+Ingest makes no provider calls, so a bad credential stays invisible until the
+first pipeline stage needs a model — after documents are uploaded, and then only
+as per-stage dead-letters that read like partial progress. Three earlier smoke
+runs stopped at ingestion for precisely this reason: the configured key was the
+`.env.example` placeholder.
+
+The ingest stage therefore runs a preflight after its authorization guards and
+before any upload: one structured chat call on the answer-agent model and one
+embedding call on the **deployment's** `chunk_embedding` binding, read from
+`GET /deployment` rather than from the CLI host's environment, so the check
+covers the model the pipeline will actually use. A probe that returns `ok=false`
+fails as loudly as a transport error — reachable is not the same as usable. A
+failure raises `ProviderPreflightError` and no document is sent. The preflight is
+skipped when every session is already ingested, since a full resume has no
+upload left to protect. The cost is two trivial calls;
+the alternative is discovering the same fact after a full ingest and a retry
+budget per stage.
+
+This is benchmark-scoped. The same failure would meet any new self-hoster
+following the quickstart, and an engine-side check at `setup` time is a
+worthwhile follow-up, but it is deliberately not part of this protocol change.
 
 ## 3. Ingestion mapping
 
