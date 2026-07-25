@@ -18,6 +18,9 @@ jobs:
       contents: read
     env:
       QUICKSTART_TARGET_SECONDS: "600"
+      # Stamped into the built image so provenance checks have something true to
+      # compare against; see plan/designs/locomo_benchmark_design.md.
+      REMEMBERSTACK_BUILD_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 

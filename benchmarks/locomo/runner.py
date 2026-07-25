@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 from typing import Final
 from uuid import UUID
@@ -35,6 +36,7 @@ from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import JudgeRecord
 from benchmarks.locomo.model import LoCoMoDataset
 from benchmarks.locomo.model import LoCoMoQuestion
+from benchmarks.locomo.model import PreflightProbe
 from benchmarks.locomo.model import PreparedDocument
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
@@ -64,13 +66,16 @@ from benchmarks.locomo.protocol import schema_sha256
 from benchmarks.locomo.protocol import session_diagnostic
 from benchmarks.locomo.protocol import TEMPERATURE
 from rememberstack.adapters.openrouter import OpenRouterProviderError
+from rememberstack.model import EmbeddingRequest
 from rememberstack.model import ModelRequest
+from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
+from rememberstack.workers import E1Settings
 
 _RUN_FILE: Final = "run.json"
 _MANIFEST_FILE: Final = "manifest.json"
@@ -143,6 +148,52 @@ def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfigurat
     return configuration
 
 
+_PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
+
+
+class ProviderPreflightError(BenchmarkRunError):
+    """Raised when the configured provider cannot serve the run's models."""
+
+
+def preflight_provider(*, provider: ModelProviderPort) -> tuple[str, ...]:
+    """Prove the credential and both model kinds work before spending real time.
+
+    Ingest makes no provider calls, so a bad credential stays invisible until the
+    first pipeline stage needs a model — by which point documents are uploaded and
+    stages dead-letter one retry budget at a time. That failure reads like partial
+    progress rather than a misconfiguration, so it is checked up front.
+
+    Returns the human-readable lines describing what was verified.
+    """
+    checks: list[str] = []
+
+    try:
+        response = provider.generate(
+            request=ModelRequest(
+                model=ANSWER_AGENT_MODEL, prompt=_PREFLIGHT_PROMPT, temperature=0.0
+            ),
+            response_type=PreflightProbe,
+        )
+    except (OpenRouterProviderError, ProviderAccountingError) as error:
+        raise ProviderPreflightError(
+            f"chat model {ANSWER_AGENT_MODEL} is not usable: {error}"
+        ) from error
+    checks.append(f"chat {ANSWER_AGENT_MODEL}: ok ({response.output.ok})")
+
+    embedding_model = E1Settings().embedding_model
+    try:
+        provider.embed(
+            request=EmbeddingRequest(model=embedding_model, texts=("preflight",))
+        )
+    except (OpenRouterProviderError, ProviderAccountingError) as error:
+        raise ProviderPreflightError(
+            f"embedding model {embedding_model} is not usable: {error}"
+        ) from error
+    checks.append(f"embedding {embedding_model}: ok")
+
+    return tuple(checks)
+
+
 def ingest_sample(
     *,
     run_dir: Path,
@@ -151,6 +202,7 @@ def ingest_sample(
     execute: bool,
     isolated_deployment_confirmation: str | None,
     client: MemoryClient,
+    provider: ModelProviderPort,
 ) -> tuple[IngestRecord, ...]:
     """Upload one conversation's sessions through the public SDK."""
     context = _load_run(run_dir=run_dir)
@@ -161,6 +213,10 @@ def ingest_sample(
         confirmation=isolated_deployment_confirmation,
         confirmation_name="confirm-isolated-deployment",
     )
+    # After authorization, before any upload: a bad credential must not be
+    # discovered only once the pipeline starts dead-lettering.
+    for line in preflight_provider(provider=provider):
+        print(f"preflight: {line}", file=sys.stderr)
     documents = tuple(
         document for document in context.documents if document.sample_id == sample_id
     )
@@ -271,6 +327,7 @@ def answer_sample(
             "the deployment did not report the exact completed"
             " RS-LoCoMo-Full-v2 pipeline and fresh P2/P3 projections"
         )
+    _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
     if prior_readiness is not None and prior_readiness != readiness:
         raise ExecutionGuardError(
@@ -780,6 +837,32 @@ def _guard_remote(
         raise ExecutionGuardError("repository revision differs from the prepared run")
     if _repository_dirty():
         raise ExecutionGuardError("real benchmark stages require a clean worktree")
+
+
+def _require_serving_revision(
+    *, context: _RunContext, readiness: PipelineReadinessReport
+) -> None:
+    """Require the serving image to be built from the prepared revision.
+
+    The other guards check the filesystem the CLI runs from, which says nothing
+    about the containers doing the work: Compose serves a published image unless
+    told to build, so a run can otherwise record a commit that never produced its
+    numbers. An unstamped image is a hard stop, not a warning — "unknown" is not
+    evidence of agreement.
+    """
+    serving = readiness.build_revision
+    prepared = context.configuration.repository_revision
+    if not serving:
+        raise ExecutionGuardError(
+            "the deployment did not report a build revision, so the serving code"
+            " cannot be shown to be the prepared code; rebuild the image with"
+            " REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD)"
+        )
+    if serving != prepared:
+        raise ExecutionGuardError(
+            f"the deployment serves revision {serving} but the run was prepared"
+            f" at {prepared}; rebuild the image from the prepared revision"
+        )
 
 
 def _require_sample_ingested(*, context: _RunContext, sample_id: str) -> None:

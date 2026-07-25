@@ -91,6 +91,16 @@ class PipelineReadinessReport(BaseModel):
             " processing-time provenance for the requested versions."
         ),
     )
+    build_revision: str = Field(
+        default="",
+        description=(
+            "Source revision stamped into the running image at build time."
+            " Empty when the image was built without it. Comparing this against"
+            " the revision a benchmark prepared with is the only way to know the"
+            " serving code is the code under test; a filesystem checkout says"
+            " nothing about what the containers actually run."
+        ),
+    )
 
 
 class ConnectorCreate(BaseModel):

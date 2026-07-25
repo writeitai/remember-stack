@@ -116,6 +116,8 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            REMEMBERSTACK_BUILD_REVISION=${{ github.sha }}
 
   github-release:
     name: Publish GitHub release

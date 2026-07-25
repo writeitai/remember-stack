@@ -23,6 +23,13 @@ COPY src ./src
 
 RUN uv sync --locked --no-dev --extra server
 
+# Provenance: the exact source revision baked into this image. The benchmark
+# harness compares it against the revision it prepared with, so a run can never
+# attribute results to code that did not produce them. Unset means "unknown",
+# which the harness treats as a hard stop for real runs rather than a warning.
+ARG REMEMBERSTACK_BUILD_REVISION=""
+ENV REMEMBERSTACK_BUILD_REVISION="${REMEMBERSTACK_BUILD_REVISION}"
+
 USER app
 
 ENTRYPOINT ["python", "-m", "rememberstack.profiles.selfhost"]

@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
                     execute=args.execute,
                     isolated_deployment_confirmation=(args.confirm_isolated_deployment),
                     client=client,
+                    provider=_provider(),
                 )
             for record in records:
                 print(record.model_dump_json())

@@ -23,6 +23,19 @@ The harness validates the pinned bytes, renders session documents, and fingerpri
 eight-question smoke plan. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
+Build the image from the revision under test — Compose otherwise serves the
+published release image, and the harness refuses to run against an engine whose
+stamped revision does not match the prepared run:
+
+```bash
+REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD) docker compose build
+docker compose up --detach
+```
+
+`ingest` runs a provider preflight (one chat call, one embedding call) after its
+authorization guards and before any upload, so a bad credential fails in seconds
+instead of surfacing later as per-stage dead-letters.
+
 The stock Compose deployment now includes all ten continuous E/P1 workers. After ingesting one
 isolated conversation and waiting for them to settle, publish the aggregate projections once:
 

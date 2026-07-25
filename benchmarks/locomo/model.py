@@ -16,6 +16,7 @@ from pydantic import model_validator
 from rememberstack.model import Envelope
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import StructuredResponseModel
 
 NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
@@ -333,3 +334,11 @@ class RunSummary(FrozenModel):
     ingestion_cost_source: Literal[
         "deployment cost ledger; not available through benchmark SDK"
     ] = "deployment cost ledger; not available through benchmark SDK"
+
+
+class PreflightProbe(StructuredResponseModel):
+    """Smallest possible structured reply proving the chat model answers."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ok: bool
