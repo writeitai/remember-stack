@@ -452,7 +452,7 @@ def test_non_json_completion_is_not_retried_and_shows_the_text(
 
     monkeypatch.setattr(provider, "_post", post)
     try:
-        with pytest.raises(OpenRouterProviderError, match="not JSON"):
+        with pytest.raises(OpenRouterProviderError, match="not JSON") as raised:
             provider.generate(
                 request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
                 response_type=FactLabelResponse,
@@ -461,6 +461,12 @@ def test_non_json_completion_is_not_retried_and_shows_the_text(
         provider._client.close()
 
     assert calls == 1
+    message = str(raised.value)
+    # Model output can restate customer material and these strings reach
+    # processing_state.last_error and the logs, so only a fingerprint appears.
+    assert "I cannot answer that." not in message
+    assert "sha256_12=" in message
+    assert "len=21" in message
 
 
 def test_schema_failure_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -484,3 +490,62 @@ def test_schema_failure_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
         provider._client.close()
 
     assert calls == 1
+
+
+def test_billed_empty_attempt_is_not_lost_when_a_later_attempt_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An earlier billed call must survive a later transport failure.
+
+    Otherwise a retry that ends in an error silently discards spend the provider
+    already charged for.
+    """
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    calls = 0
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _completion(content="", cost="0.0007")
+        raise OpenRouterProviderError("upstream refused the second call")
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError) as raised:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert calls == 2
+    assert raised.value.usage is not None
+    assert raised.value.usage.cost_usd == Decimal("0.0007")
+
+
+def test_diagnosis_never_carries_provider_error_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider error message can echo the prompt, so only its code appears."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        body = _completion(content=None)
+        body["error"] = {"code": "overloaded", "message": "secret prompt echo"}
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError) as raised:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    message = str(raised.value)
+    assert "secret prompt echo" not in message
+    assert "error_code='overloaded'" in message

@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from decimal import InvalidOperation
+import hashlib
 import json
 import time
 from typing import Any
@@ -93,41 +94,16 @@ class OpenRouterModelProvider:
         if self._settings.reasoning_effort is not None:
             payload["reasoning"] = {"effort": self._settings.reasoning_effort}
 
-        # An empty completion is a provider transient, not a bad request: the
-        # same prompt succeeds on the next call. Retrying here costs one cheap
-        # call, where failing out would consume one of the work item's few
-        # attempts and can dead-letter a document — which permanently blocks a
-        # benchmark run, because readiness requires every stage to succeed.
-        # Schema failures are deliberately NOT retried here: those repeat.
-        usages: list[ProviderCallUsage] = []
-        for attempt in range(_EMPTY_COMPLETION_ATTEMPTS):
-            body = self._post(path="/chat/completions", payload=payload)
-            usages.append(
-                _usage(
-                    body=body,
-                    requested_model=request.model,
-                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-                )
-            )
-            usage = _merged_usage(usages=usages)
-            content = _completion_content(body=body)
-            if content is not None:
-                break
-            if attempt + 1 == _EMPTY_COMPLETION_ATTEMPTS:
-                raise OpenRouterProviderError(
-                    f"{response_type.__name__}: provider returned no completion"
-                    f" content after {_EMPTY_COMPLETION_ATTEMPTS} attempts"
-                    f" ({_completion_diagnosis(body=body)})",
-                    usage=usage,
-                )
+        content, usage = self._completion_with_retry(
+            payload=payload, response_type=response_type, started_ns=started_ns
+        )
 
         try:
             decoded = json.loads(content)
         except json.JSONDecodeError as err:
             raise OpenRouterProviderError(
                 f"{response_type.__name__}: completion content is not JSON"
-                f" ({_completion_diagnosis(body=body)});"
-                f" first {_DIAGNOSTIC_PREFIX} chars: {content[:_DIAGNOSTIC_PREFIX]!r}",
+                f" ({_content_fingerprint(content=content)})",
                 usage=usage,
             ) from err
         try:
@@ -138,6 +114,56 @@ class OpenRouterModelProvider:
                 usage=usage,
             ) from error
         return GeneratedResponse(output=output, usage=usage)
+
+    def _completion_with_retry(
+        self,
+        *,
+        payload: dict[str, object],
+        response_type: type[ResponseT],
+        started_ns: int,
+    ) -> tuple[str, ProviderCallUsage]:
+        """Post until non-empty content arrives, or raise with everything billed.
+
+        An empty completion is a provider transient, not a bad request: failing
+        out would consume one of the work item's few attempts, and exhausting
+        them dead-letters a document, which permanently blocks a benchmark run
+        because readiness requires every stage to succeed. Schema and non-JSON
+        failures are handled by the caller and never retried: those repeat, so a
+        retry would only double the cost.
+
+        Every provider call made here is billed, so usage accumulates across
+        attempts and is attached to whatever is raised.
+        """
+        usages: list[ProviderCallUsage] = []
+        for attempt in range(1, _EMPTY_COMPLETION_ATTEMPTS + 1):
+            try:
+                body = self._post(path="/chat/completions", payload=payload)
+            except ProviderCallError as error:
+                # A later attempt failing must not discard earlier billed calls.
+                if usages and error.usage is None:
+                    error.usage = _merged_usage(usages=usages)
+                raise
+            usages.append(
+                _usage(
+                    body=body,
+                    requested_model=str(payload["model"]),
+                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                )
+            )
+            usage = _merged_usage(usages=usages)
+            content = _completion_content(body=body)
+            if content is not None:
+                return content, usage
+            if attempt == _EMPTY_COMPLETION_ATTEMPTS:
+                raise OpenRouterProviderError(
+                    f"{response_type.__name__}: provider returned no completion"
+                    f" content after {attempt} attempts"
+                    f" ({_completion_diagnosis(body=body)})",
+                    usage=usage,
+                )
+        raise OpenRouterProviderError(  # pragma: no cover - guards the constant
+            "_EMPTY_COMPLETION_ATTEMPTS must be at least 1"
+        )
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """One embeddings call for the caller's batch."""
@@ -219,39 +245,57 @@ def _completion_content(*, body: dict[str, Any]) -> str | None:
 
 
 def _completion_diagnosis(*, body: dict[str, Any]) -> str:
-    """Summarise why a completion was unusable, without leaking the payload.
+    """Summarise why a completion was unusable, using provider metadata only.
 
     The previous error said only "unusable completion body", which could not
     distinguish truncation from a refusal from an empty response, so a recurring
-    production failure had no diagnosable cause. Everything here is provider
-    metadata; prompts, completions, and credentials are never included.
+    production failure had no diagnosable cause.
+
+    This is deliberately metadata-only. Model output can restate customer
+    material, and these strings reach `processing_state.last_error` and the logs,
+    so no completion text, prompt, provider error message, or credential is ever
+    included -- only flags, lengths, and enumerated reasons.
     """
     parts: list[str] = []
     try:
         choice = body["choices"][0]
     except (KeyError, IndexError, TypeError):
-        parts.append("choices=absent")
-        choice = {}
-    if isinstance(choice, dict):
-        finish = choice.get("finish_reason")
-        native = choice.get("native_finish_reason")
-        parts.append(f"finish_reason={finish!r}")
-        if native != finish:
-            parts.append(f"native_finish_reason={native!r}")
-        message = choice.get("message")
-        if isinstance(message, dict):
-            content = message.get("content")
-            if content is None:
-                parts.append("content=null")
-            elif not str(content).strip():
-                parts.append(f"content=blank(len={len(str(content))})")
-            parts.append(f"reasoning_present={bool(message.get('reasoning'))}")
-            if message.get("refusal"):
-                parts.append("refusal=yes")
-    if body.get("error"):
-        parts.append(f"error={str(body['error'])[:_DIAGNOSTIC_PREFIX]!r}")
+        return "choices=absent"
+    if not isinstance(choice, dict):
+        return "choices[0]=malformed"
+    finish = choice.get("finish_reason")
+    native = choice.get("native_finish_reason")
+    parts.append(f"finish_reason={finish!r}")
+    if native != finish:
+        parts.append(f"native_finish_reason={native!r}")
+    message = choice.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if content is None:
+            parts.append("content=null")
+        else:
+            parts.append(f"content=blank(len={len(str(content))})")
+        parts.append(f"reasoning_present={bool(message.get('reasoning'))}")
+        parts.append(f"refusal_present={bool(message.get('refusal'))}")
+    # Only the shape of a provider error: its message can echo the prompt.
+    error = body.get("error")
+    if isinstance(error, dict):
+        parts.append(f"error_code={error.get('code')!r}")
+    elif error:
+        parts.append("error_present=True")
     parts.append(f"model={body.get('model')!r}")
     return ", ".join(parts)
+
+
+def _content_fingerprint(*, content: str) -> str:
+    """Identify non-JSON content without reproducing it.
+
+    A length and digest let an operator tell "the same refusal every time" from
+    "different prose each time" and correlate occurrences across runs, while
+    keeping possibly-customer-derived model output out of errors and logs.
+    """
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+    return f"len={len(content)}, sha256_12={digest}"
 
 
 def _merged_usage(*, usages: list[ProviderCallUsage]) -> ProviderCallUsage:
