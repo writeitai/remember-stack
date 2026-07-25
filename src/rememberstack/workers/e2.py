@@ -190,9 +190,7 @@ class ExtractClaimsHandler:
         selection_call = self._model_provider.generate(
             request=ModelRequest(
                 model=self._settings.extract_model,
-                prompt=_SELECTION_PROMPT.format(
-                    outcomes=_OUTCOMES, bundle=bundle
-                ),
+                prompt=_SELECTION_PROMPT.format(outcomes=_OUTCOMES, bundle=bundle),
             ),
             response_type=SelectionResponse,
         )
