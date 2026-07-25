@@ -47,13 +47,15 @@ new protocol version.
 judge is replaced with `openai/gpt-5.6-luna` in v2 and the protocol version is bumped
 accordingly; nothing else changes, and v1 numbers are not comparable to v2 numbers.
 
-Rationale. LoCoMo's weakest published property is grading, not the corpus: an independent audit
-of the benchmark reports roughly 6.4% of the answer key is wrong and that a weak LLM judge
-accepts up to 63% of deliberately incorrect answers. A judge that cheap is measuring its own
-leniency as much as the system under test, and a headline number produced that way would not
-survive third-party scrutiny under WP-8.6. The judge is also the cheapest component to
-strengthen: one call per question against nine agent calls, so upgrading it changes total run
-cost by a small fraction while materially improving grading fidelity.
+Rationale. The judge is the cheapest component to strengthen: one call per question against
+nine agent calls, so raising its tier changes total run cost by a small fraction. Grading
+fidelity is worth that cost because the judge's verdict *is* the primary metric, and a judge at
+the same tier as the agent it grades gives no headroom for catching a plausible-but-wrong answer.
+
+This is a judgement about protocol design, not a measured claim: no leniency measurement for
+either judge model has been run here. If the judge's strictness is ever asserted as a result
+rather than a design choice, it needs its own experiment — for example, scoring a set of
+deliberately incorrect answers with both models and reporting the acceptance rates.
 
 The answer agent deliberately stays on `openai/gpt-4o-mini`. It is the component under
 measurement alongside retrieval, and keeping it at the commodity tier keeps the comparison
@@ -98,9 +100,10 @@ run against a published release is verifiable in exactly the same way.
 
 Ingest makes no provider calls, so a bad credential stays invisible until the
 first pipeline stage needs a model — after documents are uploaded, and then only
-as per-stage dead-letters that read like partial progress. Three earlier smoke
-runs stopped at ingestion for precisely this reason: the configured key was the
-`.env.example` placeholder.
+as per-stage dead-letters that read like partial progress. This was observed
+directly: a run configured with the `.env.example` placeholder key ingested all
+nineteen sessions successfully and then failed every model-calling stage with
+HTTP 401.
 
 The ingest stage therefore runs a preflight after its authorization guards and
 before any upload: one structured chat call on the answer-agent model and one
@@ -117,6 +120,42 @@ budget per stage.
 This is benchmark-scoped. The same failure would meet any new self-hoster
 following the quickstart, and an engine-side check at `setup` time is a
 worthwhile follow-up, but it is deliberately not part of this protocol change.
+
+### 2.4 Provider schema compliance is not guaranteed
+
+Requests set `"strict": true` on a JSON schema, but the provider does not
+reliably honour it. Two distinct violations were observed in real runs against
+`deepseek/deepseek-v4-flash` through OpenRouter:
+
+- **Out-of-vocabulary enum value.** Selection returned `drop_boilerplate`, which
+  is not one of the twelve declared `outcome` values.
+- **Schema ignored entirely.** Fact labelling returned the bare sentence
+  `Caroline knows about advocacy.` as plain text instead of a JSON object, with
+  `finish_reason: stop` — a clean completion that simply did not use the schema.
+
+Neither is reproducible on demand: the same fact-label prompt succeeded on 24
+consecutive retries after failing once, and three prompt variants each returned
+valid JSON 8 times out of 8. The rate has **not** been measured, so no claim is
+made about how often it happens.
+
+The consequence for this protocol is that a schema is a request, not a
+constraint. Adapters must fail with a diagnosable error rather than a bare
+decode failure, and any invariant that matters must be expressible *within* the
+schema — which is why Selection's verdict and drop reason were collapsed into a
+single enum rather than paired by a validator.
+
+An unusable completion is therefore reported with provider metadata: finish
+reasons, whether content was null or blank and its length, reasoning and refusal
+flags, an error code, and for non-JSON content a length and digest. Model output
+can restate customer material and these strings reach `processing_state.last_error`
+and the logs, so the text itself is never included.
+
+Whether such failures should be retried inside the adapter is **open**. Retrying
+was implemented and then withdrawn: it was built on the assumption that an empty
+completion is a transient, and the failure actually observed is non-empty
+content, so the retry never applied to it. The work ledger already grants each
+item several attempts; whether that is sufficient needs a measured failure rate
+first.
 
 ## 3. Ingestion mapping
 
