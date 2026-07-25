@@ -72,9 +72,16 @@ immediately; had they not, the run would have recorded a commit that never
 produced its numbers.
 
 The image therefore carries its own source revision. `Dockerfile` accepts a
-`REMEMBERSTACK_BUILD_REVISION` build argument and bakes it in; the self-host
-profile reports it as `build_revision` on the readiness response; and the answer
-stage refuses to proceed unless it equals the prepared `repository_revision`.
+`REMEMBERSTACK_BUILD_REVISION` build argument and bakes it in, and the self-host
+profile reports it — together with its model bindings — from `GET /deployment`,
+which needs no version ids and so can be read *before* any work is submitted.
+
+The revision is checked at **both** boundaries, because they answer different
+questions. At **ingest** it binds the code that will *process* the corpus; at
+**answer** it binds the code that *serves* it. Checking only the latter leaves a
+hole: process under the wrong image, fail at answer, rebuild to the prepared
+revision without re-ingesting, and the answer stage then passes over data that
+other code produced.
 
 An **unstamped image is a hard stop, not a warning**: "unknown" is not evidence of
 agreement, and a benchmark that cannot name the code it measured has no claim on
@@ -97,8 +104,13 @@ runs stopped at ingestion for precisely this reason: the configured key was the
 
 The ingest stage therefore runs a preflight after its authorization guards and
 before any upload: one structured chat call on the answer-agent model and one
-embedding call on the deployment's embedding model. A failure raises
-`ProviderPreflightError` and no document is sent. The cost is two trivial calls;
+embedding call on the **deployment's** `chunk_embedding` binding, read from
+`GET /deployment` rather than from the CLI host's environment, so the check
+covers the model the pipeline will actually use. A probe that returns `ok=false`
+fails as loudly as a transport error — reachable is not the same as usable. A
+failure raises `ProviderPreflightError` and no document is sent. The preflight is
+skipped when every session is already ingested, since a full resume has no
+upload left to protect. The cost is two trivial calls;
 the alternative is discovering the same fact after a full ingest and a retry
 budget per stage.
 

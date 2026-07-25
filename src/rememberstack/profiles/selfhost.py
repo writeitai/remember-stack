@@ -25,6 +25,7 @@ from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import PipelineStage
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
@@ -266,6 +267,13 @@ class SelfHostProfile:
                 build_revision=_build_revision(),
             ),
         )
+
+        @app.get("/deployment", response_model=DeploymentBuildInfo)
+        def deployment_build_info() -> DeploymentBuildInfo:
+            """Report which code and model bindings are serving, before any work."""
+            return DeploymentBuildInfo(
+                build_revision=_build_revision(), model_bindings=_model_bindings()
+            )
 
         @app.get("/healthz", include_in_schema=False)
         def healthz() -> dict[str, str]:

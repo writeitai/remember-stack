@@ -103,6 +103,29 @@ class PipelineReadinessReport(BaseModel):
     )
 
 
+class DeploymentBuildInfo(BaseModel):
+    """Non-secret identity of the code and model bindings currently serving.
+
+    Available without version ids so a caller can verify provenance *before*
+    submitting work, rather than after the pipeline has already processed it
+    under whatever image happened to be running.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    build_revision: str = Field(
+        default="",
+        description=(
+            "Source revision stamped into the running image at build time;"
+            " empty when the image was built without it."
+        ),
+    )
+    model_bindings: dict[str, str] = Field(
+        default_factory=dict,
+        description="Current non-secret provider model identities.",
+    )
+
+
 class ConnectorCreate(BaseModel):
     """Deployment-side connector configuration sent by a client.
 
