@@ -60,6 +60,52 @@ measurement alongside retrieval, and keeping it at the commodity tier keeps the 
 against baselines honest and cheap. Judge and answer models must never be the same family tier
 by accident: a stronger judge grading a weaker agent is the intended asymmetry.
 
+### 2.2 Provenance: the serving image, not the checkout
+
+`repository_revision` is read with `git rev-parse HEAD` in the directory the CLI
+runs from. The work, however, is done by containers, and Compose resolves a
+**published image unless explicitly told to build** — so a checkout at one commit
+can drive an engine built from another. Observed 2026-07-25 on a fresh host: the
+file tree was at a development branch while the running engine was the released
+`0.1.0` image, which predates the ten-stage pipeline. Eight workers exited
+immediately; had they not, the run would have recorded a commit that never
+produced its numbers.
+
+The image therefore carries its own source revision. `Dockerfile` accepts a
+`REMEMBERSTACK_BUILD_REVISION` build argument and bakes it in; the self-host
+profile reports it as `build_revision` on the readiness response; and the answer
+stage refuses to proceed unless it equals the prepared `repository_revision`.
+
+An **unstamped image is a hard stop, not a warning**: "unknown" is not evidence of
+agreement, and a benchmark that cannot name the code it measured has no claim on
+reproducibility (WP-8.6). Build with:
+
+```bash
+REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD) docker compose build
+```
+
+Released images are stamped by the release workflow with the tag's commit, so a
+run against a published release is verifiable in exactly the same way.
+
+### 2.3 Provider preflight before ingestion
+
+Ingest makes no provider calls, so a bad credential stays invisible until the
+first pipeline stage needs a model — after documents are uploaded, and then only
+as per-stage dead-letters that read like partial progress. Three earlier smoke
+runs stopped at ingestion for precisely this reason: the configured key was the
+`.env.example` placeholder.
+
+The ingest stage therefore runs a preflight after its authorization guards and
+before any upload: one structured chat call on the answer-agent model and one
+embedding call on the deployment's embedding model. A failure raises
+`ProviderPreflightError` and no document is sent. The cost is two trivial calls;
+the alternative is discovering the same fact after a full ingest and a retry
+budget per stage.
+
+This is benchmark-scoped. The same failure would meet any new self-hoster
+following the quickstart, and an engine-side check at `setup` time is a
+worthwhile follow-up, but it is deliberately not part of this protocol change.
+
 ## 3. Ingestion mapping
 
 Each conversation runs in a clean isolated deployment. Each session is one immutable Markdown
