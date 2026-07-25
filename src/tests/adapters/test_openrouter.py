@@ -375,10 +375,10 @@ def test_empty_completion_reports_a_diagnosable_cause(
     assert raised.value.usage.cost_usd == Decimal("0.0001")
 
 
-def test_non_json_completion_is_not_retried_and_shows_the_text(
+def test_non_json_completion_fails_once_with_fingerprint_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Prose instead of JSON repeats, so retrying it only doubles the cost."""
+    """One failed call, and the error carries a fingerprint, never the prose."""
     provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
     calls = 0
 

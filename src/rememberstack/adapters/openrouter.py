@@ -6,7 +6,6 @@ import hashlib
 import json
 import time
 from typing import Any
-from typing import Final
 from typing import Literal
 from typing import TypeVar
 
@@ -27,9 +26,6 @@ from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
-
-#: Characters of provider-supplied text included in diagnostics.
-_DIAGNOSTIC_PREFIX: Final = 200
 
 
 class OpenRouterSettings(BaseSettings):
@@ -272,23 +268,6 @@ def _content_fingerprint(*, content: str) -> str:
     """
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
     return f"len={len(content)}, sha256_12={digest}"
-
-
-def _merged_usage(*, usages: list[ProviderCallUsage]) -> ProviderCallUsage:
-    """Sum usage across in-adapter retries so no billed call goes unrecorded.
-
-    A retry inside one logical call must still bill every provider call it made,
-    or budgets silently under-count.
-    """
-    if len(usages) == 1:
-        return usages[0]
-    return ProviderCallUsage(
-        model_name=usages[-1].model_name,
-        tokens_in=sum(item.tokens_in for item in usages),
-        tokens_out=sum(item.tokens_out for item in usages),
-        cost_usd=sum((item.cost_usd for item in usages), Decimal("0")),
-        latency_ms=usages[-1].latency_ms,
-    )
 
 
 def _usage(
