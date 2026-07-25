@@ -133,9 +133,20 @@ def test_every_drop_reason_has_exactly_one_outcome() -> None:
 
 
 @pytest.mark.parametrize(
-    "outcome", ("keep", "keep_flagged", "drop_opinion", "drop_references_boilerplate")
+    ("outcome", "expected_reason"),
+    (
+        ("keep", None),
+        ("keep_flagged", None),
+        ("drop_opinion", SelectionDropReason.OPINION),
+        # Multi-underscore reasons are where a naive prefix split would corrupt
+        # the derived value, so they are asserted exactly rather than by shape.
+        ("drop_no_info", SelectionDropReason.NO_INFO),
+        ("drop_references_boilerplate", SelectionDropReason.REFERENCES_BOILERPLATE),
+    ),
 )
-def test_outcome_round_trips_to_verdict_and_reason(outcome: str) -> None:
+def test_outcome_round_trips_to_verdict_and_reason(
+    outcome: str, expected_reason: SelectionDropReason | None
+) -> None:
     """Every outcome yields a consistent verdict/reason pair by construction.
 
     The pair can no longer disagree: a keep carrying a drop reason, or a drop
@@ -147,12 +158,11 @@ def test_outcome_round_trips_to_verdict_and_reason(outcome: str) -> None:
         {"candidates": [{"source_span": "A statement.", "outcome": outcome}]}
     ).candidates[0]
 
-    if outcome.startswith("drop_"):
-        assert candidate.verdict is SelectionVerdict.DROP
-        assert candidate.drop_reason is not None
-    else:
+    assert candidate.drop_reason is expected_reason
+    if expected_reason is None:
         assert candidate.verdict is not SelectionVerdict.DROP
-        assert candidate.drop_reason is None
+    else:
+        assert candidate.verdict is SelectionVerdict.DROP
 
 
 @pytest.mark.parametrize(

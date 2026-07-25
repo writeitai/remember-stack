@@ -55,7 +55,8 @@ Drop unattributed opinions, advice, hypotheticals, generic truisms, questions,
 section intros/conclusions, and "we don't know" statements. An ATTRIBUTED
 stance ("X said/believes/opposes Y") is a KEEP. Never-drop classes even if
 phrased opinionatedly: quantities, dates, named-entity+predicate,
-change-of-state. When unsure, prefer keep_flagged over drop. Each candidate's
+change-of-state. When unsure, prefer keep_flagged over any drop_* outcome.
+Each candidate's
 source_span must be a verbatim substring of the target chunk. Report one
 outcome per candidate, exactly one of: {outcomes}. The drop_* values carry the
 reason in the value itself; there is no separate reason field.

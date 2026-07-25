@@ -92,7 +92,7 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
     assert match is not None, f"no target chunk in a {type_name} prompt"
     span = match.group(1).strip()
     if type_name == "SelectionResponse":
-        return {"candidates": [{"source_span": span, "verdict": "keep"}]}
+        return {"candidates": [{"source_span": span, "outcome": "keep"}]}
     if type_name == "ClaimifyResponse":
         return {
             "claims": [

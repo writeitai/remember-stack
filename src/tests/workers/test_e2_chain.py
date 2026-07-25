@@ -60,18 +60,14 @@ _SELECTION_PAYLOAD: dict[str, object] = {
     "candidates": [
         {
             "source_span": "Project Atlas launched in 2024 in three markets.",
-            "verdict": "keep",
+            "outcome": "keep",
             "protected_class": "date",
         },
         {
             "source_span": "The team considers it a runaway success.",
-            "verdict": "keep_flagged",  # attributed stance kept, low confidence
+            "outcome": "keep_flagged",  # attributed stance kept, low confidence
         },
-        {
-            "source_span": "You should try it yourself.",
-            "verdict": "drop",
-            "drop_reason": "advice",
-        },
+        {"source_span": "You should try it yourself.", "outcome": "drop_advice"},
     ]
 }
 
