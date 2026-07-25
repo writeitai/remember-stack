@@ -13,6 +13,7 @@ from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.adapters.openrouter import _usage
 from rememberstack.model import EmbeddingRequest
+from rememberstack.model import FactLabelResponse
 from rememberstack.model import ModelRequest
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ProviderAccountingError
@@ -327,3 +328,159 @@ def test_embedding_provider_pin_is_not_forwarded_to_generation(
         provider._client.close()
 
     assert response.output.answer == "Prague"
+
+
+def _completion(*, content: object, finish: str = "stop", cost: str = "0.0001") -> dict:
+    """One provider chat-completion body with the given message content."""
+    return {
+        "model": "openai/gpt-4o-mini",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": cost},
+        "choices": [
+            {
+                "finish_reason": finish,
+                "message": {"content": content, "role": "assistant"},
+            }
+        ],
+    }
+
+
+def test_empty_completion_is_retried_once_and_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank completion is a provider transient, not a bad request.
+
+    Failing out would consume one of the work item's few attempts and can
+    dead-letter a document, which permanently blocks a benchmark run because
+    readiness requires every stage to succeed.
+    """
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    bodies = [_completion(content="  "), _completion(content='{"label": "ok"}')]
+    calls: list[dict[str, object]] = []
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(payload)
+        return bodies[len(calls) - 1]
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        result = provider.generate(
+            request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+            response_type=FactLabelResponse,
+        )
+    finally:
+        provider._client.close()
+
+    assert result.output.label == "ok"
+    assert len(calls) == 2
+
+
+def test_retried_empty_completion_bills_every_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry inside one logical call must not under-report spend.
+
+    Both provider calls were billed, so a budget that saw only the second would
+    silently under-count real cost.
+    """
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    bodies = [
+        _completion(content=None, cost="0.0004"),
+        _completion(content='{"label": "ok"}', cost="0.0006"),
+    ]
+    calls = 0
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return bodies[calls - 1]
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        result = provider.generate(
+            request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+            response_type=FactLabelResponse,
+        )
+    finally:
+        provider._client.close()
+
+    assert result.usage.cost_usd == Decimal("0.0010")
+    assert result.usage.tokens_in == 20
+
+
+def test_persistently_empty_completion_reports_a_diagnosable_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The error must say why, not merely that the body was unusable.
+
+    The previous message could not distinguish truncation from a refusal from an
+    empty response, so a recurring production failure had no diagnosable cause.
+    """
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(content="", finish="length")
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError) as raised:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    message = str(raised.value)
+    assert "no completion content" in message
+    assert "finish_reason='length'" in message
+    assert "content=blank" in message
+    assert raised.value.usage is not None
+    assert raised.value.usage.cost_usd == Decimal("0.0002")
+
+
+def test_non_json_completion_is_not_retried_and_shows_the_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prose instead of JSON repeats, so retrying it only doubles the cost."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    calls = 0
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return _completion(content="I cannot answer that.")
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="not JSON"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert calls == 1
+
+
+def test_schema_failure_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Valid JSON that violates the schema repeats; retrying wastes spend."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    calls = 0
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return _completion(content='{"wrong_field": 1}')
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="validation"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert calls == 1

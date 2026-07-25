@@ -5,6 +5,7 @@ from decimal import InvalidOperation
 import json
 import time
 from typing import Any
+from typing import Final
 from typing import Literal
 from typing import TypeVar
 
@@ -25,6 +26,11 @@ from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
+
+#: Total attempts for an empty completion, which is a provider transient.
+_EMPTY_COMPLETION_ATTEMPTS: Final = 2
+#: Characters of provider-supplied text included in diagnostics.
+_DIAGNOSTIC_PREFIX: Final = 200
 
 
 class OpenRouterSettings(BaseSettings):
@@ -86,18 +92,43 @@ class OpenRouterModelProvider:
             payload["temperature"] = request.temperature
         if self._settings.reasoning_effort is not None:
             payload["reasoning"] = {"effort": self._settings.reasoning_effort}
-        body = self._post(path="/chat/completions", payload=payload)
-        usage = _usage(
-            body=body,
-            requested_model=request.model,
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-        )
+
+        # An empty completion is a provider transient, not a bad request: the
+        # same prompt succeeds on the next call. Retrying here costs one cheap
+        # call, where failing out would consume one of the work item's few
+        # attempts and can dead-letter a document — which permanently blocks a
+        # benchmark run, because readiness requires every stage to succeed.
+        # Schema failures are deliberately NOT retried here: those repeat.
+        usages: list[ProviderCallUsage] = []
+        for attempt in range(_EMPTY_COMPLETION_ATTEMPTS):
+            body = self._post(path="/chat/completions", payload=payload)
+            usages.append(
+                _usage(
+                    body=body,
+                    requested_model=request.model,
+                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                )
+            )
+            usage = _merged_usage(usages=usages)
+            content = _completion_content(body=body)
+            if content is not None:
+                break
+            if attempt + 1 == _EMPTY_COMPLETION_ATTEMPTS:
+                raise OpenRouterProviderError(
+                    f"{response_type.__name__}: provider returned no completion"
+                    f" content after {_EMPTY_COMPLETION_ATTEMPTS} attempts"
+                    f" ({_completion_diagnosis(body=body)})",
+                    usage=usage,
+                )
+
         try:
-            content = body["choices"][0]["message"]["content"]
             decoded = json.loads(content)
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as err:
+        except json.JSONDecodeError as err:
             raise OpenRouterProviderError(
-                f"unusable completion body for {response_type.__name__}", usage=usage
+                f"{response_type.__name__}: completion content is not JSON"
+                f" ({_completion_diagnosis(body=body)});"
+                f" first {_DIAGNOSTIC_PREFIX} chars: {content[:_DIAGNOSTIC_PREFIX]!r}",
+                usage=usage,
             ) from err
         try:
             output = response_type.model_validate(decoded)
@@ -170,6 +201,74 @@ def _require_all_object_properties(node: object) -> None:
         node["additionalProperties"] = False
     for value in node.values():
         _require_all_object_properties(value)
+
+
+def _completion_content(*, body: dict[str, Any]) -> str | None:
+    """Return usable completion text, or None when the provider sent none.
+
+    Blank-but-present content counts as none: an empty string is not a partial
+    answer, it is the provider declining to answer.
+    """
+    try:
+        content = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    if not isinstance(content, str) or not content.strip():
+        return None
+    return content
+
+
+def _completion_diagnosis(*, body: dict[str, Any]) -> str:
+    """Summarise why a completion was unusable, without leaking the payload.
+
+    The previous error said only "unusable completion body", which could not
+    distinguish truncation from a refusal from an empty response, so a recurring
+    production failure had no diagnosable cause. Everything here is provider
+    metadata; prompts, completions, and credentials are never included.
+    """
+    parts: list[str] = []
+    try:
+        choice = body["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        parts.append("choices=absent")
+        choice = {}
+    if isinstance(choice, dict):
+        finish = choice.get("finish_reason")
+        native = choice.get("native_finish_reason")
+        parts.append(f"finish_reason={finish!r}")
+        if native != finish:
+            parts.append(f"native_finish_reason={native!r}")
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if content is None:
+                parts.append("content=null")
+            elif not str(content).strip():
+                parts.append(f"content=blank(len={len(str(content))})")
+            parts.append(f"reasoning_present={bool(message.get('reasoning'))}")
+            if message.get("refusal"):
+                parts.append("refusal=yes")
+    if body.get("error"):
+        parts.append(f"error={str(body['error'])[:_DIAGNOSTIC_PREFIX]!r}")
+    parts.append(f"model={body.get('model')!r}")
+    return ", ".join(parts)
+
+
+def _merged_usage(*, usages: list[ProviderCallUsage]) -> ProviderCallUsage:
+    """Sum usage across in-adapter retries so no billed call goes unrecorded.
+
+    A retry inside one logical call must still bill every provider call it made,
+    or budgets silently under-count.
+    """
+    if len(usages) == 1:
+        return usages[0]
+    return ProviderCallUsage(
+        model_name=usages[-1].model_name,
+        tokens_in=sum(item.tokens_in for item in usages),
+        tokens_out=sum(item.tokens_out for item in usages),
+        cost_usd=sum((item.cost_usd for item in usages), Decimal("0")),
+        latency_ms=usages[-1].latency_ms,
+    )
 
 
 def _usage(
