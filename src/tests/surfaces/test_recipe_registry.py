@@ -43,10 +43,12 @@ from rememberstack.spine import CANONICAL_RECIPES
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
 from rememberstack.spine import seed_canonical_recipes
+from rememberstack.spine.recipes import GRAPH_RECIPES
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import EXECUTABLE_OPS
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces import RecipeExecutor
+from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("52000000-0000-0000-0000-000000000001")
@@ -500,3 +502,29 @@ def test_an_omitted_optional_argument_is_not_a_keyerror(corpus: _Corpus) -> None
     )
     assert _payload(replayed) == _payload(direct)
     assert replayed.negative is None  # the relation is found, predicate unfiltered
+
+
+def test_descriptor_required_order_survives_jsonb_key_reordering() -> None:
+    """The rendered descriptor must not depend on parameter mapping order.
+
+    The registry round-trips `parameters` through Postgres jsonb, which
+    normalises object key order (shortest key first), so declaration order does
+    not survive storage. The benchmark protocol hashes descriptors exactly as
+    served; an order-sensitive `required` array made a live deployment's
+    graph_path hash differently from the same code's stock rendering.
+    """
+    stock = next(r for r in GRAPH_RECIPES if r.name == "graph_path")
+    # jsonb orders keys shortest-first: max_hops, to_entity_id, from_entity_id.
+    reordered = stock.model_copy(
+        update={
+            "parameters": {
+                "max_hops": stock.parameters["max_hops"],
+                "to_entity_id": stock.parameters["to_entity_id"],
+                "from_entity_id": stock.parameters["from_entity_id"],
+            }
+        }
+    )
+    a = recipe_descriptors(recipes=(stock,))[0].model_dump(mode="json")
+    b = recipe_descriptors(recipes=(reordered,))[0].model_dump(mode="json")
+    assert a["input_schema"]["required"] == ["from_entity_id", "to_entity_id"]
+    assert a == b
