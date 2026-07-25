@@ -42,6 +42,7 @@ from rememberstack.model.claims import SelectionVerdict
 from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
 from rememberstack.model.client import ConnectorNotFoundError
+from rememberstack.model.client import DeploymentBuildInfo
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import PipelineStageReadiness
 from rememberstack.model.client import ProjectionReadiness
@@ -362,6 +363,7 @@ __all__ = (
     "DeploymentConflictError",
     "DocumentUpload",
     "DocumentVersionNotFoundError",
+    "DeploymentBuildInfo",
     "EmbeddingRequest",
     "EmbeddingResponse",
     "GeneratedResponse",

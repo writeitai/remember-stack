@@ -529,7 +529,17 @@ def _synthetic_dataset() -> LoCoMoDataset:
     )
 
 
+def _deployment_payload(*, build_revision: str = "a" * 40) -> dict[str, object]:
+    """Provenance the deployment reports before any work is submitted."""
+    return {
+        "build_revision": build_revision,
+        "model_bindings": {"chunk_embedding": "qwen/qwen3-embedding-8b"},
+    }
+
+
 def _run_transport(request: httpx.Request) -> httpx.Response:
+    if request.method == "GET" and request.url.path == "/deployment":
+        return httpx.Response(200, json=_deployment_payload())
     if request.method == "POST" and request.url.path == "/ingest":
         return httpx.Response(
             200,
@@ -628,19 +638,24 @@ def test_preflight_failure_stops_before_any_upload(
     assert state["ingests"] == {}
 
 
-def test_serving_revision_mismatch_is_refused(
+def test_serving_revision_mismatch_is_refused_before_processing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A deployment built from other code cannot be measured as this revision."""
+    """Work is never processed by an image built from other code.
+
+    Checking only at answer time would leave a hole: process under the wrong
+    image, fail, rebuild without re-ingesting, and the answer stage then passes
+    over data produced by code that is no longer running.
+    """
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
 
     def other_revision(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and request.url.path == "/readiness":
-            payload = _complete_readiness_payload()
-            payload["build_revision"] = "b" * 40
-            return httpx.Response(200, json=payload)
+        if request.method == "GET" and request.url.path == "/deployment":
+            return httpx.Response(
+                200, json=_deployment_payload(build_revision="b" * 40)
+            )
         return _run_transport(request)
 
     raw_client = httpx.Client(
@@ -648,28 +663,20 @@ def test_serving_revision_mismatch_is_refused(
     )
     client = MemoryClient(client=raw_client)
     try:
-        ingest_sample(
-            run_dir=run_dir,
-            sample_id="conv-test",
-            max_documents=1,
-            execute=True,
-            isolated_deployment_confirmation="conv-test",
-            client=client,
-            provider=_PreflightProvider(),
-        )
-        with pytest.raises(ExecutionGuardError, match="serves revision"):
-            answer_sample(
+        with pytest.raises(ExecutionGuardError, match="ingest time"):
+            ingest_sample(
                 run_dir=run_dir,
                 sample_id="conv-test",
-                max_questions=1,
-                max_agent_calls=9,
-                max_evaluator_cost_usd=Decimal("1"),
+                max_documents=1,
                 execute=True,
+                isolated_deployment_confirmation="conv-test",
                 client=client,
-                provider=_CostProvider(cost=Decimal("0.001")),
+                provider=_PreflightProvider(),
             )
     finally:
         raw_client.close()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["ingests"] == {}
 
 
 def test_unstamped_image_is_refused_rather_than_assumed_to_match(
@@ -681,14 +688,46 @@ def test_unstamped_image_is_refused_rather_than_assumed_to_match(
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
 
     def unstamped(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and request.url.path == "/readiness":
-            payload = _complete_readiness_payload()
-            payload["build_revision"] = ""
-            return httpx.Response(200, json=payload)
+        if request.method == "GET" and request.url.path == "/deployment":
+            return httpx.Response(200, json=_deployment_payload(build_revision=""))
         return _run_transport(request)
 
     raw_client = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(unstamped)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ExecutionGuardError, match="did not report a build"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+    finally:
+        raw_client.close()
+
+
+def test_answer_rechecks_revision_after_a_clean_ingest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Swapping the image between ingest and answer is still caught."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def drifting(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/readiness":
+            payload = _complete_readiness_payload()
+            payload["build_revision"] = "c" * 40
+            return httpx.Response(200, json=payload)
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(drifting)
     )
     client = MemoryClient(client=raw_client)
     try:
@@ -701,7 +740,7 @@ def test_unstamped_image_is_refused_rather_than_assumed_to_match(
             client=client,
             provider=_PreflightProvider(),
         )
-        with pytest.raises(ExecutionGuardError, match="did not report a build"):
+        with pytest.raises(ExecutionGuardError, match="answer time"):
             answer_sample(
                 run_dir=run_dir,
                 sample_id="conv-test",

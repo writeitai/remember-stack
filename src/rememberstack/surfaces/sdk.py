@@ -24,6 +24,7 @@ from pydantic_settings import SettingsConfigDict
 
 from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
+from rememberstack.model.client import DeploymentBuildInfo
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.documents import IngestedVersion
@@ -162,6 +163,14 @@ class MemoryClient:
             Envelope,
             self._json("GET", f"/hydrate/relation/{relation_id}"),
             endpoint=f"GET /hydrate/relation/{relation_id}",
+        )
+
+    def deployment_build_info(self) -> DeploymentBuildInfo:
+        """Read which code and model bindings are serving, before submitting work."""
+        return _validated(
+            DeploymentBuildInfo,
+            self._json("GET", "/deployment"),
+            endpoint="GET /deployment",
         )
 
     def pipeline_readiness(
