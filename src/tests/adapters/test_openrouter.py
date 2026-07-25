@@ -344,70 +344,7 @@ def _completion(*, content: object, finish: str = "stop", cost: str = "0.0001") 
     }
 
 
-def test_empty_completion_is_retried_once_and_then_succeeds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A blank completion is a provider transient, not a bad request.
-
-    Failing out would consume one of the work item's few attempts and can
-    dead-letter a document, which permanently blocks a benchmark run because
-    readiness requires every stage to succeed.
-    """
-    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
-    bodies = [_completion(content="  "), _completion(content='{"label": "ok"}')]
-    calls: list[dict[str, object]] = []
-
-    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
-        calls.append(payload)
-        return bodies[len(calls) - 1]
-
-    monkeypatch.setattr(provider, "_post", post)
-    try:
-        result = provider.generate(
-            request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
-            response_type=FactLabelResponse,
-        )
-    finally:
-        provider._client.close()
-
-    assert result.output.label == "ok"
-    assert len(calls) == 2
-
-
-def test_retried_empty_completion_bills_every_provider_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A retry inside one logical call must not under-report spend.
-
-    Both provider calls were billed, so a budget that saw only the second would
-    silently under-count real cost.
-    """
-    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
-    bodies = [
-        _completion(content=None, cost="0.0004"),
-        _completion(content='{"label": "ok"}', cost="0.0006"),
-    ]
-    calls = 0
-
-    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
-        nonlocal calls
-        calls += 1
-        return bodies[calls - 1]
-
-    monkeypatch.setattr(provider, "_post", post)
-    try:
-        result = provider.generate(
-            request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
-            response_type=FactLabelResponse,
-        )
-    finally:
-        provider._client.close()
-
-    assert result.usage.cost_usd == Decimal("0.0010")
-    assert result.usage.tokens_in == 20
-
-
-def test_persistently_empty_completion_reports_a_diagnosable_cause(
+def test_empty_completion_reports_a_diagnosable_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The error must say why, not merely that the body was unusable.
@@ -435,13 +372,13 @@ def test_persistently_empty_completion_reports_a_diagnosable_cause(
     assert "finish_reason='length'" in message
     assert "content=blank" in message
     assert raised.value.usage is not None
-    assert raised.value.usage.cost_usd == Decimal("0.0002")
+    assert raised.value.usage.cost_usd == Decimal("0.0001")
 
 
-def test_non_json_completion_is_not_retried_and_shows_the_text(
+def test_non_json_completion_fails_once_with_fingerprint_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Prose instead of JSON repeats, so retrying it only doubles the cost."""
+    """One failed call, and the error carries a fingerprint, never the prose."""
     provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
     calls = 0
 
@@ -490,39 +427,6 @@ def test_schema_failure_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
         provider._client.close()
 
     assert calls == 1
-
-
-def test_billed_empty_attempt_is_not_lost_when_a_later_attempt_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An earlier billed call must survive a later transport failure.
-
-    Otherwise a retry that ends in an error silently discards spend the provider
-    already charged for.
-    """
-    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
-    calls = 0
-
-    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return _completion(content="", cost="0.0007")
-        raise OpenRouterProviderError("upstream refused the second call")
-
-    monkeypatch.setattr(provider, "_post", post)
-    try:
-        with pytest.raises(OpenRouterProviderError) as raised:
-            provider.generate(
-                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
-                response_type=FactLabelResponse,
-            )
-    finally:
-        provider._client.close()
-
-    assert calls == 2
-    assert raised.value.usage is not None
-    assert raised.value.usage.cost_usd == Decimal("0.0007")
 
 
 def test_diagnosis_never_carries_provider_error_prose(

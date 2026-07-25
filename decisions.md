@@ -2632,11 +2632,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
 > **Amended 2026-07-24 (protocol v2 — stronger judge):** the judge is
-> `openai/gpt-5.6-luna` and the protocol is **`RS-LoCoMo-Full-v2`**. LoCoMo's
-> published weakness is grading — an independent audit reports ~6.4% of the answer
-> key is wrong and that a weak judge accepts up to 63% of deliberately incorrect
-> answers — and the judge is one call per question against nine agent calls, so it
-> is the cheapest component to strengthen. The **answer agent stays on
+> `openai/gpt-5.6-luna` and the protocol is **`RS-LoCoMo-Full-v2`**. The judge is
+> one call per question against nine agent calls, so it is the cheapest component
+> to strengthen, and its verdict is the primary metric. This is a design
+> judgement, not a measured result: no leniency comparison between the two judge
+> models has been run. The **answer agent stays on
 > `gpt-4o-mini`**: it is under measurement, and keeping it at the commodity tier
 > keeps baseline comparison honest. No v1 result is comparable to a v2 result.
 > Everything else in D78 is unchanged. See
@@ -2647,11 +2647,14 @@ may proceed to its first tagged artifact proof after CLA activation.
 > answer stage refuses a deployment whose revision differs from the prepared run
 > — an unstamped image is a hard stop, because a checkout proves nothing about
 > what the containers run. Ingest additionally preflights the provider with one
-> chat and one embedding call before uploading anything. Both follow from real
-> failures observed on 2026-07-25: a fresh host silently served the released
-> `0.1.0` image against a development checkout, and three earlier smoke runs
-> stalled at ingestion because the configured key was the `.env.example`
-> placeholder. See §§2.2–2.3 of the companion design.
+> chat and one embedding call before uploading anything. Provider responses that
+> ignore the declared JSON schema are reported with provider metadata rather than
+> a bare decode failure (design §2.4); no in-adapter retry is claimed, and the
+> rate of such failures is unmeasured. The revision stamp and the preflight both
+> follow from real failures observed on 2026-07-25: a fresh host silently served the released
+> `0.1.0` image against a development checkout, and a run configured with the
+> `.env.example` placeholder key ingested every session and then failed each
+> model-calling stage with HTTP 401. See §§2.2–2.3 of the companion design.
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;

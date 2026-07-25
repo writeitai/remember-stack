@@ -6,7 +6,6 @@ import hashlib
 import json
 import time
 from typing import Any
-from typing import Final
 from typing import Literal
 from typing import TypeVar
 
@@ -27,11 +26,6 @@ from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
-
-#: Total attempts for an empty completion, which is a provider transient.
-_EMPTY_COMPLETION_ATTEMPTS: Final = 2
-#: Characters of provider-supplied text included in diagnostics.
-_DIAGNOSTIC_PREFIX: Final = 200
 
 
 class OpenRouterSettings(BaseSettings):
@@ -94,7 +88,7 @@ class OpenRouterModelProvider:
         if self._settings.reasoning_effort is not None:
             payload["reasoning"] = {"effort": self._settings.reasoning_effort}
 
-        content, usage = self._completion_with_retry(
+        content, usage = self._completion_text(
             payload=payload, response_type=response_type, started_ns=started_ns
         )
 
@@ -115,55 +109,33 @@ class OpenRouterModelProvider:
             ) from error
         return GeneratedResponse(output=output, usage=usage)
 
-    def _completion_with_retry(
+    def _completion_text(
         self,
         *,
         payload: dict[str, object],
         response_type: type[ResponseT],
         started_ns: int,
     ) -> tuple[str, ProviderCallUsage]:
-        """Post until non-empty content arrives, or raise with everything billed.
+        """Post once and return usable completion text, or raise saying why.
 
-        An empty completion is a provider transient, not a bad request: failing
-        out would consume one of the work item's few attempts, and exhausting
-        them dead-letters a document, which permanently blocks a benchmark run
-        because readiness requires every stage to succeed. Schema and non-JSON
-        failures are handled by the caller and never retried: those repeat, so a
-        retry would only double the cost.
-
-        Every provider call made here is billed, so usage accumulates across
-        attempts and is attached to whatever is raised.
+        One provider call per logical call: usage accounting stays one-to-one and
+        a caller cannot be billed twice for work it asked for once. Retrying is
+        the work ledger's job, which already grants each item several attempts.
         """
-        usages: list[ProviderCallUsage] = []
-        for attempt in range(1, _EMPTY_COMPLETION_ATTEMPTS + 1):
-            try:
-                body = self._post(path="/chat/completions", payload=payload)
-            except ProviderCallError as error:
-                # A later attempt failing must not discard earlier billed calls.
-                if usages and error.usage is None:
-                    error.usage = _merged_usage(usages=usages)
-                raise
-            usages.append(
-                _usage(
-                    body=body,
-                    requested_model=str(payload["model"]),
-                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-                )
-            )
-            usage = _merged_usage(usages=usages)
-            content = _completion_content(body=body)
-            if content is not None:
-                return content, usage
-            if attempt == _EMPTY_COMPLETION_ATTEMPTS:
-                raise OpenRouterProviderError(
-                    f"{response_type.__name__}: provider returned no completion"
-                    f" content after {attempt} attempts"
-                    f" ({_completion_diagnosis(body=body)})",
-                    usage=usage,
-                )
-        raise OpenRouterProviderError(  # pragma: no cover - guards the constant
-            "_EMPTY_COMPLETION_ATTEMPTS must be at least 1"
+        body = self._post(path="/chat/completions", payload=payload)
+        usage = _usage(
+            body=body,
+            requested_model=str(payload["model"]),
+            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
         )
+        content = _completion_content(body=body)
+        if content is None:
+            raise OpenRouterProviderError(
+                f"{response_type.__name__}: provider returned no completion"
+                f" content ({_completion_diagnosis(body=body)})",
+                usage=usage,
+            )
+        return content, usage
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """One embeddings call for the caller's batch."""
@@ -296,23 +268,6 @@ def _content_fingerprint(*, content: str) -> str:
     """
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
     return f"len={len(content)}, sha256_12={digest}"
-
-
-def _merged_usage(*, usages: list[ProviderCallUsage]) -> ProviderCallUsage:
-    """Sum usage across in-adapter retries so no billed call goes unrecorded.
-
-    A retry inside one logical call must still bill every provider call it made,
-    or budgets silently under-count.
-    """
-    if len(usages) == 1:
-        return usages[0]
-    return ProviderCallUsage(
-        model_name=usages[-1].model_name,
-        tokens_in=sum(item.tokens_in for item in usages),
-        tokens_out=sum(item.tokens_out for item in usages),
-        cost_usd=sum((item.cost_usd for item in usages), Decimal("0")),
-        latency_ms=usages[-1].latency_ms,
-    )
 
 
 def _usage(
