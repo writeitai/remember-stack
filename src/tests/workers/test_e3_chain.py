@@ -73,10 +73,10 @@ _SOURCE = (
 
 _SELECTION_PAYLOAD: dict[str, object] = {
     "candidates": [
-        {"source_span": "Alice Novak joined Acme in 2024.", "verdict": "keep"},
+        {"source_span": "Alice Novak joined Acme in 2024.", "outcome": "keep"},
         {
             "source_span": "Alice Novak works for Acme as an engineer.",
-            "verdict": "keep",
+            "outcome": "keep",
         },
     ]
 }

@@ -48,6 +48,10 @@ class SelectionOutcome(StrEnum):
     One flat enum is the most reliable structured-output primitive there is: a
     keep that carries a drop reason, or a drop that omits one, is now
     unrepresentable rather than merely invalid.
+
+    This is a provider-facing wire vocabulary only. It is deliberately NOT the
+    `selection_drop_reason` PostgreSQL enum, which stores the bare reason and is
+    unchanged; `drop_reason` below is the mapping between them.
     """
 
     KEEP = "keep"
