@@ -2650,8 +2650,8 @@ may proceed to its first tagged artifact proof after CLA activation.
 > chat and one embedding call before uploading anything. Provider responses that
 > ignore the declared JSON schema are reported with provider metadata rather than
 > a bare decode failure (design §2.4); no in-adapter retry is claimed, and the
-> rate of such failures is unmeasured. Both follow from real
-> failures observed on 2026-07-25: a fresh host silently served the released
+> rate of such failures is unmeasured. The revision stamp and the preflight both
+> follow from real failures observed on 2026-07-25: a fresh host silently served the released
 > `0.1.0` image against a development checkout, and a run configured with the
 > `.env.example` placeholder key ingested every session and then failed each
 > model-calling stage with HTTP 401. See §§2.2–2.3 of the companion design.
