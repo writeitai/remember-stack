@@ -234,7 +234,7 @@ def ingest_sample(
         _require_matching_revision(
             prepared=context.configuration.repository_revision,
             serving=build.build_revision,
-            when="ingest time",
+            when=_INGEST_STAGE,
         )
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
@@ -868,6 +868,10 @@ def _guard_remote(
         raise ExecutionGuardError("real benchmark stages require a clean worktree")
 
 
+_INGEST_STAGE = "ingest time"
+_ANSWER_STAGE = "answer time"
+
+
 def _require_matching_revision(*, prepared: str, serving: str, when: str) -> None:
     """Require the serving image to be built from the prepared revision.
 
@@ -877,6 +881,9 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
     under the wrong image, fail, rebuild without re-ingesting, and the answer
     stage then passes over data produced by other code.
     """
+    # Answer-time drift needs only a rebuild; ingest-time drift means the corpus
+    # itself was processed by other code, so it must be ingested again.
+    remedy = " and re-ingest" if when == _INGEST_STAGE else ""
     if not serving:
         raise ExecutionGuardError(
             f"the deployment did not report a build revision at {when}, so the"
@@ -887,7 +894,7 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
         raise ExecutionGuardError(
             f"the deployment serves revision {serving} at {when} but the run was"
             f" prepared at {prepared}; rebuild the image from the prepared"
-            " revision and re-ingest"
+            f" revision{remedy}"
         )
 
 
@@ -905,7 +912,7 @@ def _require_serving_revision(
     _require_matching_revision(
         prepared=context.configuration.repository_revision,
         serving=readiness.build_revision,
-        when="answer time",
+        when=_ANSWER_STAGE,
     )
 
 

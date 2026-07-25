@@ -753,3 +753,52 @@ def test_answer_rechecks_revision_after_a_clean_ingest(
             )
     finally:
         raw_client.close()
+
+
+def test_preflight_rejects_a_reachable_but_unusable_chat_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A schema-valid ok=false answer is a failure, not a successful probe.
+
+    The transport works and the response parses, so only an explicit check
+    distinguishes "the provider answered" from "the provider can serve this run".
+    """
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    class _RefusingProvider(_PreflightProvider):
+        def generate(
+            self, *, request: ModelRequest, response_type: type[ResponseT]
+        ) -> GeneratedResponse[ResponseT]:
+            """Answer the probe successfully but report itself unusable."""
+            return GeneratedResponse(
+                output=response_type.model_validate({"ok": False}),
+                usage=ProviderCallUsage(
+                    model_name=request.model,
+                    tokens_in=1,
+                    tokens_out=1,
+                    cost_usd=Decimal("0"),
+                    latency_ms=1,
+                ),
+            )
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ProviderPreflightError, match="ok=false"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_RefusingProvider(),
+            )
+    finally:
+        raw_client.close()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["ingests"] == {}
