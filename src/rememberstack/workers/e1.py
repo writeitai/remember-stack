@@ -53,7 +53,7 @@ E1_EMBED_VERSION: Final = "e1-embed-2026.07"
 E1_PREFIXER_VERSION: Final = "e1-prefix-2026.07"
 """The context-prefix call's prompt generation (D58; conventional mode, D63)."""
 
-E2_EXTRACTOR_VERSION: Final = "e2-extract-2026.07b:drop-reason-enum-1"
+E2_EXTRACTOR_VERSION: Final = "e2-extract-2026.07c:claim-valid-time-1"
 """The extractor generation baked into extraction_input_hash (D56); the E2
 stage (WP-1.3) binds its handler to this same constant."""
 

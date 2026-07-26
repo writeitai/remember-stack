@@ -8,6 +8,9 @@ span anchors inside the chunk and every added substring exists in the bundle
 element it was attributed to — a check the model cannot talk its way past.
 """
 
+from datetime import date
+from datetime import datetime
+from datetime import UTC
 import logging
 from typing import Final
 from uuid import UUID
@@ -23,6 +26,8 @@ from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimifyResponse
 from rememberstack.model import ClaimRecord
+from rememberstack.model import ClaimValidKind
+from rememberstack.model import ClaimValidPrecision
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
 from rememberstack.model import EnqueueWork
@@ -73,7 +78,15 @@ candidate. For each claim return: claim_text (standalone), source_span (the
 verbatim chunk substring it derives from), added_context (every substring you
 ADDED, each tagged header|neighbour|prefix with the exact text as it appears
 in that bundle element), entailment_self_verdict (does chunk+bundle entail the
-claim), is_attributed.
+claim), is_attributed. When the source states or implies WHEN a fact holds or
+happened, resolve relative dates using ONLY the bundle timestamps (same rule as
+decontextualization) and emit valid_kind, valid_from_iso, valid_until_iso, and
+valid_precision as ISO-8601 date or datetime strings; otherwise leave
+valid_kind/from/until null and valid_precision unknown. Event on a calendar day
+→ valid_kind=event_time, valid_precision=day, both ISO ends for that day.
+Year-only → precision=year with that year's [start,end] ISO bounds. Bounded
+precisions (day|month|quarter|year) require both ends; open requires from only;
+instant sets both ends equal.
 
 KEPT PROPOSITIONS:
 {keeps}
@@ -309,6 +322,9 @@ def _grounded_claim(
         )
         if element is None or added.text not in element:
             return None
+    valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
+        candidate=candidate
+    )
     return ClaimRecord(
         claim_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -324,7 +340,86 @@ def _grounded_claim(
         entailment_self_verdict=candidate.entailment_self_verdict,
         kept_flagged=candidate.source_span in flagged_spans,
         extractor_version=E2_EXTRACTOR_VERSION,
+        claim_valid_from=valid_from,
+        claim_valid_until=valid_until,
+        claim_valid_precision=valid_precision,
+        claim_valid_kind=valid_kind,
     )
+
+
+def _parse_claim_valid_time(
+    *, candidate: CandidateClaim
+) -> tuple[
+    datetime | None, datetime | None, ClaimValidPrecision, ClaimValidKind | None
+]:
+    """Parse model-emitted D41 valid-time into claim-row values.
+
+    ISO date strings become UTC midnight; datetimes keep their instant and are
+    stored as UTC. A malformed string or a combination that would violate the
+    claims-table CHECKs falls back to unknown/None for the temporal fields
+    only — the claim itself is still accepted.
+    """
+    try:
+        valid_from = _parse_iso_timestamp(value=candidate.valid_from_iso)
+        valid_until = _parse_iso_timestamp(value=candidate.valid_until_iso)
+    except ValueError:
+        return None, None, ClaimValidPrecision.UNKNOWN, None
+    precision = candidate.valid_precision
+    kind = candidate.valid_kind
+    if not _valid_time_satisfies_checks(
+        valid_from=valid_from, valid_until=valid_until, precision=precision
+    ):
+        return None, None, ClaimValidPrecision.UNKNOWN, None
+    return valid_from, valid_until, precision, kind
+
+
+def _parse_iso_timestamp(*, value: str | None) -> datetime | None:
+    """Convert an ISO-8601 date or datetime string to a UTC-aware datetime.
+
+    ``None`` and absent pass through. Date-only values become midnight UTC.
+    An explicit offset is respected for the instant, then normalized to UTC.
+    Raises ``ValueError`` when the string is present but unparseable.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        raise ValueError("empty timestamp")
+    try:
+        if len(text) == 10:
+            parsed_date = date.fromisoformat(text)
+            return datetime(
+                parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=UTC
+            )
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"malformed timestamp: {value!r}") from error
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _valid_time_satisfies_checks(
+    *,
+    valid_from: datetime | None,
+    valid_until: datetime | None,
+    precision: ClaimValidPrecision,
+) -> bool:
+    """Mirror the claims-table D41 CHECK constraints on valid-time columns."""
+    if valid_until is not None and valid_from is not None and valid_until < valid_from:
+        return False
+    if precision is ClaimValidPrecision.UNKNOWN:
+        return valid_from is None and valid_until is None
+    if precision is ClaimValidPrecision.OPEN:
+        return valid_from is not None and valid_until is None
+    if precision is ClaimValidPrecision.INSTANT:
+        return (
+            valid_from is not None
+            and valid_until is not None
+            and valid_until == valid_from
+        )
+    # day | month | quarter | year — both ends required
+    return valid_from is not None and valid_until is not None
 
 
 def _bundle_text(

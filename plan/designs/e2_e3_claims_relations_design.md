@@ -110,6 +110,15 @@ Grounding therefore stores **two things per claim** and accepts via **layered ch
 - `added_context[]` — each substring the model *added* during decontextualization, tagged with which
   bundle element it came from (neighbour / header / prefix).
 
+**Amendment (2026-07-27, issue #146):** the fused Claimify call also emits optional D41
+source-asserted valid-time as *nullable typed scalars only* (no free-form objects — strict-schema
+constraint from #145): `valid_kind` (`proposition_validity|event_time|measurement_period|effective_period`),
+`valid_from_iso` / `valid_until_iso` (ISO-8601 date or datetime strings), and `valid_precision`
+(`unknown|instant|day|month|quarter|year|open`). Relative dates resolve from bundle timestamps only,
+the same rule as decontextualization. E2 parses them deterministically into
+`claims.claim_valid_*`; a malformed string falls back to unknown/null for the temporal fields
+without rejecting the claim. Most claims have no stated world-time and leave these null/unknown.
+
 Acceptance layers four checks, cheapest first:
 
 1. **Anchor** (deterministic): the `source_span` must be a real, in-bounds slice of the target chunk —
@@ -225,7 +234,7 @@ internals (entity resolution, predicate registry, the supersession cascade) are 
 | **E1** | chunk + a context prefix ("…from the Results section of the Project Atlas 2024 memo…") |
 | **E2 Selection** | keep "launched last year in three markets"; **keep** "The team considers it a runaway success" as the team's attributed stance (D59 — a bare, holderless version would drop → ledger) |
 | **E2 Decontextualize** | "It"→Project Atlas (neighbour), "last year"→2024 (header) → *"Project Atlas launched in 2024 in three markets"* |
-| **E2 Decompose** | `"Project Atlas launched in 2024."` (emits `claim_valid_from = 2024`, precision year — D41) + `"Project Atlas launched in three markets."` |
+| **E2 Decompose** | `"Project Atlas launched in 2024."` (emits `valid_kind=event_time`, `valid_from_iso`/`valid_until_iso` for 2024's bounds, `valid_precision=year` — D41; amendment 2026-07-27 / #146) + `"Project Atlas launched in three markets."` |
 | **E2 Grounding** | each accepted: anchor span present, additions trace to bundle, entailed; the date "2024" verbatim-exists in the bundle, so the asserted interval is grounded (D32) |
 | **E3** | the stance claim becomes a **stance observation** on the team entity ("Acme's team considers Project Atlas a runaway success" — D59); neither decomposed launch claim yields a relation — "three markets" is a quantity and "2024" a date, neither a second entity (D2/D18); the temporal one carries `claim_valid_from = 2024` (**D41**), queryable as evidence. A later memo asserting 2023 makes a *second* immutable claim (`claim_valid_from = 2023`); with no relation to host them, **both stand** as evidence and there is no adjudicated supersession — the documented non-goal (`postgres_schema_design.md` §15). |
 
