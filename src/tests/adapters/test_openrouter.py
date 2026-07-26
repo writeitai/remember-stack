@@ -12,6 +12,7 @@ from rememberstack.adapters import OpenRouterProviderError
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.adapters.openrouter import _usage
+from rememberstack.adapters.openrouter import StrictSchemaError
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import FactLabelResponse
 from rememberstack.model import ModelRequest
@@ -475,7 +476,7 @@ def test_strict_schema_rejects_free_form_objects_before_any_call(
 
     monkeypatch.setattr(provider, "_post", post)
     try:
-        with pytest.raises(ValueError, match="open object"):
+        with pytest.raises(StrictSchemaError, match="open object"):
             provider.generate(
                 request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
                 response_type=OpenArguments,  # type: ignore[type-var]

@@ -205,3 +205,30 @@ def test_answer_steps_ignore_arguments_json() -> None:
         action="answer", tool_name=None, arguments_json="ignored junk", answer="Prague"
     )
     assert step.answer == "Prague"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    (
+        ("", {}),
+        ("   ", {}),
+        ("{}", {}),
+        ('  {"a": 1}', {"a": 1}),
+        ('{"outer": {"inner": [1, 2]}} trailing prose', {"outer": {"inner": [1, 2]}}),
+        ('{"q": "kav\u00e1rna"}', {"q": "kav\u00e1rna"}),
+    ),
+)
+def test_parsed_arguments_edge_cases(raw: str, expected: dict[str, object]) -> None:
+    """Empty means no arguments; whitespace, nesting, and unicode all decode."""
+    step = AnswerAgentStep(
+        action="tool", tool_name="claims_verbatim", arguments_json=raw
+    )
+    arguments, _ = step.parsed_arguments()
+    assert arguments == expected
+
+
+@pytest.mark.parametrize("raw", ("{", "null", "[1]", "true"))
+def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
+    """A fragment or non-object payload fails the tool step at validation time."""
+    with pytest.raises(ValidationError):
+        AnswerAgentStep(action="tool", tool_name="claims_verbatim", arguments_json=raw)
