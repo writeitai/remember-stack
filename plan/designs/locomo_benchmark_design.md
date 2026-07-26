@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v2
+protocol                RS-LoCoMo-Full-v3
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -41,7 +41,12 @@ The tool catalog hash, prompt and schema hashes, adapter and repository revision
 rendered documents, model identities, and component generations are stored. A change creates a
 new protocol version.
 
-### 2.1 Why v2 uses a stronger judge
+**v2 → v3 (2026-07-26, before any scored run):** `AnswerAgentStep.arguments`
+became `arguments_json`, a JSON-object-encoded string, because compliant strict
+providers reject a free-form object schema outright (§2.4). The answer prompt
+changed accordingly. No v2 score ever existed.
+
+### 2.1 Why v2+ uses a stronger judge
 
 `RS-LoCoMo-Full-v1` used `openai/gpt-4o-mini` for both the answer agent and the judge. The
 judge is replaced with `openai/gpt-5.6-luna` in v2 and the protocol version is bumped
@@ -132,6 +137,16 @@ reliably honour it. Two distinct violations were observed in real runs against
 - **Schema ignored entirely.** Fact labelling returned the bare sentence
   `Caroline knows about advocacy.` as plain text instead of a JSON object, with
   `finish_reason: stop` — a clean completion that simply did not use the schema.
+- **Strict mode enforced only by some providers.** The same request shape is
+  accepted by the providers serving the extraction models but rejected with
+  HTTP 400 by Azure serving `gpt-4o-mini`, which requires every schema object
+  closed (`additionalProperties: false`). A free-form object is therefore
+  unrepresentable under strict mode — the reason `AnswerAgentStep` carries tool
+  arguments as a JSON-encoded string (v3).
+- **String contamination.** At temperature 0, `gpt-4o-mini` was observed
+  appending a sentence period inside the `arguments_json` string, after the
+  closing brace. The agent loop parses the first complete JSON object and
+  records the trailing text on the trace row (§7).
 
 Neither is reproducible on demand: the same fact-label prompt succeeded on 24
 consecutive retries after failing once, and three prompt variants each returned
@@ -271,7 +286,9 @@ For each question:
 
 1. Render the frozen answer-agent prompt with question, public tool descriptors, and prior trace.
 2. Ask for strict `AnswerAgentStep`.
-3. For `action="tool"`, validate the name against the catalog and call
+3. For `action="tool"`, validate the name against the catalog, decode
+   `arguments_json` by taking its first complete JSON object (trailing text is
+   recorded on the trace row, not discarded silently — see §2.4), and call
    `MemoryClient.run_recipe()`.
 4. Append arguments, latency, and the complete envelope.
 5. For `action="answer"`, require at least one tool call and at most six words.

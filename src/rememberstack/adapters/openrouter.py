@@ -197,6 +197,15 @@ def _require_all_object_properties(node: object) -> None:
     if isinstance(properties, dict):
         node["required"] = list(properties)
         node["additionalProperties"] = False
+    elif node.get("type") == "object":
+        # A free-form object cannot be expressed under strict mode: compliant
+        # providers require every object closed (Azure rejects the request with
+        # HTTP 400), and closing an object with no properties would forbid all
+        # content. Encode arbitrary payloads as a JSON string field instead.
+        raise ValueError(
+            "strict schema contains an open object (no properties); free-form"
+            " objects are unrepresentable under strict structured output"
+        )
     for value in node.values():
         _require_all_object_properties(value)
 

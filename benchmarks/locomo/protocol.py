@@ -20,7 +20,7 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v2"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v3"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -62,7 +62,9 @@ outside knowledge. If the deployment does not contain the answer, finish with
 "Unknown". A final answer must be concise and at most six words.
 
 Return one structured step: either action="tool" with one listed tool_name and
-arguments, or action="answer" with the final answer. Never invent a tool.
+arguments_json (the tool arguments as one JSON object encoded as a string, with
+nothing after the closing brace), or action="answer" with the final answer.
+Never invent a tool.
 
 PUBLIC TOOLS:
 {tools}

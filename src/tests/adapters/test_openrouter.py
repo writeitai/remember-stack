@@ -453,3 +453,32 @@ def test_diagnosis_never_carries_provider_error_prose(
     message = str(raised.value)
     assert "secret prompt echo" not in message
     assert "error_code='overloaded'" in message
+
+
+def test_strict_schema_rejects_free_form_objects_before_any_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open object is unrepresentable under strict mode, so fail at build time.
+
+    Azure rejects such schemas with HTTP 400; providers that accept them are not
+    enforcing strict mode at all. Failing before the request means the defect is
+    caught in tests rather than on the first compliant provider in production.
+    """
+
+    class OpenArguments(BaseModel):
+        payload: dict[str, object]
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        raise AssertionError("no HTTP call may happen for an invalid schema")
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(ValueError, match="open object"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=OpenArguments,  # type: ignore[type-var]
+            )
+    finally:
+        provider._client.close()

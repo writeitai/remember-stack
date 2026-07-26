@@ -5,6 +5,7 @@ from datetime import timezone
 import hashlib
 import json
 
+from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
@@ -16,6 +17,7 @@ from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
 from benchmarks.locomo.protocol import session_diagnostic
+from pydantic import ValidationError
 import pytest
 
 from rememberstack.model import Envelope
@@ -170,3 +172,36 @@ def test_session_diagnostic_keeps_valid_ids_and_discloses_malformed_fields() -> 
     assert diagnostic.malformed_fields == 2
     assert diagnostic.recall == pytest.approx(2 / 3)
     assert diagnostic.complete is False
+
+
+def test_tool_arguments_survive_trailing_junk_and_record_it() -> None:
+    """The first complete JSON object wins; the leftover text is returned.
+
+    Observed at temperature 0: the answer model appended a sentence period
+    inside arguments_json after the closing brace. Syntax noise in the agent's
+    envelope must not read as a retrieval failure, and must not vanish either.
+    """
+    step = AnswerAgentStep(
+        action="tool",
+        tool_name="claims_verbatim",
+        arguments_json='{"query": "Where did Caroline go?"}.',
+    )
+    arguments, trailing = step.parsed_arguments()
+    assert arguments == {"query": "Where did Caroline go?"}
+    assert trailing == "."
+
+
+def test_tool_arguments_must_encode_an_object() -> None:
+    """A JSON scalar or array is not a tool-arguments payload."""
+    with pytest.raises(ValidationError):
+        AnswerAgentStep(
+            action="tool", tool_name="claims_verbatim", arguments_json='"query"'
+        )
+
+
+def test_answer_steps_ignore_arguments_json() -> None:
+    """Strict mode forces the field on every step; it only means anything on tools."""
+    step = AnswerAgentStep(
+        action="answer", tool_name=None, arguments_json="ignored junk", answer="Prague"
+    )
+    assert step.answer == "Prague"

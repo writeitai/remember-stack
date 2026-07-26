@@ -2655,6 +2655,14 @@ may proceed to its first tagged artifact proof after CLA activation.
 > `0.1.0` image against a development checkout, and a run configured with the
 > `.env.example` placeholder key ingested every session and then failed each
 > model-calling stage with HTTP 401. See §§2.2–2.3 of the companion design.
+>
+> **Also amended 2026-07-26 (v3 — strict-representable agent step):** the answer
+> agent's tool arguments travel as a JSON-encoded string (`arguments_json`), and
+> the protocol is **`RS-LoCoMo-Full-v3`**: Azure, enforcing strict structured
+> output, rejects a free-form arguments object with HTTP 400, so v2's schema was
+> invalid for compliant providers. The agent loop takes the first complete JSON
+> object from the string and records any trailing text. No v2 score ever
+> existed. See the companion design §2.4 and the v2→v3 note in §2.
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;
