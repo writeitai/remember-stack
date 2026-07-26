@@ -162,7 +162,7 @@
 | src/rememberstack/surfaces/mcp.py                                                             |       15 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_engine.py                                                   |      273 |        8 |       58 |        7 |     95.5% |102-103, 154, 389, 567, 642-\>644, 645, 905, 939 |
 | src/rememberstack/surfaces/recipe\_executor.py                                                |       78 |       10 |       32 |        5 |     82.7% |88, 90, 93, 100-106, 124, 126 |
-| src/rememberstack/surfaces/recipe\_surface.py                                                 |       98 |       18 |       40 |        3 |     76.1% |62-68, 78-83, 176-\>178, 215, 228-236 |
+| src/rememberstack/surfaces/recipe\_surface.py                                                 |       98 |       18 |       40 |        3 |     76.1% |62-68, 78-83, 176-\>184, 221, 234-242 |
 | src/rememberstack/surfaces/remote\_mcp.py                                                     |       62 |       12 |       24 |        7 |     77.9% |57-58, 65, 71-72, 88, 98, 107, 113, 116, 121, 129 |
 | src/rememberstack/surfaces/sdk.py                                                             |      132 |       17 |       34 |        7 |     84.3% |71, 114, 140-146, 154, 162, 181, 234, 236, 270, 330-331, 332-\>334, 337-338 |
 | src/rememberstack/workers/\_\_init\_\_.py                                                     |       76 |        0 |        0 |        0 |    100.0% |           |
