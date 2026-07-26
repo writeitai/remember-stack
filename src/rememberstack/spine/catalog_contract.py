@@ -16,6 +16,24 @@ EXPECTED_EXTENSIONS: Final = (
     "pgcrypto",
     "unaccent",
 )
+# D41 claim valid-time vocabularies — must match the PostgreSQL enums and the
+# Python StrEnums on CandidateClaim / ClaimRecord (drift-guarded in tests).
+CLAIM_VALID_KIND_VALUES: Final = (
+    "proposition_validity",
+    "event_time",
+    "measurement_period",
+    "effective_period",
+)
+CLAIM_VALID_PRECISION_VALUES: Final = (
+    "unknown",
+    "instant",
+    "day",
+    "month",
+    "quarter",
+    "year",
+    "open",
+)
+
 EXPECTED_ENUMS: Final = (
     "adjudication_method",
     "adjudication_outcome",

@@ -13,6 +13,7 @@ from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.adapters.openrouter import _usage
 from rememberstack.adapters.openrouter import StrictSchemaError
+from rememberstack.model import ClaimifyResponse
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import FactLabelResponse
 from rememberstack.model import ModelRequest
@@ -174,7 +175,9 @@ def test_generation_uses_strict_schema_for_defaulted_response_fields(
     assert "default" not in properties["observations"]
 
 
-@pytest.mark.parametrize("response_type", (StructureResponse, SelectionResponse))
+@pytest.mark.parametrize(
+    "response_type", (StructureResponse, SelectionResponse, ClaimifyResponse)
+)
 def test_strict_schema_closes_every_nested_object_and_removes_defaults(
     response_type: type[BaseModel],
 ) -> None:
@@ -197,6 +200,40 @@ def test_strict_schema_closes_every_nested_object_and_removes_defaults(
             assert_strict(value)
 
     assert_strict(schema)
+
+
+def test_claimify_response_schema_has_nullable_valid_time_scalars() -> None:
+    """D41 valid-time on CandidateClaim is nullable typed scalars — no open objects (#146)."""
+    schema = _strict_json_schema(ClaimifyResponse)
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    claim_schema = defs.get("CandidateClaim")
+    assert isinstance(claim_schema, dict), "CandidateClaim must be a named schema def"
+    properties = claim_schema["properties"]
+    assert isinstance(properties, dict)
+    for field in ("valid_kind", "valid_from_iso", "valid_until_iso", "valid_precision"):
+        assert field in properties
+    # free-form dict fields would surface as open objects and raise at build time;
+    # presence of the closed CandidateClaim schema proves the contract is representable
+    assert claim_schema["additionalProperties"] is False
+    assert set(claim_schema["required"]) == set(properties)
+
+    def _is_nullable_scalar(node: object) -> bool:
+        if not isinstance(node, dict):
+            return False
+        if "anyOf" in node:
+            options = node["anyOf"]
+            assert isinstance(options, list)
+            return any(
+                option.get("type") == "null"
+                for option in options
+                if isinstance(option, dict)
+            )
+        types = node.get("type")
+        return isinstance(types, list) and "null" in types
+
+    assert _is_nullable_scalar(properties["valid_kind"])
+    assert _is_nullable_scalar(properties["valid_from_iso"])
+    assert _is_nullable_scalar(properties["valid_until_iso"])
 
 
 def test_generation_preserves_usage_on_structured_output_validation_error(

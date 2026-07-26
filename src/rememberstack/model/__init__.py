@@ -29,6 +29,8 @@ from rememberstack.model.claims import CandidateClaim
 from rememberstack.model.claims import ClaimForEmbedding
 from rememberstack.model.claims import ClaimifyResponse
 from rememberstack.model.claims import ClaimRecord
+from rememberstack.model.claims import ClaimValidKind
+from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.claims import DecisionRecord
 from rememberstack.model.claims import DecisionType
 from rememberstack.model.claims import FactForLabeling
@@ -327,6 +329,8 @@ __all__ = (
     "ClaimForEmbedding",
     "ClaimForNormalization",
     "ClaimRecord",
+    "ClaimValidKind",
+    "ClaimValidPrecision",
     "ClaimedWork",
     "ClaimifyResponse",
     "ClusterConfig",

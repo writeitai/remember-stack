@@ -2,6 +2,8 @@
 attributed stance kept. Runs the full chain with the deterministic fake provider."""
 
 from collections.abc import Iterator
+from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 from uuid import UUID
 
@@ -77,6 +79,10 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
             "claim_text": "Project Atlas launched in 2024.",
             "source_span": "Project Atlas launched in 2024",
             "entailment_self_verdict": True,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2024-01-01",
+            "valid_until_iso": "2024-12-31",
+            "valid_precision": "year",
         },
         {
             "claim_text": (
@@ -277,7 +283,9 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
             connection.execute(
                 text(
                     "SELECT claim_text, source_span, char_start, char_end,"
-                    " is_attributed, anchor_ok, window_membership_ok"
+                    " is_attributed, anchor_ok, window_membership_ok,"
+                    " claim_valid_from, claim_valid_until,"
+                    " claim_valid_precision, claim_valid_kind"
                     " FROM claims ORDER BY claim_text"
                 )
             )
@@ -318,8 +326,20 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
         assert claim["anchor_ok"] and claim["window_membership_ok"]
         assert _SOURCE[claim["char_start"] : claim["char_end"]] == claim["source_span"]
 
-    # the attributed stance is kept as an attributed claim (D59):
+    # D41 valid-time from the FakeModelProvider claim lands parsed (#146):
+    launch = claims[0]
+    assert launch["claim_valid_kind"] == "event_time"
+    assert launch["claim_valid_precision"] == "year"
+    assert launch["claim_valid_from"] == datetime(2024, 1, 1, tzinfo=UTC)
+    assert launch["claim_valid_until"] == datetime(2024, 12, 31, tzinfo=UTC)
+    # claims with no stated world-time stay at the column defaults:
     stance = claims[1]
+    assert stance["claim_valid_precision"] == "unknown"
+    assert stance["claim_valid_from"] is None
+    assert stance["claim_valid_until"] is None
+    assert stance["claim_valid_kind"] is None
+
+    # the attributed stance is kept as an attributed claim (D59):
     assert stance["is_attributed"]
 
     # drops, flags, and edits are ledgered (D33); Selection is enforced — the

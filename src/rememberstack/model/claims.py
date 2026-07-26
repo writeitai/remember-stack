@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from rememberstack.model.queue import UTCDateTime
+
 _NonEmpty = Annotated[str, Field(min_length=1)]
 
 
@@ -68,6 +70,35 @@ class SelectionOutcome(StrEnum):
     DROP_REFERENCES_BOILERPLATE = "drop_references_boilerplate"
 
 
+class ClaimValidKind(StrEnum):
+    """Which world-interval a claim's valid-time describes (Postgres enum).
+
+    Values must match the ``claim_valid_kind`` PostgreSQL enum exactly so the
+    extractor can write D41 columns without a translation table.
+    """
+
+    PROPOSITION_VALIDITY = "proposition_validity"
+    EVENT_TIME = "event_time"
+    MEASUREMENT_PERIOD = "measurement_period"
+    EFFECTIVE_PERIOD = "effective_period"
+
+
+class ClaimValidPrecision(StrEnum):
+    """Granularity of a claim's source-asserted world interval (Postgres enum).
+
+    Values must match the ``claim_valid_precision`` PostgreSQL enum exactly.
+    ``unknown`` is the default for claims with no stated world-time.
+    """
+
+    UNKNOWN = "unknown"
+    INSTANT = "instant"
+    DAY = "day"
+    MONTH = "month"
+    QUARTER = "quarter"
+    YEAR = "year"
+    OPEN = "open"
+
+
 _DROP_PREFIX: Final = "drop_"
 
 
@@ -116,7 +147,13 @@ class AddedContext(BaseModel):
 
 
 class CandidateClaim(BaseModel):
-    """One decontextualized, decomposed claim before the deterministic gate."""
+    """One decontextualized, decomposed claim before the deterministic gate.
+
+    Optional D41 valid-time fields are nullable typed scalars only — no free-form
+    objects — so the OpenRouter strict-schema adapter can constrain the model
+    without raising ``StrictSchemaError``. Most claims have no stated world-time;
+    leave ``valid_*`` at null/unknown in that case.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -125,6 +162,10 @@ class CandidateClaim(BaseModel):
     added_context: tuple[AddedContext, ...] = ()
     entailment_self_verdict: bool
     is_attributed: bool = False
+    valid_kind: ClaimValidKind | None = None
+    valid_from_iso: str | None = None
+    valid_until_iso: str | None = None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
 
 
 class ClaimifyResponse(BaseModel):
@@ -154,6 +195,10 @@ class ClaimRecord(BaseModel):
     entailment_self_verdict: bool
     kept_flagged: bool
     extractor_version: _NonEmpty
+    claim_valid_from: UTCDateTime | None = None
+    claim_valid_until: UTCDateTime | None = None
+    claim_valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
+    claim_valid_kind: ClaimValidKind | None = None
 
 
 class DecisionType(StrEnum):

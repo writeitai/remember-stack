@@ -238,12 +238,14 @@ _INSERT_CLAIM = text(
         claim_id, deployment_id, doc_id, chunk_id, section_id,
         claim_text, source_span, char_start, char_end, added_context,
         is_attributed, anchor_ok, window_membership_ok,
-        entailment_self_verdict, kept_flagged, extractor_version
+        entailment_self_verdict, kept_flagged, extractor_version,
+        claim_valid_from, claim_valid_until, claim_valid_precision, claim_valid_kind
     ) VALUES (
         :claim_id, :deployment_id, :doc_id, :chunk_id, :section_id,
         :claim_text, :source_span, :char_start, :char_end, :added_context,
         :is_attributed, true, true,
-        :entailment_self_verdict, :kept_flagged, :extractor_version
+        :entailment_self_verdict, :kept_flagged, :extractor_version,
+        :claim_valid_from, :claim_valid_until, :claim_valid_precision, :claim_valid_kind
     )
     """
 ).bindparams(bindparam("added_context", type_=JSON))
