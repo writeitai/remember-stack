@@ -8,7 +8,7 @@
 | src/rememberstack/adapters/\_\_init\_\_.py                                                    |       17 |        3 |        4 |        2 |     76.2% | 33-37, 42 |
 | src/rememberstack/adapters/codex\_writer.py                                                   |       82 |        3 |       20 |        3 |     94.1% |172, 203, 215 |
 | src/rememberstack/adapters/markitdown\_converter.py                                           |       24 |        2 |        0 |        0 |     91.7% |     40-41 |
-| src/rememberstack/adapters/openrouter.py                                                      |      148 |       10 |       38 |        4 |     91.4% |170-176, 212-213, 234-235, 237, 241-\>243, 244-\>253, 257 |
+| src/rememberstack/adapters/openrouter.py                                                      |      151 |       10 |       40 |        4 |     91.6% |179-185, 230-231, 252-253, 255, 259-\>261, 262-\>271, 275 |
 | src/rememberstack/adapters/selfhost/\_\_init\_\_.py                                           |       24 |        1 |        2 |        1 |     92.3% |        54 |
 | src/rememberstack/adapters/selfhost/forget.py                                                 |       43 |        1 |       10 |        1 |     96.2% |        19 |
 | src/rememberstack/adapters/selfhost/git.py                                                    |       98 |        6 |       32 |        8 |     89.2% |55, 75-\>127, 154, 184-185, 199-\>227, 263, 307, 331-\>329 |
@@ -184,7 +184,7 @@
 | src/rememberstack/workers/p3.py                                                               |      247 |        5 |       68 |        5 |     96.8% |122-127, 226-\>228, 333-\>335, 337-\>341, 564, 671 |
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **13019** | **1050** | **2720** |  **502** | **89.2%** |           |
+| **TOTAL**                                                                                     | **13022** | **1050** | **2722** |  **502** | **89.2%** |           |
 
 
 ## Setup coverage badge
