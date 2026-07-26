@@ -27,19 +27,23 @@ def test_claim_valid_enums_match_catalog_contract() -> None:
 
 def test_parse_iso_timestamp_date_only_is_utc_midnight() -> None:
     """A bare ISO date becomes midnight UTC (no local timezone guess)."""
-    assert _parse_iso_timestamp(value="2024-05-08") == datetime(2024, 5, 8, tzinfo=UTC)
+    assert _parse_iso_timestamp(value="2024-05-08") == (
+        datetime(2024, 5, 8, tzinfo=UTC),
+        True,  # date-only: carries day precision, must never pose as an instant
+    )
 
 
 def test_parse_iso_timestamp_respects_explicit_offset() -> None:
     """An offset-bearing datetime is converted to the equivalent UTC instant."""
-    assert _parse_iso_timestamp(value="2024-05-08T14:30:00+02:00") == datetime(
-        2024, 5, 8, 12, 30, tzinfo=UTC
+    assert _parse_iso_timestamp(value="2024-05-08T14:30:00+02:00") == (
+        datetime(2024, 5, 8, 12, 30, tzinfo=UTC),
+        False,
     )
 
 
 def test_parse_iso_timestamp_null_passthrough() -> None:
     """Absent timestamps stay None so optional valid-time remains optional."""
-    assert _parse_iso_timestamp(value=None) is None
+    assert _parse_iso_timestamp(value=None) == (None, False)
 
 
 def test_parse_claim_valid_time_malformed_falls_back_without_failing() -> None:
@@ -96,3 +100,70 @@ def test_bare_kind_without_interval_is_normalized_to_null() -> None:
     assert (valid_from, valid_until) == (None, None)
     assert precision is ClaimValidPrecision.UNKNOWN
     assert kind is None
+
+
+def test_naive_datetime_degrades_instead_of_inventing_utc() -> None:
+    """A datetime with no offset must not be assigned an invented timezone."""
+    candidate = CandidateClaim(
+        claim_text="The meeting happened at 14:30.",
+        source_span="at 14:30",
+        entailment_self_verdict=True,
+        valid_kind=ClaimValidKind.EVENT_TIME,
+        valid_from_iso="2024-05-08T14:30:00",
+        valid_until_iso="2024-05-08T14:30:00",
+        valid_precision=ClaimValidPrecision.INSTANT,
+    )
+    valid_from, valid_until, precision, kind = _parse_claim_valid_time(
+        candidate=candidate
+    )
+    assert (valid_from, valid_until, kind) == (None, None, None)
+    assert precision is ClaimValidPrecision.UNKNOWN
+
+
+def test_date_only_bounds_cannot_pose_as_an_instant() -> None:
+    """A date carries day precision; equal midnights are not an exact instant."""
+    candidate = CandidateClaim(
+        claim_text="It happened on 8 May 2024.",
+        source_span="on 8 May 2024",
+        entailment_self_verdict=True,
+        valid_kind=ClaimValidKind.EVENT_TIME,
+        valid_from_iso="2024-05-08",
+        valid_until_iso="2024-05-08",
+        valid_precision=ClaimValidPrecision.INSTANT,
+    )
+    _, _, precision, kind = _parse_claim_valid_time(candidate=candidate)
+    assert precision is ClaimValidPrecision.UNKNOWN
+    assert kind is None
+
+
+def test_out_of_range_utc_conversion_degrades_not_raises() -> None:
+    """Offset arithmetic at datetime.max must degrade, not fail the claim."""
+    candidate = CandidateClaim(
+        claim_text="Forever.",
+        source_span="Forever.",
+        entailment_self_verdict=True,
+        valid_kind=ClaimValidKind.PROPOSITION_VALIDITY,
+        valid_from_iso="9999-12-31T23:59:59-01:00",
+        valid_until_iso=None,
+        valid_precision=ClaimValidPrecision.OPEN,
+    )
+    valid_from, valid_until, precision, kind = _parse_claim_valid_time(
+        candidate=candidate
+    )
+    assert (valid_from, valid_until, kind) == (None, None, None)
+    assert precision is ClaimValidPrecision.UNKNOWN
+
+
+def test_plus_separator_is_not_a_time() -> None:
+    """fromisoformat would read 2024-01-01+02:00 as date plus TIME 02:00."""
+    candidate = CandidateClaim(
+        claim_text="Dated.",
+        source_span="Dated.",
+        entailment_self_verdict=True,
+        valid_kind=ClaimValidKind.EVENT_TIME,
+        valid_from_iso="2024-01-01+02:00",
+        valid_until_iso="2024-01-01+02:00",
+        valid_precision=ClaimValidPrecision.DAY,
+    )
+    _, _, precision, _ = _parse_claim_valid_time(candidate=candidate)
+    assert precision is ClaimValidPrecision.UNKNOWN

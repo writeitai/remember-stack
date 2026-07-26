@@ -79,12 +79,14 @@ verbatim chunk substring it derives from), added_context (every substring you
 ADDED, each tagged header|neighbour|prefix with the exact text as it appears
 in that bundle element), entailment_self_verdict (does chunk+bundle entail the
 claim), is_attributed. When the source states or implies WHEN a fact holds or
-happened, resolve relative dates using ONLY the bundle timestamps (same rule as
+happened, resolve relative dates USING ONLY THE BUNDLE (as with
 decontextualization) and emit valid_kind, valid_from_iso, valid_until_iso, and
-valid_precision as ISO-8601 date or datetime strings; otherwise leave
+valid_precision. Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit
+offset or Z; never emit a datetime without an offset. Otherwise leave
 valid_kind/from/until null and valid_precision unknown. Event on a calendar day
 → valid_kind=event_time, valid_precision=day, both ISO ends for that day.
-Year-only → precision=year with that year's [start,end] ISO bounds. Bounded
+Year-only → precision=year with that year's [start,end] ISO bounds; quarters
+are calendar quarters. Bounded
 precisions (day|month|quarter|year) require both ends; open requires from only;
 instant sets both ends equal.
 
@@ -354,20 +356,27 @@ def _parse_claim_valid_time(
 ]:
     """Parse model-emitted D41 valid-time into claim-row values.
 
-    ISO date strings become UTC midnight; datetimes keep their instant and are
-    stored as UTC. A malformed string, or a combination that breaks the prompt
-    contract's consistency rules, falls back to unknown/None for the temporal
-    fields only — the claim itself is still accepted.
+    ISO date strings become UTC midnight; offset-bearing datetimes keep their
+    instant and are stored as UTC. A malformed string, a datetime with no
+    offset (which would force us to invent a timezone), an out-of-range
+    conversion, or a combination that violates the claims-table D41 CHECK
+    constraints falls back to unknown/None for the temporal fields only — the
+    claim itself is still accepted.
     """
     try:
-        valid_from = _parse_iso_timestamp(value=candidate.valid_from_iso)
-        valid_until = _parse_iso_timestamp(value=candidate.valid_until_iso)
-    except ValueError:
+        valid_from, from_is_date = _parse_iso_timestamp(value=candidate.valid_from_iso)
+        valid_until, until_is_date = _parse_iso_timestamp(
+            value=candidate.valid_until_iso
+        )
+    except (ValueError, OverflowError):
         return None, None, ClaimValidPrecision.UNKNOWN, None
     precision = candidate.valid_precision
     kind = candidate.valid_kind
     if not _valid_time_satisfies_checks(
-        valid_from=valid_from, valid_until=valid_until, precision=precision
+        valid_from=valid_from,
+        valid_until=valid_until,
+        precision=precision,
+        any_date_only=from_is_date or until_is_date,
     ):
         return None, None, ClaimValidPrecision.UNKNOWN, None
     if precision is ClaimValidPrecision.UNKNOWN:
@@ -376,30 +385,42 @@ def _parse_claim_valid_time(
     return valid_from, valid_until, precision, kind
 
 
-def _parse_iso_timestamp(*, value: str | None) -> datetime | None:
+def _parse_iso_timestamp(*, value: str | None) -> tuple[datetime | None, bool]:
     """Convert an ISO-8601 date or datetime string to a UTC-aware datetime.
 
-    ``None`` and absent pass through. Date-only values become midnight UTC.
-    An explicit offset is respected for the instant, then normalized to UTC.
-    Raises ``ValueError`` when the string is present but unparseable.
+    Returns the datetime (or None for absent input) and whether the input was
+    date-only — a date carries day precision, so callers must not let it pose
+    as an exact instant. Date-only values become midnight UTC. Datetimes MUST
+    carry an explicit offset (or ``Z``): a naive datetime would require
+    inventing a timezone, which corrupts source-asserted time, so it is
+    rejected. End-of-day ``24:00`` forms are not supported. Raises
+    ``ValueError`` for anything present but unusable.
     """
     if value is None:
-        return None
+        return None, False
     text = value.strip()
     if not text:
         raise ValueError("empty timestamp")
     try:
         if len(text) == 10:
             parsed_date = date.fromisoformat(text)
-            return datetime(
-                parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=UTC
+            return (
+                datetime(
+                    parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=UTC
+                ),
+                True,
             )
+        # Guard the separator: fromisoformat would otherwise read
+        # "2024-01-01+02:00" as a date plus a TIME of 02:00, silently
+        # inventing an instant.
+        if len(text) > 10 and text[10] not in ("T", " "):
+            raise ValueError("expected 'T' or space between date and time")
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as error:
         raise ValueError(f"malformed timestamp: {value!r}") from error
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+        raise ValueError(f"datetime without offset: {value!r}")
+    return parsed.astimezone(UTC), False
 
 
 def _valid_time_satisfies_checks(
@@ -407,13 +428,18 @@ def _valid_time_satisfies_checks(
     valid_from: datetime | None,
     valid_until: datetime | None,
     precision: ClaimValidPrecision,
+    any_date_only: bool,
 ) -> bool:
-    """Enforce the prompt contract's valid-time consistency rules.
+    """Mirror the claims-table D41 CHECK constraints, plus one honesty rule.
 
-    These are NOT database CHECK constraints — the claims table has none on the
-    valid-time columns. They mirror what the Claimify prompt demands (bounded
-    precisions carry both ends, open carries only a start, instant is a point),
-    so an inconsistent emission degrades to unknown instead of landing skewed.
+    The five CHECKs live in migration p0_02_0004 (ordering; unknown carries no
+    bounds; open carries only a start; instant is a point; bounded precisions
+    carry both ends). Mirroring them here turns an inconsistent emission into a
+    degrade-to-unknown instead of an INSERT failure that would drop the claim.
+
+    The addition beyond the CHECKs: ``instant`` is refused when either end was
+    a date-only input — a date carries day precision, and promoting it to an
+    exact midnight instant would overstate immutable evidence precision.
     """
     if valid_until is not None and valid_from is not None and valid_until < valid_from:
         return False
@@ -423,7 +449,8 @@ def _valid_time_satisfies_checks(
         return valid_from is not None and valid_until is None
     if precision is ClaimValidPrecision.INSTANT:
         return (
-            valid_from is not None
+            not any_date_only
+            and valid_from is not None
             and valid_until is not None
             and valid_until == valid_from
         )
