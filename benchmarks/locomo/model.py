@@ -1,9 +1,10 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v2 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v3 protocol."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+import json
 from typing import Annotated
 from typing import Literal
 from uuid import UUID
@@ -107,7 +108,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v2"] = "RS-LoCoMo-Full-v2"
+    protocol_name: Literal["RS-LoCoMo-Full-v3"] = "RS-LoCoMo-Full-v3"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -189,20 +190,52 @@ class BenchmarkFailure(FrozenModel):
 
 
 class AnswerAgentStep(FrozenModel):
-    """One bounded answer-agent decision: call a public recipe or finish."""
+    """One bounded answer-agent decision: call a public recipe or finish.
+
+    Tool arguments travel as `arguments_json` — one JSON object encoded as a
+    string — because OpenAI-compatible strict mode requires every object in the
+    schema to be closed (`additionalProperties: false` with enumerated
+    properties), which makes a free-form arguments object unrepresentable: Azure
+    rejects the schema outright with HTTP 400. A string field is
+    strict-representable and carries arbitrary tool arguments.
+    """
 
     action: Literal["tool", "answer"]
     tool_name: str | None = None
-    arguments: dict[str, object] = Field(default_factory=dict)
+    arguments_json: str = "{}"
     answer: str | None = None
+
+    def parsed_arguments(self) -> tuple[dict[str, object], str]:
+        """Decode the first JSON object in `arguments_json`, with any trailing text.
+
+        Lenient on trailing junk by design: at temperature 0 the answer model was
+        observed appending a sentence period after the closing brace. The parse
+        takes the first complete JSON value, requires it to be an object, and
+        returns the leftover text so the caller can record it — syntax noise in
+        the agent's tool-call envelope must not masquerade as a retrieval
+        failure, but it must not vanish either.
+        """
+        raw = self.arguments_json.strip()
+        if not raw:
+            return {}, ""
+        decoded, end = json.JSONDecoder().raw_decode(raw)
+        if not isinstance(decoded, dict):
+            raise ValueError("arguments_json must encode a JSON object")
+        return decoded, raw[end:].strip()
 
     @model_validator(mode="after")
     def require_one_action_shape(self) -> "AnswerAgentStep":
-        """Make tool and answer decisions mutually exclusive and complete."""
+        """Make tool and answer decisions mutually exclusive and complete.
+
+        `arguments_json` is not validated on answer steps: strict mode forces
+        the field to be present on every step, so its content is meaningful only
+        when a tool is called.
+        """
         if self.action == "tool":
             if not self.tool_name or self.answer is not None:
                 raise ValueError("a tool step requires tool_name and no answer")
-        elif not self.answer or self.tool_name is not None or self.arguments:
+            self.parsed_arguments()
+        elif not self.answer or self.tool_name is not None:
             raise ValueError("an answer step requires only a non-empty answer")
         return self
 
@@ -212,6 +245,7 @@ class ToolCallRecord(FrozenModel):
 
     name: NonEmpty
     arguments: dict[str, object]
+    arguments_trailing: str = ""
     latency_ms: int = Field(ge=0)
     response: Envelope
 
@@ -316,7 +350,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v2"] = "RS-LoCoMo-Full-v2"
+    protocol_name: Literal["RS-LoCoMo-Full-v3"] = "RS-LoCoMo-Full-v3"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

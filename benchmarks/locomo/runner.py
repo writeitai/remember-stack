@@ -354,7 +354,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v2 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v3 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -674,7 +674,7 @@ def _validate_run(
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v2")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v3")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -684,14 +684,14 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v2")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v3")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if (
         configuration.answer_agent_temperature != TEMPERATURE
         or configuration.judge_temperature != TEMPERATURE
     ):
-        raise BenchmarkRunError("run temperature differs from RS-LoCoMo-Full-v2")
+        raise BenchmarkRunError("run temperature differs from RS-LoCoMo-Full-v3")
     if _models_hash(values=documents) != configuration.documents_sha256:
         raise BenchmarkRunError("prepared document manifest changed")
     if len(questions) != configuration.item_count:
@@ -1129,9 +1129,13 @@ def _answer_one(
                 usages=tuple(usages),
             )
         tool_started = time.monotonic_ns()
+        # Validated by the model's own validator for tool steps, so this cannot
+        # raise here; trailing junk (observed: a sentence period after the
+        # closing brace at temperature 0) is recorded on the trace row.
+        step_arguments, step_trailing = step.parsed_arguments()
         try:
             envelope = client.run_recipe(
-                name=step.tool_name or "", arguments=step.arguments
+                name=step.tool_name or "", arguments=step_arguments
             )
         except MemoryApiError as error:
             return _failed_answer(
@@ -1153,7 +1157,8 @@ def _answer_one(
         trace.append(
             ToolCallRecord(
                 name=step.tool_name or "",
-                arguments=step.arguments,
+                arguments=step_arguments,
+                arguments_trailing=step_trailing,
                 latency_ms=latency,
                 response=envelope,
             )

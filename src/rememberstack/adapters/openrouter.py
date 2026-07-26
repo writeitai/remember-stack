@@ -28,6 +28,15 @@ from rememberstack.model import StructuredResponseModel
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
 
+class StrictSchemaError(ValueError):
+    """A response model cannot be expressed under strict structured output.
+
+    This is a programmer error caught before any HTTP request — never a model
+    or provider failure — so it gets its own type: broad except blocks around
+    provider calls must not be able to misclassify it as a flaky reply.
+    """
+
+
 class OpenRouterSettings(BaseSettings):
     """The OpenRouter binding: key and endpoint, per deployment (D61)."""
 
@@ -197,6 +206,15 @@ def _require_all_object_properties(node: object) -> None:
     if isinstance(properties, dict):
         node["required"] = list(properties)
         node["additionalProperties"] = False
+    elif node.get("type") == "object":
+        # A free-form object cannot be expressed under strict mode: compliant
+        # providers require every object closed (Azure rejects the request with
+        # HTTP 400), and closing an object with no properties would forbid all
+        # content. Encode arbitrary payloads as a JSON string field instead.
+        raise StrictSchemaError(
+            "strict schema contains an open object (no properties); free-form"
+            " objects are unrepresentable under strict structured output"
+        )
     for value in node.values():
         _require_all_object_properties(value)
 

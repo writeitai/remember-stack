@@ -89,7 +89,7 @@ def test_answer_without_consulting_memory_is_rejected() -> None:
         generate_payload={
             "action": "answer",
             "tool_name": None,
-            "arguments": {},
+            "arguments_json": "{}",
             "answer": "Prague",
         }
     )
@@ -376,10 +376,15 @@ def _tool_then_answer(prompt: str, type_name: str) -> dict[str, object]:
         return {
             "action": "tool",
             "tool_name": "claims_verbatim",
-            "arguments": {"query": "Where?"},
+            "arguments_json": '{"query": "Where?"}',
             "answer": None,
         }
-    return {"action": "answer", "tool_name": None, "arguments": {}, "answer": "Prague"}
+    return {
+        "action": "answer",
+        "tool_name": None,
+        "arguments_json": "{}",
+        "answer": "Prague",
+    }
 
 
 def _tool_answer_and_judge(prompt: str, type_name: str) -> dict[str, object]:
@@ -459,14 +464,14 @@ class _CostProvider:
                 {
                     "action": "tool",
                     "tool_name": "claims_verbatim",
-                    "arguments": {"query": "Where?"},
+                    "arguments_json": '{"query": "Where?"}',
                     "answer": None,
                 }
                 if self.answer_calls == 1
                 else {
                     "action": "answer",
                     "tool_name": None,
-                    "arguments": {},
+                    "arguments_json": "{}",
                     "answer": "Prague",
                 }
             )
