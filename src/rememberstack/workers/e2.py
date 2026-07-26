@@ -355,9 +355,9 @@ def _parse_claim_valid_time(
     """Parse model-emitted D41 valid-time into claim-row values.
 
     ISO date strings become UTC midnight; datetimes keep their instant and are
-    stored as UTC. A malformed string or a combination that would violate the
-    claims-table CHECKs falls back to unknown/None for the temporal fields
-    only — the claim itself is still accepted.
+    stored as UTC. A malformed string, or a combination that breaks the prompt
+    contract's consistency rules, falls back to unknown/None for the temporal
+    fields only — the claim itself is still accepted.
     """
     try:
         valid_from = _parse_iso_timestamp(value=candidate.valid_from_iso)
@@ -370,6 +370,9 @@ def _parse_claim_valid_time(
         valid_from=valid_from, valid_until=valid_until, precision=precision
     ):
         return None, None, ClaimValidPrecision.UNKNOWN, None
+    if precision is ClaimValidPrecision.UNKNOWN:
+        # A kind without an interval is meaningless; never store it bare.
+        kind = None
     return valid_from, valid_until, precision, kind
 
 
@@ -405,7 +408,13 @@ def _valid_time_satisfies_checks(
     valid_until: datetime | None,
     precision: ClaimValidPrecision,
 ) -> bool:
-    """Mirror the claims-table D41 CHECK constraints on valid-time columns."""
+    """Enforce the prompt contract's valid-time consistency rules.
+
+    These are NOT database CHECK constraints — the claims table has none on the
+    valid-time columns. They mirror what the Claimify prompt demands (bounded
+    precisions carry both ends, open carries only a start, instant is a point),
+    so an inconsistent emission degrades to unknown instead of landing skewed.
+    """
     if valid_until is not None and valid_from is not None and valid_until < valid_from:
         return False
     if precision is ClaimValidPrecision.UNKNOWN:

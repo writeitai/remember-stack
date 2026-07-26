@@ -80,3 +80,19 @@ def test_parse_claim_valid_time_accepts_year_bounds() -> None:
     assert valid_until == datetime(2024, 12, 31, tzinfo=UTC)
     assert precision is ClaimValidPrecision.YEAR
     assert kind is ClaimValidKind.EVENT_TIME
+
+
+def test_bare_kind_without_interval_is_normalized_to_null() -> None:
+    """A kind with no interval is meaningless and must not land in the row."""
+    candidate = CandidateClaim(
+        claim_text="Acme exists.",
+        source_span="Acme exists.",
+        entailment_self_verdict=True,
+        valid_kind=ClaimValidKind.EVENT_TIME,
+    )
+    valid_from, valid_until, precision, kind = _parse_claim_valid_time(
+        candidate=candidate
+    )
+    assert (valid_from, valid_until) == (None, None)
+    assert precision is ClaimValidPrecision.UNKNOWN
+    assert kind is None
