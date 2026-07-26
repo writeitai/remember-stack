@@ -174,7 +174,13 @@ def _descriptor(recipe: Recipe) -> ToolDescriptor:
         "additionalProperties": False,
     }
     if required:
-        schema["required"] = required
+        # Canonical order, not declaration order: the registry round-trips
+        # `parameters` through Postgres jsonb, which normalises object key
+        # order, so declaration order does not survive storage. The benchmark
+        # protocol hashes descriptors exactly as served, and an order-sensitive
+        # array here made every live deployment hash differently from the same
+        # code's stock rendering (observed on graph_path, 2026-07-25).
+        schema["required"] = sorted(required)
     return ToolDescriptor(
         name=recipe.name,
         description=recipe.description,
