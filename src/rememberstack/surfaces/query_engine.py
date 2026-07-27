@@ -1295,26 +1295,33 @@ _ENTITY_TRANSCRIPT = text(
     -- its mentions resolved (resolution_decisions) and every merge it took
     -- part in (merge_events), newest-last across both. related_id is the
     -- COUNTERPART entity of a merge (never the subject); a reversed merge is
-    -- an unmerge.
-    SELECT 'entity' AS subject_kind,
-           CASE WHEN is_new_entity THEN 'new_entity' ELSE 'linked' END AS outcome,
-           method::text AS method, confidence,
-           mention_id AS related_id, decided_by::text AS decided_by,
-           decided_at, features
-    FROM resolution_decisions
-    WHERE deployment_id = :deployment_id AND entity_id = :subject_id
-    UNION ALL
-    SELECT 'entity' AS subject_kind,
-           CASE WHEN reversed_by IS NOT NULL THEN 'unmerge' ELSE 'merge' END
-               AS outcome,
-           'merge_event' AS method, NULL::real AS confidence,
-           CASE WHEN survivor_id = :subject_id THEN absorbed_id
-                ELSE survivor_id END AS related_id,
-           decided_by::text AS decided_by, decided_at, evidence AS features
-    FROM merge_events
-    WHERE deployment_id = :deployment_id
-      AND (survivor_id = :subject_id OR absorbed_id = :subject_id)
-    ORDER BY decided_at
+    -- an unmerge. The per-arm primary key breaks decided_at ties so the
+    -- recent-first truncation boundary is deterministic under batch inserts.
+    SELECT subject_kind, outcome, method, confidence, related_id,
+           decided_by, decided_at, features
+    FROM (
+        SELECT 'entity' AS subject_kind,
+               CASE WHEN is_new_entity THEN 'new_entity' ELSE 'linked' END
+                   AS outcome,
+               method::text AS method, confidence,
+               mention_id AS related_id, decided_by::text AS decided_by,
+               decided_at, features, decision_id AS event_id
+        FROM resolution_decisions
+        WHERE deployment_id = :deployment_id AND entity_id = :subject_id
+        UNION ALL
+        SELECT 'entity' AS subject_kind,
+               CASE WHEN reversed_by IS NOT NULL THEN 'unmerge' ELSE 'merge' END
+                   AS outcome,
+               'merge_event' AS method, NULL::real AS confidence,
+               CASE WHEN survivor_id = :subject_id THEN absorbed_id
+                    ELSE survivor_id END AS related_id,
+               decided_by::text AS decided_by, decided_at,
+               evidence AS features, merge_id AS event_id
+        FROM merge_events
+        WHERE deployment_id = :deployment_id
+          AND (survivor_id = :subject_id OR absorbed_id = :subject_id)
+    ) braided
+    ORDER BY decided_at, event_id
     """
 )
 

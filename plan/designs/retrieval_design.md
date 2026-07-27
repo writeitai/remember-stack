@@ -130,8 +130,10 @@ the envelope's existing truncation marker set when the cap applies. Long
 entity resolution logs were returning hundreds of rows and blowing agent
 reader contexts; S18 already forbids silent caps, so the bound is disclosed
 rather than unbounded-by-default. Callers that need a larger window pass an
-explicit `limit`. This is the same cap-with-signal pattern as `delta`, not a
-new mechanism.
+explicit `limit` — on the Python surface and as the recipe's optional `limit`
+parameter (recipe v3), so a truncated history is recoverable through the
+public surface too. This is the same cap-with-signal pattern as `delta`, not
+a new mechanism.
 
 **Temporal parameters — composed, not special-cased (S15/S16).** Every primitive that touches
 validity accepts `valid_at` (world time: "what held at T") and `believed_at` (system time:

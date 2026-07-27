@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v4
+protocol                RS-LoCoMo-Full-v5
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -52,6 +52,14 @@ scores alone); the answer-agent prompt adds loop guards (no identical
 tool+arguments retries; switch tools after a useless result; try a claims
 search before "Unknown"). Prompt, tool-catalog hash, and descriptors all
 changed, so the protocol version bumps. No v3 score is comparable.
+
+**v4 → v5 (2026-07-27, issue #156):** the `identity_as_of` recipe descriptor
+became honest about its recent-first transcript bound (default 40 rows,
+truncation signalled in the envelope) and gained an optional `limit`
+parameter so a truncated history is recoverable through the public surface.
+The tool-catalog hash changed, so the protocol version bumps — the v4 smoke
+scores (glm-4.7-flash arm) were taken against the pre-truncation catalog and
+are not directly comparable.
 
 ### 2.1 Why v2+ uses a stronger judge
 

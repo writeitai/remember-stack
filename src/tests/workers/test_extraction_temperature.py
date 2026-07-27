@@ -6,32 +6,41 @@ import ast
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
-_EXTRACTION_MODULES = (
-    _ROOT / "src/rememberstack/workers/e0.py",
-    _ROOT / "src/rememberstack/workers/e1.py",
-    _ROOT / "src/rememberstack/workers/e2.py",
-    _ROOT / "src/rememberstack/workers/e3.py",
-    _ROOT / "src/rememberstack/workers/p1.py",
-    _ROOT / "src/rememberstack/spine/observation_adjudication.py",
-    _ROOT / "src/rememberstack/spine/resolver.py",
-    _ROOT / "src/rememberstack/spine/supersession.py",
+_SCANNED_TREES = (
+    _ROOT / "src/rememberstack/workers",
+    _ROOT / "src/rememberstack/spine",
 )
-"""Every E-layer / P1 extract-or-label / adjudication generate path.
+"""Every module under workers/ and spine/ is scanned — a new extraction-class
+module is covered the day it appears, without editing this list. Benchmarks'
+answer-agent / judge calls pin temperature separately; eval/ is a consumption
+harness, not extraction."""
 
-Deliberately excludes p2_analytics community labels and benchmarks' answer-
-agent / judge calls (those already pin temperature separately).
-"""
+
+def _extraction_modules() -> list[Path]:
+    """Every python module under the scanned trees, discovered, not listed."""
+    return sorted(path for tree in _SCANNED_TREES for path in tree.rglob("*.py"))
 
 
 def _model_request_temperatures(*, path: Path) -> list[float | None]:
-    """Return the temperature keyword value for each ModelRequest(...) call."""
+    """Return the temperature keyword value for each ModelRequest(...) call.
+
+    Matches both the bare name and any attribute-qualified spelling
+    (`model.ModelRequest(...)`) so an import alias cannot dodge the scan.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     temperatures: list[float | None] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         callee = node.func
-        if not isinstance(callee, ast.Name) or callee.id != "ModelRequest":
+        name = (
+            callee.id
+            if isinstance(callee, ast.Name)
+            else callee.attr
+            if isinstance(callee, ast.Attribute)
+            else None
+        )
+        if name != "ModelRequest":
             continue
         temperature: float | None = None
         for keyword in node.keywords:
@@ -60,14 +69,14 @@ def test_extraction_model_request_sites_pin_temperature_zero() -> None:
     (issue #154). This AST check fails closed if a new extraction-class
     ModelRequest is added without the pin.
     """
+    modules = _extraction_modules()
+    assert len(modules) >= 8, "workers/ and spine/ trees moved — fix the scan roots"
     seen = 0
-    for path in _EXTRACTION_MODULES:
-        temps = _model_request_temperatures(path=path)
-        assert temps, f"expected ModelRequest call sites in {path}"
-        for temperature in temps:
+    for path in modules:
+        for temperature in _model_request_temperatures(path=path):
             assert temperature == 0.0, (
                 f"{path}: ModelRequest temperature={temperature!r}, expected 0.0"
             )
-        seen += len(temps)
+            seen += 1
     # Guard against vacuous green: the known extraction surface has many calls.
-    assert seen >= 12
+    assert seen >= 15

@@ -67,8 +67,9 @@ from rememberstack.workers.e1 import E1_CHUNK_VERSION
 E0_CONVERT_VERSION: Final = "e0-convert-2026.07"
 """The convert sub-worker's component version (D12 idempotency key member)."""
 
-E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07b:pageindex-snap-1"
-"""The structure stage's component version (D39): LLM route + snap algorithm."""
+E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07c:temp0-1"
+"""The structure stage's component version (D39): LLM route + snap algorithm.
+07c pins temperature=0.0 — generation parameters are part of provenance."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""

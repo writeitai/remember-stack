@@ -214,14 +214,34 @@ def test_generation_per_model_map_falls_back_when_global_unset(
 
 
 def test_reasoning_effort_map_rejects_invalid_effort_values() -> None:
-    """Map values must be one of the allowed effort literals."""
-    with pytest.raises(ValidationError):
+    """Map values must be one of the allowed effort literals — and the error
+    is OUR message, not merely pydantic's extra_forbidden for an unknown field
+    (which would also raise if the feature were reverted wholesale)."""
+    with pytest.raises(ValidationError, match="not an allowed effort"):
         OpenRouterSettings.model_validate(
             {
                 "api_key": "test-key",
                 "reasoning_effort_map": {"z-ai/glm-4.7-flash": "ludicrous"},
             }
         )
+
+
+def test_reasoning_effort_map_rejects_malformed_env_values() -> None:
+    """Invalid JSON, non-object JSON, and empty keys each fail loudly."""
+    for bad in ("{not json", '["none"]', '{"": "none"}'):
+        with pytest.raises(ValidationError, match="reasoning_effort_map"):
+            OpenRouterSettings.model_validate(
+                {"api_key": "test-key", "reasoning_effort_map": bad}
+            )
+
+
+def test_reasoning_effort_map_empty_string_env_means_unset() -> None:
+    """Compose passes empty strings for unset optionals; that is None, not an
+    error and not an empty mapping."""
+    settings = OpenRouterSettings.model_validate(
+        {"api_key": "test-key", "reasoning_effort_map": "  "}
+    )
+    assert settings.reasoning_effort_map is None
 
 
 def test_reasoning_effort_map_parses_json_env_string(

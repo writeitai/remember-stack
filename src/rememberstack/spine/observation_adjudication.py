@@ -35,8 +35,9 @@ from rememberstack.model import ObservationVerdict
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 
-OBSERVATION_ADJUDICATOR_VERSION: Final = "obs-adjudicator-2026.07"
-"""The observation adjudicator generation (D12; replayed on rebuild, D7)."""
+OBSERVATION_ADJUDICATOR_VERSION: Final = "obs-adjudicator-2026.07b:temp0-1"
+"""The observation adjudicator generation (D12; replayed on rebuild, D7).
+07b pins temperature=0.0 — generation parameters are part of provenance."""
 
 _VERDICT_PROMPT: Final = """You adjudicate observations for a memory system.
 Both statements are believed facts about the SAME entity:

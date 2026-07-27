@@ -32,9 +32,11 @@ from rememberstack.model import ModelRequest
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.projection import ProjectionCatalog
 
-COMMUNITY_DETECTOR_VERSION: Final = "p2-communities-2026.07:louvain-native"
+COMMUNITY_DETECTOR_VERSION: Final = "p2-communities-2026.07b:louvain-native-temp0"
 """The analytics pass's component version (D12); the algorithm is part of
-the identity because a detector swap changes every assignment."""
+the identity because a detector swap changes every assignment. 07b pins the
+label call's temperature=0.0 — labels are navigation-only, but identical
+builds should not wander."""
 
 _PROJECTION: Final = "analytics_graph"
 _LABEL_MEMBERS: Final = 8
@@ -223,6 +225,7 @@ class GraphAnalyticsWorker:
                 request=ModelRequest(
                     model=self._settings.label_model,
                     prompt=_LABEL_PROMPT.format(clusters="\n".join(blocks)),
+                    temperature=0.0,
                 ),
                 response_type=CommunityLabels,
             )

@@ -20,12 +20,12 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v4"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v5"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
-    "032f5df77e67e3e2fbccfea590fb6526b7df8af036948eb6e5d0d2e42ab55438"
+    "34d2069ae37fabf033d2b1f0fae2ed9e7c1ad5c3f6e1fd14b2971344cd89c3a6"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",

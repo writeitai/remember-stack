@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v4 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v5 protocol."""
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v4"] = "RS-LoCoMo-Full-v4"
+    protocol_name: Literal["RS-LoCoMo-Full-v5"] = "RS-LoCoMo-Full-v5"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -350,7 +350,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v4"] = "RS-LoCoMo-Full-v4"
+    protocol_name: Literal["RS-LoCoMo-Full-v5"] = "RS-LoCoMo-Full-v5"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

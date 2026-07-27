@@ -30,8 +30,9 @@ from rememberstack.model import SupersessionVerdict
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 
-ADJUDICATOR_VERSION: Final = "adjudicator-2026.07"
-"""The supersession adjudicator generation (D12; replayed on rebuild, D7)."""
+ADJUDICATOR_VERSION: Final = "adjudicator-2026.07b:temp0-1"
+"""The supersession adjudicator generation (D12; replayed on rebuild, D7).
+07b pins temperature=0.0 — generation parameters are part of provenance."""
 
 _ADJUDICATION_PROMPT: Final = """You adjudicate fact supersession for a memory
 system. Two believed facts share a subject and a change-prone predicate:
