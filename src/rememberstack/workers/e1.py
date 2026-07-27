@@ -50,12 +50,14 @@ E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 E1_EMBED_VERSION: Final = "e1-embed-2026.07"
 """The embed stage's component version (model identity rides settings/stamps)."""
 
-E1_PREFIXER_VERSION: Final = "e1-prefix-2026.07"
-"""The context-prefix call's prompt generation (D58; conventional mode, D63)."""
+E1_PREFIXER_VERSION: Final = "e1-prefix-2026.07b:temp0-1"
+"""The context-prefix call's prompt generation (D58; conventional mode, D63).
+07b pins temperature=0.0 — generation parameters are part of provenance."""
 
-E2_EXTRACTOR_VERSION: Final = "e2-extract-2026.07c:claim-valid-time-1"
+E2_EXTRACTOR_VERSION: Final = "e2-extract-2026.07d:temp0-1"
 """The extractor generation baked into extraction_input_hash (D56); the E2
-stage (WP-1.3) binds its handler to this same constant."""
+stage (WP-1.3) binds its handler to this same constant. 07d pins
+temperature=0.0 on the Selection call (Claimify already carried it)."""
 
 _PREFIX_PROMPT_TEMPLATE: Final = (
     "In one sentence, state where this passage sits in the document — "
@@ -321,7 +323,9 @@ class EmbedChunksHandler:
             head=head,
         )
         response = self._model_provider.generate(
-            request=ModelRequest(model=self._settings.prefix_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._settings.prefix_model, prompt=prompt, temperature=0.0
+            ),
             response_type=ContextPrefix,
         )
         meter.record(

@@ -30,11 +30,13 @@ class FakeModelProvider:
         self._generate_router = generate_router
         self.embedded_texts: list[str] = []
         self.generated_prompts: list[str] = []
+        self.generated_requests: list[ModelRequest] = []
 
     def generate[ResponseT: StructuredResponseModel](
         self, *, request: ModelRequest, response_type: type[ResponseT]
     ) -> GeneratedResponse[ResponseT]:
         """Return the canned payload validated as the caller's declared type."""
+        self.generated_requests.append(request)
         self.generated_prompts.append(request.prompt)
         if callable(self._generate_router):
             output = response_type.model_validate(

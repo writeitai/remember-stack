@@ -207,6 +207,7 @@ class ExtractClaimsHandler:
             request=ModelRequest(
                 model=self._settings.extract_model,
                 prompt=_SELECTION_PROMPT.format(outcomes=_OUTCOMES, bundle=bundle),
+                temperature=0.0,
             ),
             response_type=SelectionResponse,
         )
@@ -241,6 +242,7 @@ class ExtractClaimsHandler:
                         keeps="\n".join(f"- {keep.source_span}" for keep in keeps),
                         bundle=bundle,
                     ),
+                    temperature=0.0,
                 ),
                 response_type=ClaimifyResponse,
             )

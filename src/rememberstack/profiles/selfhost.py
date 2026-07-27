@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 from typing import Self
@@ -615,6 +616,13 @@ def _model_bindings() -> dict[str, str]:
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
         "openrouter_reasoning_effort": openrouter.reasoning_effort or "auto",
+        # Canonical (sorted-key) form so the effective per-model effort policy
+        # is part of measurement provenance, not hidden behind the global pin.
+        "openrouter_reasoning_effort_map": json.dumps(
+            openrouter.reasoning_effort_map, sort_keys=True
+        )
+        if openrouter.reasoning_effort_map
+        else "unset",
     }
 
 

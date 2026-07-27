@@ -368,6 +368,13 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
     ]
     assert all(call["model_name"] and call["tokens_in"] > 0 for call in metered_calls)
     assert {call["tier"] for call in metered_calls} == {"decontextualize", "selection"}
+    # Extraction is a measurement surface (#154): selection + claimify must pin
+    # temperature=0.0 so identical bindings do not wander (gold-span coverage
+    # previously varied 7/8 → 4/8 across runs at the provider default).
+    assert rig.provider.generated_requests, "expected Claimify model calls"
+    assert all(
+        request.temperature == 0.0 for request in rig.provider.generated_requests
+    )
     assert all(call["cost_usd"] == 0 for call in metered_calls)
 
 

@@ -33,8 +33,9 @@ from rememberstack.workers.base import HandlerOutcome
 P1_EMBED_CLAIMS_VERSION: Final = "p1-embed-claims-2026.07"
 """The claim-embed stage's component version (the model rides settings)."""
 
-FACT_LABEL_VERSION: Final = "p1-fact-label-2026.07"
-"""The fact-labeler prompt generation (regenerated only on version bump)."""
+FACT_LABEL_VERSION: Final = "p1-fact-label-2026.07b:temp0-1"
+"""The fact-labeler prompt generation (regenerated only on version bump).
+07b pins temperature=0.0 — generation parameters are part of provenance."""
 
 _FACT_LABEL_PROMPT: Final = (
     "Write one short natural sentence stating this fact, nothing else: "
@@ -161,6 +162,7 @@ class LabelFactsHandler:
                             predicate=relation.predicate,
                             object=relation.object_name,
                         ),
+                        temperature=0.0,
                     ),
                     response_type=FactLabelResponse,
                 )

@@ -57,6 +57,13 @@ DEFAULT_DELTA_LIMIT = 500
 """How many change-feed rows one `delta` page returns before truncating —
 a starting point to measure, not a committed constant (retrieval §13)."""
 
+DEFAULT_TRANSCRIPT_LIMIT = 40
+"""How many decision-history rows one `transcript` returns before truncating
+— recent-first. A starting point to measure, not a committed constant: long
+entity resolution logs (hundreds of mention rows) must not blow a reader
+context, and S18 forbids silent caps, so the envelope always signals when
+this bound applies."""
+
 DEFAULT_SCAN_BATCH = 1_000
 """How many rows the batch `scan` cursor fetches per round-trip."""
 
@@ -423,7 +430,12 @@ class QueryEngine:
         )
 
     def transcript(
-        self, *, deployment_id: UUID, subject_kind: str, subject_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        subject_kind: str,
+        subject_id: UUID,
+        limit: int = DEFAULT_TRANSCRIPT_LIMIT,
     ) -> Envelope:
         """The S8/S32/S35 audit query: any subject's decision history.
 
@@ -431,10 +443,17 @@ class QueryEngine:
         four subjects a decision is about: a supersession-adjudicated
         `relation` or `observation`, a resolved/merged `entity` (its
         resolution decisions braided with its merges), or a compiled
-        `k_page` (its compile provenance). Returned newest-last; reads never
-        trigger anything. An empty history is `known_empty`, not a guess; an
-        unknown kind is a `boundary` naming the four that exist.
+        `k_page` (its compile provenance). Returned newest-last among the
+        kept window; reads never trigger anything. The result is
+        recent-first bounded by `limit` (default
+        `DEFAULT_TRANSCRIPT_LIMIT`): when more history exists, the oldest
+        rows drop and the envelope's truncation marker is set so callers
+        see the cap rather than receiving everything (S18). An empty
+        history is `known_empty`, not a guess; an unknown kind is a
+        `boundary` naming the four that exist.
         """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
         statement = _TRANSCRIPT_BY_KIND.get(subject_kind)
         if statement is None:
             return Envelope(
@@ -447,7 +466,7 @@ class QueryEngine:
                 ),
             )
         with self._engine.connect() as connection:
-            rows = (
+            rows = list(
                 connection.execute(
                     statement,
                     {"deployment_id": deployment_id, "subject_id": subject_id},
@@ -455,12 +474,24 @@ class QueryEngine:
                 .mappings()
                 .all()
             )
+        total = len(rows)
+        truncated = total > limit
+        # SQL orders oldest→newest (newest-last). Keep the most recent
+        # `limit` rows so a long entity log still answers "what happened
+        # lately" without flooding the reader context.
+        kept = rows[-limit:] if truncated else rows
         return Envelope(
             grain=Grain.COMPOSITE,
-            transcript=tuple(TranscriptEntry.model_validate(dict(row)) for row in rows),
+            transcript=tuple(TranscriptEntry.model_validate(dict(row)) for row in kept),
             freshness=_freshness(),
+            truncation=Truncation(
+                truncated=truncated,
+                returned=len(kept),
+                estimated_total=total,
+                total_is_exact=True,
+            ),
             negative=None
-            if rows
+            if kept
             else Negative(
                 kind=NegativeKind.KNOWN_EMPTY,
                 explanation=f"no decision history for this {subject_kind}",
@@ -1264,26 +1295,33 @@ _ENTITY_TRANSCRIPT = text(
     -- its mentions resolved (resolution_decisions) and every merge it took
     -- part in (merge_events), newest-last across both. related_id is the
     -- COUNTERPART entity of a merge (never the subject); a reversed merge is
-    -- an unmerge.
-    SELECT 'entity' AS subject_kind,
-           CASE WHEN is_new_entity THEN 'new_entity' ELSE 'linked' END AS outcome,
-           method::text AS method, confidence,
-           mention_id AS related_id, decided_by::text AS decided_by,
-           decided_at, features
-    FROM resolution_decisions
-    WHERE deployment_id = :deployment_id AND entity_id = :subject_id
-    UNION ALL
-    SELECT 'entity' AS subject_kind,
-           CASE WHEN reversed_by IS NOT NULL THEN 'unmerge' ELSE 'merge' END
-               AS outcome,
-           'merge_event' AS method, NULL::real AS confidence,
-           CASE WHEN survivor_id = :subject_id THEN absorbed_id
-                ELSE survivor_id END AS related_id,
-           decided_by::text AS decided_by, decided_at, evidence AS features
-    FROM merge_events
-    WHERE deployment_id = :deployment_id
-      AND (survivor_id = :subject_id OR absorbed_id = :subject_id)
-    ORDER BY decided_at
+    -- an unmerge. The per-arm primary key breaks decided_at ties so the
+    -- recent-first truncation boundary is deterministic under batch inserts.
+    SELECT subject_kind, outcome, method, confidence, related_id,
+           decided_by, decided_at, features
+    FROM (
+        SELECT 'entity' AS subject_kind,
+               CASE WHEN is_new_entity THEN 'new_entity' ELSE 'linked' END
+                   AS outcome,
+               method::text AS method, confidence,
+               mention_id AS related_id, decided_by::text AS decided_by,
+               decided_at, features, decision_id AS event_id
+        FROM resolution_decisions
+        WHERE deployment_id = :deployment_id AND entity_id = :subject_id
+        UNION ALL
+        SELECT 'entity' AS subject_kind,
+               CASE WHEN reversed_by IS NOT NULL THEN 'unmerge' ELSE 'merge' END
+                   AS outcome,
+               'merge_event' AS method, NULL::real AS confidence,
+               CASE WHEN survivor_id = :subject_id THEN absorbed_id
+                    ELSE survivor_id END AS related_id,
+               decided_by::text AS decided_by, decided_at,
+               evidence AS features, merge_id AS event_id
+        FROM merge_events
+        WHERE deployment_id = :deployment_id
+          AND (survivor_id = :subject_id OR absorbed_id = :subject_id)
+    ) braided
+    ORDER BY decided_at, event_id
     """
 )
 

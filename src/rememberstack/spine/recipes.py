@@ -271,20 +271,26 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     ),
     Recipe(
         name="identity_as_of",
-        description="An entity's identity history — how its mentions resolved"
-        " and every merge it took part in (S61). Composite grain, audit."
-        " As-of regime resolution, not a biography or fact timeline.",
-        parameters={"entity_id": {"type": "uuid", "required": True}},
+        description="An entity's identity history — recent resolution"
+        " decisions and merges (S61). Composite grain, audit. As-of regime"
+        " resolution, not a biography or fact timeline. Keeps the newest"
+        " `limit` rows (default 40), returned oldest-to-newest; the envelope"
+        " signals truncation when older history was cut. Pass a larger"
+        " `limit` to widen the window.",
+        parameters={
+            "entity_id": {"type": "uuid", "required": True},
+            "limit": {"type": "integer", "required": False, "minimum": 1},
+        },
         chain=(
             RecipeStep(
                 op="transcript",
                 settings={"subject_kind": "entity"},
-                bind={"subject_id": "entity_id"},
+                bind={"subject_id": "entity_id", "limit": "limit"},
             ),
         ),
         output_grain=Grain.COMPOSITE,
         answer_intent=RecipeAnswerIntent.AUDIT,
-        version=2,
+        version=3,
     ),
     Recipe(
         name="changed_since",

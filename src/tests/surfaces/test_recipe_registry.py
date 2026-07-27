@@ -375,6 +375,40 @@ def test_seeding_upgrades_a_changed_recipe_instead_of_masking_it(
     }
 
 
+def test_identity_as_of_v3_supersedes_a_persisted_v2_descriptor(
+    corpus: _Corpus,
+) -> None:
+    """ON CONFLICT DO NOTHING must not pin deployments to the pre-truncation
+    descriptor: re-seeding over a persisted v2 row serves v3 (issue #156)."""
+    registry = RecipeRegistry(engine=corpus.engine)
+    current = next(
+        recipe for recipe in CANONICAL_RECIPES if recipe.name == "identity_as_of"
+    )
+    registry.register(
+        deployment_id=_DEPLOYMENT_ID,
+        recipe=current.model_copy(
+            update={
+                "version": 2,
+                "description": "An entity's identity history — how its mentions"
+                " resolved and every merge it took part in (S61).",
+                "parameters": {"entity_id": {"type": "uuid", "required": True}},
+            }
+        ),
+    )
+
+    seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
+
+    active = registry.by_name(deployment_id=_DEPLOYMENT_ID, name="identity_as_of")
+    assert active is not None
+    assert active.version == 3
+    assert "truncation" in active.description
+    assert active.parameters["limit"] == {
+        "type": "integer",
+        "required": False,
+        "minimum": 1,
+    }
+
+
 # --- a recipe ≡ its chain --------------------------------------------------
 
 

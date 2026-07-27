@@ -131,9 +131,9 @@ def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
     )
 
 
-def test_protocol_is_v4_and_answer_prompt_has_loop_guards() -> None:
+def test_protocol_is_v5_and_answer_prompt_has_loop_guards() -> None:
     """v4 fingerprint: protocol name plus the answer-loop discipline lines."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v4"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v5"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt

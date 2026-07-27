@@ -45,8 +45,9 @@ _logger = logging.getLogger(__name__)
 _OTHER_PREDICATE: Final = OTHER_PREDICATE_GRAMMAR
 """The escape-value routing check (the spine re-validates authoritatively)."""
 
-E3_NORMALIZER_VERSION: Final = "e3-normalize-2026.07"
-"""The normalize sub-worker's component version (D12 idempotency member)."""
+E3_NORMALIZER_VERSION: Final = "e3-normalize-2026.07b:temp0-1"
+"""The normalize sub-worker's component version (D12 idempotency member).
+07b pins temperature=0.0 — generation parameters are part of provenance."""
 
 _NORMALIZE_PROMPT: Final = """You are the normalizer of a memory system. Turn
 the CLAIM into zero or more of:
@@ -229,6 +230,7 @@ class NormalizeRelationsHandler:
                     is_attributed=claim.is_attributed,
                     claim_text=claim.claim_text,
                 ),
+                temperature=0.0,
             ),
             response_type=NormalizationResponse,
         )
