@@ -675,6 +675,11 @@ def test_transcript_entity_braids_resolution_and_merge(corpus: _Corpus) -> None:
     outcomes = [entry.outcome for entry in answer.transcript]
     assert outcomes == ["linked", "merge"]  # ordered by decided_at
     assert answer.transcript[-1].related_id == corpus.ids["A. Nowak"]
+    assert answer.truncation is not None
+    assert answer.truncation.truncated is False
+    assert answer.truncation.returned == 2
+    assert answer.truncation.estimated_total == 2
+    assert answer.truncation.total_is_exact is True
 
 
 def test_transcript_unknown_kind_is_boundary(corpus: _Corpus) -> None:
@@ -695,6 +700,65 @@ def test_transcript_of_a_subject_with_no_history_is_known_empty(
     )
     assert answer.negative is not None
     assert answer.negative.kind is NegativeKind.KNOWN_EMPTY
+
+
+def test_transcript_recent_first_bound_signals_truncation(corpus: _Corpus) -> None:
+    """#156: over-cap entity history keeps the newest rows and discloses the cut.
+
+    An unbounded identity transcript once returned ~310 rows / ~75KB for one
+    entity and five calls blew a 128k reader context. The default bound is a
+    measurement starting point; the envelope must never be silent about it
+    (S18).
+    """
+    from datetime import timedelta
+
+    from rememberstack.surfaces.query_engine import DEFAULT_TRANSCRIPT_LIMIT
+
+    entity_id = corpus.ids["Bob"]
+    over_cap = DEFAULT_TRANSCRIPT_LIMIT + 7
+    origin = datetime(2026, 1, 1, tzinfo=UTC)
+    with corpus.engine.begin() as connection:
+        for index in range(over_cap):
+            connection.execute(
+                text(
+                    "INSERT INTO resolution_decisions (decision_id, deployment_id,"
+                    " mention_id, entity_id, method, confidence, is_new_entity,"
+                    " resolver_version, decided_by, decided_at)"
+                    " VALUES (:x, :d, :m, :e, 'T3', 0.8, false, 'toy', 'auto', :at)"
+                ),
+                {
+                    "x": uuid4(),
+                    "d": _DEPLOYMENT_ID,
+                    "m": uuid4(),
+                    "e": entity_id,
+                    "at": origin + timedelta(hours=index),
+                },
+            )
+
+    answer = _engine(corpus).transcript(
+        deployment_id=_DEPLOYMENT_ID, subject_kind="entity", subject_id=entity_id
+    )
+    assert answer.truncation is not None
+    assert answer.truncation.truncated is True
+    assert answer.truncation.returned == DEFAULT_TRANSCRIPT_LIMIT
+    assert answer.truncation.estimated_total == over_cap
+    assert answer.truncation.total_is_exact is True
+    assert len(answer.transcript) == DEFAULT_TRANSCRIPT_LIMIT
+    # kept window is newest-last among the recent rows, not the oldest tail
+    times = [entry.decided_at for entry in answer.transcript if entry.decided_at]
+    assert times == sorted(times)
+    assert times[0] == origin + timedelta(hours=7)
+    assert times[-1] == origin + timedelta(hours=over_cap - 1)
+
+    full = _engine(corpus).transcript(
+        deployment_id=_DEPLOYMENT_ID,
+        subject_kind="entity",
+        subject_id=entity_id,
+        limit=over_cap,
+    )
+    assert full.truncation is not None
+    assert full.truncation.truncated is False
+    assert len(full.transcript) == over_cap
 
 
 # --- delta: the change feed ------------------------------------------------

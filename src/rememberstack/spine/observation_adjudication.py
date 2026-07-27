@@ -503,7 +503,9 @@ class ObservationAdjudicator:
         """Small-model verdict, escalating to frontier below the floor."""
         prompt = _VERDICT_PROMPT.format(existing=existing, new=new)
         verdict_call = self._model_provider.generate(
-            request=ModelRequest(model=self._settings.small_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._settings.small_model, prompt=prompt, temperature=0.0
+            ),
             response_type=ObservationVerdict,
         )
         if meter is not None:
@@ -516,7 +518,9 @@ class ObservationAdjudicator:
         if verdict.confidence >= self._settings.confidence_floor:
             return verdict, "small_model"
         frontier_call = self._model_provider.generate(
-            request=ModelRequest(model=self._settings.frontier_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._settings.frontier_model, prompt=prompt, temperature=0.0
+            ),
             response_type=ObservationVerdict,
         )
         if meter is not None:

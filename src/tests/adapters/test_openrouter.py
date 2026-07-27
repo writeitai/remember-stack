@@ -5,6 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import ValidationError
 import pytest
 
 from rememberstack.adapters import OpenRouterModelProvider
@@ -132,6 +133,106 @@ def test_generation_forwards_configured_reasoning_effort(
         provider._client.close()
 
     assert observed.get("reasoning") == expected
+
+
+def test_generation_per_model_reasoning_effort_map_overrides_global(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#155: a model's map entry wins over the global effort pin."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {
+                "api_key": "test-key",
+                "reasoning_effort": "high",
+                "reasoning_effort_map": {
+                    "z-ai/glm-4.7-flash": "none",
+                    "openai/gpt-5.6-luna": "high",
+                },
+            }
+        )
+    )
+    observed: list[dict[str, object]] = []
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        observed.append(dict(payload))
+        assert path == "/chat/completions"
+        return {
+            "model": str(payload["model"]),
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        for model in ("z-ai/glm-4.7-flash", "openai/gpt-5.6-luna", "other/model"):
+            provider.generate(
+                request=ModelRequest(model=model, prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert [item.get("reasoning") for item in observed] == [
+        {"effort": "none"},  # map override
+        {"effort": "high"},  # map entry equals global but still explicit
+        {"effort": "high"},  # absent from map → global fallback
+    ]
+
+
+def test_generation_per_model_map_falls_back_when_global_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent map entry with no global pin leaves reasoning unset (model default)."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {
+                "api_key": "test-key",
+                "reasoning_effort_map": {"z-ai/glm-4.7-flash": "none"},
+            }
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        observed.update(payload)
+        return {
+            "model": "other/model",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.generate(
+            request=ModelRequest(model="other/model", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert "reasoning" not in observed
+
+
+def test_reasoning_effort_map_rejects_invalid_effort_values() -> None:
+    """Map values must be one of the allowed effort literals."""
+    with pytest.raises(ValidationError):
+        OpenRouterSettings.model_validate(
+            {
+                "api_key": "test-key",
+                "reasoning_effort_map": {"z-ai/glm-4.7-flash": "ludicrous"},
+            }
+        )
+
+
+def test_reasoning_effort_map_parses_json_env_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The env form is a JSON object (Compose-friendly), not a Python dict."""
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP", '{"z-ai/glm-4.7-flash":"none"}'
+    )
+    settings = OpenRouterSettings.model_validate({"api_key": "test-key"})
+    assert settings.reasoning_effort_map == {"z-ai/glm-4.7-flash": "none"}
 
 
 def test_generation_uses_strict_schema_for_defaulted_response_fields(

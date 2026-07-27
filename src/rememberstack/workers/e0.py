@@ -529,7 +529,9 @@ class StructureHandler:
         )
         try:
             generated = self._model_provider.generate(
-                request=ModelRequest(model=self._settings.model, prompt=prompt),
+                request=ModelRequest(
+                    model=self._settings.model, prompt=prompt, temperature=0.0
+                ),
                 response_type=StructureResponse,
             )
         except ProviderAccountingError:

@@ -212,7 +212,9 @@ class SupersessionAdjudicator:
             new_asserted=new["asserted_at"] or "unknown",
         )
         verdict_call = self._model_provider.generate(
-            request=ModelRequest(model=self._settings.small_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._settings.small_model, prompt=prompt, temperature=0.0
+            ),
             response_type=SupersessionVerdict,
         )
         if meter is not None:
@@ -227,7 +229,7 @@ class SupersessionAdjudicator:
         if verdict.confidence < self._settings.confidence_floor:
             verdict_call = self._model_provider.generate(
                 request=ModelRequest(
-                    model=self._settings.frontier_model, prompt=prompt
+                    model=self._settings.frontier_model, prompt=prompt, temperature=0.0
                 ),
                 response_type=SupersessionVerdict,
             )

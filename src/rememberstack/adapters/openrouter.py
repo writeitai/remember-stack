@@ -6,7 +6,9 @@ import hashlib
 import json
 import time
 from typing import Any
+from typing import Final
 from typing import Literal
+from typing import TypeAlias
 from typing import TypeVar
 
 import httpx
@@ -27,6 +29,15 @@ from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
+ReasoningEffort: TypeAlias = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
+"""Allowed OpenRouter reasoning-effort values (global pin or per-model map)."""
+
+_ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
+    ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+)
+
 
 class StrictSchemaError(ValueError):
     """A response model cannot be expressed under strict structured output.
@@ -46,9 +57,15 @@ class OpenRouterSettings(BaseSettings):
     base_url: str = Field(default="https://openrouter.ai/api/v1")
     timeout_s: float = Field(default=120.0, gt=0)
     embedding_provider: str | None = None
-    reasoning_effort: (
-        Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None
-    ) = None
+    reasoning_effort: ReasoningEffort | None = None
+    reasoning_effort_map: dict[str, ReasoningEffort] | None = None
+    """Optional per-model effort overrides as a JSON object env var
+    (`REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP`, e.g.
+    `{"z-ai/glm-4.7-flash":"none","openai/gpt-5.6-luna":"high"}`). A model's
+    entry wins over the global `reasoning_effort` for requests to that model;
+    absent entries fall back to the global pin (or the model default when the
+    global pin is also unset). Values must be one of the allowed effort
+    literals."""
 
     @field_validator("embedding_provider", "reasoning_effort", mode="before")
     @classmethod
@@ -57,6 +74,46 @@ class OpenRouterSettings(BaseSettings):
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @field_validator("reasoning_effort_map", mode="before")
+    @classmethod
+    def parse_reasoning_effort_map(cls, value: object) -> object:
+        """Parse the JSON object env form and reject unknown effort literals.
+
+        Compose often supplies empty strings for unset optionals; treat those
+        as unset. A JSON string is accepted because pydantic-settings may hand
+        the raw env value through before typed decoding on some paths.
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                value = json.loads(stripped)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    "reasoning_effort_map must be a JSON object of model-id → effort"
+                ) from error
+        if not isinstance(value, dict):
+            raise ValueError(
+                "reasoning_effort_map must be a JSON object of model-id → effort"
+            )
+        parsed: dict[str, str] = {}
+        for model_id, effort in value.items():
+            if not isinstance(model_id, str) or not model_id.strip():
+                raise ValueError(
+                    "reasoning_effort_map keys must be non-empty model id strings"
+                )
+            if not isinstance(effort, str) or effort not in _ALLOWED_REASONING_EFFORTS:
+                raise ValueError(
+                    f"reasoning_effort_map[{model_id!r}]={effort!r} is not an"
+                    f" allowed effort"
+                    f" ({', '.join(sorted(_ALLOWED_REASONING_EFFORTS))})"
+                )
+            parsed[model_id.strip()] = effort
+        return parsed or None
 
 
 class OpenRouterProviderError(ProviderCallError):
@@ -94,8 +151,9 @@ class OpenRouterModelProvider:
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
-        if self._settings.reasoning_effort is not None:
-            payload["reasoning"] = {"effort": self._settings.reasoning_effort}
+        effort = self._reasoning_effort_for(model=request.model)
+        if effort is not None:
+            payload["reasoning"] = {"effort": effort}
 
         content, usage = self._completion_text(
             payload=payload, response_type=response_type, started_ns=started_ns
@@ -117,6 +175,13 @@ class OpenRouterModelProvider:
                 usage=usage,
             ) from error
         return GeneratedResponse(output=output, usage=usage)
+
+    def _reasoning_effort_for(self, *, model: str) -> ReasoningEffort | None:
+        """Resolve effort for one model: per-model map entry, else global pin."""
+        mapped = self._settings.reasoning_effort_map
+        if mapped is not None and model in mapped:
+            return mapped[model]
+        return self._settings.reasoning_effort
 
     def _completion_text(
         self,

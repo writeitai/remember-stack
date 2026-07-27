@@ -271,9 +271,10 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     ),
     Recipe(
         name="identity_as_of",
-        description="An entity's identity history — how its mentions resolved"
-        " and every merge it took part in (S61). Composite grain, audit."
-        " As-of regime resolution, not a biography or fact timeline.",
+        description="An entity's identity history — recent resolution"
+        " decisions and merges (S61). Composite grain, audit. As-of regime"
+        " resolution, not a biography or fact timeline. The envelope signals"
+        " truncation when the recent-bound cap applies.",
         parameters={"entity_id": {"type": "uuid", "required": True}},
         chain=(
             RecipeStep(

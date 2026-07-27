@@ -224,13 +224,17 @@ class CascadeResolver:
         if context_a:
             prompt += f"\nCANDIDATE CONTEXT: {context_a}"
         verdict = self._model_provider.generate(
-            request=ModelRequest(model=self._small_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._small_model, prompt=prompt, temperature=0.0
+            ),
             response_type=AdjudicationVerdict,
         )
         if verdict.output.confidence >= thresholds.t4_small_confidence_floor:
             return verdict.output.match, "T4_small"
         frontier = self._model_provider.generate(
-            request=ModelRequest(model=self._frontier_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._frontier_model, prompt=prompt, temperature=0.0
+            ),
             response_type=AdjudicationVerdict,
         )
         return frontier.output.match, "T4_frontier"
@@ -384,7 +388,9 @@ class CascadeResolver:
             candidate_type=candidate.type,
         )
         verdict_call = self._model_provider.generate(
-            request=ModelRequest(model=self._small_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._small_model, prompt=prompt, temperature=0.0
+            ),
             response_type=AdjudicationVerdict,
         )
         if meter is not None:
@@ -396,7 +402,9 @@ class CascadeResolver:
         if verdict.confidence >= thresholds.t4_small_confidence_floor:
             return verdict, "T4_small", self._small_model
         frontier_call = self._model_provider.generate(
-            request=ModelRequest(model=self._frontier_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._frontier_model, prompt=prompt, temperature=0.0
+            ),
             response_type=AdjudicationVerdict,
         )
         if meter is not None:

@@ -321,7 +321,9 @@ class EmbedChunksHandler:
             head=head,
         )
         response = self._model_provider.generate(
-            request=ModelRequest(model=self._settings.prefix_model, prompt=prompt),
+            request=ModelRequest(
+                model=self._settings.prefix_model, prompt=prompt, temperature=0.0
+            ),
             response_type=ContextPrefix,
         )
         meter.record(

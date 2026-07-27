@@ -117,11 +117,21 @@ never trigger anything** — all K/E triggering originates from writes).
 | `fuse` | result_sets → RRF-merged set | reciprocal-rank fusion of parallel channels (D9), exposed as an operator so *agent-composed* channel sets fuse the same way recipes do | S46 |
 | `rerank` | candidates × signal — graph_distance(focal), evidence_count, cross_encoder (flagged) | the D9 rerankers as explicit, inspectable stages | S46, S48 |
 | `hydrate` | ids, depth: record \| evidence \| sources \| bytes, locator? | the §2 confirmation hop + progressive deepening: record → evidence rows + claims → documents → GCS handles. At `depth=bytes` an optional **source locator** (D65) scopes the fetch to a time interval / region, returning a seekable, codec-aware segment (§7 — unmounted parity for media) | S5, S59, all |
-| `transcript` | relation \| observation \| entity \| k_page → its decision history | adjudications, resolution decisions, compile provenance — the audit trail as a first-class query ("why do we believe…") | S8, S32, S35 |
+| `transcript` | relation \| observation \| entity \| k_page → its decision history (recent-first bound; see amendment below) | adjudications, resolution decisions, compile provenance — the audit trail as a first-class query ("why do we believe…") | S8, S32, S35 |
 | `delta` | since T, scope?, kinds? → changed evidence / pages | the change feed as a query (new / capped / invalidated / recompiled) | S13, S14, S30 |
 | `pages_about` | entity \| key → K pages (+ freshness/flags) | **the K routing index read backwards**: the rule-key inverted index built for write-side routing doubles as the reader's discovery index — which pages exist about X, mechanically | S31, S45 |
 | `aggregate` | enumerated forms: count / group-by-predicate / group-by-object / timeline(entity) / delta-top-entities(since T) / typed-absence(type, predicate) | see §9 — enumerated, not general | S12, S26–S28, S30, S40 |
 | `scan` | filter → stream | the batch surface (§9): full exports for compilers, auditors, external analytics — same zero-LLM reads, streaming contract, separate resource pool from interactive | S53 |
+
+**Amendment (2026-07-27, issue #156).** `transcript` (and the `identity_as_of`
+recipe that is one fixed chain over it) is **recent-first bounded** by a
+measurable default (`DEFAULT_TRANSCRIPT_LIMIT`, starting point 40 rows), with
+the envelope's existing truncation marker set when the cap applies. Long
+entity resolution logs were returning hundreds of rows and blowing agent
+reader contexts; S18 already forbids silent caps, so the bound is disclosed
+rather than unbounded-by-default. Callers that need a larger window pass an
+explicit `limit`. This is the same cap-with-signal pattern as `delta`, not a
+new mechanism.
 
 **Temporal parameters — composed, not special-cased (S15/S16).** Every primitive that touches
 validity accepts `valid_at` (world time: "what held at T") and `believed_at` (system time:

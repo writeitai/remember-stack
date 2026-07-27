@@ -229,6 +229,7 @@ class NormalizeRelationsHandler:
                     is_attributed=claim.is_attributed,
                     claim_text=claim.claim_text,
                 ),
+                temperature=0.0,
             ),
             response_type=NormalizationResponse,
         )

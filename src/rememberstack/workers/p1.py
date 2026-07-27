@@ -161,6 +161,7 @@ class LabelFactsHandler:
                             predicate=relation.predicate,
                             object=relation.object_name,
                         ),
+                        temperature=0.0,
                     ),
                     response_type=FactLabelResponse,
                 )
