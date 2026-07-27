@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -35,7 +36,11 @@ from rememberstack.core import KNOWN_OPS
 from rememberstack.core import lint_recipe
 from rememberstack.core import RecipeLintError
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import Envelope
+from rememberstack.model import EvidenceResult
+from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import RankedItem
 from rememberstack.model import Recipe
 from rememberstack.model import RecipeAnswerIntent
 from rememberstack.model import RecipeStep
@@ -48,6 +53,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import EXECUTABLE_OPS
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces import RecipeExecutor
+from rememberstack.surfaces.recipe_executor import _chain_answer
 from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -359,7 +365,7 @@ def test_seeding_upgrades_a_changed_recipe_instead_of_masking_it(
 
     active = registry.by_name(deployment_id=_DEPLOYMENT_ID, name="claims_verbatim")
     assert active is not None
-    assert active.version == 2
+    assert active.version == 3
     assert active.parameters["k"] == {
         "type": "integer",
         "required": False,
@@ -416,17 +422,22 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
             deployment_id=_DEPLOYMENT_ID, entity_id=alice
         ),
     }
-    # the fused recipe: two searches hand-fused the same way the chain does
+    # the fused recipe: two searches hand-fused then claim-hydrated, same chain
     first = engine.search_claims(deployment_id=_DEPLOYMENT_ID, query="alice acme", k=10)
     second = engine.search_claims(
         deployment_id=_DEPLOYMENT_ID, query="alice acme", k=10
     )
-    direct["claims_hybrid_rrf"] = engine.fuse(
+    fused = engine.fuse(
         rankings=[
             [record.claim_id for record in first.evidence],
             [record.claim_id for record in second.evidence],
         ],
         k=60,
+    )
+    direct["claims_hybrid_rrf"] = engine.hydrate_claims(
+        deployment_id=_DEPLOYMENT_ID,
+        claim_ids=[item.item_id for item in fused.ranking],
+        ranking=fused.ranking,
     )
 
     canonical = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
@@ -528,3 +539,177 @@ def test_descriptor_required_order_survives_jsonb_key_reordering() -> None:
     b = recipe_descriptors(recipes=(reordered,))[0].model_dump(mode="json")
     assert a["input_schema"]["required"] == ["from_entity_id", "to_entity_id"]
     assert a == b
+
+
+# --- recipe ergonomics (issue #149) ----------------------------------------
+
+
+def test_claims_hybrid_rrf_chain_ends_with_claim_hydration() -> None:
+    """Hybrid RRF must hydrate ranked claim text, not stop at bare UUIDs.
+
+    Offline structural proof: the stock chain is search×2 → fuse → hydrate.
+    """
+    recipe = next(r for r in CANONICAL_RECIPES if r.name == "claims_hybrid_rrf")
+    assert [step.op for step in recipe.chain] == [
+        "search_claims",
+        "search_claims",
+        "fuse",
+        "hydrate_claims",
+    ]
+    assert recipe.chain[-1].inputs == (2,)
+    assert recipe.version == 3
+    lint_recipe(recipe)
+
+
+def test_hydrate_claims_attaches_evidence_and_keeps_ranking() -> None:
+    """Offline: hydrate_claims confirms claim text while preserving RRF scores.
+
+    Break-then-restore: temporarily dropping the evidence assignment fails
+    the `claim_text` assertion below; restored before commit.
+    """
+    claim_a, claim_b = uuid4(), uuid4()
+    doc_id, chunk_id = uuid4(), uuid4()
+    ranking = (
+        RankedItem(item_id=claim_a, score=0.033, signals={"rrf": 0.033}),
+        RankedItem(item_id=claim_b, score=0.016, signals={"rrf": 0.016}),
+    )
+    evidence = (
+        EvidenceResult(
+            claim_id=claim_a,
+            doc_id=doc_id,
+            chunk_id=chunk_id,
+            claim_text="Alice joined Acme.",
+            source_span="Alice joined Acme.",
+            char_start=0,
+            char_end=18,
+            is_attributed=False,
+            is_current_testimony=True,
+        ),
+        EvidenceResult(
+            claim_id=claim_b,
+            doc_id=doc_id,
+            chunk_id=chunk_id,
+            claim_text="Acme hired Alice.",
+            source_span="Acme hired Alice.",
+            char_start=0,
+            char_end=17,
+            is_attributed=False,
+            is_current_testimony=True,
+        ),
+    )
+
+    class _NullSearchIndex:
+        """Unused by hydrate_claims."""
+
+        def search_claims(
+            self,
+            *,
+            deployment_id: str,
+            vector: tuple[float, ...],
+            k: int,
+            current_only: bool,
+        ) -> tuple[str, ...]:
+            """Never called."""
+            return ()
+
+        def search_facts(
+            self,
+            *,
+            deployment_id: str,
+            vector: tuple[float, ...],
+            k: int,
+            kind: str | None,
+        ) -> tuple[str, ...]:
+            """Never called."""
+            return ()
+
+    engine = QueryEngine(
+        engine=MagicMock(),
+        search_index=_NullSearchIndex(),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+    engine._confirm_claims = (  # type: ignore[method-assign]
+        lambda **_kwargs: (evidence, 0)
+    )
+    envelope = engine.hydrate_claims(
+        deployment_id=uuid4(), claim_ids=(claim_a, claim_b), ranking=ranking
+    )
+    assert envelope.grain == Grain.EVIDENCE
+    assert envelope.evidence == evidence
+    assert envelope.ranking == ranking
+    assert envelope.evidence[0].claim_text == "Alice joined Acme."
+    assert envelope.ranking[0].score == pytest.approx(0.033)
+
+
+def test_when_to_use_guidance_is_on_choice_sensitive_recipes() -> None:
+    """Descriptors must steer tool choice with one cold-reader sentence each."""
+    by_name = {recipe.name: recipe for recipe in (*CANONICAL_RECIPES, *GRAPH_RECIPES)}
+    assert "WHEN/date" in by_name["entity_timeline"].description
+    assert "preferences" in by_name["observation_current"].description
+    assert "single-pass default" in by_name["claims_verbatim"].description
+    assert "reciprocal-rank fusion" in by_name["claims_hybrid_rrf"].description
+    assert "not a biography" in by_name["identity_as_of"].description
+    assert "connect" in by_name["graph_path"].description
+    assert "surrounds" in by_name["graph_neighborhood"].description
+    assert "may be empty when K is not composed" in by_name["pages_about"].description
+
+
+def test_hybrid_envelope_carries_hydrated_evidence(corpus: _Corpus) -> None:
+    """claims_hybrid_rrf returns claim text plus ranking scores (Postgres)."""
+    engine = _query_engine(corpus)
+    executor = RecipeExecutor(query_engine=engine)
+    recipe = next(r for r in CANONICAL_RECIPES if r.name == "claims_hybrid_rrf")
+    envelope = executor.execute(
+        deployment_id=_DEPLOYMENT_ID,
+        recipe=recipe,
+        arguments={"query": "alice acme", "k": 10},
+    )
+    assert envelope.grain == Grain.EVIDENCE
+    assert envelope.evidence, "hybrid must hydrate claim text, not only UUIDs"
+    assert envelope.ranking, "hybrid must keep RRF ranking signals"
+    assert {record.claim_id for record in envelope.evidence} == {
+        item.item_id for item in envelope.ranking
+    }
+    assert all(record.claim_text for record in envelope.evidence)
+    assert all(item.score > 0 for item in envelope.ranking)
+
+
+def test_chain_answer_reports_upstream_hydration_drops() -> None:
+    """The recipe's answer carries the WHOLE chain's drop count.
+
+    The search passes feeding fuse → hydrate drop stale nominations in
+    envelopes the executor discards; before the fix the hybrid answer reported
+    dropped_by_hydration=0 while drops happened upstream (Codex review
+    finding on the v4 branch).
+    """
+    freshness = Freshness(pg_live_ts=datetime(2026, 7, 27, tzinfo=UTC))
+    chain = [
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=0),
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
+    ]
+    answer = _chain_answer(envelopes=chain)
+    assert answer.dropped_by_hydration == 3
+    # A single-step chain is returned untouched.
+    single = _chain_answer(envelopes=[chain[0]])
+    assert single.dropped_by_hydration == 1
+
+
+def test_hydrate_chain_with_two_inputs_is_lint_rejected() -> None:
+    """A lint-clean chain must run exactly as written; ambiguous inputs fail."""
+    recipe = Recipe(
+        name="bad_hydrate",
+        description="two inputs into hydrate must not lint",
+        parameters={"query": {"type": "string", "required": True}},
+        chain=(
+            RecipeStep(op="search_claims", bind={"query": "query"}),
+            RecipeStep(op="search_claims", bind={"query": "query"}),
+            RecipeStep(op="hydrate_claims", inputs=(0, 1)),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+    )
+    with pytest.raises(RecipeLintError, match="at most 1"):
+        lint_recipe(recipe=recipe)

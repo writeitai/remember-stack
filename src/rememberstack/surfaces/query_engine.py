@@ -486,7 +486,8 @@ class QueryEngine:
         recipe applies, exposed so an agent's ad-hoc channel set fuses
         identically. The grain is EVIDENCE — a fused order is over
         nominations still to be confirmed by id-hydration (D48), never
-        current-fact truth on its own.
+        current-fact truth on its own. Call `hydrate_claims` on the ranked
+        ids when the caller needs claim text, not only scores.
         """
         fused = reciprocal_rank_fusion(rankings=rankings, k=k)
         return Envelope(
@@ -499,6 +500,42 @@ class QueryEngine:
                 kind=NegativeKind.KNOWN_EMPTY,
                 explanation="no channel supplied any candidate to fuse",
                 workaround=None,
+            ),
+        )
+
+    def hydrate_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        claim_ids: Sequence[UUID],
+        ranking: Sequence[RankedItem] = (),
+    ) -> Envelope:
+        """Confirm claim ids into evidence rows, keeping any prior ranking.
+
+        The D48 confirmation hop for an ordered claim-id list (typically the
+        output of `fuse`/`rerank`): re-reads each claim from the spine and
+        drops what no longer confirms. When a ranking is supplied, scores and
+        order are preserved on the envelope for the confirmed ids so a fused
+        result is usable without a second tool call.
+        """
+        ordered_ids = tuple(claim_ids)
+        evidence, dropped = self._confirm_claims(
+            deployment_id=deployment_id, claim_ids=ordered_ids
+        )
+        confirmed = {record.claim_id for record in evidence}
+        kept_ranking = tuple(item for item in ranking if item.item_id in confirmed)
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            evidence=evidence,
+            ranking=kept_ranking,
+            freshness=_freshness(),
+            dropped_by_hydration=dropped,
+            negative=None
+            if evidence
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation="no nominated claims confirmed at hydration",
+                workaround="broaden the query or inspect the source artifacts",
             ),
         )
 

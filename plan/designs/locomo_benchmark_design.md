@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v3
+protocol                RS-LoCoMo-Full-v4
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -45,6 +45,13 @@ new protocol version.
 became `arguments_json`, a JSON-object-encoded string, because compliant strict
 providers reject a free-form object schema outright (§2.4). The answer prompt
 changed accordingly. No v2 score ever existed.
+
+**v3 → v4 (2026-07-27, before any scored run):** recipe descriptors gained
+when-to-use guidance; `claims_hybrid_rrf` hydrates ranked claim text (not
+scores alone); the answer-agent prompt adds loop guards (no identical
+tool+arguments retries; switch tools after a useless result; try a claims
+search before "Unknown"). Prompt, tool-catalog hash, and descriptors all
+changed, so the protocol version bumps. No v3 score is comparable.
 
 ### 2.1 Why v2+ uses a stronger judge
 
@@ -298,6 +305,12 @@ For each question:
 The agent is instructed to orient, verify current facts, and audit evidence while respecting
 grain, validity, freshness, truncation, typed negatives, and hydration drops. It receives no gold
 answer, evidence IDs, summaries, or outside retrieval.
+
+Loop guards in the frozen answer prompt (v4): never repeat a tool call with the
+same tool and the same arguments; if a tool yields nothing useful, switch tools
+rather than retrying it; before answering "Unknown", try `claims_verbatim` or
+`claims_hybrid_rrf` at least once. These are prompt discipline, not harness
+enforcement — the harness still only bounds call counts.
 
 Evidence claims found anywhere in the trace are de-duplicated in first-seen order for the coarse
 session diagnostic. This diagnostic remains separate from the primary score.
