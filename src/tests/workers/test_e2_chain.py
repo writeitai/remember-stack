@@ -342,11 +342,13 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
     # the attributed stance is kept as an attributed claim (D59):
     assert stance["is_attributed"]
 
-    # drops, flags, and edits are ledgered (D33); Selection is enforced — the
-    # fused call's attempt to resurrect the dropped advice span never landed:
+    # drops, flags, edits, and Claimify-stage rejections are ledgered (D33/#161);
+    # Selection is enforced — the fused call's attempt to resurrect the dropped
+    # advice span never landed (it becomes grounding_rejected, not a claims row):
     by_kind = {decision["decision_type"]: decision for decision in decisions}
     assert set(by_kind) == {
         "decontext_edit",
+        "grounding_rejected",
         "selection_drop",
         "selection_keep_flagged",
     }
@@ -359,7 +361,31 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
         flagged_claim = connection.execute(
             text("SELECT claim_id FROM claims WHERE kept_flagged")
         ).scalar_one()
+        rejections = (
+            connection.execute(
+                text(
+                    "SELECT source_span, edit_detail"
+                    " FROM claim_extraction_decisions"
+                    " WHERE decision_type = 'grounding_rejected'"
+                    " ORDER BY source_span"
+                )
+            )
+            .mappings()
+            .all()
+        )
     assert by_kind["selection_keep_flagged"]["claim_id"] == flagged_claim
+    # three silent deaths become three named gate rejections (#161):
+    assert [row["source_span"] for row in rejections] == [
+        "Atlas was cancelled in March",
+        "Project Atlas launched in 2024",
+        "You should try it yourself.",
+    ]
+    gates = {row["source_span"]: row["edit_detail"]["gate"] for row in rejections}
+    assert gates["Atlas was cancelled in March"] == "span_not_found"
+    assert gates["Project Atlas launched in 2024"] == "added_context_unverified"
+    assert gates["You should try it yourself."] == "outside_kept_ranges"
+    # both keeps produced accepted claims — no claimify_omitted rows:
+    assert "claimify_omitted" not in by_kind
 
     assert links == len(claims)
     assert [call["call_key"].split(":", 1)[0] for call in metered_calls] == [

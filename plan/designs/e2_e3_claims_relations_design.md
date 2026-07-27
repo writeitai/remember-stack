@@ -148,16 +148,42 @@ in the bundle. The dropped opinion never reaches grounding.
 
 Two safeguards keep aggressive Selection safe:
 
-- **A decision ledger (D33).** Every Selection drop and every decontextualization edit is written to an
-  append-only, version-stamped `claim_extraction_decisions` table. A better prompt can later re-examine
-  *only the drops*; a rebuild reads stored claims + decisions and never re-calls the model (the LLM
-  rungs are replay-from-storage, like any non-deterministic stage — D7); the per-chunk worker is
-  idempotent on content-hash + extractor version (D12).
+- **A decision ledger (D33).** Every Selection drop, every decontextualization edit, and every
+  Claimify-stage loss is written to an append-only, version-stamped `claim_extraction_decisions`
+  table. A better prompt can later re-examine *only the drops*; a rebuild reads stored claims +
+  decisions and never re-calls the model (the LLM rungs are replay-from-storage, like any
+  non-deterministic stage — D7); the per-chunk worker is idempotent on content-hash + extractor
+  version (D12).
 - **A recall envelope (D35).** Selection biases toward KEEP when unsure; **never-drop classes**
   (quantities, dates, named-entity + predicate, change-of-state language) are protected even if phrased
   opinionatedly; a low-confidence `kept_flagged` outcome marks-for-review instead of hard-deleting; and
   planted rare-fact canaries fail CI if Selection drops them. Drop-rates are tuned against **per-fact**
   loss, never a corpus average — a uniquely-attested fact has no second copy to fall back on.
+
+**Amendment (2026-07-27, issue #161):** Selection keep/keep_flagged is not the end of the story.
+Between a keep and an accepted `claims` row sit Claimify (the fused decontextualize+decompose call)
+and the deterministic D32 grounding gates. Without ledger rows for those stages, a keep that never
+lands a claim is indistinguishable from a keep that produced a claim the gate rejected — and plain
+(unflagged) keeps that die are completely invisible. The D33 transcript therefore also records:
+
+| `decision_type` | When written | `source_span` | `edit_detail` |
+|---|---|---|---|
+| `claimify_omitted` | A kept Selection span for which Claimify returned **no claim at all** (the model simply skipped it). One row per dead keep. | The Selection span. | null |
+| `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>}`. |
+
+**Invariant — every kept span is accounted for end-to-end.** After grounding, each keep OR
+keep_flagged span ends in *exactly one* of:
+
+1. **accepted claim(s)** — one or more `claims` rows whose span targets the keep (and any
+   `decontext_edit` / `selection_keep_flagged` pairing that already applied); or
+2. **`grounding_rejected` row(s)** — Claimify returned at least one claim about this span, and every
+   such claim failed a gate (the model tried; the gate named which check fired); or
+3. **a single `claimify_omitted` row** — Claimify returned nothing for this span.
+
+No double-counting: a span that has a `grounding_rejected` row and zero accepted claims does **not**
+also get `claimify_omitted` — omission means "the model never returned a claim," not "no claim
+survived grounding." Cross-model extraction comparisons can then show *why* a stronger model lands
+more claims (fewer omissions vs fewer gate rejections) instead of only *that* it does.
 
 ## 4. Why there is no value gate (the non-goal)
 
