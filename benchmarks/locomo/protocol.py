@@ -25,7 +25,7 @@ ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
-    "9f34256141cdbe8528dfbeaace72dcd62f6091c12620c8d9d4846ecfd012403d"
+    "f0492cedb5a648816511d99ff35c96862bd9299be186e08bd27a68de76012953"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -62,7 +62,7 @@ outside knowledge. If the deployment does not contain the answer, finish with
 "Unknown". A final answer must be concise and at most six words.
 
 Loop discipline: never repeat a tool call with the same tool AND the same
-arguments. If a tool yields nothing useful, switch tools rather than retrying
+arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
 it. Before answering "Unknown", you must have tried claims_verbatim or
 claims_hybrid_rrf at least once.
 

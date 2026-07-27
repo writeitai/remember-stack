@@ -217,8 +217,8 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         name="claims_verbatim",
         description="What sources actually asserted, verbatim, for a query"
         " (S6). Evidence grain — never a current-fact answer (the D41 bar)."
-        " Phrase-anchored: prefer when the question quotes or names wording"
-        " to match.",
+        " Semantic search over claim text; the single-pass default for finding"
+        " what was said.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -236,10 +236,10 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     ),
     Recipe(
         name="claims_hybrid_rrf",
-        description="Verbatim claims for a query, fused across parallel channel"
-        " orderings by reciprocal-rank fusion (S46), then hydrated to claim"
-        " text. Evidence grain with ranking scores kept. Prefer for broader"
-        " semantic+lexical search when exact phrasing is unknown.",
+        description="Verbatim claims for a query: semantic search passes fused"
+        " by reciprocal-rank fusion (S46), then hydrated to claim text."
+        " Evidence grain with ranking scores kept. Prefer when a single"
+        " claims_verbatim search returned too little.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {

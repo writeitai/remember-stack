@@ -36,7 +36,9 @@ from rememberstack.core import KNOWN_OPS
 from rememberstack.core import lint_recipe
 from rememberstack.core import RecipeLintError
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import Envelope
 from rememberstack.model import EvidenceResult
+from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import Recipe
@@ -51,6 +53,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import EXECUTABLE_OPS
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces import RecipeExecutor
+from rememberstack.surfaces.recipe_executor import _chain_answer
 from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -644,8 +647,8 @@ def test_when_to_use_guidance_is_on_choice_sensitive_recipes() -> None:
     by_name = {recipe.name: recipe for recipe in (*CANONICAL_RECIPES, *GRAPH_RECIPES)}
     assert "WHEN/date" in by_name["entity_timeline"].description
     assert "preferences" in by_name["observation_current"].description
-    assert "Phrase-anchored" in by_name["claims_verbatim"].description
-    assert "semantic+lexical" in by_name["claims_hybrid_rrf"].description
+    assert "single-pass default" in by_name["claims_verbatim"].description
+    assert "reciprocal-rank fusion" in by_name["claims_hybrid_rrf"].description
     assert "not a biography" in by_name["identity_as_of"].description
     assert "connect" in by_name["graph_path"].description
     assert "surrounds" in by_name["graph_neighborhood"].description
@@ -670,3 +673,43 @@ def test_hybrid_envelope_carries_hydrated_evidence(corpus: _Corpus) -> None:
     }
     assert all(record.claim_text for record in envelope.evidence)
     assert all(item.score > 0 for item in envelope.ranking)
+
+
+def test_chain_answer_reports_upstream_hydration_drops() -> None:
+    """The recipe's answer carries the WHOLE chain's drop count.
+
+    The search passes feeding fuse → hydrate drop stale nominations in
+    envelopes the executor discards; before the fix the hybrid answer reported
+    dropped_by_hydration=0 while drops happened upstream (Codex review
+    finding on the v4 branch).
+    """
+    freshness = Freshness(pg_live_ts=datetime(2026, 7, 27, tzinfo=UTC))
+    chain = [
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=0),
+        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
+    ]
+    answer = _chain_answer(envelopes=chain)
+    assert answer.dropped_by_hydration == 3
+    # A single-step chain is returned untouched.
+    single = _chain_answer(envelopes=[chain[0]])
+    assert single.dropped_by_hydration == 1
+
+
+def test_hydrate_chain_with_two_inputs_is_lint_rejected() -> None:
+    """A lint-clean chain must run exactly as written; ambiguous inputs fail."""
+    recipe = Recipe(
+        name="bad_hydrate",
+        description="two inputs into hydrate must not lint",
+        parameters={"query": {"type": "string", "required": True}},
+        chain=(
+            RecipeStep(op="search_claims", bind={"query": "query"}),
+            RecipeStep(op="search_claims", bind={"query": "query"}),
+            RecipeStep(op="hydrate_claims", inputs=(0, 1)),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+    )
+    with pytest.raises(RecipeLintError, match="at most 1"):
+        lint_recipe(recipe=recipe)

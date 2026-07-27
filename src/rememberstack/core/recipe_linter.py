@@ -43,6 +43,7 @@ class _OpSpec:
     grain: Grain  # the D49 grain this op's envelope carries
     validity_filtered: bool  # filters BOTH clocks to "now" (the current_facts bar)
     min_inputs: int = 0  # prior steps this op must consume
+    max_inputs: int | None = None  # cap where the executor consumes a fixed count
 
 
 # The op vocabulary a recipe chain may compose — exactly the set the executor
@@ -58,7 +59,9 @@ _OPS: dict[str, _OpSpec] = {
     "lookup_observations": _OpSpec(Grain.FACT, validity_filtered=True),
     "aggregate": _OpSpec(Grain.FACT, validity_filtered=False),
     "search_claims": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
-    "hydrate_claims": _OpSpec(Grain.EVIDENCE, validity_filtered=False, min_inputs=1),
+    "hydrate_claims": _OpSpec(
+        Grain.EVIDENCE, validity_filtered=False, min_inputs=1, max_inputs=1
+    ),
     "hydrate_relation": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
     "transcript": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
     "delta": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
@@ -99,6 +102,12 @@ def _check_ops_and_inputs(recipe: Recipe) -> None:
             raise RecipeLintError(
                 f"recipe {recipe.name!r} step {index} names unknown op"
                 f" {step.op!r}; known ops: {', '.join(sorted(KNOWN_OPS))}"
+            )
+        if spec.max_inputs is not None and len(step.inputs) > spec.max_inputs:
+            raise RecipeLintError(
+                f"step {index}: op {step.op!r} consumes at most"
+                f" {spec.max_inputs} input(s); a lint-clean chain must run"
+                " exactly as written"
             )
         if len(step.inputs) < spec.min_inputs:
             raise RecipeLintError(
