@@ -2733,41 +2733,62 @@ this protocol; matched baseline runs in WP-8.3 must use the same public tool bud
 fingerprint. Any changed tool inventory, call budget, model, prompt, schema, judge repetition,
 ingestion mapping, or K mode is a separately named protocol.
 
-## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and consumed
+## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and orientation-only
 
-**Decision (2026-07-27, owner-directed: the system must scale).** The E0 structure stage stops
-asking one frontier-model call to draw the whole section tree — spans, roles, and summaries — over
-up to 200K characters in a single strict-JSON response. Instead: (1) the section **skeleton is
-parsed deterministically** from the conversion-controlled markdown's explicit heading syntax, with
-the LLM demoted to a fallback for structureless documents that returns searchable heading strings,
-never raw character offsets; (2) **summaries are produced bottom-up** — one bounded flash-class
-call per leaf section, parents composed from child summaries — parallel, content-hash cached per
-section; (3) **summaries are consumed, not archived**: they feed E1 context prefixes and enter the
-E2 extraction bundle as the D31 "section path + summary" element (target + ancestors), with the
-`added_context` tag enum extended accordingly. The §4 output contract (every document gets
-`document_sections` rows on the block grid; sidecar + PG index) is unchanged. Design detail:
-`plan/designs/e0_files_design.md` §4.1.
+**Decision (2026-07-27, owner-directed: the system must scale; revised after Grok + Codex
+review of PR #164). Refines D71.** The E0 structure stage stops asking one LLM call to draw the
+whole section tree — spans, roles, and summaries — over up to 200K characters in a single
+schema-constrained response. Instead: (1) the section **skeleton is parsed deterministically**
+from the heading blocks conversion emits, with the LLM demoted to a fallback — triggered by
+insufficient heading density or oversized unsegmented leaves, not only zero headings — that
+returns exact block-contained anchor **strings** resolved by deterministic search, never raw
+character offsets; (2) **roles are assigned** by deterministic normalized-title rules, then a
+bounded title-only classifier for undecided headings, then explicit `body`; (3) **summaries are
+produced bottom-up** on a dedicated flash-class summary seat — leaf calls sharded at block grain
+under a hard token ceiling, parent calls reading their own direct blocks plus child one-liners
+with balanced fan-in — parallel, cached per section on content + child-summary + model + prompt
++ version hashes; (4) the **placement hint rides the root reduction call** (null on the degraded
+path, P3 falls back to its type default); (5) **summaries are consumed as orientation only**:
+they feed the E1 context-prefix input and the E2 bundle's D31 "section path + summary" element
+(target + ancestors), but they are **never a grounding source** — no `summary` added-context
+kind exists, additions must still come from source-derived elements — and they are **excluded
+from extraction-correctness inputs** (`extraction_input_hash`), so re-summarization never
+invalidates or re-extracts unchanged chunks. The §4 output contract (every document gets
+`document_sections` rows on the block grid, non-null roles, sidecar + PG index, placement hint)
+is unchanged. Design detail: `plan/designs/e0_files_design.md` §4.1.
 
-**Context.** The one-shot route has three measured cliffs: LLM character-offset arithmetic that
-the deterministic snap can make well-formed but never correct (no anchor recovery); the §2.4
-long-context strict-JSON failure zone (middle-of-document neglect, output-token ceilings on large
-trees); and the hard `max_prompt_chars` truncation cliff. It also bills a frontier model ~50K
-tokens per document for work that is mostly transcription of explicit markdown structure, and the
-summaries it produces were write-only — the extraction bundle never saw them despite the D31
-design table listing them (issue #163). Pipeline order (structure before chunk before extraction)
-already guarantees summaries exist before extraction; only consumption was missing.
+**Context.** Three structural cliffs are visible in the shipped one-shot route (observed code
+risks — per-cliff rates not yet measured in-repo): character-offset proposals the deterministic
+snap can make well-formed but never correct (no anchor recovery); a single long-context
+structured-output call — the call shape `locomo_benchmark_design.md` §2.4 documents as
+provider-unreliable, compounded by known long-context neglect and output-token ceilings; and the
+`max_prompt_chars` cut past which content is unseen by the model. The route bills the
+extraction-tier structurer seat (default `gpt-5.6-luna`) up to ~50K input tokens on a near-cap
+document for work that is mostly transcription of explicit markdown structure, and the summaries
+it produces were write-only — the extraction bundle never saw them despite the D31 design table
+listing them (issue #163). Pipeline order (structure → chunk → extraction) already guarantees
+summaries exist before extraction; only consumption was missing.
 
 **Rejected alternatives.** Upgrading the one-shot seat to a stronger model (pays more to stand
 closer to the same cliffs); per-chunk instead of per-section summaries (cost scales with chunks,
 duplicates the E1 prefix); keeping summaries write-only (unmeasurable quality, unused spend);
 page-anchored offsets à la original PageIndex (our substrate is markdown, not paginated PDF);
-letting the fallback LLM keep proposing raw offsets (the failure mode being removed).
+letting the fallback LLM keep proposing raw offsets (the failure mode being removed); admitting
+`summary` as an `added_context` grounding source (an abstractive summary would let invented
+phrases pass the membership-only D32 layer-2 check — a fact-injection channel, per both
+reviews); hashing ancestor summaries into `extraction_input_hash` (one leaf edit would fan out
+into document-wide re-extraction, breaking D56's edit-local reuse).
 
-**Consequences.** `structurer_version` splits into a deterministic skeleton version and a summary
-seat/version so a summary-model swap re-summarizes without re-structuring; the summary seat is a
-D70 per-deployment port binding defaulting to a flash-class model; the E2 `added_context` enum
-gains `summary` with grounding-gate verification and an extractor version bump; re-ingests
-re-summarize only content-hash-changed sections. Summary quality is judged only where consumed
-(Selection drop quality on low-value roles, prefix quality, #150 scorecard canaries).
-Implementation is sequenced behind the #161 loss ledger so the bundle change lands with its
-measurement in place; entity hints (#163) remain a separate, later decision gated on #148 lint.
+**Consequences.** `structurer_version` splits into hash-stamped generations per D12 — skeleton,
+role pass, summary seat, placement — immutable with a current pointer (first-write-wins section
+rows and the write-once sidecar are never edited in place; regeneration writes a new generation
+and moves the pointer; existing deployments backfill as a legacy generation; sidecar URIs
+versioned). `REMEMBERSTACK_STRUCTURER_*` narrows to the fallback structure-proposal seat; the
+summary seat is a new D70 per-deployment binding defaulting to a flash-class model. The D38
+converter contract gains the explicit clause that conversion preserves/emits heading syntax when
+the source has structure. The E1 prefix prompt gains the size-capped target + ancestor
+one-liners; the E2 bundle change bumps the extractor version. Cost improvement is expected, to
+be measured, not asserted (#150 scorecard canaries; Selection drop quality on low-value roles;
+prefix quality). Implementation (#165) is sequenced behind the #161 loss ledger so the bundle
+change lands with its measurement in place; entity hints (#163) remain a separate, later
+decision gated on #148 lint.

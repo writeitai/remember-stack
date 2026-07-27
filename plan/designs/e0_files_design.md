@@ -227,49 +227,99 @@ content and structure are freshly understood. It is *advisory*: the authoritativ
 materialized later by the projection (§6), which can reconcile, rename, and reorganize across the
 whole corpus as it grows (a single document cannot know the global tree).
 
-### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bottom-up summaries
+### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bounded summaries, orientation-only consumption
 
-The shipped route is a **single LLM call** over up to `max_prompt_chars` of `document.md`
-returning the entire tree — every span, role, and summary — as one strict-JSON response, with
-char offsets snapped backward onto the block grid. That shape has three measured cliffs on real
-documents:
+The shipped route is a **single schema-constrained LLM call** over up to `max_prompt_chars`
+of `document.md` (default 200K; documents under `min_blocks_for_llm` skip the call) returning
+the entire tree — every span, role, and summary — in one response, with char offsets snapped
+backward onto the block grid. Three structural cliffs are visible in that shape (observed code
+risks; the per-cliff failure rates are not yet measured in-repo):
 
 1. **Offset arithmetic without anchors.** The model proposes `char_start`/`char_end` as
    numbers; the snap makes any input *well-formed* but cannot make it *correct* — there is no
-   title-text search or recovery, so a miscounted offset yields a well-formed wrong tree with
-   no error signal. LLMs are systematically bad at character counting.
-2. **Long-context strict-JSON in one shot.** One call must read ~200K chars and emit the full
-   tree; this is the §2.4 failure zone (middle-of-document neglect, output-token ceiling on
-   large trees, silent truncation/flattening) and confines the seat to frontier models.
-3. **The truncation cliff.** Content past `max_prompt_chars` is never structured at all.
+   title-text search or recovery (`section_snap.py` snaps positions only), so a miscounted
+   offset yields a well-formed wrong tree with no error signal.
+2. **Long-context structured output in one shot.** One call reads up to ~200K chars and must
+   emit the full tree; provider structured-output unreliability is documented at
+   `locomo_benchmark_design.md` §2.4, and long-context neglect plus output-token ceilings on
+   large trees are known model failure modes. The shape confines the seat to strong models
+   (default: the extraction-tier `gpt-5.6-luna`).
+3. **The truncation cliff.** Content past `max_prompt_chars` is unseen by the model —
+   mechanically it still lands under the root or the last proposed sibling, but its internal
+   structure is never proposed.
 
 D79 replaces the shape, not the contract (§4's output contract — `document_sections` rows for
-every document, sidecar + PG index, block-grid spans — is unchanged):
+every document, sidecar + PG index, block-grid spans, non-null roles, a placement hint — is
+unchanged):
 
-- **Skeleton: parse, don't ask.** `document.md` is conversion-controlled markdown whose
-  headings are explicit syntax; a deterministic parser builds the section tree for structured
-  documents with zero LLM calls and exact boundaries. The LLM runs only as a **fallback for
-  structureless documents**, and the fallback contract returns heading/anchor **strings**
-  located by deterministic text search — never raw character offsets.
-- **Summaries: bottom-up, bounded, cheap.** Leaf sections get a one-line summary from a
-  dedicated **summary seat** (D70 port binding, default flash-class) reading only that
-  section's text; parent summaries compose from child summaries (map-reduce), so no call's
-  context grows with document size. Calls are parallel and **content-hash cacheable per
-  section** — a re-ingest re-summarizes only changed sections. This is the shape where cheap
-  models are reliable: bounded context, no arithmetic, no giant output.
-- **Summaries become consumed context.** They feed the E1 context-prefix input (as §4 already
-  claims) and enter the **E2 bundle** as the D31 "section path + summary" element — target
-  section summary plus ancestor summaries, so a chunk in subchapter 8.2 sees the book's and
-  chapter 8's one-liners. The `added_context` tag enum gains `summary` and the grounding gate
-  verifies against it; extractor version bumps. Pipeline order already guarantees summaries
-  exist before extraction — this closes the consumption gap (issue #163, summary element).
-- **Provenance splits.** `structurer_version` divides into a deterministic skeleton version
-  and a summarizer seat/version, so a summary-model swap re-summarizes without re-structuring.
+- **Skeleton: parse, don't ask.** A deterministic parser builds the section tree from the
+  markdown heading blocks the conversion already emits (`BlockType.HEADING` — heading starts
+  are block boundaries by construction). The converter contract (D38) is amended to state it
+  explicitly: conversion **preserves or emits heading syntax when the source has structure**
+  (it cannot invent structure from OCR text or `<div>` soup — that is the fallback's job).
+  The LLM fallback triggers on **insufficient heading density or an oversized unsegmented
+  leaf**, not only on zero headings (a media transcript with one `## Transcript` wrapper
+  heading still needs segmentation). The fallback returns anchor **strings** — exact,
+  block-contained substrings with occurrence-order disambiguation, resolved by deterministic
+  search — never raw character offsets; an anchor that resolves ambiguously or not at all
+  degrades to the enclosing parent, mirroring the snap's degrade-to-parent rule.
+- **Roles: deterministic first, classifier second.** The parser cannot produce the §4 role
+  enum, and roles are load-bearing (Selection's low-value drops, crossref cite mining from
+  `references` sections). Role assignment becomes: (1) deterministic normalized-title rules
+  ("References"/"Bibliography" → `references`, "Abstract" → `abstract`, "Appendix" →
+  `appendix`, media wrapper headings → their fixed roles, …); (2) a bounded title-only
+  classifier call for headings the rules do not decide; (3) explicit `body` on failure. The
+  role pass carries its own generation version.
+- **Summaries: bottom-up, bounded by construction.** Leaf sections get a one-line summary
+  from a dedicated **summary seat** (D70 port binding, default flash-class). Bounded means
+  bounded: a leaf larger than the summary-call token ceiling is sharded at block grain and
+  reduced; a parent call reads its **own direct blocks plus its children's one-liners** (a
+  chapter's preamble is content too) with balanced fan-in when children are many. Calls are
+  parallel and cached per section; the cache key is the ordered constituent block hashes,
+  child-summary hashes, model, prompt, generation parameters, and summarizer version. This is
+  the call shape where cheap models are reliable: bounded context, no arithmetic, no giant
+  output.
+- **Placement rides the root reduction.** The one-shot call also produced the D39 placement
+  hint; that responsibility moves to the **document-level (root) summary call**, which sees
+  exactly what placement needs — the title, source kind, and the child one-liners. On the
+  degraded path (no summaries), placement is null and the P3 projection falls back to its
+  type-based default, as it already must for failed structuring.
+- **Consumption: orientation only, never load-bearing.** Summaries feed the E1
+  context-prefix input (the prefix prompt gains the target + ancestor one-liners, size-capped)
+  and enter the **E2 bundle** as the D31 "section path + summary" element — target summary
+  plus ancestor one-liners, so a chunk in subchapter 8.2 sees the book's and chapter 8's
+  lines. Two hard rules keep this sound:
+  1. **A summary is never a grounding source.** Summaries are abstractive LLM text; if
+     `added_context` could cite them, an invented phrase in a summary could be laundered into
+     a claim through the membership-only D32 layer-2 check. The allowed `added_context`
+     source kinds stay exactly `header|neighbour|prefix` (+ `hint` where designed) — **no
+     `summary` kind exists**. The model may *read* summaries to choose an interpretation; any
+     text it *adds* must still come from source-derived elements. (This re-states §4's
+     "context, never as facts" as an enforced contract, and hardens the same rule already
+     implicit for the prefix.)
+  2. **Summaries are excluded from extraction-correctness inputs.** They do not enter
+     `extraction_input_hash` (the same exclusion D56 already applies to LLM-derived context),
+     so a re-summarization — including an ancestor summary changing because a sibling leaf
+     was edited — never silently invalidates or re-extracts unchanged chunks. Better
+     summaries improve *future* extractions; they never fan out into document-wide
+     reprocessing.
+- **Provenance and migration.** `structurer_version` splits into generations: skeleton
+  (deterministic parser + fallback contract), role pass, summary seat, and placement — each
+  hash-stamped per D12. Structure/summary generations are immutable with a current pointer
+  (the `(version_id, node_path)` first-write-wins rows and the write-once `pageindex.json`
+  cannot be edited in place); a regeneration writes a new generation and moves the pointer,
+  and existing deployments' rows are backfilled as a legacy generation. Sidecar URIs are
+  versioned accordingly. `REMEMBERSTACK_STRUCTURER_*` narrows to the fallback
+  structure-proposal seat; the summary seat gets its own binding. **Refines D71.**
 
-Cost at scale: the shipped route bills a frontier model for ~50K tokens per document; D79 is a
-parser plus N small flash-class calls — an order of magnitude cheaper on long documents, and
-strictly more robust. Summary quality is measured where summaries are consumed (Selection
-drop quality, prefix quality, #150 scorecard canaries), not judged in prose.
+Cost at scale: the shipped route can bill the structurer seat up to ~50K input tokens on a
+near-cap document; D79 is a parser plus bounded flash-class calls, expected — to be measured,
+not asserted — to be substantially cheaper on long documents and no worse on short ones (below
+`min_blocks_for_llm` neither route calls a model). Summary quality is judged only where
+summaries are consumed (Selection drop quality, prefix quality, #150 scorecard canaries), not
+in prose.
+
+## 4A. Cross-references — the `crossref` sub-worker
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
 `DOC_CROSSREF` graph edges (P2) and one source of the E2 bundle's entity hints
