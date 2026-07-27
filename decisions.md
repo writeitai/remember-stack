@@ -2732,3 +2732,42 @@ joins it with claim embedding. The API/query writer share `P1Settings`. WP-8.2 c
 this protocol; matched baseline runs in WP-8.3 must use the same public tool budget and
 fingerprint. Any changed tool inventory, call budget, model, prompt, schema, judge repetition,
 ingestion mapping, or K mode is a separately named protocol.
+
+## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and consumed
+
+**Decision (2026-07-27, owner-directed: the system must scale).** The E0 structure stage stops
+asking one frontier-model call to draw the whole section tree — spans, roles, and summaries — over
+up to 200K characters in a single strict-JSON response. Instead: (1) the section **skeleton is
+parsed deterministically** from the conversion-controlled markdown's explicit heading syntax, with
+the LLM demoted to a fallback for structureless documents that returns searchable heading strings,
+never raw character offsets; (2) **summaries are produced bottom-up** — one bounded flash-class
+call per leaf section, parents composed from child summaries — parallel, content-hash cached per
+section; (3) **summaries are consumed, not archived**: they feed E1 context prefixes and enter the
+E2 extraction bundle as the D31 "section path + summary" element (target + ancestors), with the
+`added_context` tag enum extended accordingly. The §4 output contract (every document gets
+`document_sections` rows on the block grid; sidecar + PG index) is unchanged. Design detail:
+`plan/designs/e0_files_design.md` §4.1.
+
+**Context.** The one-shot route has three measured cliffs: LLM character-offset arithmetic that
+the deterministic snap can make well-formed but never correct (no anchor recovery); the §2.4
+long-context strict-JSON failure zone (middle-of-document neglect, output-token ceilings on large
+trees); and the hard `max_prompt_chars` truncation cliff. It also bills a frontier model ~50K
+tokens per document for work that is mostly transcription of explicit markdown structure, and the
+summaries it produces were write-only — the extraction bundle never saw them despite the D31
+design table listing them (issue #163). Pipeline order (structure before chunk before extraction)
+already guarantees summaries exist before extraction; only consumption was missing.
+
+**Rejected alternatives.** Upgrading the one-shot seat to a stronger model (pays more to stand
+closer to the same cliffs); per-chunk instead of per-section summaries (cost scales with chunks,
+duplicates the E1 prefix); keeping summaries write-only (unmeasurable quality, unused spend);
+page-anchored offsets à la original PageIndex (our substrate is markdown, not paginated PDF);
+letting the fallback LLM keep proposing raw offsets (the failure mode being removed).
+
+**Consequences.** `structurer_version` splits into a deterministic skeleton version and a summary
+seat/version so a summary-model swap re-summarizes without re-structuring; the summary seat is a
+D70 per-deployment port binding defaulting to a flash-class model; the E2 `added_context` enum
+gains `summary` with grounding-gate verification and an extractor version bump; re-ingests
+re-summarize only content-hash-changed sections. Summary quality is judged only where consumed
+(Selection drop quality on low-value roles, prefix quality, #150 scorecard canaries).
+Implementation is sequenced behind the #161 loss ledger so the bundle change lands with its
+measurement in place; entity hints (#163) remain a separate, later decision gated on #148 lint.

@@ -227,7 +227,49 @@ content and structure are freshly understood. It is *advisory*: the authoritativ
 materialized later by the projection (§6), which can reconcile, rename, and reorganize across the
 whole corpus as it grows (a single document cannot know the global tree).
 
-## 4A. Cross-references — the `crossref` sub-worker
+### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bottom-up summaries
+
+The shipped route is a **single LLM call** over up to `max_prompt_chars` of `document.md`
+returning the entire tree — every span, role, and summary — as one strict-JSON response, with
+char offsets snapped backward onto the block grid. That shape has three measured cliffs on real
+documents:
+
+1. **Offset arithmetic without anchors.** The model proposes `char_start`/`char_end` as
+   numbers; the snap makes any input *well-formed* but cannot make it *correct* — there is no
+   title-text search or recovery, so a miscounted offset yields a well-formed wrong tree with
+   no error signal. LLMs are systematically bad at character counting.
+2. **Long-context strict-JSON in one shot.** One call must read ~200K chars and emit the full
+   tree; this is the §2.4 failure zone (middle-of-document neglect, output-token ceiling on
+   large trees, silent truncation/flattening) and confines the seat to frontier models.
+3. **The truncation cliff.** Content past `max_prompt_chars` is never structured at all.
+
+D79 replaces the shape, not the contract (§4's output contract — `document_sections` rows for
+every document, sidecar + PG index, block-grid spans — is unchanged):
+
+- **Skeleton: parse, don't ask.** `document.md` is conversion-controlled markdown whose
+  headings are explicit syntax; a deterministic parser builds the section tree for structured
+  documents with zero LLM calls and exact boundaries. The LLM runs only as a **fallback for
+  structureless documents**, and the fallback contract returns heading/anchor **strings**
+  located by deterministic text search — never raw character offsets.
+- **Summaries: bottom-up, bounded, cheap.** Leaf sections get a one-line summary from a
+  dedicated **summary seat** (D70 port binding, default flash-class) reading only that
+  section's text; parent summaries compose from child summaries (map-reduce), so no call's
+  context grows with document size. Calls are parallel and **content-hash cacheable per
+  section** — a re-ingest re-summarizes only changed sections. This is the shape where cheap
+  models are reliable: bounded context, no arithmetic, no giant output.
+- **Summaries become consumed context.** They feed the E1 context-prefix input (as §4 already
+  claims) and enter the **E2 bundle** as the D31 "section path + summary" element — target
+  section summary plus ancestor summaries, so a chunk in subchapter 8.2 sees the book's and
+  chapter 8's one-liners. The `added_context` tag enum gains `summary` and the grounding gate
+  verifies against it; extractor version bumps. Pipeline order already guarantees summaries
+  exist before extraction — this closes the consumption gap (issue #163, summary element).
+- **Provenance splits.** `structurer_version` divides into a deterministic skeleton version
+  and a summarizer seat/version, so a summary-model swap re-summarizes without re-structuring.
+
+Cost at scale: the shipped route bills a frontier model for ~50K tokens per document; D79 is a
+parser plus N small flash-class calls — an order of magnitude cheaper on long documents, and
+strictly more robust. Summary quality is measured where summaries are consumed (Selection
+drop quality, prefix quality, #150 scorecard canaries), not judged in prose.
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
 `DOC_CROSSREF` graph edges (P2) and one source of the E2 bundle's entity hints
