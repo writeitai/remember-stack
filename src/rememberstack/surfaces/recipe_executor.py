@@ -55,6 +55,7 @@ class RecipeExecutor:
                 deployment_id=deployment_id,
                 step=step,
                 arguments=arguments,
+                envelopes=envelopes,
                 rankings=rankings,
             )
             envelopes.append(envelope)
@@ -67,6 +68,7 @@ class RecipeExecutor:
         deployment_id: UUID,
         step: RecipeStep,
         arguments: dict[str, object],
+        envelopes: list[Envelope],
         rankings: list[list[UUID]],
     ) -> Envelope:
         """Dispatch one chain step to its primitive with resolved keywords.
@@ -84,6 +86,13 @@ class RecipeExecutor:
             return self._engine.fuse(
                 rankings=[rankings[index] for index in step.inputs], **kwargs
             )
+        if step.op == "hydrate_claims":
+            return self._hydrate_claims_step(
+                deployment_id=deployment_id,
+                step=step,
+                envelopes=envelopes,
+                rankings=rankings,
+            )
         if step.op == "graph_neighborhood":
             return self._graph_step(op=step.op, kwargs=kwargs)
         if step.op == "graph_path":
@@ -94,6 +103,22 @@ class RecipeExecutor:
                 f"the executor has no handler for op {step.op!r}"
             )
         return handler(self._engine, deployment_id, kwargs)
+
+    def _hydrate_claims_step(
+        self,
+        *,
+        deployment_id: UUID,
+        step: RecipeStep,
+        envelopes: list[Envelope],
+        rankings: list[list[UUID]],
+    ) -> Envelope:
+        """Hydrate claim ids from a prior ranking step, keeping its scores."""
+        source_index = step.inputs[0]
+        source = envelopes[source_index]
+        claim_ids = rankings[source_index]
+        return self._engine.hydrate_claims(
+            deployment_id=deployment_id, claim_ids=claim_ids, ranking=source.ranking
+        )
 
     def _graph_step(self, *, op: str, kwargs: dict[str, Any]) -> Envelope:
         """Run a P2 operation only when the deployment composed P2 queries."""
@@ -208,6 +233,7 @@ _SINGLE_OP_HANDLERS = {
 
 EXECUTABLE_OPS = frozenset(_SINGLE_OP_HANDLERS) | {
     "fuse",
+    "hydrate_claims",
     "graph_neighborhood",
     "graph_path",
 }

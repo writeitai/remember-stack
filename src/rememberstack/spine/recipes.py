@@ -188,16 +188,19 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         name="observation_current",
         description="Current observations on an entity — 'what do we know about"
-        " X now?' (S2). Validity-filtered, fact grain.",
+        " X now?' (S2). Validity-filtered, fact grain. Prefer for current"
+        " identity attributes, preferences, and state on a resolved entity.",
         parameters={"entity_id": {"type": "uuid", "required": True}},
         chain=(RecipeStep(op="lookup_observations", bind={"entity_id": "entity_id"}),),
         output_grain=Grain.FACT,
         answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
+        version=2,
     ),
     Recipe(
         name="entity_timeline",
         description="An entity's facts by year — its evolution over time (S30)."
-        " A bounded fact aggregate, an orientation over history.",
+        " A bounded fact aggregate, an orientation over history. Prefer for"
+        " WHEN/date questions about how an entity changed; not identity merges.",
         parameters={"entity_id": {"type": "uuid", "required": True}},
         chain=(
             RecipeStep(
@@ -208,11 +211,14 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         ),
         output_grain=Grain.FACT,
         answer_intent=RecipeAnswerIntent.ORIENTATION,
+        version=2,
     ),
     Recipe(
         name="claims_verbatim",
         description="What sources actually asserted, verbatim, for a query"
-        " (S6). Evidence grain — never a current-fact answer (the D41 bar).",
+        " (S6). Evidence grain — never a current-fact answer (the D41 bar)."
+        " Phrase-anchored: prefer when the question quotes or names wording"
+        " to match.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -226,12 +232,14 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         chain=(RecipeStep(op="search_claims", bind={"query": "query", "k": "k"}),),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=2,
+        version=3,
     ),
     Recipe(
         name="claims_hybrid_rrf",
         description="Verbatim claims for a query, fused across parallel channel"
-        " orderings by reciprocal-rank fusion (S46). Evidence grain.",
+        " orderings by reciprocal-rank fusion (S46), then hydrated to claim"
+        " text. Evidence grain with ranking scores kept. Prefer for broader"
+        " semantic+lexical search when exact phrasing is unknown.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -246,10 +254,11 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
             RecipeStep(op="search_claims", bind={"query": "query", "k": "k"}),
             RecipeStep(op="search_claims", bind={"query": "query", "k": "k"}),
             RecipeStep(op="fuse", settings={"k": 60}, inputs=(0, 1)),
+            RecipeStep(op="hydrate_claims", inputs=(2,)),
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=2,
+        version=3,
     ),
     Recipe(
         name="explain",
@@ -263,7 +272,8 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         name="identity_as_of",
         description="An entity's identity history — how its mentions resolved"
-        " and every merge it took part in (S61). Composite grain, audit.",
+        " and every merge it took part in (S61). Composite grain, audit."
+        " As-of regime resolution, not a biography or fact timeline.",
         parameters={"entity_id": {"type": "uuid", "required": True}},
         chain=(
             RecipeStep(
@@ -274,6 +284,7 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         ),
         output_grain=Grain.COMPOSITE,
         answer_intent=RecipeAnswerIntent.AUDIT,
+        version=2,
     ),
     Recipe(
         name="changed_since",
@@ -287,11 +298,13 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         name="pages_about",
         description="Which compiled K pages exist about an entity (S31/S45) —"
-        " the routing index read backwards. Compiled grain, orientation.",
+        " the routing index read backwards. Compiled grain, orientation."
+        " K discovery only; may be empty when K is not composed.",
         parameters={"entity_id": {"type": "uuid", "required": True}},
         chain=(RecipeStep(op="pages_about", bind={"entity_id": "entity_id"}),),
         output_grain=Grain.COMPILED,
         answer_intent=RecipeAnswerIntent.ORIENTATION,
+        version=2,
     ),
 )
 
@@ -299,7 +312,8 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         name="graph_neighborhood",
         description="Current P2 graph neighborhood around an entity, ranked by"
-        " distance and carrying explicit truncation metadata.",
+        " distance and carrying explicit truncation metadata. Prefer to expand"
+        " who or what surrounds a resolved entity in the current graph.",
         parameters={
             "entity_id": {"type": "uuid", "required": True},
             "hops": {
@@ -325,11 +339,13 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
         ),
         output_grain=Grain.FACT,
         answer_intent=RecipeAnswerIntent.ORIENTATION,
+        version=2,
     ),
     Recipe(
         name="graph_path",
         description="Current shortest P2 paths between two resolved entities,"
-        " with every traversed fact edge returned for inspection.",
+        " with every traversed fact edge returned for inspection. Prefer when"
+        " asking how two resolved entities connect.",
         parameters={
             "from_entity_id": {"type": "uuid", "required": True},
             "to_entity_id": {"type": "uuid", "required": True},
@@ -353,6 +369,7 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
         ),
         output_grain=Grain.FACT,
         answer_intent=RecipeAnswerIntent.ORIENTATION,
+        version=2,
     ),
 )
 

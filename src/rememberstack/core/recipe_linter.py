@@ -50,13 +50,15 @@ class _OpSpec:
 # strict current-instant test (both clocks): only the point-in-time lookups
 # qualify. `aggregate` is NOT one of them — its forms span history (timeline)
 # or count live-but-expired rows — so it can never sit in a `current_facts`
-# recipe. `fuse` returns an evidence-grade ranking (candidates to hydrate).
+# recipe. `fuse` returns an evidence-grade ranking (candidates to hydrate);
+# `hydrate_claims` turns that ranking into claim text while keeping scores.
 _OPS: dict[str, _OpSpec] = {
     "resolve": _OpSpec(Grain.FACT, validity_filtered=False),
     "lookup_relations": _OpSpec(Grain.FACT, validity_filtered=True),
     "lookup_observations": _OpSpec(Grain.FACT, validity_filtered=True),
     "aggregate": _OpSpec(Grain.FACT, validity_filtered=False),
     "search_claims": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
+    "hydrate_claims": _OpSpec(Grain.EVIDENCE, validity_filtered=False, min_inputs=1),
     "hydrate_relation": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
     "transcript": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
     "delta": _OpSpec(Grain.COMPOSITE, validity_filtered=False),

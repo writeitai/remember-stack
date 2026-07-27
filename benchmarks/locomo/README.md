@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v3 setup
+# RS-LoCoMo-Full-v4 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its

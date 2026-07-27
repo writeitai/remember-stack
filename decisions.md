@@ -2663,6 +2663,16 @@ may proceed to its first tagged artifact proof after CLA activation.
 > invalid for compliant providers. The agent loop takes the first complete JSON
 > object from the string and records any trailing text. No v2 score ever
 > existed. See the companion design §2.4 and the v2→v3 note in §2.
+>
+> **Also amended 2026-07-27 (v4 — recipe ergonomics and answer-loop guards):**
+> the protocol is **`RS-LoCoMo-Full-v4`**. Public recipe descriptors carry
+> when-to-use guidance; `claims_hybrid_rrf` hydrates ranked claim text (keeping
+> RRF scores) so the envelope is usable without a follow-up the descriptor never
+> mentioned; the answer-agent prompt forbids identical tool+arguments retries,
+> requires switching tools after a useless result, and requires a claims search
+> before "Unknown". Prompt, tool-catalog hash, and descriptors all change, so
+> the protocol version bumps. No v3 score is comparable. See the companion
+> design §2 (v3→v4 note) and §7.
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;

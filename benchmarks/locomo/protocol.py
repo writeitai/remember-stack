@@ -20,12 +20,12 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v3"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v4"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
-    "96061015e1681877015027a8f4eccad0ceebec53d6d8dbade346ec0934a9024a"
+    "9f34256141cdbe8528dfbeaace72dcd62f6091c12620c8d9d4846ecfd012403d"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -60,6 +60,11 @@ automatically current fact. Use timestamps to resolve relative dates. Do not
 confuse people mentioned in a memory with the conversation speakers. Never use
 outside knowledge. If the deployment does not contain the answer, finish with
 "Unknown". A final answer must be concise and at most six words.
+
+Loop discipline: never repeat a tool call with the same tool AND the same
+arguments. If a tool yields nothing useful, switch tools rather than retrying
+it. Before answering "Unknown", you must have tried claims_verbatim or
+claims_hybrid_rrf at least once.
 
 Return one structured step: either action="tool" with one listed tool_name and
 arguments_json (the tool arguments as one JSON object encoded as a string, with

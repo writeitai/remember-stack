@@ -11,8 +11,10 @@ from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ToolCallRecord
+from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import EXPECTED_TOOL_CATALOG_SHA256
 from benchmarks.locomo.protocol import official_f1
+from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
@@ -127,6 +129,17 @@ def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
     assert hashlib.sha256(canonical.encode()).hexdigest() == (
         EXPECTED_TOOL_CATALOG_SHA256
     )
+
+
+def test_protocol_is_v4_and_answer_prompt_has_loop_guards() -> None:
+    """v4 fingerprint: protocol name plus the answer-loop discipline lines."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v4"
+    prompt = ANSWER_AGENT_PROMPT_TEMPLATE
+    assert "never repeat a tool call with the same tool AND the same" in prompt
+    assert "switch tools rather than retrying" in prompt
+    assert "claims_verbatim or" in prompt
+    assert "claims_hybrid_rrf at least once" in prompt
+    assert 'answering "Unknown"' in prompt
 
 
 def test_judge_never_receives_tool_trace() -> None:
