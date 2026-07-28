@@ -2802,3 +2802,37 @@ be measured, not asserted (#150 scorecard canaries; Selection drop quality on lo
 prefix quality). Implementation (#165) is sequenced behind the #161 loss ledger so the bundle
 change lands with its measurement in place; entity hints (#163) remain a separate, later
 decision gated on #148 lint.
+
+**Amendment (2026-07-28, owner-directed after the complicated-template-PDF discussion; revised
+per Grok + Codex review of PR #167): the skeleton sanity check.** Heading density can be
+healthy while the parsed tree is template junk (running headers, TOC pages, scrambled heading
+order surviving conversion as valid headings), so the parser path gains a coherence judge
+between parse and roles. A normative, versioned stat schema (duplicate-title global AND
+sibling ratios, raw-heading-level jumps, same-scheme-run numbering inversions plus scheme
+switches, tiny/zero direct-body ratios, oversized-leaf ratio and heading density — the same
+formulas the demotion gates use — title-shape distributions, sibling fanout; exact formulas,
+zero-cases, and floors as named versioned constants in the design; no stat-to-verdict
+thresholds shipped) is computed and persisted, then one budget-bounded call on a new
+**skeleton-check seat** (`REMEMBERSTACK_SKELETON_CHECK_*`, D70, default flash-class) reads the
+stats block and anomaly-exemplar-sampled `(level, title, size)` lines — never section
+content — and answers with ONE closed enum (`coherent | incoherent_<primary-defect>`, §2.4's
+single-enum lesson; structurally unable to propose structure). `incoherent` demotes to the LLM
+fallback route, whose output gets one TERMINAL check — incoherent there degrades to the
+synthetic root (honest no-structure over a plausible-wrong tree), no cycles. The persisted
+`check_outcome` separates `provider_error | invalid_response | not_run_short` from verdicts so
+fail-open (kept because the check is a non-authority guard and fail-closed would amplify
+provider blips into corpus-wide fallback traffic — NOT because of document survival, which the
+fallback also guarantees) is never bookkept as coherence. Provenance: a fifth `skeleton_check`
+generation joins the D79 split, with an append-only per-document check record (D52) carrying
+candidate-skeleton hash, stats, sampled-input hash, outcome, component/model/prompt/schema
+hashes, failure envelope, and cost; the final skeleton generation records the selecting check
+and a route tag; a checker bump mints a new skeleton generation only when the route flips;
+D53 producer-family is recorded N/A for the deterministic parser. Audit: route tags, stats +
+outcomes, and structure canaries validated against a sampled labeled skeleton-quality set are
+primary; the #161 loss ledger is a supplementary correlative only (a bad tree can mis-role
+sections so losses never reach the Claimify ledger). The owner's no-reinvention requirement
+resolves to REUSING the repository's existing pinned `markdown-it-py` blockizer (D57's single
+shared tokenizer) with heading metadata (raw level, normalized title) exposed under a
+`blockizer_version` bump — never a second parallel parse. Scope fence: the check judges the
+tree, not the text under it — intra-section reading-order scrambles are the conversion-layer
+track (D38, issue #168). Design detail: `plan/designs/e0_files_design.md` §4.1.
