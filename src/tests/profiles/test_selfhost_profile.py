@@ -57,6 +57,20 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     assert 'command: ["project", "--plane", "all"]' in compose
 
 
+def test_compose_forwards_the_dedicated_summary_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D66/D70: Compose and readiness expose the same flash-class binding."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert (
+        "REMEMBERSTACK_SUMMARY_MODEL:"
+        " ${REMEMBERSTACK_SUMMARY_MODEL:-z-ai/glm-4.7-flash}"
+    ) in compose
+    monkeypatch.delenv("REMEMBERSTACK_SUMMARY_MODEL", raising=False)
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    assert _model_bindings()["section_summary"] == "z-ai/glm-4.7-flash"
+
+
 @pytest.mark.parametrize(
     ("configured", "reported"), (("nebius", "nebius"), ("", "auto"))
 )

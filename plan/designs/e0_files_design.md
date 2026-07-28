@@ -385,7 +385,14 @@ unchanged):
   parallel and cached per section; the cache key is the ordered constituent block hashes,
   child-summary hashes, model, prompt, generation parameters, and summarizer version. This is
   the call shape where cheap models are reliable: bounded context, no arithmetic, no giant
-  output.
+  output. **Degradation convention:** `summary_version` is non-null only when every section
+  in the generation has a summary; any failed section call leaves that section null (and any
+  ancestor that cannot receive all child one-liners null), may preserve successful summaries
+  in independent subtrees, and makes the generation's `summary_version` null. Because root
+  placement is emitted by the same complete reduction, `placement_version` is non-null iff
+  `summary_version` and root `placement_path` are non-null; otherwise both placement fields
+  are null. Thus a partially useful tree is persisted without mislabeling a degraded run as a
+  complete summary generation.
 - **Placement rides the root reduction.** The one-shot call also produced the D39 placement
   hint; that responsibility moves to the **document-level (root) summary call**, which sees
   exactly what placement needs — the title, source kind, and the child one-liners. On the

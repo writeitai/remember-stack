@@ -302,6 +302,8 @@ from rememberstack.model.sections import PersistedSectionTree
 from rememberstack.model.sections import ProposedSection
 from rememberstack.model.sections import RoleAssignment
 from rememberstack.model.sections import RoleClassificationResponse
+from rememberstack.model.sections import RootSummaryPlacementResponse
+from rememberstack.model.sections import SectionSummaryResponse
 from rememberstack.model.sections import SectionTreeRecord
 from rememberstack.model.sections import SkeletonCheckOutcome
 from rememberstack.model.sections import SkeletonCheckRecord
@@ -591,7 +593,9 @@ __all__ = (
     "ProposedSection",
     "RoleAssignment",
     "RoleClassificationResponse",
+    "RootSummaryPlacementResponse",
     "SectionTreeRecord",
+    "SectionSummaryResponse",
     "SkeletonCheckOutcome",
     "SkeletonCheckRecord",
     "SkeletonCheckResponse",

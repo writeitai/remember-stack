@@ -164,6 +164,23 @@ class RoleClassificationResponse(BaseModel):
     assignments: tuple[RoleAssignment, ...] = ()
 
 
+class SectionSummaryResponse(BaseModel):
+    """One bounded, single-line section summary and no auxiliary prose."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    summary: str = Field(min_length=1, max_length=512, pattern=r"^[^\r\n]+$")
+
+
+class RootSummaryPlacementResponse(BaseModel):
+    """The root reduction's closed two-field summary + D39 placement shape."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    summary: str = Field(min_length=1, max_length=512, pattern=r"^[^\r\n]+$")
+    placement_path: str = Field(min_length=3, max_length=512, pattern=r"^/[^\r\n]+/$")
+
+
 class SnappedSection(BaseModel):
     """One well-formed section after the deterministic snap (block coordinates).
 
@@ -181,7 +198,7 @@ class SnappedSection(BaseModel):
     block_end: int = Field(ge=-1)
     char_start: int = Field(ge=0)
     char_end: int = Field(ge=0)
-    summary: str
+    summary: str | None
     ordinal: int = Field(ge=0)
     heading_level: int | None = Field(default=None, ge=1, le=6)
     normalized_title: str = ""

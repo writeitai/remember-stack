@@ -17,13 +17,15 @@ The RememberStack, `rememberstack`, and `remember` names used here are final. Do
 not expose this stack to untrusted traffic.
 
 Model seats are per-deployment environment bindings. The document-structure
-stage uses three: `REMEMBERSTACK_SKELETON_CHECK_MODEL` (the bounded skeleton
+stage uses four: `REMEMBERSTACK_SKELETON_CHECK_MODEL` (the bounded skeleton
 sanity judge, default `z-ai/glm-4.7-flash`), `REMEMBERSTACK_ROLE_MODEL` (the
-title-only section-role classifier, default `z-ai/glm-4.7-flash`), and
-`REMEMBERSTACK_STRUCTURER_MODEL` — which now names **only** the string-anchor
+title-only section-role classifier, default `z-ai/glm-4.7-flash`),
+`REMEMBERSTACK_SUMMARY_MODEL` (bottom-up section summaries plus the root
+placement reduction, default `z-ai/glm-4.7-flash`), and
+`REMEMBERSTACK_STRUCTURER_MODEL` — which names **only** the string-anchor
 fallback proposer for documents whose headings cannot be parsed or whose
-parsed tree fails the sanity check; the routine path is deterministic and
-calls no model.
+parsed tree fails the sanity check. Routine skeleton construction is
+deterministic; bounded summary calls still run on the selected tree.
 
 ## Start the stack
 
