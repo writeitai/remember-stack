@@ -263,6 +263,44 @@ unchanged):
   block-contained substrings with occurrence-order disambiguation, resolved by deterministic
   search — never raw character offsets; an anchor that resolves ambiguously or not at all
   degrades to the enclosing parent, mirroring the snap's degrade-to-parent rule.
+- **Skeleton sanity check (2026-07-28 addition): a judge, never a proposer.** Density can
+  look healthy while the parsed tree is nonsense — a complicated print template whose running
+  headers, TOC pages, or scrambled reading order survived conversion as syntactically valid
+  headings. On the parser path only (the fallback route already contains LLM judgment; a
+  skeleton under ~3 sections is accepted without a check), after the parse and **before** the
+  role pass:
+  1. **Red-flag stats — exact arithmetic over the parsed skeleton**, always computed, always
+     persisted, carrying **no decision thresholds in v1**: `duplicate_title_ratio`
+     (1 − distinct/n over casefolded, whitespace-collapsed titles, digits kept);
+     `level_jump_count` (Σ max(0, d_{i+1} − d_i − 1) over consecutive sections);
+     `numbering_inversions` + `numbering_coverage` (leading numbering tokens — `3.2`, roman,
+     `A.` — compared as tuples over adjacent numbered titles; descents counted);
+     `tiny_section_ratio` (body span under a floor ≈ heading-follows-heading);
+     `oversized_leaf_ratio`; `heading_density` (sections per 10K chars);
+     `title_shape_stats` (length and letter/digit/punctuation class ratios — no junk-word
+     lexicon, language-neutral).
+  2. **One bounded check call** on a flash-class **check seat** (D70 binding; may default to
+     the summary seat's model, separately versioned): input is the document title, source
+     kind, the stats block, and the ordered `(depth, title, size)` lines — **never section
+     content**; a pathological heading count (> ~200) is head+tail sampled. Output is a
+     closed micro-schema (§2.4 discipline): verdict `coherent | incoherent` plus reasons from
+     a closed enum (`repeated_boilerplate | scrambled_order | junk_titles | over_fragmented`)
+     — no free text, no confidence, and structurally **no ability to propose structure**.
+  3. **Routing**: `coherent` keeps the parsed skeleton; `incoherent` demotes the document to
+     the LLM fallback route. One-way, no cycles — the fallback's output is not re-checked.
+  4. **Fail-open**: a check call that errors or returns garbage keeps the parsed skeleton and
+     logs — a broken guard must never take down the cheap correct path ("structuring never
+     fails a document").
+  5. **Measured, then earned**: verdict + reasons + stats persist with the skeleton
+     generation (sidecar + sections metadata). Downstream, the #161 loss ledger gives a
+     per-document signal (a scrambled document that slips through shows up as an omission/
+     rejection spike), so the checker's false negatives are auditable from data already
+     collected. Once (stats → verdict → loss-rate) triples accumulate, the stats may earn
+     gate duty — skip the call when uniformly clean, demote without asking when egregious;
+     v1 deliberately ships no such thresholds because they would be invented, not measured.
+  Non-goals: the check judges the **tree**, not the text under it — a document whose
+  intra-section reading order was scrambled by conversion needs the conversion-layer fix
+  (layout-aware PDF/OCR), which is its own track.
 - **Roles: deterministic first, classifier second.** The parser cannot produce the §4 role
   enum, and roles are load-bearing (Selection's low-value drops, crossref cite mining from
   `references` sections). Role assignment becomes: (1) deterministic normalized-title rules

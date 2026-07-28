@@ -2802,3 +2802,20 @@ be measured, not asserted (#150 scorecard canaries; Selection drop quality on lo
 prefix quality). Implementation (#165) is sequenced behind the #161 loss ledger so the bundle
 change lands with its measurement in place; entity hints (#163) remain a separate, later
 decision gated on #148 lint.
+
+**Amendment (2026-07-28, owner-directed after the complicated-template-PDF discussion): the
+skeleton sanity check.** Heading density can be healthy while the parsed tree is template junk
+(running headers, TOC pages, scrambled reading order surviving conversion as valid headings), so
+the parser path gains a third demotion trigger between parse and roles: deterministic red-flag
+stats (duplicate-title ratio, level jumps, numbering inversions/coverage, tiny-section and
+oversized-leaf ratios, heading density, title character-class shapes — exact arithmetic, no
+decision thresholds in v1) are computed, persisted, and handed to one bounded flash-class check
+call reading titles and numbers only — never content. The call is a judge with a closed
+micro-schema (verdict `coherent|incoherent` + closed reason enum) and structurally cannot
+propose structure; `incoherent` demotes the document to the LLM fallback route, one-way, no
+re-check of the fallback's output. The check fails open (a broken guard never takes down the
+cheap correct path). Verdicts and stats persist with the skeleton generation so the checker is
+auditable against the #161 per-document loss signal; thresholds that would let stats skip or
+replace the call must be earned from that data, never invented. Scope fence: the check judges
+the tree, not the text under it — intra-section reading-order scrambles are a conversion-layer
+(D38) problem, tracked separately. Design detail: `plan/designs/e0_files_design.md` §4.1.
