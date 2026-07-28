@@ -189,12 +189,20 @@ class ExtractClaimsHandler:
             prior_chunk_id=prior,
         )
         if attached == 0:
-            # the prior chunk carries no claims — a terminal no_info: carry
-            # the marker forward so replay stays closed for this chunk too
-            self._catalog.record_extraction(
-                claims=(),
-                decisions=(_empty_extraction_marker(source=source, chunk=chunk),),
+            # the prior chunk carries no claims. Zero claims no longer means
+            # no_info — the prior may hold claimify_omitted /
+            # grounding_rejected rows (#161) — so carry the prior transcript
+            # forward verbatim; fabricate the no_info marker only when the
+            # prior transcript is itself empty. Either way replay stays
+            # closed for this chunk.
+            copied = self._catalog.copy_reused_decisions(
+                chunk_id=chunk.chunk_id, prior_chunk_id=prior
             )
+            if copied == 0:
+                self._catalog.record_extraction(
+                    claims=(),
+                    decisions=(_empty_extraction_marker(source=source, chunk=chunk),),
+                )
         return True
 
     def _extract_chunk(
@@ -262,9 +270,15 @@ class ExtractClaimsHandler:
                 usage=response_call.usage,
             )
             response = response_call.output
-            # Per-keep "model tried" marker for claimify_omitted accounting:
-            # any returned claim that targets a keep (accepted or rejected)
-            # suppresses claimify_omitted for that keep (#161).
+            # Per-keep "model tried" marker for claimify_omitted accounting.
+            # Attribution is RANGE-OVERLAP ONLY: a returned claim marks
+            # exactly the keeps whose anchored ranges its own anchored range
+            # overlaps. Text containment is deliberately not used — it would
+            # let one claim suppress omission rows for unrelated keeps that
+            # merely share text. Consequences, both conservative: a claim
+            # whose span anchors nowhere is an orphan rejection and
+            # suppresses no omission; a keep whose span anchors nowhere can
+            # never be marked tried and always gets its omission row (#161).
             keep_had_return = [False] * len(keeps)
             for candidate in response.claims:
                 result = _grounded_claim(
@@ -277,17 +291,15 @@ class ExtractClaimsHandler:
                     flagged_spans=flagged_spans,
                     kept_ranges=kept_ranges,
                 )
-                for index_keep, keep in enumerate(keeps):
-                    if keep_had_return[index_keep]:
-                        continue
-                    if _claim_targets_keep(
-                        claim_span=candidate.source_span,
-                        keep=keep,
-                        keep_range=keep_ranges[index_keep],
-                        document_md=document_md,
-                        chunk=chunk,
-                    ):
-                        keep_had_return[index_keep] = True
+                claim_range = _span_range(
+                    span=candidate.source_span, chunk=chunk, document_md=document_md
+                )
+                if claim_range is not None:
+                    for index_keep, keep_range in enumerate(keep_ranges):
+                        if keep_range is not None and _ranges_overlap(
+                            claim_range, keep_range
+                        ):
+                            keep_had_return[index_keep] = True
                 if isinstance(result, GroundingRejection):
                     _logger.warning(
                         "grounding gate %s rejected candidate %r on chunk %s",
@@ -599,14 +611,25 @@ def _neighbour_text(
     return "(none)"
 
 
+def _span_range(
+    *, span: str, chunk: ChunkForEmbedding, document_md: str
+) -> tuple[int, int] | None:
+    """Absolute char range of a span inside the chunk, or None if unfindable.
+
+    Repeated text resolves to its first occurrence — a pre-existing bias
+    shared by keeps and claims alike, so overlap attribution stays symmetric.
+    """
+    found = document_md.find(span, chunk.char_start, chunk.char_end)
+    if found < 0:
+        return None
+    return found, found + len(span)
+
+
 def _keep_range(
     *, keep: SelectionCandidate, chunk: ChunkForEmbedding, document_md: str
 ) -> tuple[int, int] | None:
     """Absolute char range of one kept Selection span, or None if unfindable."""
-    found = document_md.find(keep.source_span, chunk.char_start, chunk.char_end)
-    if found < 0:
-        return None
-    return found, found + len(keep.source_span)
+    return _span_range(span=keep.source_span, chunk=chunk, document_md=document_md)
 
 
 def _kept_ranges(
@@ -621,33 +644,11 @@ def _kept_ranges(
     )
 
 
-def _claim_targets_keep(
-    *,
-    claim_span: str,
-    keep: SelectionCandidate,
-    keep_range: tuple[int, int] | None,
-    document_md: str,
-    chunk: ChunkForEmbedding,
-) -> bool:
-    """True when a Claimify-returned claim is about this kept Selection span.
-
-    Claimify typically returns a substring of the keep as ``source_span``;
-    range overlap covers the same case when the claim span is findable. Used
-    only for claimify_omitted accounting so a rejected attempt is not also
-    recorded as an omission (#161).
-    """
-    if claim_span == keep.source_span or claim_span in keep.source_span:
-        return True
-    if keep.source_span in claim_span:
-        return True
-    if keep_range is None:
-        return False
-    anchor = document_md.find(claim_span, chunk.char_start, chunk.char_end)
-    if anchor < 0:
-        return False
-    claim_end = anchor + len(claim_span)
-    keep_start, keep_end = keep_range
-    return anchor < keep_end and keep_start < claim_end
+def _ranges_overlap(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """Half-open char-range overlap — the sole claimify_omitted attribution
+    rule (#161). Text containment is deliberately excluded: it would let one
+    returned claim suppress omission rows for unrelated keeps sharing text."""
+    return a[0] < b[1] and b[0] < a[1]
 
 
 def _truncate_for_ledger(text: str) -> str:
@@ -711,7 +712,8 @@ def _grounding_rejected_decision(
         "claim_span": _truncate_for_ledger(rejection.claim_span),
     }
     if rejection.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED:
-        edit_detail["kind"] = rejection.kind
+        # kind is model-returned text too — bound every persisted field
+        edit_detail["kind"] = _truncate_for_ledger(rejection.kind or "")
         edit_detail["text"] = _truncate_for_ledger(rejection.text or "")
     return DecisionRecord(
         decision_id=uuid4(),
@@ -720,7 +722,7 @@ def _grounding_rejected_decision(
         chunk_id=chunk.chunk_id,
         claim_id=None,
         decision_type=DecisionType.GROUNDING_REJECTED,
-        source_span=rejection.claim_span,
+        source_span=_truncate_for_ledger(rejection.claim_span),
         reason=None,
         edit_detail=edit_detail,
         protected_class=None,

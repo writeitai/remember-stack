@@ -697,6 +697,16 @@ eval metrics come for free.
 **Context.** The same durable-state discipline the resolution and supersession layers use, applied to
 the extraction transcript. (C8.)
 
+**Amendment (2026-07-27, issue #161).** The transcript also records the Claimify-stage losses that
+were previously silent: `claimify_omitted` (a kept span the model returned no claim for — including
+spans not verbatim-findable in the document, which formerly vanished traceless) and
+`grounding_rejected` (a returned claim a D32 gate rejected, with the gate named in `edit_detail`).
+Accounting rules: every returned claim independently ends accepted or rejected; every keep with no
+range-attributable returned claim gets exactly one omission row; orphan rejections suppress no
+omission. On D56 zero-claim reuse the prior transcript is copied forward — the `no_info` marker is
+fabricated only when the prior transcript is itself empty. Detail:
+`plan/designs/e2_e3_claims_relations_design.md` §3 amendment.
+
 ## D34. E2 Selection is the value filter — there is no pre-extraction value gate
 
 **Decision.** Junk-control lives at the **proposition grain**, in-call: Selection (D31) decides

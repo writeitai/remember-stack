@@ -105,6 +105,23 @@ class ClaimCatalog:
                 )
         return prior_links
 
+    def copy_reused_decisions(self, *, chunk_id: UUID, prior_chunk_id: UUID) -> int:
+        """Replicate a prior chunk's decision transcript under a reused chunk.
+
+        The D56 zero-claim reuse rung: a prior extraction with no accepted
+        claims may still carry claimify_omitted / grounding_rejected rows
+        (#161) — the reused occurrence adopts that transcript verbatim
+        instead of fabricating a no_info marker. Returns how many rows were
+        copied; zero means the prior transcript is empty and the caller owns
+        the terminal marker.
+        """
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                _COPY_CHUNK_DECISIONS,
+                {"chunk_id": chunk_id, "prior_chunk_id": prior_chunk_id},
+            )
+        return result.rowcount or 0
+
     def claims_for_chunks(
         self, *, chunk_ids: tuple[UUID, ...]
     ) -> tuple[ClaimForNormalization, ...]:
@@ -270,6 +287,25 @@ _INSERT_DECISION = text(
     )
     """
 ).bindparams(bindparam("edit_detail", type_=JSON))
+
+_COPY_CHUNK_DECISIONS = text(
+    """
+    -- D56 reuse of a zero-claim extraction: replicate the prior occurrence's
+    -- transcript verbatim under the new chunk so the loss accounting (#161)
+    -- survives reuse. Fresh ids and decided_at=now(): this row records when
+    -- THIS occurrence adopted the outcome, on the current partition.
+    INSERT INTO claim_extraction_decisions (
+        decision_id, deployment_id, doc_id, chunk_id, claim_id,
+        decision_type, source_span, reason, edit_detail,
+        protected_class, extractor_version
+    )
+    SELECT gen_random_uuid(), deployment_id, doc_id, :chunk_id, claim_id,
+           decision_type, source_span, reason, edit_detail,
+           protected_class, extractor_version
+    FROM claim_extraction_decisions
+    WHERE chunk_id = :prior_chunk_id
+    """
+)
 
 _SELECT_CLAIMS_FOR_CHUNKS = text(
     """

@@ -1356,8 +1356,8 @@ verbatim `source_span` + offsets + the `added_context` substrings (D32), so grou
 -- change, and claim validity is never superseded (D3) — adjudicated validity lives only on relations.
 -- A row in claims is an ACCEPTED claim: the deterministic grounding gate (anchor + window
 -- membership, D32 layers 1-2) MUST pass, enforced by the CHECK — a claim that fails the gate is
--- never produced (it becomes a ledger entry or is discarded), so the flags exist for audit and are
--- always true here. Large (~5×10⁷) ⇒ monthly partition by ingested_at; logical FKs (D23).
+-- never produced (it becomes a grounding_rejected ledger entry, #161; never silently discarded),
+-- so the flags exist for audit and are always true here. Large (~5×10⁷) ⇒ monthly partition by ingested_at; logical FKs (D23).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE claims (
   claim_id        uuid NOT NULL,
@@ -1421,10 +1421,14 @@ CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = '
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- claim_extraction_decisions — the append-only, version-stamped extraction transcript (D33). It
--- records every Selection DROP (with reason), every low-confidence KEEP-FLAG, and every
--- decontextualization EDIT. Plain keeps are NOT recorded (they ARE the claims row) — keeping the
--- table sized for drops+flags+edits, not every keep. Rebuild reads stored claims + these decisions
--- and never re-calls the model (D7). Large ⇒ monthly partition by decided_at.
+-- records every Selection DROP (with reason), every low-confidence KEEP-FLAG, every
+-- decontextualization EDIT, and (issue #161, 2026-07-27) the Claimify-stage losses:
+-- CLAIMIFY_OMITTED (a kept span the model returned no claim for) and GROUNDING_REJECTED (a
+-- returned claim a D32 gate rejected — gate named in edit_detail; these are ledgered, not
+-- discarded). Plain keeps that land are NOT recorded (they ARE the claims row); a plain keep
+-- that dies now leaves a loss row, so the table sizes for drops+flags+edits+losses, still not
+-- every keep. Rebuild reads stored claims + these decisions and never re-calls the model (D7).
+-- Large ⇒ monthly partition by decided_at.
 -- INVARIANT: a kept_flagged claim is the pair (claims row with kept_flagged=true) + (a
 -- selection_keep_flagged decision here); the ledger is the replay source from which
 -- claims.kept_flagged is reconstituted on rebuild.
@@ -1435,7 +1439,7 @@ CREATE TABLE claim_extraction_decisions (
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents
   chunk_id        uuid NOT NULL,               -- LOGICAL FK → chunks
   claim_id        uuid,                        -- LOGICAL FK → claims; set for decontext edits + selection_keep_flagged; NULL for selection_drop (no claim produced)
-  decision_type   extraction_decision_type NOT NULL, -- selection_drop | selection_keep_flagged | decontext_edit
+  decision_type   extraction_decision_type NOT NULL, -- selection_drop | selection_keep_flagged | decontext_edit | claimify_omitted | grounding_rejected (#161)
   source_span     text,                        -- the proposition/sentence the decision was about
   reason          selection_drop_reason,       -- for drops: opinion|advice|hypothetical|generic|question|intro|conclusion|no_info|ambiguous|references_boilerplate (D31)
   edit_detail     jsonb,                        -- for decontext edits: what was resolved/added and from which bundle source

@@ -171,19 +171,28 @@ lands a claim is indistinguishable from a keep that produced a claim the gate re
 | `claimify_omitted` | A kept Selection span for which Claimify returned **no claim at all** (the model simply skipped it). One row per dead keep. | The Selection span. | null |
 | `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>}`. |
 
-**Invariant — every kept span is accounted for end-to-end.** After grounding, each keep OR
-keep_flagged span ends in *exactly one* of:
+**Invariant — every kept span is accounted for end-to-end.** Two independent rules (revised
+2026-07-27 after review — one keep can decompose into several returned claims with mixed fates,
+so "exactly one category per keep" was wrong):
 
-1. **accepted claim(s)** — one or more `claims` rows whose span targets the keep (and any
-   `decontext_edit` / `selection_keep_flagged` pairing that already applied); or
-2. **`grounding_rejected` row(s)** — Claimify returned at least one claim about this span, and every
-   such claim failed a gate (the model tried; the gate named which check fired); or
-3. **a single `claimify_omitted` row** — Claimify returned nothing for this span.
+1. **Every Claimify-returned claim** independently ends either **accepted** (a `claims` row, plus
+   any `decontext_edit` / `selection_keep_flagged` pairing that already applied) or
+   **`grounding_rejected`** (one row naming which gate fired). A mixed outcome — same keep, one
+   claim accepted, another rejected — records both and is not an omission.
+2. **Every keep or keep_flagged span with no attributable returned claim** gets exactly one
+   `claimify_omitted` row. Attribution is **anchored-range overlap only** (the claim's resolved
+   char range overlaps the keep's) — text containment is deliberately excluded so one claim
+   cannot suppress omission rows for unrelated keeps that merely share text. Two conservative
+   consequences: a returned claim whose span anchors nowhere is an **orphan rejection** (its
+   `grounding_rejected` row stands; it suppresses no omission), and a Selection span that is not
+   verbatim-findable can never be marked "tried," so it always gets its omission row — the case
+   that previously vanished with no trace.
 
-No double-counting: a span that has a `grounding_rejected` row and zero accepted claims does **not**
-also get `claimify_omitted` — omission means "the model never returned a claim," not "no claim
-survived grounding." Cross-model extraction comparisons can then show *why* a stronger model lands
-more claims (fewer omissions vs fewer gate rejections) instead of only *that* it does.
+Cross-model extraction comparisons can then show *why* a stronger model lands more claims (fewer
+omissions vs fewer gate rejections) instead of only *that* it does. On D56 chunk reuse with zero
+attached claims, the prior occurrence's transcript is copied forward verbatim — the synthetic
+`no_info` marker is written only when the prior transcript is itself empty, so reuse never
+rewrites a real loss reason.
 
 ## 4. Why there is no value gate (the non-goal)
 
