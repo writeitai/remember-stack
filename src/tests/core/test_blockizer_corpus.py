@@ -1,13 +1,18 @@
 """The blockizer golden corpus: locked hashes per BLOCKIZER_VERSION (WP-0.7, D57)."""
 
+import hashlib
 import json
 from pathlib import Path
+from uuid import UUID
 
 from markdown_it import __version__ as markdown_it_version
 
 from rememberstack.core import block_hash
 from rememberstack.core import blockize
 from rememberstack.core import BLOCKIZER_VERSION
+from rememberstack.core import ChunkerParams
+from rememberstack.core import pack_blocks
+from rememberstack.model import SectionSpan
 
 _CORPUS = Path(__file__).resolve().parents[1] / "blockizer_corpus"
 
@@ -26,6 +31,51 @@ def test_seed_document_hash_sequence_is_locked() -> None:
         for block in blocks
     ]
     assert observed == expected["blocks"]
+
+
+def test_heading_metadata_reuses_the_canonical_parse_and_normalizes_nfkc() -> None:
+    """D79 metadata is raw-level + NFKC/casefold/whitespace title only."""
+    source = "### ＦＯＯ   *Bär*\n\nBody.\n"
+    heading, body = blockize(document_md=source)
+    assert heading.heading_level == 3
+    assert heading.heading_title == "ＦＯＯ Bär"
+    assert heading.normalized_title == "foo bär"
+    assert body.heading_level is None
+    assert body.normalized_title is None
+
+
+def test_chunk_work_identity_tracks_the_metadata_only_blockizer_bump() -> None:
+    """The version bumps while the golden document's packed grid bytes stay locked."""
+    from rememberstack.core import CHUNKER_VERSION
+    from rememberstack.workers import E1_CHUNK_VERSION
+
+    assert E1_CHUNK_VERSION == CHUNKER_VERSION
+    source = (_CORPUS / "seed_mixed.md").read_text()
+    blocks = blockize(document_md=source)
+    chunks = pack_blocks(
+        blocks=blocks,
+        sections=(
+            SectionSpan(
+                section_id=UUID("00000000-0000-0000-0000-000000000079"),
+                node_path="0",
+                role="body",
+                block_start=0,
+                block_end=len(blocks) - 1,
+            ),
+        ),
+        document_md=source,
+        params=ChunkerParams(
+            token_budget=20, anchor_modulus=24, anchor_min_gap_tokens=200
+        ),
+    )
+    grid_bytes = json.dumps(
+        [chunk.model_dump(mode="json") for chunk in chunks],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    assert hashlib.sha256(grid_bytes).hexdigest() == (
+        "a8f22df40a4492ca66bc87b7b744d508c9dbcd72e386548bded0040b37f402ff"
+    )
 
 
 def test_offsets_slice_the_source_exactly() -> None:
@@ -77,3 +127,42 @@ def test_nested_list_items_stay_inside_their_parent_block() -> None:
     assert [block.type.value for block in blocks] == ["list_item", "list_item"]
     parent_raw = source[blocks[0].char_start : blocks[0].char_end]
     assert "nested child" in parent_raw
+
+
+def test_packing_is_byte_identical_under_different_heading_metadata() -> None:
+    """The chunk grid depends on segmentation and hashes, never on heading
+    metadata: repacking with every heading's metadata replaced yields
+    byte-identical chunks. This is the pre-vs-post-07b equivalence proof the
+    single hardcoded digest cannot give (review)."""
+    source = (_CORPUS / "seed_mixed.md").read_text()
+    blocks = blockize(document_md=source)
+    # model_copy skips validation, letting us fake arbitrary metadata drift
+    mutated = tuple(
+        block.model_copy(
+            update={"heading_title": "REPLACED", "normalized_title": "replaced"}
+        )
+        if block.heading_title is not None
+        else block
+        for block in blocks
+    )
+    sections = (
+        SectionSpan(
+            section_id=UUID("00000000-0000-0000-0000-000000000079"),
+            node_path="0",
+            role="body",
+            block_start=0,
+            block_end=len(blocks) - 1,
+        ),
+    )
+    params = ChunkerParams(
+        token_budget=20, anchor_modulus=24, anchor_min_gap_tokens=200
+    )
+    original = pack_blocks(
+        blocks=blocks, sections=sections, document_md=source, params=params
+    )
+    repacked = pack_blocks(
+        blocks=mutated, sections=sections, document_md=source, params=params
+    )
+    assert [chunk.model_dump(mode="json") for chunk in original] == [
+        chunk.model_dump(mode="json") for chunk in repacked
+    ]

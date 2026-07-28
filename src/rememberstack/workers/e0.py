@@ -6,15 +6,13 @@ queued stage handlers. Artifacts land ID-addressed in the artifacts store
 (`<doc_id>/<content_hash>/<representation_id>/…`, D37/D65); Postgres carries
 only the index.
 
-The structure stage runs the full D39 route when a model provider is
-composed: the structurer LLM proposes a section tree + placement hint from
-`document.md`, the deterministic snap (`core/section_snap.py`) normalizes it
-onto the block grid, and the tree lands as `document_sections` rows plus the
-`pageindex.json` sidecar. Every degradation path — no provider, a short
-document, a failed or malformed LLM call — falls back to the synthetic root:
-a document never fails structuring.
+The D79 structure stage parses canonical heading blocks, checks eligible
+skeletons with a bounded judge, uses an anchor-only LLM fallback for deficient
+trees, assigns title-only roles, and appends immutable generations. A document
+still never fails structuring.
 """
 
+from collections.abc import Iterable
 from datetime import datetime
 import hashlib
 import json
@@ -30,17 +28,29 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core import analyze_skeleton
 from rememberstack.core import blockize
 from rememberstack.core import BLOCKIZER_VERSION
+from rememberstack.core import blocks_from_sidecar
 from rememberstack.core import ConversionRouter
+from rememberstack.core import deterministic_section_role
+from rememberstack.core import LONG_TITLE
+from rememberstack.core import MAX_FALLBACK_DEPTH
+from rememberstack.core import MIN_CHECK_SECTIONS
+from rememberstack.core import parse_heading_skeleton
+from rememberstack.core import resolve_fallback_skeleton
 from rememberstack.core import SECTION_ROLES
-from rememberstack.core import snap_sections
+from rememberstack.core import skeleton_hash
+from rememberstack.core import SKELETON_PARSER_VERSION
+from rememberstack.core import SKELETON_STATS_VERSION
+from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
+from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import IngestedVersion
 from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
@@ -50,10 +60,16 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderCallUsage
+from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import RepresentationRecord
+from rememberstack.model import RoleClassificationResponse
 from rememberstack.model import SectionTreeRecord
+from rememberstack.model import SkeletonCheckOutcome
+from rememberstack.model import SkeletonCheckRecord
+from rememberstack.model import SkeletonCheckResponse
 from rememberstack.model import SnappedSection
-from rememberstack.model import StructureResponse
+from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
 from rememberstack.model import UploadRecord
@@ -67,9 +83,38 @@ from rememberstack.workers.e1 import E1_CHUNK_VERSION
 E0_CONVERT_VERSION: Final = "e0-convert-2026.07"
 """The convert sub-worker's component version (D12 idempotency key member)."""
 
-E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07c:temp0-1"
-"""The structure stage's component version (D39): LLM route + snap algorithm.
-07c pins temperature=0.0 — generation parameters are part of provenance."""
+E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07d:d79-wave1"
+"""The aggregate Wave-1 generation identity.
+
+Maps old ``e0-structure-2026.07c:temp0-1`` (one-shot offsets/tree/roles/
+summaries/placement) to the D79 split: deterministic/anchor skeleton, sanity
+check, and role pass. Summary and placement generation slots remain empty.
+"""
+
+E0_SKELETON_VERSION: Final = (
+    f"e0-skeleton-2026.07a:d79:{SKELETON_PARSER_VERSION}"
+    f":anchor-v1-depth{MAX_FALLBACK_DEPTH}"
+)
+"""Skeleton contract: canonical heading stack plus exact-anchor fallback."""
+
+SKELETON_CHECK_PROMPT_CEILING: Final = 16_000
+"""Hard total checker prompt ceiling, pinned by the checker version."""
+
+E0_SKELETON_CHECK_VERSION: Final = (
+    f"e0-skeleton-check-2026.07a:{SKELETON_STATS_VERSION}"
+    f":sample-v2:enum-v1:ceiling{SKELETON_CHECK_PROMPT_CEILING}"
+)
+"""Checker prompt/sampling/schema generation. sample-v2: the greedy fit went
+arithmetic (conservative digit/newline padding), so boundary selections can
+differ from the per-trial re-render greedy it replaced."""
+
+ROLE_PROMPT_CEILING: Final = 12_000
+"""Hard total title-only role prompt ceiling, pinned by the role version."""
+
+E0_ROLE_VERSION: Final = (
+    f"e0-role-2026.07a:title-rules-v1:classifier-v1:ceiling{ROLE_PROMPT_CEILING}"
+)
+"""Deterministic normalized-title rules plus bounded title-only classifier."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""
@@ -309,7 +354,9 @@ class ConvertHandler:
                 "blockizer_version": BLOCKIZER_VERSION,
                 "block_count": len(blocks),
                 "markdown_chars": len(result.document_md),
-                "blocks": [block.model_dump(mode="json") for block in blocks],
+                "blocks": [
+                    block.model_dump(mode="json", exclude_none=True) for block in blocks
+                ],
             }
         )
         manifest_bytes = _json_bytes(
@@ -389,14 +436,13 @@ class ConvertHandler:
 
 
 class StructurerSettings(BaseSettings):
-    """The full structure route's knobs (D39/D70 port defaults; D22 numbers).
+    """The D79 fallback structure-proposal seat and deterministic gate knobs.
 
-    The model seat follows the D70 principle — a per-deployment port
-    configuration, defaulting to the extraction tier. The thresholds are
-    starting points to be measured: a document below ``min_blocks_for_llm``
-    is served by the synthetic root alone (the LLM cannot improve a
-    three-paragraph note), and the prompt reads at most
-    ``max_prompt_chars`` of `document.md`.
+    ``REMEMBERSTACK_STRUCTURER_*`` is retained for deployment compatibility
+    but now names only the anchor-proposal fallback. ``min_blocks_for_llm`` is
+    accepted as a deprecated compatibility value; parser/check routing never
+    reads it. Gate metrics come from the same computation persisted as D79
+    stats. These operational starting points are not stat-to-verdict rules.
     """
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_STRUCTURER_")
@@ -404,40 +450,84 @@ class StructurerSettings(BaseSettings):
     model: str = Field(default="openai/gpt-5.6-luna")
     min_blocks_for_llm: int = Field(default=8, ge=1)
     max_prompt_chars: int = Field(default=200_000, ge=1_000)
+    min_heading_density_per_10k: float = Field(default=0.25, ge=0)
+    max_oversized_leaf_ratio: float = Field(default=0.75, ge=0, le=1)
 
 
-_STRUCTURE_PROMPT: Final = """You are a document structurer. Read the document \
-and propose its hierarchical section tree (a table of contents with spans).
+class SkeletonCheckSettings(BaseSettings):
+    """The independent D79 skeleton-check seat."""
 
-Rules:
-- Return sections as a JSON tree: each node has "title", "role", \
-"char_start", "char_end", "summary" (one line), and "children" (nested nodes).
-- Character offsets index into EXACTLY the document text below (0-based; \
-char_end is exclusive). Top-level sections should cover the document in order.
-- "role" must be one of: {roles}.
-- Also return "placement": a proposed corpus path for this document, e.g. \
-"/finance/annual-reports/2023/" — where it would live in an ideal directory \
-tree of a whole document collection. Advisory only.
-- Do not invent sections a short flat document does not have; return an empty \
-"sections" list if the document has no internal structure worth naming.
+    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_SKELETON_CHECK_")
+
+    model: str = Field(default="z-ai/glm-4.7-flash")
+
+
+class RoleSettings(BaseSettings):
+    """The narrow bounded title-only role classifier seat."""
+
+    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_ROLE_")
+
+    model: str = Field(default="z-ai/glm-4.7-flash")
+
+
+_FALLBACK_PROMPT: Final = """You propose section starts for a document whose \
+markdown headings were insufficient. Return a hierarchical tree of anchors.
+
+Each node has exactly:
+- anchor: an EXACT non-empty substring contained wholly in one rendered block
+- occurrence_index: zero-based occurrence of that exact substring inside the \
+enclosing parent's block range
+- children: nested nodes using the same shape
+
+Never return character offsets, block ordinals, roles, summaries, or placement.
+If no reliable internal sections exist, return an empty sections list.
 
 Document title: {title}
+Source kind: {source_kind}
+Rendered blocks ({included} included, {omitted} omitted):
+{blocks}"""
 
-DOCUMENT:
-{document}"""
+_CHECK_INSTRUCTION: Final = """Judge whether this document SECTION SKELETON \
+is structurally coherent. You see statistics and heading lines only, never \
+section body text. Return exactly one primary verdict:
+coherent | incoherent_repeated_boilerplate | \
+incoherent_heading_sequence | incoherent_junk_titles | \
+incoherent_over_fragmented.
+Do not propose structure and do not add a reason or confidence."""
+
+_CHECK_PROMPT_TEMPLATE: Final = """{instruction}
+Document title: {title}
+Source kind: {source_kind}
+Stats:
+{stats}
+Section lines: {included} included, {omitted} omitted
+{lines}"""
+
+_ROLE_INSTRUCTION: Final = """Assign one section role from this closed set:
+{roles}
+Use only the provided title. Return assignments keyed by the exact node_path.
+Do not summarize or inspect body content."""
+
+_CHECK_PROMPT_HASH: Final = hashlib.sha256(
+    _CHECK_PROMPT_TEMPLATE.format(
+        instruction=_CHECK_INSTRUCTION,
+        title="{capped_document_title}",
+        source_kind="{capped_source_kind}",
+        stats="{canonical_stats_json}",
+        included="{included_count}",
+        omitted="{omitted_count}",
+        lines="{ordered_sampled_lines}",
+    ).encode("utf-8")
+).hexdigest()
+_CHECK_SCHEMA_HASH: Final = hashlib.sha256(
+    json.dumps(
+        SkeletonCheckResponse.model_json_schema(), separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+).hexdigest()
 
 
 class StructureHandler:
-    """The structure stage (D39): the full PageIndex-style route, snap-guarded.
-
-    With a composed model provider and a long-enough document, the LLM
-    proposes the section tree and placement hint; the deterministic snap
-    normalizes it onto the block grid; rows + `pageindex.json` sidecar land
-    and the chain completes — representation ready, live-reading pointer
-    set, lineage currency moved (D54). Without a provider — or when the
-    call fails or returns nothing usable — the document gets the synthetic
-    root: structuring never fails a document.
-    """
+    """D79 parse → stats/gates → check/fallback → roles → immutable generation."""
 
     def __init__(
         self,
@@ -446,53 +536,144 @@ class StructureHandler:
         artifact_store: ObjectStorePort,
         model_provider: ModelProviderPort | None = None,
         settings: StructurerSettings | None = None,
+        check_settings: SkeletonCheckSettings | None = None,
+        role_settings: RoleSettings | None = None,
     ) -> None:
-        """Bind the handler to its catalog, artifacts bucket, and model seat."""
+        """Bind the handler to all three independently versioned seats."""
         self._catalog = catalog
         self._artifact_store = artifact_store
         self._model_provider = model_provider
         self._settings = settings or StructurerSettings()
+        self._check_settings = check_settings or SkeletonCheckSettings()
+        self._role_settings = role_settings or RoleSettings()
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Structure one representation and flip currency."""
+        """Run the acyclic D79 state machine and flip currency once."""
         source = self._catalog.structure_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
         blocks_doc = json.loads(
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
-        blocks = tuple(
-            Block.model_validate(payload) for payload in blocks_doc["blocks"]
-        )
-        response = self._propose(source=source, block_count=len(blocks), meter=meter)
-        proposed = response.sections if response is not None else ()
-        placement = (response.placement or None) if response is not None else None
-        sections = snap_sections(
-            proposed=proposed,
+        markdown = self._artifact_store.read_bytes(
+            key=ObjectKey(source.markdown_uri)
+        ).decode("utf-8")
+        blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=markdown)
+        parsed = parse_heading_skeleton(
             blocks=blocks,
             title=source.title,
             markdown_chars=blocks_doc["markdown_chars"],
         )
-        structurer_name = "pageindex_llm" if len(sections) > 1 else "synthetic_root"
-        persisted = self._catalog.record_section_tree(
-            record=SectionTreeRecord(
-                deployment_id=source.deployment_id,
-                doc_id=source.doc_id,
-                version_id=source.version_id,
-                representation_id=source.representation_id,
-                sections=sections,
-                placement_path=placement,
-                structurer_name=structurer_name,
-                structurer_version=E0_STRUCTURE_VERSION,
-            )
+        parsed_analysis = analyze_skeleton(
+            sections=parsed, blocks=blocks, markdown_chars=len(markdown)
         )
-        # the sidecar is derived from what the database actually persisted —
-        # a retry that lost to an earlier attempt must not write a fresher
-        # LLM proposal beside rows carrying the first one (Codex review):
-        self._write_sidecar(
+        parsed_hash = skeleton_hash(sections=parsed)
+
+        route: StructureRouteTag
+        selected = parsed
+        selection_analysis = parsed_analysis
+        selection_candidate_hash = parsed_hash
+        selecting_check_id: UUID | None = None
+        check_version: str | None = None
+        configured_check_version = _skeleton_check_version(
+            settings=self._check_settings
+        )
+        producer_family = "N/A"
+
+        if parsed_analysis.heading_density < self._settings.min_heading_density_per_10k:
+            (
+                route,
+                selected,
+                selection_analysis,
+                selection_candidate_hash,
+                selecting_check_id,
+                producer_family,
+            ) = self._fallback_with_terminal(
+                source=source,
+                work=work,
+                blocks=blocks,
+                markdown=markdown,
+                meter=meter,
+                parsed_root=parsed[0],
+                kept_route=StructureRouteTag.FALLBACK_DENSITY,
+            )
+            check_version = configured_check_version
+        elif (
+            parsed_analysis.oversized_leaf_ratio
+            > self._settings.max_oversized_leaf_ratio
+        ):
+            (
+                route,
+                selected,
+                selection_analysis,
+                selection_candidate_hash,
+                selecting_check_id,
+                producer_family,
+            ) = self._fallback_with_terminal(
+                source=source,
+                work=work,
+                blocks=blocks,
+                markdown=markdown,
+                meter=meter,
+                parsed_root=parsed[0],
+                kept_route=StructureRouteTag.FALLBACK_LEAF,
+            )
+            check_version = configured_check_version
+        else:
+            initial_outcome, initial_check_id = self._check(
+                source=source,
+                work=work,
+                sections=parsed,
+                analysis=parsed_analysis,
+                meter=meter,
+                terminal=False,
+            )
+            selecting_check_id = initial_check_id
+            check_version = configured_check_version
+            if _is_incoherent(outcome=initial_outcome):
+                self._persist_generation(
+                    source=source,
+                    sections=parsed,
+                    route=StructureRouteTag.PARSER_DEMOTED_CHECK,
+                    analysis=parsed_analysis,
+                    candidate_skeleton_hash=parsed_hash,
+                    selecting_check_id=initial_check_id,
+                    check_version=configured_check_version,
+                    roles_version=None,
+                    producer_family="N/A",
+                    make_current=False,
+                )
+                (
+                    route,
+                    selected,
+                    selection_analysis,
+                    selection_candidate_hash,
+                    selecting_check_id,
+                    producer_family,
+                ) = self._fallback_with_terminal(
+                    source=source,
+                    work=work,
+                    blocks=blocks,
+                    markdown=markdown,
+                    meter=meter,
+                    parsed_root=parsed[0],
+                    kept_route=StructureRouteTag.FALLBACK_AFTER_CHECK,
+                )
+            else:
+                route = StructureRouteTag.PARSER
+
+        with_roles = self._assign_roles(sections=selected, meter=meter)
+        self._persist_generation(
             source=source,
-            sections=persisted.sections,
-            placement=persisted.placement_path,
+            sections=with_roles,
+            route=route,
+            analysis=selection_analysis,
+            candidate_skeleton_hash=selection_candidate_hash,
+            selecting_check_id=selecting_check_id,
+            check_version=check_version,
+            roles_version=_role_version(settings=self._role_settings),
+            producer_family=producer_family,
+            make_current=True,
         )
         return HandlerOutcome(
             follow_up=(
@@ -512,66 +693,624 @@ class StructureHandler:
             )
         )
 
-    def _propose(
-        self, *, source: StructureSource, block_count: int, meter: CostMeterPort
-    ) -> StructureResponse | None:
-        """Ask the structurer LLM for a tree; every failure degrades to None."""
+    def _fallback_with_terminal(
+        self,
+        *,
+        source: StructureSource,
+        work: ClaimedWork,
+        blocks: tuple[Block, ...],
+        markdown: str,
+        meter: CostMeterPort,
+        parsed_root: SnappedSection,
+        kept_route: StructureRouteTag,
+    ) -> tuple[
+        StructureRouteTag, tuple[SnappedSection, ...], SkeletonAnalysis, str, UUID, str
+    ]:
+        """Every fallback tree faces the terminal judge (§4.1 state machine).
+
+        The plausible-wrong-tree failure mode does not care which gate demoted
+        the document, so density/leaf demotions get the same terminal check as
+        incoherent-verdict demotions. Terminal incoherence degrades to the
+        synthetic root — honest no-structure over a plausible-wrong tree; the
+        check-record chain preserves which gate started the demotion. The
+        returned analysis/candidate hash always describe the SELECTED tree —
+        generation rows describe what is persisted, check records describe the
+        candidates they judged.
+        """
+        fallback, producer_family = self._fallback(
+            source=source, blocks=blocks, markdown=markdown, meter=meter
+        )
+        fallback_analysis = analyze_skeleton(
+            sections=fallback, blocks=blocks, markdown_chars=len(markdown)
+        )
+        terminal_outcome, terminal_check_id = self._check(
+            source=source,
+            work=work,
+            sections=fallback,
+            analysis=fallback_analysis,
+            meter=meter,
+            terminal=True,
+        )
+        if _is_incoherent(outcome=terminal_outcome):
+            synthetic = (parsed_root,)
+            return (
+                StructureRouteTag.SYNTHETIC_AFTER_CHECK,
+                synthetic,
+                analyze_skeleton(
+                    sections=synthetic, blocks=blocks, markdown_chars=len(markdown)
+                ),
+                skeleton_hash(sections=synthetic),
+                terminal_check_id,
+                "N/A",
+            )
+        return (
+            kept_route,
+            fallback,
+            fallback_analysis,
+            skeleton_hash(sections=fallback),
+            terminal_check_id,
+            producer_family,
+        )
+
+    def _fallback(
+        self,
+        *,
+        source: StructureSource,
+        blocks: tuple[Block, ...],
+        markdown: str,
+        meter: CostMeterPort,
+    ) -> tuple[tuple[SnappedSection, ...], str]:
+        """Return the resolved proposal and actual family; failures are N/A roots."""
         if self._model_provider is None:
-            return None
-        if block_count < self._settings.min_blocks_for_llm:
-            return None  # a short document: the synthetic root serves it
-        markdown = self._artifact_store.read_bytes(
-            key=ObjectKey(source.markdown_uri)
-        ).decode("utf-8")
-        prompt = _STRUCTURE_PROMPT.format(
-            roles=", ".join(sorted(SECTION_ROLES)),
-            title=source.title or "(untitled)",
-            document=markdown[: self._settings.max_prompt_chars],
+            return (
+                resolve_fallback_skeleton(
+                    proposed=(), blocks=blocks, document_md=markdown, title=source.title
+                ),
+                "N/A",
+            )
+        prompt = _render_fallback_prompt(
+            source=source,
+            blocks=blocks,
+            markdown=markdown,
+            ceiling=self._settings.max_prompt_chars,
         )
         try:
             generated = self._model_provider.generate(
                 request=ModelRequest(
                     model=self._settings.model, prompt=prompt, temperature=0.0
                 ),
-                response_type=StructureResponse,
+                response_type=FallbackStructureResponse,
             )
         except ProviderAccountingError:
-            raise  # budget enforcement must never degrade missing usage to zero
+            raise
         except ProviderCallError as error:
             if error.usage is not None:
                 meter.record(
-                    call_key="structure_failure",
-                    tier="failed_response",
+                    call_key="structure_fallback_failure",
+                    tier="fallback_failed_response",
                     usage=error.usage,
                 )
-            return None
+            return (
+                resolve_fallback_skeleton(
+                    proposed=(), blocks=blocks, document_md=markdown, title=source.title
+                ),
+                "N/A",
+            )
         except Exception:  # noqa: BLE001 — a document never fails structuring
-            return None
-        meter.record(call_key="structure", tier="structure", usage=generated.usage)
-        return generated.output
+            return (
+                resolve_fallback_skeleton(
+                    proposed=(), blocks=blocks, document_md=markdown, title=source.title
+                ),
+                "N/A",
+            )
+        meter.record(
+            call_key="structure_fallback",
+            tier="structure_fallback",
+            usage=generated.usage,
+        )
+        return (
+            resolve_fallback_skeleton(
+                proposed=generated.output.sections,
+                blocks=blocks,
+                document_md=markdown,
+                title=source.title,
+            ),
+            _model_family(model=generated.usage.model_name),
+        )
 
-    def _write_sidecar(
+    def _check(
         self,
         *,
         source: StructureSource,
         sections: tuple[SnappedSection, ...],
-        placement: str | None,
+        analysis: SkeletonAnalysis,
+        work: ClaimedWork,
+        meter: CostMeterPort,
+        terminal: bool,
+    ) -> tuple[SkeletonCheckOutcome, UUID]:
+        """Append one explicit checker outcome; failures are fail-open."""
+        outcome = SkeletonCheckOutcome.NOT_RUN_SHORT
+        usage: ProviderCallUsage | None = None
+        failure: dict[str, str | int | float | bool | None] | None = None
+        # A prompt no call will ever send gets no render and no hash — a
+        # not_run_short record with a sampled_input_hash would bookkeep an
+        # input that never existed (and rendering is the expensive part).
+        sampled_hash: str | None = None
+        if len(sections) - 1 >= MIN_CHECK_SECTIONS:
+            prompt = _render_check_prompt(
+                source=source, sections=sections, analysis=analysis
+            )
+            sampled_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            if self._model_provider is None:
+                outcome = SkeletonCheckOutcome.PROVIDER_ERROR
+                failure = {"error_type": "provider_unavailable", "has_usage": False}
+            else:
+                try:
+                    generated = self._model_provider.generate(
+                        request=ModelRequest(
+                            model=self._check_settings.model,
+                            prompt=prompt,
+                            temperature=0.0,
+                        ),
+                        response_type=SkeletonCheckResponse,
+                    )
+                    usage = generated.usage
+                    outcome = SkeletonCheckOutcome(generated.output.verdict)
+                except ProviderAccountingError:
+                    raise
+                except (
+                    ProviderInvalidResponseError,
+                    # ValueError covers pydantic ValidationError AND the
+                    # off-enum verdict coercion from a non-OpenRouter
+                    # provider — both are invalid responses, not outages
+                    ValueError,
+                ) as error:
+                    outcome = SkeletonCheckOutcome.INVALID_RESPONSE
+                    usage = getattr(error, "usage", None) or usage
+                    failure = _failure_envelope(error=error, usage=usage)
+                except ProviderCallError as error:
+                    outcome = SkeletonCheckOutcome.PROVIDER_ERROR
+                    usage = error.usage
+                    failure = _failure_envelope(error=error, usage=usage)
+                except Exception as error:  # noqa: BLE001 - guard is fail-open
+                    outcome = SkeletonCheckOutcome.PROVIDER_ERROR
+                    failure = _failure_envelope(error=error, usage=None)
+
+        call_key = "skeleton_check_terminal" if terminal else "skeleton_check"
+        if usage is not None:
+            meter.record(call_key=call_key, tier="skeleton_check", usage=usage)
+        check_id = uuid4()
+        checker_model = (
+            usage.model_name if usage is not None else self._check_settings.model
+        )
+        self._catalog.record_skeleton_check(
+            record=SkeletonCheckRecord(
+                check_id=check_id,
+                processing_id=work.processing_id,
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                version_id=source.version_id,
+                representation_id=source.representation_id,
+                candidate_skeleton_hash=skeleton_hash(sections=sections),
+                stats_version=SKELETON_STATS_VERSION,
+                stats=analysis.stats,
+                sampled_input_hash=sampled_hash,
+                check_outcome=outcome,
+                checker_component_version=E0_SKELETON_CHECK_VERSION,
+                checker_model=checker_model,
+                checker_model_hash=hashlib.sha256(
+                    checker_model.encode("utf-8")
+                ).hexdigest(),
+                checker_prompt_hash=_CHECK_PROMPT_HASH,
+                checker_schema_hash=_CHECK_SCHEMA_HASH,
+                provider_failure=failure,
+                tokens_in=usage.tokens_in if usage is not None else None,
+                tokens_out=usage.tokens_out if usage is not None else None,
+                cost_usd=usage.cost_usd if usage is not None else None,
+                latency_ms=usage.latency_ms if usage is not None else None,
+            )
+        )
+        return outcome, check_id
+
+    def _assign_roles(
+        self, *, sections: tuple[SnappedSection, ...], meter: CostMeterPort
+    ) -> tuple[SnappedSection, ...]:
+        """Rules first, one bounded title-only call second, explicit body last."""
+        roles: dict[str, str] = {"0": "body"}
+        undecided: list[SnappedSection] = []
+        for section in sections[1:]:
+            role = deterministic_section_role(normalized_title=section.normalized_title)
+            if role is None:
+                undecided.append(section)
+            else:
+                roles[section.node_path] = role
+
+        included, prompt = _render_role_prompt(sections=tuple(undecided))
+        if included and self._model_provider is not None:
+            try:
+                generated = self._model_provider.generate(
+                    request=ModelRequest(
+                        model=self._role_settings.model, prompt=prompt, temperature=0.0
+                    ),
+                    response_type=RoleClassificationResponse,
+                )
+                meter.record(
+                    call_key="section_roles",
+                    tier="title_classifier",
+                    usage=generated.usage,
+                )
+                allowed = {section.node_path for section in included}
+                for assignment in generated.output.assignments:
+                    if (
+                        assignment.node_path in allowed
+                        and assignment.node_path not in roles
+                    ):
+                        roles[assignment.node_path] = assignment.role
+            except ProviderAccountingError:
+                raise
+            except ProviderCallError as error:
+                if error.usage is not None:
+                    meter.record(
+                        call_key="section_roles_failure",
+                        tier="title_classifier_failed_response",
+                        usage=error.usage,
+                    )
+            except Exception:  # noqa: BLE001 - undecided titles become body
+                pass
+        return tuple(
+            section.model_copy(update={"role": roles.get(section.node_path, "body")})
+            for section in sections
+        )
+
+    def _persist_generation(
+        self,
+        *,
+        source: StructureSource,
+        sections: tuple[SnappedSection, ...],
+        route: StructureRouteTag,
+        analysis: SkeletonAnalysis,
+        candidate_skeleton_hash: str,
+        selecting_check_id: UUID | None,
+        check_version: str | None,
+        roles_version: str | None,
+        producer_family: str,
+        make_current: bool,
     ) -> None:
-        """Write the reproducible `pageindex.json` next to `document.md` (D39)."""
-        sidecar_key = source.blocks_uri.rsplit("/", 1)[0] + "/pageindex.json"
+        """Append one generation, then write its versioned sidecar.
+
+        The generation identity is seeded from the SELECTED tree and route —
+        never from the checker version. Both halves of the D79 rule follow
+        from one seed: a checker bump over an unchanged route+tree derives
+        the same id (ON CONFLICT no-op — no minted generation, no pointer
+        churn), while a genuine route flip or a different fallback tree
+        changes the seed and appends a real generation. Role version stays
+        in the seed because roles change the section rows themselves.
+        """
+        skeleton_version = _skeleton_version(settings=self._settings)
+        generation_id = uuid5(
+            NAMESPACE_URL,
+            "rememberstack:structure:"
+            f"{source.representation_id}:{E0_STRUCTURE_VERSION}:"
+            f"{route.value}:{skeleton_hash(sections=sections)}:"
+            f"{skeleton_version}:{roles_version or 'none'}",
+        )
+        sidecar_key = (
+            source.blocks_uri.rsplit("/", 1)[0]
+            + f"/structure/{generation_id}/pageindex.json"
+        )
+        persisted = self._catalog.record_section_tree(
+            record=SectionTreeRecord(
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                version_id=source.version_id,
+                representation_id=source.representation_id,
+                structure_generation_id=generation_id,
+                sections=sections,
+                placement_path=None,
+                structurer_name=route.value,
+                structurer_version=E0_STRUCTURE_VERSION,
+                skeleton_version=skeleton_version,
+                skeleton_hash=skeleton_hash(sections=sections),
+                skeleton_producer_family=producer_family,
+                skeleton_check_version=check_version,
+                roles_version=roles_version,
+                selecting_check_id=selecting_check_id,
+                route_tag=route,
+                candidate_skeleton_hash=candidate_skeleton_hash,
+                stats_version=SKELETON_STATS_VERSION,
+                stats=analysis.stats,
+                pageindex_uri=sidecar_key,
+                make_current=make_current,
+            )
+        )
         payload = _json_bytes(
             payload={
-                "structurer_version": E0_STRUCTURE_VERSION,
-                "placement": placement,
-                "sections": [section.model_dump(mode="json") for section in sections],
+                "structure_generation_id": str(persisted.structure_generation_id),
+                "structurer_version": persisted.structurer_version,
+                "generations": {
+                    "skeleton": persisted.skeleton_version,
+                    "skeleton_check": persisted.skeleton_check_version,
+                    "roles": persisted.roles_version,
+                    "summary": persisted.summary_version,
+                    "placement": persisted.placement_version,
+                },
+                "route_tag": persisted.route_tag.value,
+                "selecting_check_id": (
+                    str(persisted.selecting_check_id)
+                    if persisted.selecting_check_id is not None
+                    else None
+                ),
+                "candidate_skeleton_hash": persisted.candidate_skeleton_hash,
+                "stats_version": persisted.stats_version,
+                "stats": persisted.stats.model_dump(mode="json"),
+                "placement": persisted.placement_path,
+                "sections": [
+                    section.model_dump(mode="json") for section in persisted.sections
+                ],
             }
         )
         try:
             self._artifact_store.write_bytes(
-                key=ObjectKey(sidecar_key), content=payload
+                key=ObjectKey(persisted.pageindex_uri), content=payload
             )
         except ObjectAlreadyExistsError:
-            pass  # a retried attempt replays; the first write is the truth
+            pass
+
+
+def _render_fallback_prompt(
+    *, source: StructureSource, blocks: tuple[Block, ...], markdown: str, ceiling: int
+) -> str:
+    """Render whole block excerpts under the compatibility prompt ceiling."""
+    rendered: list[str] = []
+    for block in blocks:
+        raw = markdown[block.char_start : block.char_end]
+        line = f"[{block.type.value}]\n{raw}"
+        trial = "\n\n".join((*rendered, line))
+        prompt = _FALLBACK_PROMPT.format(
+            title=(source.title or "(untitled)")[:LONG_TITLE],
+            source_kind=source.source_kind[:LONG_TITLE],
+            included=len(rendered) + 1,
+            omitted=len(blocks) - len(rendered) - 1,
+            blocks=trial,
+        )
+        if len(prompt) > ceiling:
+            break
+        rendered.append(line)
+    return _FALLBACK_PROMPT.format(
+        title=(source.title or "(untitled)")[:LONG_TITLE],
+        source_kind=source.source_kind[:LONG_TITLE],
+        included=len(rendered),
+        omitted=len(blocks) - len(rendered),
+        blocks="\n\n".join(rendered),
+    )
+
+
+def _render_check_prompt(
+    *,
+    source: StructureSource,
+    sections: tuple[SnappedSection, ...],
+    analysis: SkeletonAnalysis,
+) -> str:
+    """Anomaly-first deterministic sampling, rendered back in document order.
+
+    Linear, not quadratic: every candidate line renders exactly once, the
+    static envelope (stats block, header) renders exactly once, and the
+    greedy fit tracks lengths arithmetically — the previous shape re-rendered
+    the full prompt per candidate, ~5s of pure CPU on a 6,000-heading
+    document. The fit is conservative (worst-case count digits, a newline
+    per line), so the final render can only land under the ceiling; the
+    assert is the belt to that suspenders.
+    """
+    candidates = sections[1:]
+    priorities = _anomaly_priority(sections=candidates, analysis=analysis)
+    line_for = tuple(
+        _check_line(
+            section=section,
+            direct_body_chars=analysis.direct_body_chars[section.node_path],
+        )
+        for section in candidates
+    )
+    stats_json = json.dumps(
+        analysis.stats.model_dump(mode="json"),
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+
+    def compose(ordered: tuple[int, ...]) -> str:
+        return _CHECK_PROMPT_TEMPLATE.format(
+            instruction=_CHECK_INSTRUCTION,
+            title=(source.title or "(untitled)")[:LONG_TITLE],
+            source_kind=source.source_kind[:LONG_TITLE],
+            stats=stats_json,
+            included=len(ordered),
+            omitted=len(candidates) - len(ordered),
+            lines="\n".join(line_for[index] for index in ordered),
+        )
+
+    overhead = len(compose(()))
+    budget = SKELETON_CHECK_PROMPT_CEILING - overhead
+    selected: set[int] = set()
+    used = 0
+    for index in priorities:
+        cost = len(line_for[index]) + 1  # +1: the joining newline, worst case
+        if used + cost <= budget:
+            selected.add(index)
+            used += cost
+    rendered = compose(tuple(sorted(selected)))
+    if len(rendered) > SKELETON_CHECK_PROMPT_CEILING:
+        raise AssertionError("checker prompt base exceeds its versioned hard ceiling")
+    return rendered
+
+
+def _anomaly_priority(
+    *, sections: tuple[SnappedSection, ...], analysis: SkeletonAnalysis
+) -> tuple[int, ...]:
+    """Repeated titles, jumps, tiny bodies, large leaves, then head/tail."""
+    priorities: list[int] = []
+
+    def add(indexes: Iterable[int]) -> None:
+        for index in indexes:
+            if index not in priorities:
+                priorities.append(index)
+
+    multiplicity: dict[str, int] = {}
+    for section in sections:
+        multiplicity[section.normalized_title] = (
+            multiplicity.get(section.normalized_title, 0) + 1
+        )
+    add(
+        tuple(
+            index
+            for index, section in sorted(
+                enumerate(sections),
+                key=lambda item: (-multiplicity[item[1].normalized_title], item[0]),
+            )
+            if multiplicity[section.normalized_title] > 1
+        )[:8]
+    )
+    jumps = sorted(
+        (
+            (
+                # raw levels only — a pair missing a raw level is no jump,
+                # matching the d79-v2 stat rule (tree depth would fake zero
+                # or invent jumps that steer the sample)
+                max(0, right.heading_level - left.heading_level - 1)
+                if left.heading_level is not None and right.heading_level is not None
+                else 0,
+                index + 1,
+            )
+            for index, (left, right) in enumerate(
+                zip(sections, sections[1:], strict=False)
+            )
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    add(tuple(index for jump, index in jumps if jump > 0)[:8])
+    add(
+        tuple(
+            index
+            for index, _ in sorted(
+                enumerate(sections),
+                key=lambda item: (
+                    analysis.direct_body_chars[item[1].node_path],
+                    item[0],
+                ),
+            )
+        )[:8]
+    )
+    add(
+        tuple(
+            index
+            for index, section in sorted(
+                enumerate(sections),
+                key=lambda item: (
+                    -analysis.leaf_span_chars.get(item[1].node_path, -1),
+                    item[0],
+                ),
+            )
+            if section.node_path in analysis.leaf_span_chars
+        )[:8]
+    )
+    add(range(min(8, len(sections))))
+    add(range(max(0, len(sections) - 8), len(sections)))
+    add(range(len(sections)))
+    return tuple(priorities)
+
+
+def _check_line(*, section: SnappedSection, direct_body_chars: int) -> str:
+    title = section.title
+    if len(title) > LONG_TITLE:
+        title = title[: LONG_TITLE - 1] + "…"
+    # anchor-derived sections carry no raw level; "null" tells the judge the
+    # truth instead of a tree depth masquerading as one
+    level = "null" if section.heading_level is None else str(section.heading_level)
+    return (
+        f"(level={level}, "
+        f"title={json.dumps(title, ensure_ascii=False)}, "
+        f"direct_body_chars={direct_body_chars})"
+    )
+
+
+def _render_role_prompt(
+    *, sections: tuple[SnappedSection, ...]
+) -> tuple[tuple[SnappedSection, ...], str]:
+    included: list[SnappedSection] = []
+    instruction = _ROLE_INSTRUCTION.format(roles=", ".join(sorted(SECTION_ROLES)))
+    for section in sections:
+        line = (
+            f"{section.node_path}\t"
+            f"{json.dumps(section.title[:LONG_TITLE], ensure_ascii=False)}"
+        )
+        trial = "\n".join(
+            (
+                instruction,
+                f"Title lines: {len(included) + 1} included,"
+                f" {len(sections) - len(included) - 1} omitted",
+                *(
+                    f"{item.node_path}\t"
+                    f"{json.dumps(item.title[:LONG_TITLE], ensure_ascii=False)}"
+                    for item in included
+                ),
+                line,
+            )
+        )
+        if len(trial) > ROLE_PROMPT_CEILING:
+            break
+        included.append(section)
+    prompt = "\n".join(
+        (
+            instruction,
+            f"Title lines: {len(included)} included,"
+            f" {len(sections) - len(included)} omitted",
+            *(
+                f"{item.node_path}\t"
+                f"{json.dumps(item.title[:LONG_TITLE], ensure_ascii=False)}"
+                for item in included
+            ),
+        )
+    )
+    return tuple(included), prompt
+
+
+def _failure_envelope(
+    *, error: Exception, usage: ProviderCallUsage | None
+) -> dict[str, str | int | float | bool | None]:
+    """Metadata-only failure fingerprint; never persist exception/completion text."""
+    return {
+        "error_type": type(error).__name__,
+        "error_fingerprint": hashlib.sha256(str(error).encode("utf-8")).hexdigest(),
+        "has_usage": usage is not None,
+    }
+
+
+def _is_incoherent(*, outcome: SkeletonCheckOutcome) -> bool:
+    return outcome.value.startswith("incoherent_")
+
+
+def _model_family(*, model: str) -> str:
+    return model.split("/", 1)[0] if "/" in model else model
+
+
+def _skeleton_version(*, settings: StructurerSettings) -> str:
+    return (
+        f"{E0_SKELETON_VERSION}"
+        f":density{settings.min_heading_density_per_10k:g}"
+        f":leaf{settings.max_oversized_leaf_ratio:g}"
+        f":fallback-model-{hashlib.sha256(settings.model.encode()).hexdigest()[:12]}"
+    )
+
+
+def _role_version(*, settings: RoleSettings) -> str:
+    """Bind the independently configured classifier model into role provenance."""
+    model_hash = hashlib.sha256(settings.model.encode("utf-8")).hexdigest()[:12]
+    return f"{E0_ROLE_VERSION}:model-{model_hash}"
+
+
+def _skeleton_check_version(*, settings: SkeletonCheckSettings) -> str:
+    """Bind the checker seat model into its generation slot."""
+    model_hash = hashlib.sha256(settings.model.encode("utf-8")).hexdigest()[:12]
+    return f"{E0_SKELETON_CHECK_VERSION}:model-{model_hash}"
 
 
 def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:

@@ -7,7 +7,12 @@ from rememberstack.workers.base import StageHandler
 from rememberstack.workers.base import Worker
 from rememberstack.workers.e0 import ConvertHandler
 from rememberstack.workers.e0 import E0_CONVERT_VERSION
+from rememberstack.workers.e0 import E0_ROLE_VERSION
+from rememberstack.workers.e0 import E0_SKELETON_CHECK_VERSION
+from rememberstack.workers.e0 import E0_SKELETON_VERSION
 from rememberstack.workers.e0 import E0_STRUCTURE_VERSION
+from rememberstack.workers.e0 import RoleSettings
+from rememberstack.workers.e0 import SkeletonCheckSettings
 from rememberstack.workers.e0 import StructureHandler
 from rememberstack.workers.e0 import StructurerSettings
 from rememberstack.workers.e0 import UPLOAD_SOURCE_KIND
@@ -118,6 +123,9 @@ __all__ = (
     "P1Settings",
     "P1_EMBED_CLAIMS_VERSION",
     "E0_CONVERT_VERSION",
+    "E0_ROLE_VERSION",
+    "E0_SKELETON_CHECK_VERSION",
+    "E0_SKELETON_VERSION",
     "E0_STRUCTURE_VERSION",
     "HandlerOutcome",
     "HandlerRegistry",
@@ -146,6 +154,8 @@ __all__ = (
     "ReconcileHandler",
     "RECONCILE_VERSION",
     "StructureHandler",
+    "RoleSettings",
+    "SkeletonCheckSettings",
     "StructurerSettings",
     "SyncCycleRunner",
     "SyncSettings",

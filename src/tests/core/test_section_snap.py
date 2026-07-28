@@ -248,6 +248,8 @@ def test_the_catalog_refuses_a_disconnected_tree() -> None:
     from pydantic import ValidationError
 
     from rememberstack.model import SectionTreeRecord
+    from rememberstack.model import SkeletonStats
+    from rememberstack.model import StructureRouteTag
 
     root = SnappedSection(
         node_path="0",
@@ -274,13 +276,46 @@ def test_the_catalog_refuses_a_disconnected_tree() -> None:
         ordinal=1,
     )
     with pytest.raises(ValidationError, match="before its parent"):
+        stats = SkeletonStats(
+            stats_version="test",
+            section_count=0,
+            duplicate_title_ratio=None,
+            max_title_multiplicity=None,
+            sibling_duplicate_ratio=None,
+            level_jump_count=None,
+            numbering_coverage=None,
+            numbering_inversions=None,
+            numbering_scheme_switches=None,
+            tiny_section_ratio=None,
+            zero_direct_body_ratio=None,
+            oversized_leaf_ratio=None,
+            heading_density=None,
+            title_length_p50=None,
+            title_length_p95=None,
+            long_title_ratio=None,
+            low_letter_ratio=None,
+            empty_title_ratio=None,
+            max_sibling_fanout=None,
+        )
         SectionTreeRecord(
             deployment_id=uuid4(),
             doc_id=uuid4(),
             version_id=uuid4(),
             representation_id=uuid4(),
+            structure_generation_id=uuid4(),
             sections=(root, orphan),
             placement_path=None,
             structurer_name="pageindex_llm",
             structurer_version="test",
+            skeleton_version="test",
+            skeleton_hash="hash",
+            skeleton_producer_family="N/A",
+            skeleton_check_version=None,
+            roles_version="test",
+            selecting_check_id=None,
+            route_tag=StructureRouteTag.LEGACY,
+            candidate_skeleton_hash="hash",
+            stats_version="test",
+            stats=stats,
+            pageindex_uri="test/pageindex.json",
         )

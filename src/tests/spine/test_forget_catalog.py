@@ -167,6 +167,7 @@ def _restore_pre_forget_postgres(*, engine: Engine) -> None:
     )
     with engine.begin() as connection:
         _seed_documents(connection=connection)
+        _seed_structure_provenance(connection=connection)
         _seed_evidence(connection=connection)
         _seed_knowledge_and_residuals(connection=connection)
 
@@ -249,6 +250,57 @@ def test_readiness_rehonors_manifest_after_old_postgres_restore(
     assert record is not None
     assert record.status is ForgetManifestStatus.COMPLETE
     _assert_scrubbed_and_control_survives(engine=seeded_engine)
+
+
+_TARGET_CHECK_ID = UUID("75000000-0000-0000-0000-0000000000c1")
+_TARGET_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000c2")
+
+
+def _seed_structure_provenance(*, connection: Connection) -> None:
+    """A D79 check record + generation for the target doc: hard-forget must
+    erase both EXPLICITLY (review MAJOR — never via implied cascade)."""
+    connection.execute(
+        text(
+            "INSERT INTO document_skeleton_checks ("
+            " check_id, processing_id, deployment_id, doc_id, version_id,"
+            " representation_id, candidate_skeleton_hash, stats_version, stats,"
+            " sampled_input_hash, check_outcome, checker_component_version,"
+            " checker_model, checker_model_hash, checker_prompt_hash,"
+            " checker_schema_hash"
+            ") VALUES ("
+            " :check_id, :check_id, :d, :doc, :version, :representation,"
+            " 'hash', 'stats-v', CAST('{}' AS jsonb), NULL, 'coherent',"
+            " 'check-v', 'model', 'mh', 'ph', 'sh')"
+        ),
+        {
+            "check_id": _TARGET_CHECK_ID,
+            "d": _DEPLOYMENT_ID,
+            "doc": _TARGET_DOC_ID,
+            "version": _TARGET_VERSION_ID,
+            "representation": _TARGET_REPRESENTATION_ID,
+        },
+    )
+    connection.execute(
+        text(
+            "INSERT INTO document_structure_generations ("
+            " structure_generation_id, deployment_id, doc_id, version_id,"
+            " representation_id, skeleton_version, skeleton_hash,"
+            " skeleton_producer_family, selecting_check_id, route_tag,"
+            " candidate_skeleton_hash, stats_version, stats"
+            ") VALUES ("
+            " :generation_id, :d, :doc, :version, :representation,"
+            " 'skeleton-v', 'hash', 'N/A', :check_id, 'parser', 'hash',"
+            " 'stats-v', CAST('{}' AS jsonb))"
+        ),
+        {
+            "generation_id": _TARGET_GENERATION_ID,
+            "d": _DEPLOYMENT_ID,
+            "doc": _TARGET_DOC_ID,
+            "version": _TARGET_VERSION_ID,
+            "representation": _TARGET_REPRESENTATION_ID,
+            "check_id": _TARGET_CHECK_ID,
+        },
+    )
 
 
 def _seed_documents(*, connection: Connection) -> None:
@@ -951,6 +1003,16 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
         assert (
             _count(connection, "claim_extraction_decisions", "doc_id", _TARGET_DOC_ID)
+            == 0
+        )
+        assert (
+            _count(
+                connection, "document_structure_generations", "doc_id", _TARGET_DOC_ID
+            )
+            == 0
+        )
+        assert (
+            _count(connection, "document_skeleton_checks", "doc_id", _TARGET_DOC_ID)
             == 0
         )
         assert _count(connection, "grounding_audits", "claim_id", _TARGET_CLAIM_ID) == 0

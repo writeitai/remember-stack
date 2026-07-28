@@ -16,12 +16,12 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core import blocks_from_sidecar
 from rememberstack.core import CHUNKER_VERSION
 from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import extraction_input_hash
 from rememberstack.core import pack_blocks
-from rememberstack.model import Block
 from rememberstack.model import CarryForwardSource
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
@@ -113,7 +113,7 @@ class ChunkHandler:
         blocks_doc = json.loads(
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
-        blocks = tuple(Block.model_validate(block) for block in blocks_doc["blocks"])
+        blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
         packed = pack_blocks(
             blocks=blocks,
             sections=source.sections,

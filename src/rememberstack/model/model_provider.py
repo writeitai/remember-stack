@@ -43,6 +43,10 @@ class ProviderCallError(Exception):
         self.usage = usage
 
 
+class ProviderInvalidResponseError(ProviderCallError):
+    """A completed generation returned no value valid for the response schema."""
+
+
 class GeneratedResponse(BaseModel, Generic[ResponseT]):
     """A validated structured output paired with its provider accounting."""
 

@@ -111,6 +111,7 @@ class StructureSource(BaseModel):
     blocks_uri: str
     markdown_uri: str
     title: str | None
+    source_kind: str
 
 
 class SyntheticRootRecord(BaseModel):

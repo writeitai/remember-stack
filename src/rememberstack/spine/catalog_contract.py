@@ -87,7 +87,9 @@ EXPECTED_ENUMS: Final = (
     "section_role",
     "selection_drop_reason",
     "selection_outcome",
+    "skeleton_check_outcome",
     "snapshot_status",
+    "structure_route_tag",
     "subscription_status",
     "versioning_mode",
 )
@@ -106,7 +108,9 @@ EXPECTED_TABLES: Final = (
     "deployments",
     "document_crossrefs",
     "document_representations",
+    "document_skeleton_checks",
     "document_sections",
+    "document_structure_generations",
     "document_versions",
     "documents",
     "entities",
@@ -238,6 +242,8 @@ EXPECTED_INDEXES: Final = (
     "ix_sections_doc",
     "ix_sections_parent",
     "ix_sections_role",
+    "ix_skeleton_checks_representation",
+    "ix_structure_generations_representation",
     "ux_kae_link",
     "ux_kquarantine_open_artifact",
     "ux_kwatch",
@@ -297,7 +303,7 @@ EMPTY_AT_HEAD: Final = (
     "predicate_signatures",
     "predicates",
 )
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 40, "f": 113, "p": 60, "u": 30, "x": 1}
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 47, "f": 124, "p": 62, "u": 31, "x": 1}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),
@@ -317,6 +323,7 @@ DECISION_OBJECTS: Final = {
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("v_graph_relates",),
     "D74": ("forget_manifests", "ix_forget_content_guard"),
+    "D79": ("document_structure_generations", "document_skeleton_checks"),
 }
 
 

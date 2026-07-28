@@ -97,13 +97,16 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p7_02_0016",
         "p7_05_0017",
         "p1_03_0018",
+        "p1_04_0019",
     )
     assert len(script.get_heads()) == 1
 
     migration_source = "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(_VERSIONS.glob("p*_*.py"))
     ).lower()
-    assert "insert into" not in migration_source
+    # D79's structural migration performs the one required legacy-generation
+    # backfill; no deployment/bootstrap seed DML belongs in this chain.
+    assert migration_source.count("insert into") == 1
     assert "bootstrap_deployment" not in migration_source
 
 
@@ -221,6 +224,156 @@ def test_claim_citation_coordinate_migration_deduplicates_real_rows() -> None:
         command.upgrade(config=config, revision="head")
 
 
+def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
+    """Existing first-write section rows gain one immutable legacy wrapper/current pointer."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p1_03_0018")
+    deployment_id = uuid4()
+    doc_id = uuid4()
+    version_id = uuid4()
+    representation_id = uuid4()
+    section_id = uuid4()
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket)"
+                    " VALUES (:deployment, 'd79-backfill', 'D79 backfill',"
+                    " 'mem://raw', 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                    " byte_size, raw_uri) VALUES"
+                    " (:deployment, 'legacy-content', 'text/markdown', 1, 'raw')"
+                ),
+                {"deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, title) VALUES"
+                    " (:doc, :deployment, 'test', 'legacy', 'Legacy')"
+                ),
+                {"doc": doc_id, "deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                    " content_hash, version_no, status) VALUES"
+                    " (:version, :deployment, :doc, 'legacy-content', 1, 'ready')"
+                ),
+                {"version": version_id, "deployment": deployment_id, "doc": doc_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_representations (representation_id,"
+                    " deployment_id, version_id, route, structurer_name,"
+                    " structurer_version, pageindex_uri, status) VALUES"
+                    " (:representation, :deployment, :version, 'passthrough',"
+                    " 'pageindex_llm', 'e0-structure-2026.07c:temp0-1',"
+                    " 'legacy/pageindex.json', 'ready')"
+                ),
+                {
+                    "representation": representation_id,
+                    "deployment": deployment_id,
+                    "version": version_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
+                    " version_id, representation_id, node_path, block_start, block_end,"
+                    " title, role, char_start, char_end, ordinal, structurer_version)"
+                    " VALUES (:section, :deployment, :doc, :version, :representation,"
+                    " '0', 0, 0, 'Legacy', 'body', 0, 1, 0,"
+                    " 'e0-structure-2026.07c:temp0-1')"
+                ),
+                {
+                    "section": section_id,
+                    "deployment": deployment_id,
+                    "doc": doc_id,
+                    "version": version_id,
+                    "representation": representation_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
+                    " version_id, representation_id, node_path, block_start, block_end,"
+                    " title, role, char_start, char_end, ordinal, structurer_version)"
+                    " VALUES (:section, :deployment, :doc, :version, :representation,"
+                    " '0.1', 0, 0, 'Legacy Child', 'body', 0, 1, 1,"
+                    " 'e0-structure-2026.07c:temp0-1')"
+                ),
+                {
+                    "section": uuid4(),
+                    "deployment": deployment_id,
+                    "doc": doc_id,
+                    "version": version_id,
+                    "representation": representation_id,
+                },
+            )
+
+        command.upgrade(config=config, revision="head")
+        with engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT g.structure_generation_id, g.route_tag::text AS route,"
+                        " g.skeleton_version, g.skeleton_producer_family,"
+                        " g.roles_version, g.summary_version,"
+                        " g.placement_version, g.pageindex_uri,"
+                        " r.current_structure_generation_id"
+                        " FROM document_structure_generations g"
+                        " JOIN document_representations r"
+                        " ON r.representation_id = g.representation_id"
+                        " WHERE g.representation_id = :representation"
+                    ),
+                    {"representation": representation_id},
+                )
+                .mappings()
+                .one()
+            )
+        assert row["route"] == "legacy"
+        assert row["skeleton_version"] == "e0-structure-2026.07c:temp0-1"
+        assert row["skeleton_producer_family"] == "legacy-unknown"
+        assert row["roles_version"] == "e0-structure-2026.07c:temp0-1"
+        assert row["summary_version"] is None
+        assert row["placement_version"] is None
+        assert row["pageindex_uri"] == "legacy/pageindex.json"
+        assert row["current_structure_generation_id"] == row["structure_generation_id"]
+        with engine.connect() as connection:
+            sections = (
+                connection.execute(
+                    text(
+                        "SELECT node_path, structure_generation_id, normalized_title"
+                        " FROM document_sections"
+                        " WHERE representation_id = :representation ORDER BY node_path"
+                    ),
+                    {"representation": representation_id},
+                )
+                .mappings()
+                .all()
+            )
+        # a MULTI-section legacy tree wraps under ONE generation (review gap)
+        assert [section["node_path"] for section in sections] == ["0", "0.1"]
+        assert {section["structure_generation_id"] for section in sections} == {
+            row["structure_generation_id"]
+        }
+        assert {section["normalized_title"] for section in sections} == {""}
+    finally:
+        engine.dispose()
+        command.downgrade(config=config, revision="base")
+        command.upgrade(config=config, revision="head")
+
+
 def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> None:
     """Exercise the complete PostgreSQL 16+ lifecycle and negative catalog proof."""
     database_url = _database_url()
@@ -236,7 +389,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 60
+    assert len(fresh_inventory.tables) == 62
     assert fresh_inventory.empty_tables == (
         "deployments",
         "entity_types",
@@ -263,5 +416,5 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p1_03_0018"
+    assert head_before_noop == head_after_noop == "p1_04_0019"
     assert _inventory(database_url=database_url) == restored_inventory

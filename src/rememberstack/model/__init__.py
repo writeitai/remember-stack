@@ -231,6 +231,7 @@ from rememberstack.model.model_provider import ModelRequest
 from rememberstack.model.model_provider import ProviderAccountingError
 from rememberstack.model.model_provider import ProviderCallError
 from rememberstack.model.model_provider import ProviderCallUsage
+from rememberstack.model.model_provider import ProviderInvalidResponseError
 from rememberstack.model.model_provider import StructuredResponseModel
 from rememberstack.model.mounts import PublishedMounts
 from rememberstack.model.object_store import ObjectAlreadyExistsError
@@ -295,11 +296,20 @@ from rememberstack.model.retrieval_spikes import RETRIEVAL_SPIKE_NAMES
 from rememberstack.model.retrieval_spikes import RetrievalSpikeMeasurement
 from rememberstack.model.retrieval_spikes import RetrievalSpikeName
 from rememberstack.model.retrieval_spikes import RetrievalSpikeReport
+from rememberstack.model.sections import FallbackAnchor
+from rememberstack.model.sections import FallbackStructureResponse
 from rememberstack.model.sections import PersistedSectionTree
 from rememberstack.model.sections import ProposedSection
+from rememberstack.model.sections import RoleAssignment
+from rememberstack.model.sections import RoleClassificationResponse
 from rememberstack.model.sections import SectionTreeRecord
+from rememberstack.model.sections import SkeletonCheckOutcome
+from rememberstack.model.sections import SkeletonCheckRecord
+from rememberstack.model.sections import SkeletonCheckResponse
+from rememberstack.model.sections import SkeletonStats
+from rememberstack.model.sections import SkeletonVerdict
 from rememberstack.model.sections import SnappedSection
-from rememberstack.model.sections import StructureResponse
+from rememberstack.model.sections import StructureRouteTag
 from rememberstack.model.telemetry import TelemetryAttribute
 from rememberstack.model.telemetry import TelemetryEvent
 
@@ -389,6 +399,8 @@ __all__ = (
     "FactLabelResponse",
     "FactResult",
     "FactSupport",
+    "FallbackAnchor",
+    "FallbackStructureResponse",
     "ForgetError",
     "ForgetInProgressError",
     "ForgetManifest",
@@ -447,6 +459,7 @@ __all__ = (
     "ProviderAccountingError",
     "ProviderCallError",
     "ProviderCallUsage",
+    "ProviderInvalidResponseError",
     "PublishedMounts",
     "QueueRoute",
     "PageRef",
@@ -576,9 +589,16 @@ __all__ = (
     "ScopeInterestsRuleParams",
     "PersistedSectionTree",
     "ProposedSection",
+    "RoleAssignment",
+    "RoleClassificationResponse",
     "SectionTreeRecord",
+    "SkeletonCheckOutcome",
+    "SkeletonCheckRecord",
+    "SkeletonCheckResponse",
+    "SkeletonStats",
+    "SkeletonVerdict",
     "SnappedSection",
-    "StructureResponse",
+    "StructureRouteTag",
     "SourceItem",
     "SourceRecord",
     "StructureSource",
