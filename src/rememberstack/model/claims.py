@@ -207,6 +207,8 @@ class DecisionType(StrEnum):
     SELECTION_DROP = "selection_drop"
     SELECTION_KEEP_FLAGGED = "selection_keep_flagged"
     DECONTEXT_EDIT = "decontext_edit"
+    CLAIMIFY_OMITTED = "claimify_omitted"
+    GROUNDING_REJECTED = "grounding_rejected"
 
 
 class DecisionRecord(BaseModel):

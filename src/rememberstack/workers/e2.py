@@ -6,11 +6,15 @@ decontextualizes, decomposes, and self-grounds the keeps. The deterministic
 grounding gate (D32 layers 1-2) accepts a claim only if its verbatim source
 span anchors inside the chunk and every added substring exists in the bundle
 element it was attributed to — a check the model cannot talk its way past.
+Every kept span ends in accepted claim(s), grounding_rejected row(s), or a
+claimify_omitted row so Claimify-stage losses are never silent (#161).
 """
 
+from dataclasses import dataclass
 from datetime import date
 from datetime import datetime
 from datetime import UTC
+from enum import StrEnum
 import logging
 from typing import Final
 from uuid import UUID
@@ -52,6 +56,10 @@ from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 _logger = logging.getLogger(__name__)
 
 _OUTCOMES: Final = "|".join(outcome.value for outcome in SelectionOutcome)
+
+# Truncation ceiling for claim_span / invented text stored in edit_detail jsonb —
+# keeps the ledger row small without hiding the gate identity (#161).
+_LEDGER_SPAN_MAX: Final = 512
 
 _SELECTION_PROMPT: Final = """You are the Selection stage of a claim extractor.
 Judge every proposition in the TARGET CHUNK: keep statements making a specific,
@@ -181,12 +189,20 @@ class ExtractClaimsHandler:
             prior_chunk_id=prior,
         )
         if attached == 0:
-            # the prior chunk carries no claims — a terminal no_info: carry
-            # the marker forward so replay stays closed for this chunk too
-            self._catalog.record_extraction(
-                claims=(),
-                decisions=(_empty_extraction_marker(source=source, chunk=chunk),),
+            # the prior chunk carries no claims. Zero claims no longer means
+            # no_info — the prior may hold claimify_omitted /
+            # grounding_rejected rows (#161) — so carry the prior transcript
+            # forward verbatim; fabricate the no_info marker only when the
+            # prior transcript is itself empty. Either way replay stays
+            # closed for this chunk.
+            copied = self._catalog.copy_reused_decisions(
+                chunk_id=chunk.chunk_id, prior_chunk_id=prior
             )
+            if copied == 0:
+                self._catalog.record_extraction(
+                    claims=(),
+                    decisions=(_empty_extraction_marker(source=source, chunk=chunk),),
+                )
         return True
 
     def _extract_chunk(
@@ -227,9 +243,11 @@ class ExtractClaimsHandler:
         )
         claims: list[ClaimRecord] = []
         if keeps:
-            kept_ranges = _kept_ranges(
-                keeps=keeps, chunk=chunk, document_md=document_md
+            keep_ranges = tuple(
+                _keep_range(keep=keep, chunk=chunk, document_md=document_md)
+                for keep in keeps
             )
+            kept_ranges = tuple(span for span in keep_ranges if span is not None)
             flagged_spans = {
                 candidate.source_span
                 for candidate in keeps
@@ -252,8 +270,18 @@ class ExtractClaimsHandler:
                 usage=response_call.usage,
             )
             response = response_call.output
+            # Per-keep "model tried" marker for claimify_omitted accounting.
+            # Attribution is RANGE-OVERLAP ONLY: a returned claim marks
+            # exactly the keeps whose anchored ranges its own anchored range
+            # overlaps. Text containment is deliberately not used — it would
+            # let one claim suppress omission rows for unrelated keeps that
+            # merely share text. Consequences, both conservative: a claim
+            # whose span anchors nowhere is an orphan rejection and
+            # suppresses no omission; a keep whose span anchors nowhere can
+            # never be marked tried and always gets its omission row (#161).
+            keep_had_return = [False] * len(keeps)
             for candidate in response.claims:
-                record = _grounded_claim(
+                result = _grounded_claim(
                     candidate=candidate,
                     source=source,
                     chunk=chunk,
@@ -263,16 +291,38 @@ class ExtractClaimsHandler:
                     flagged_spans=flagged_spans,
                     kept_ranges=kept_ranges,
                 )
-                if record is None:
+                claim_range = _span_range(
+                    span=candidate.source_span, chunk=chunk, document_md=document_md
+                )
+                if claim_range is not None:
+                    for index_keep, keep_range in enumerate(keep_ranges):
+                        if keep_range is not None and _ranges_overlap(
+                            claim_range, keep_range
+                        ):
+                            keep_had_return[index_keep] = True
+                if isinstance(result, GroundingRejection):
                     _logger.warning(
-                        "grounding gate rejected candidate %r on chunk %s",
+                        "grounding gate %s rejected candidate %r on chunk %s",
+                        result.gate.value,
                         candidate.claim_text,
                         chunk.chunk_id,
                     )
+                    decisions.append(
+                        _grounding_rejected_decision(
+                            source=source, chunk=chunk, rejection=result
+                        )
+                    )
                     continue
-                claims.append(record)
-                if record.added_context:
-                    decisions.append(_edit_decision(source=source, record=record))
+                claims.append(result)
+                if result.added_context:
+                    decisions.append(_edit_decision(source=source, record=result))
+            for keep, had_return in zip(keeps, keep_had_return, strict=True):
+                if not had_return:
+                    decisions.append(
+                        _claimify_omitted_decision(
+                            source=source, chunk=chunk, keep=keep
+                        )
+                    )
         decisions = _link_flagged_decisions(decisions=decisions, claims=claims)
         if not claims and not decisions:
             # terminal marker (D7): an extraction that found nothing claim-worthy
@@ -281,6 +331,24 @@ class ExtractClaimsHandler:
         self._catalog.record_extraction(
             claims=tuple(claims), decisions=tuple(decisions)
         )
+
+
+class GroundingGate(StrEnum):
+    """Which deterministic D32 gate rejected a Claimify-returned claim (#161)."""
+
+    SPAN_NOT_FOUND = "span_not_found"
+    OUTSIDE_KEPT_RANGES = "outside_kept_ranges"
+    ADDED_CONTEXT_UNVERIFIED = "added_context_unverified"
+
+
+@dataclass(frozen=True)
+class GroundingRejection:
+    """A Claimify candidate that failed a grounding gate (never a claims row)."""
+
+    gate: GroundingGate
+    claim_span: str
+    kind: str | None = None
+    text: str | None = None
 
 
 def _grounded_claim(
@@ -293,29 +361,34 @@ def _grounded_claim(
     document_md: str,
     flagged_spans: set[str],
     kept_ranges: tuple[tuple[int, int], ...],
-) -> ClaimRecord | None:
+) -> ClaimRecord | GroundingRejection:
     """Apply the deterministic grounding gate (D32 layers 1-2).
 
     Layer 1 (anchor): the source span must be a real in-bounds slice of the
     target chunk, and must overlap a span Selection kept — the fused call can
     never resurrect a dropped proposition. Layer 2 (window membership): every
     added substring must verbatim-exist in the bundle element it was
-    attributed to. A failed check returns None — the candidate never becomes
-    a claims row. Semantic invention behind a real span is layer-3/4
-    territory: the in-call self-verdict is stored advisory, and the sampled
-    independent audit owns the honest measurement.
+    attributed to. A failed check returns which gate fired so the D33 ledger
+    can record ``grounding_rejected`` (#161); the accept path is unchanged.
+    Semantic invention behind a real span is layer-3/4 territory: the in-call
+    self-verdict is stored advisory, and the sampled independent audit owns
+    the honest measurement.
     """
-    anchor_at = document_md.find(
-        candidate.source_span, chunk.char_start, chunk.char_end
-    )
+    claim_span = candidate.source_span
+    anchor_at = document_md.find(claim_span, chunk.char_start, chunk.char_end)
     if anchor_at < 0:
-        return None
-    anchor_end = anchor_at + len(candidate.source_span)
+        return GroundingRejection(
+            gate=GroundingGate.SPAN_NOT_FOUND, claim_span=claim_span
+        )
+    anchor_end = anchor_at + len(claim_span)
     if not any(
         anchor_at < kept_end and kept_start < anchor_end
         for kept_start, kept_end in kept_ranges
     ):
-        return None  # Selection is enforced, not advisory
+        # Selection is enforced, not advisory
+        return GroundingRejection(
+            gate=GroundingGate.OUTSIDE_KEPT_RANGES, claim_span=claim_span
+        )
     for added in candidate.added_context:
         element = _bundle_element(
             kind=added.source_kind,
@@ -325,7 +398,12 @@ def _grounded_claim(
             document_md=document_md,
         )
         if element is None or added.text not in element:
-            return None
+            return GroundingRejection(
+                gate=GroundingGate.ADDED_CONTEXT_UNVERIFIED,
+                claim_span=claim_span,
+                kind=added.source_kind,
+                text=added.text,
+            )
     valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
         candidate=candidate
     )
@@ -336,13 +414,13 @@ def _grounded_claim(
         chunk_id=chunk.chunk_id,
         section_id=None,
         claim_text=candidate.claim_text,
-        source_span=candidate.source_span,
+        source_span=claim_span,
         char_start=anchor_at,
-        char_end=anchor_at + len(candidate.source_span),
+        char_end=anchor_at + len(claim_span),
         added_context=candidate.added_context,
         is_attributed=candidate.is_attributed,
         entailment_self_verdict=candidate.entailment_self_verdict,
-        kept_flagged=candidate.source_span in flagged_spans,
+        kept_flagged=claim_span in flagged_spans,
         extractor_version=E2_EXTRACTOR_VERSION,
         claim_valid_from=valid_from,
         claim_valid_until=valid_until,
@@ -533,16 +611,51 @@ def _neighbour_text(
     return "(none)"
 
 
+def _span_range(
+    *, span: str, chunk: ChunkForEmbedding, document_md: str
+) -> tuple[int, int] | None:
+    """Absolute char range of a span inside the chunk, or None if unfindable.
+
+    Repeated text resolves to its first occurrence — a pre-existing bias
+    shared by keeps and claims alike, so overlap attribution stays symmetric.
+    """
+    found = document_md.find(span, chunk.char_start, chunk.char_end)
+    if found < 0:
+        return None
+    return found, found + len(span)
+
+
+def _keep_range(
+    *, keep: SelectionCandidate, chunk: ChunkForEmbedding, document_md: str
+) -> tuple[int, int] | None:
+    """Absolute char range of one kept Selection span, or None if unfindable."""
+    return _span_range(span=keep.source_span, chunk=chunk, document_md=document_md)
+
+
 def _kept_ranges(
     *, keeps: tuple[SelectionCandidate, ...], chunk: ChunkForEmbedding, document_md: str
 ) -> tuple[tuple[int, int], ...]:
     """Absolute char ranges of the kept Selection spans inside the chunk."""
-    ranges: list[tuple[int, int]] = []
-    for keep in keeps:
-        found = document_md.find(keep.source_span, chunk.char_start, chunk.char_end)
-        if found >= 0:
-            ranges.append((found, found + len(keep.source_span)))
-    return tuple(ranges)
+    return tuple(
+        span
+        for keep in keeps
+        if (span := _keep_range(keep=keep, chunk=chunk, document_md=document_md))
+        is not None
+    )
+
+
+def _ranges_overlap(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """Half-open char-range overlap — the sole claimify_omitted attribution
+    rule (#161). Text containment is deliberately excluded: it would let one
+    returned claim suppress omission rows for unrelated keeps sharing text."""
+    return a[0] < b[1] and b[0] < a[1]
+
+
+def _truncate_for_ledger(text: str) -> str:
+    """Bound edit_detail text so a long span cannot bloat the ledger row."""
+    if len(text) <= _LEDGER_SPAN_MAX:
+        return text
+    return text[: _LEDGER_SPAN_MAX - 1] + "…"
 
 
 def _link_flagged_decisions(
@@ -586,6 +699,52 @@ def _empty_extraction_marker(
         reason=SelectionDropReason.NO_INFO,
         edit_detail=None,
         protected_class=None,
+        extractor_version=E2_EXTRACTOR_VERSION,
+    )
+
+
+def _grounding_rejected_decision(
+    *, source: ChunkSource, chunk: ChunkForEmbedding, rejection: GroundingRejection
+) -> DecisionRecord:
+    """One D33 row for a Claimify claim that failed a grounding gate (#161)."""
+    edit_detail: dict[str, object] = {
+        "gate": rejection.gate.value,
+        "claim_span": _truncate_for_ledger(rejection.claim_span),
+    }
+    if rejection.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED:
+        # kind is model-returned text too — bound every persisted field
+        edit_detail["kind"] = _truncate_for_ledger(rejection.kind or "")
+        edit_detail["text"] = _truncate_for_ledger(rejection.text or "")
+    return DecisionRecord(
+        decision_id=uuid4(),
+        deployment_id=source.deployment_id,
+        doc_id=source.doc_id,
+        chunk_id=chunk.chunk_id,
+        claim_id=None,
+        decision_type=DecisionType.GROUNDING_REJECTED,
+        source_span=_truncate_for_ledger(rejection.claim_span),
+        reason=None,
+        edit_detail=edit_detail,
+        protected_class=None,
+        extractor_version=E2_EXTRACTOR_VERSION,
+    )
+
+
+def _claimify_omitted_decision(
+    *, source: ChunkSource, chunk: ChunkForEmbedding, keep: SelectionCandidate
+) -> DecisionRecord:
+    """One D33 row for a kept span Claimify returned no claim for (#161)."""
+    return DecisionRecord(
+        decision_id=uuid4(),
+        deployment_id=source.deployment_id,
+        doc_id=source.doc_id,
+        chunk_id=chunk.chunk_id,
+        claim_id=None,
+        decision_type=DecisionType.CLAIMIFY_OMITTED,
+        source_span=keep.source_span,
+        reason=None,
+        edit_detail=None,
+        protected_class=keep.protected_class,
         extractor_version=E2_EXTRACTOR_VERSION,
     )
 

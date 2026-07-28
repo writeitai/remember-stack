@@ -148,16 +148,51 @@ in the bundle. The dropped opinion never reaches grounding.
 
 Two safeguards keep aggressive Selection safe:
 
-- **A decision ledger (D33).** Every Selection drop and every decontextualization edit is written to an
-  append-only, version-stamped `claim_extraction_decisions` table. A better prompt can later re-examine
-  *only the drops*; a rebuild reads stored claims + decisions and never re-calls the model (the LLM
-  rungs are replay-from-storage, like any non-deterministic stage — D7); the per-chunk worker is
-  idempotent on content-hash + extractor version (D12).
+- **A decision ledger (D33).** Every Selection drop, every decontextualization edit, and every
+  Claimify-stage loss is written to an append-only, version-stamped `claim_extraction_decisions`
+  table. A better prompt can later re-examine *only the drops*; a rebuild reads stored claims +
+  decisions and never re-calls the model (the LLM rungs are replay-from-storage, like any
+  non-deterministic stage — D7); the per-chunk worker is idempotent on content-hash + extractor
+  version (D12).
 - **A recall envelope (D35).** Selection biases toward KEEP when unsure; **never-drop classes**
   (quantities, dates, named-entity + predicate, change-of-state language) are protected even if phrased
   opinionatedly; a low-confidence `kept_flagged` outcome marks-for-review instead of hard-deleting; and
   planted rare-fact canaries fail CI if Selection drops them. Drop-rates are tuned against **per-fact**
   loss, never a corpus average — a uniquely-attested fact has no second copy to fall back on.
+
+**Amendment (2026-07-27, issue #161):** Selection keep/keep_flagged is not the end of the story.
+Between a keep and an accepted `claims` row sit Claimify (the fused decontextualize+decompose call)
+and the deterministic D32 grounding gates. Without ledger rows for those stages, a keep that never
+lands a claim is indistinguishable from a keep that produced a claim the gate rejected — and plain
+(unflagged) keeps that die are completely invisible. The D33 transcript therefore also records:
+
+| `decision_type` | When written | `source_span` | `edit_detail` |
+|---|---|---|---|
+| `claimify_omitted` | A kept Selection span for which Claimify returned **no claim at all** (the model simply skipped it). One row per dead keep. | The Selection span. | null |
+| `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>}`. |
+
+**Invariant — every kept span is accounted for end-to-end.** Two independent rules (revised
+2026-07-27 after review — one keep can decompose into several returned claims with mixed fates,
+so "exactly one category per keep" was wrong):
+
+1. **Every Claimify-returned claim** independently ends either **accepted** (a `claims` row, plus
+   any `decontext_edit` / `selection_keep_flagged` pairing that already applied) or
+   **`grounding_rejected`** (one row naming which gate fired). A mixed outcome — same keep, one
+   claim accepted, another rejected — records both and is not an omission.
+2. **Every keep or keep_flagged span with no attributable returned claim** gets exactly one
+   `claimify_omitted` row. Attribution is **anchored-range overlap only** (the claim's resolved
+   char range overlaps the keep's) — text containment is deliberately excluded so one claim
+   cannot suppress omission rows for unrelated keeps that merely share text. Two conservative
+   consequences: a returned claim whose span anchors nowhere is an **orphan rejection** (its
+   `grounding_rejected` row stands; it suppresses no omission), and a Selection span that is not
+   verbatim-findable can never be marked "tried," so it always gets its omission row — the case
+   that previously vanished with no trace.
+
+Cross-model extraction comparisons can then show *why* a stronger model lands more claims (fewer
+omissions vs fewer gate rejections) instead of only *that* it does. On D56 chunk reuse with zero
+attached claims, the prior occurrence's transcript is copied forward verbatim — the synthetic
+`no_info` marker is written only when the prior transcript is itself empty, so reuse never
+rewrites a real loss reason.
 
 ## 4. Why there is no value gate (the non-goal)
 
