@@ -257,6 +257,12 @@ unchanged):
   are block boundaries by construction). The converter contract (D38) is amended to state it
   explicitly: conversion **preserves or emits heading syntax when the source has structure**
   (it cannot invent structure from OCR text or `<div>` soup — that is the fallback's job).
+  *Optional requirement (owner, 2026-07-28): before writing custom heading-tree logic,
+  evaluate a maintained CommonMark parser as the tokenizer under this step — first candidate
+  `markdown-it-py` (CommonMark-compliant, actively maintained, token stream carries source
+  line maps that align with the block grid) — and hand-roll only where the library route
+  fights the block-grid contract. The tree-building and degrade rules above stay ours either
+  way; the library replaces tokenization, not the design.*
   The LLM fallback triggers on **insufficient heading density or an oversized unsegmented
   leaf**, not only on zero headings (a media transcript with one `## Transcript` wrapper
   heading still needs segmentation). The fallback returns anchor **strings** — exact,
