@@ -257,56 +257,116 @@ unchanged):
   are block boundaries by construction). The converter contract (D38) is amended to state it
   explicitly: conversion **preserves or emits heading syntax when the source has structure**
   (it cannot invent structure from OCR text or `<div>` soup — that is the fallback's job).
-  *Optional requirement (owner, 2026-07-28): before writing custom heading-tree logic,
-  evaluate a maintained CommonMark parser as the tokenizer under this step — first candidate
-  `markdown-it-py` (CommonMark-compliant, actively maintained, token stream carries source
-  line maps that align with the block grid) — and hand-roll only where the library route
-  fights the block-grid contract. The tree-building and degrade rules above stay ours either
-  way; the library replaces tokenization, not the design.*
+  *No second tokenizer (owner requirement 2026-07-28, resolved by review): the repository's
+  canonical GFM blockizer already runs the maintained `markdown-it-py` under D57's
+  one-shared-blockizer rule — the owner's no-reinvention requirement is satisfied by REUSING
+  it, never by introducing a parallel parse. The skeleton parser consumes the blockizer's
+  heading tokens; where it needs raw heading level and a normalized title, that metadata is
+  exposed on the heading blocks under a `blockizer_version` bump. The skeleton layer owns
+  only tree construction and degradation.*
   The LLM fallback triggers on **insufficient heading density or an oversized unsegmented
-  leaf**, not only on zero headings (a media transcript with one `## Transcript` wrapper
-  heading still needs segmentation). The fallback returns anchor **strings** — exact,
-  block-contained substrings with occurrence-order disambiguation, resolved by deterministic
-  search — never raw character offsets; an anchor that resolves ambiguously or not at all
-  degrades to the enclosing parent, mirroring the snap's degrade-to-parent rule.
-- **Skeleton sanity check (2026-07-28 addition): a judge, never a proposer.** Density can
-  look healthy while the parsed tree is nonsense — a complicated print template whose running
-  headers, TOC pages, or scrambled reading order survived conversion as syntactically valid
-  headings. On the parser path only (the fallback route already contains LLM judgment; a
-  skeleton under ~3 sections is accepted without a check), after the parse and **before** the
-  role pass:
-  1. **Red-flag stats — exact arithmetic over the parsed skeleton**, always computed, always
-     persisted, carrying **no decision thresholds in v1**: `duplicate_title_ratio`
-     (1 − distinct/n over casefolded, whitespace-collapsed titles, digits kept);
-     `level_jump_count` (Σ max(0, d_{i+1} − d_i − 1) over consecutive sections);
-     `numbering_inversions` + `numbering_coverage` (leading numbering tokens — `3.2`, roman,
-     `A.` — compared as tuples over adjacent numbered titles; descents counted);
-     `tiny_section_ratio` (body span under a floor ≈ heading-follows-heading);
-     `oversized_leaf_ratio`; `heading_density` (sections per 10K chars);
-     `title_shape_stats` (length and letter/digit/punctuation class ratios — no junk-word
-     lexicon, language-neutral).
-  2. **One bounded check call** on a flash-class **check seat** (D70 binding; may default to
-     the summary seat's model, separately versioned): input is the document title, source
-     kind, the stats block, and the ordered `(depth, title, size)` lines — **never section
-     content**; a pathological heading count (> ~200) is head+tail sampled. Output is a
-     closed micro-schema (§2.4 discipline): verdict `coherent | incoherent` plus reasons from
-     a closed enum (`repeated_boilerplate | scrambled_order | junk_titles | over_fragmented`)
-     — no free text, no confidence, and structurally **no ability to propose structure**.
-  3. **Routing**: `coherent` keeps the parsed skeleton; `incoherent` demotes the document to
-     the LLM fallback route. One-way, no cycles — the fallback's output is not re-checked.
-  4. **Fail-open**: a check call that errors or returns garbage keeps the parsed skeleton and
-     logs — a broken guard must never take down the cheap correct path ("structuring never
-     fails a document").
-  5. **Measured, then earned**: verdict + reasons + stats persist with the skeleton
-     generation (sidecar + sections metadata). Downstream, the #161 loss ledger gives a
-     per-document signal (a scrambled document that slips through shows up as an omission/
-     rejection spike), so the checker's false negatives are auditable from data already
-     collected. Once (stats → verdict → loss-rate) triples accumulate, the stats may earn
-     gate duty — skip the call when uniformly clean, demote without asking when egregious;
-     v1 deliberately ships no such thresholds because they would be invented, not measured.
+  leaf** — both defined by exactly the formulas the sanity-check stat schema below gives
+  them, one definition with two consumers — not only on zero headings (a media transcript
+  with one `## Transcript` wrapper heading still needs segmentation). The fallback returns
+  anchor **strings** — exact, block-contained substrings with occurrence-order
+  disambiguation, resolved by deterministic search — never raw character offsets; an anchor
+  that resolves ambiguously or not at all degrades to the enclosing parent, mirroring the
+  snap's degrade-to-parent rule.
+- **Skeleton sanity check (2026-07-28 addition, revised after Grok + Codex review): a judge,
+  never a proposer.** Density can look healthy while the parsed tree is nonsense — a
+  complicated print template whose running headers, TOC pages, or scrambled heading order
+  survived conversion as syntactically valid headings. The exact state machine:
+
+  ```
+  parse candidate skeleton → compute + persist stats → density / oversized-leaf gates
+    → eligibility (≥ MIN_CHECK_SECTIONS non-root sections; below it: outcome
+      not_run_short, skeleton accepted)
+    → check call → coherent: keep parsed skeleton
+                 → incoherent_*: demote to LLM fallback route
+                       → fallback tree → TERMINAL check call
+                             → coherent: keep fallback tree
+                             → incoherent_*: synthetic root (honest no-structure
+                               beats a plausible-wrong tree; no second fallback,
+                               no cycle)
+    → roles → summaries → placement   (on whichever skeleton won)
+  ```
+
+  1. **Stat schema — normative, versioned (`stats_version`).** Heading universe: the
+     candidate skeleton's sections in document order, synthetic root excluded; `n` its size;
+     all stats null and the check `not_run_short` when `n < MIN_CHECK_SECTIONS` (starting
+     point 3, a named versioned constant like every floor here — "no thresholds" means no
+     stat-to-verdict rules, not no operational eligibility bounds). `level` is the RAW
+     markdown heading level from the blockizer's heading tokens (materialized tree depth
+     would make jumps identically zero — the parser assigns parents one edge at a time);
+     exposing raw level + normalized title on heading blocks is a `blockizer_version` bump.
+     `direct_body(s)` = the section's span minus its heading block and its children's spans.
+     Titles normalize as NFKC + casefold + whitespace-collapse, digits kept. The stats:
+     - `duplicate_title_ratio` = 1 − distinct/n over normalized titles; plus
+       `max_title_multiplicity` and `sibling_duplicate_ratio` (duplicates among same-parent
+       siblings) — the global ratio false-fires on legitimate per-chapter "Summary"
+       headings, the sibling form does not;
+     - `level_jump_count` = Σ max(0, level_{i+1} − level_i − 1), consecutive document order;
+     - numbering: leading tokens by recognized scheme (`3.2` arabic-dotted, roman, `A.`
+       alpha); `numbering_coverage` = numbered/n; `numbering_inversions` counted ONLY within
+       same-scheme same-parent runs (a chapter restart is not an inversion);
+       `numbering_scheme_switches` counted separately;
+     - `tiny_section_ratio` = |direct_body < TINY_FLOOR| / n (starting point 80 chars) and
+       `zero_direct_body_ratio`;
+     - `oversized_leaf_ratio` = largest leaf span / document span — the same formula the
+       oversized-leaf demotion gate uses;
+     - `heading_density` = n per 10K document chars — the same formula the density gate uses;
+     - `title_shape`: p50/p95 normalized-title length, fraction over LONG_TITLE (starting
+       point 120 chars), fraction with letter-category ratio < 0.5, `empty_title_ratio`
+       (character-class stats are script-dependent — reported as-is, no language-neutrality
+       claim);
+     - `max_sibling_fanout`.
+  2. **One budget-bounded check call** on the **skeleton-check seat**
+     (`REMEMBERSTACK_SKELETON_CHECK_*`, D70 binding, default flash-class). Input: document
+     title (capped), source kind, the stats block, and ordered `(level, title, direct-body
+     chars)` lines — titles ellipsized at LONG_TITLE, **never section content**, under a
+     hard total prompt ceiling (versioned constant). When the tree exceeds the ceiling, the
+     line sample is **anomaly-exemplar first, deterministic**: the most-repeated titles, the
+     largest level jumps, the smallest direct bodies, the largest leaves, then head and tail
+     — naive head+tail alone would hide mid-document template corruption, the motivating
+     case — with omitted-line counts stated in the rendered block, and the sampled input
+     hashed into the check record.
+  3. **Output — one closed enum, §2.4's own lesson** (paired verdict+reason fields allow
+     contradictory states; the schema makes them unrepresentable):
+     `coherent | incoherent_repeated_boilerplate | incoherent_heading_sequence |
+     incoherent_junk_titles | incoherent_over_fragmented` — the model picks the PRIMARY
+     defect; `additionalProperties: false`; no free text, no confidence, structurally no
+     ability to propose structure. (`incoherent_heading_sequence`, not "scrambled order" —
+     the check sees heading order only, never body order.)
+  4. **Outcomes and fail-open.** The persisted `check_outcome` is its own closed set —
+     `not_run_short | coherent | incoherent_<reason> | provider_error | invalid_response` —
+     so an outage is never bookkept as coherence; unchecked documents count in every audit
+     denominator. On `provider_error`/`invalid_response` the parsed skeleton is kept
+     (fail-open) because the check is a **non-authority guard**: fail-closed would convert
+     every provider blip into extraction-tier fallback traffic corpus-wide. (Document
+     survival is NOT the argument — the fallback path also never fails a document.)
+  5. **Provenance: a fifth generation.** The D79 split gains `skeleton_check` alongside
+     skeleton / roles / summaries / placement. Each run appends a document-level,
+     append-only check record (D52): candidate-skeleton hash, `stats_version` + stats,
+     sampled-input hash, `check_outcome`, checker component version and model/prompt/schema
+     hashes, provider-failure envelope, cost attribution. The final skeleton generation
+     records the selecting check record and a route tag (`parser |
+     parser_demoted_check | fallback_density | fallback_leaf | fallback_after_check |
+     synthetic_after_check`). A checker bump appends a new record and mints a new skeleton
+     generation only when the route flips. D53 note: the deterministic parser has no
+     producer model family — recorded N/A, not silently skipped.
+  6. **Audit and earned gating.** Primary surfaces are the ones this design creates: route
+     tags, persisted stats + outcomes, and structure canaries (role distribution,
+     section-size histograms, Selection drop mix by role), validated against a **sampled,
+     labeled skeleton-quality set** (human or independent audit — false negatives need truth
+     labels). The #161 loss ledger is a supplementary downstream correlative only — a bad
+     tree can mis-role sections so losses never reach the Claimify ledger at all. Stats may
+     earn gate duty (skip the call when uniformly clean, demote without asking when
+     egregious) only from that labeled data; this design ships no stat-to-verdict
+     thresholds because they would be invented, not measured.
   Non-goals: the check judges the **tree**, not the text under it — a document whose
   intra-section reading order was scrambled by conversion needs the conversion-layer fix
-  (layout-aware PDF/OCR), which is its own track.
+  (layout-aware PDF/OCR, issue #168), which is its own track. Cost: one check call per
+  eligible parser-path document; a demoted document pays check + fallback + terminal check.
 - **Roles: deterministic first, classifier second.** The parser cannot produce the §4 role
   enum, and roles are load-bearing (Selection's low-value drops, crossref cite mining from
   `references` sections). Role assignment becomes: (1) deterministic normalized-title rules
@@ -348,8 +408,8 @@ unchanged):
      summaries improve *future* extractions; they never fan out into document-wide
      reprocessing.
 - **Provenance and migration.** `structurer_version` splits into generations: skeleton
-  (deterministic parser + fallback contract), role pass, summary seat, and placement — each
-  hash-stamped per D12. Structure/summary generations are immutable with a current pointer
+  (deterministic parser + fallback contract), **skeleton check** (the sanity-check bullet
+  above), role pass, summary seat, and placement — each hash-stamped per D12. Structure/summary generations are immutable with a current pointer
   (the `(version_id, node_path)` first-write-wins rows and the write-once `pageindex.json`
   cannot be edited in place); a regeneration writes a new generation and moves the pointer,
   and existing deployments' rows are backfilled as a legacy generation. Sidecar URIs are
@@ -357,9 +417,12 @@ unchanged):
   structure-proposal seat; the summary seat gets its own binding. **Refines D71.**
 
 Cost at scale: the shipped route can bill the structurer seat up to ~50K input tokens on a
-near-cap document; D79 is a parser plus bounded flash-class calls, expected — to be measured,
-not asserted — to be substantially cheaper on long documents and no worse on short ones (below
-`min_blocks_for_llm` neither route calls a model). Summary quality is judged only where
+near-cap document; D79 is a parser plus bounded flash-class calls — one skeleton-check
+micro-call per eligible parser-path document, the per-section summary calls, and (for demoted
+documents only) the fallback structure seat plus a terminal check — expected — to be measured,
+not asserted — to be substantially cheaper on long documents and no worse on short ones (a
+skeleton under `MIN_CHECK_SECTIONS` calls no checker; a document below `min_blocks_for_llm`
+previously called no structurer either). Summary quality is judged only where
 summaries are consumed (Selection drop quality, prefix quality, #150 scorecard canaries), not
 in prose.
 
