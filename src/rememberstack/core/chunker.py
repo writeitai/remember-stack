@@ -22,9 +22,16 @@ from rememberstack.model import Block
 from rememberstack.model import PackedChunk
 from rememberstack.model import SectionSpan
 
-CHUNKER_VERSION: Final = "e1-chunker-2026.07b:whitespace-tokens:anchored:owner-runs"
-"""Pins the packing algorithm and the token counter; the full packing
-generation additionally encodes the parameter values — see `chunker_version`."""
+CHUNKER_VERSION: Final = (
+    "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs"
+    ":blockizer-heading-metadata"
+)
+"""Pins packing plus its blockizer-contract generation.
+
+The ``07c`` bump follows D12/D57 because ``blocks.json`` gained D79 heading
+metadata. Packing behavior and emitted chunk-grid bytes are unchanged from
+``e1-chunker-2026.07b:whitespace-tokens:anchored:owner-runs``.
+"""
 
 
 class ChunkerParams(BaseModel):

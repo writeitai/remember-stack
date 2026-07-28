@@ -90,6 +90,7 @@ class _Corpus:
     ) -> UUID:
         """One lineage with a ready version, representation, and root section."""
         doc_id, version_id, representation_id = uuid4(), uuid4(), uuid4()
+        structure_generation_id = uuid4()
         connection.execute(  # type: ignore[attr-defined]
             text(
                 "INSERT INTO documents (doc_id, deployment_id, source_kind,"
@@ -137,12 +138,35 @@ class _Corpus:
         )
         connection.execute(  # type: ignore[attr-defined]
             text(
+                "INSERT INTO document_structure_generations"
+                " (structure_generation_id, deployment_id, doc_id, version_id,"
+                " representation_id, skeleton_version, skeleton_hash,"
+                " skeleton_producer_family, roles_version, summary_version,"
+                " placement_version, route_tag, candidate_skeleton_hash,"
+                " stats_version, stats)"
+                " VALUES (:generation, :d, :doc, :v, :r, 'test-skeleton',"
+                " :hash, 'N/A', 'test-role', 'test-summary', 'test-placement',"
+                " 'parser', :hash, 'test-stats',"
+                " jsonb_build_object('stats_version', 'test-stats',"
+                " 'section_count', 0))"
+            ),
+            {
+                "generation": structure_generation_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "v": version_id,
+                "r": representation_id,
+                "hash": f"test-skeleton-{doc_id}",
+            },
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
                 "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
-                " version_id, representation_id, node_path, block_start, block_end,"
-                " title, role, char_start, char_end, ordinal, summary,"
+                " version_id, representation_id, structure_generation_id, node_path,"
+                " block_start, block_end, title, role, char_start, char_end, ordinal, summary,"
                 " placement_path, structurer_version)"
-                " VALUES (:s, :d, :doc, :v, :r, '0', 0, 1, :title, 'body', 0, 10,"
-                " 0, :summary, :placement, 'test')"
+                " VALUES (:s, :d, :doc, :v, :r, :generation, '0', 0, 1, :title,"
+                " 'body', 0, 10, 0, :summary, :placement, 'test')"
             ),
             {
                 "s": uuid4(),
@@ -150,6 +174,7 @@ class _Corpus:
                 "doc": doc_id,
                 "v": version_id,
                 "r": representation_id,
+                "generation": structure_generation_id,
                 "title": title,
                 "summary": summary,
                 "placement": placement,
@@ -161,6 +186,14 @@ class _Corpus:
                 " WHERE version_id = :v"
             ),
             {"r": representation_id, "v": version_id},
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "UPDATE document_representations"
+                " SET current_structure_generation_id = :generation"
+                " WHERE representation_id = :r"
+            ),
+            {"generation": structure_generation_id, "r": representation_id},
         )
         connection.execute(  # type: ignore[attr-defined]
             text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),

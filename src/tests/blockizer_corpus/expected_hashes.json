@@ -1,5 +1,5 @@
 {
-  "blockizer_version": "blockizer-2026.07:markdown-it-py-4:gfm-tables",
+  "blockizer_version": "blockizer-2026.07b:markdown-it-py-4:gfm-tables:heading-metadata",
   "parser": "markdown-it-py==4.2.0",
   "blocks": [
     {

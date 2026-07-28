@@ -387,6 +387,8 @@ class SelfHostProfile:
         from rememberstack.workers import NormalizeRelationsHandler
         from rememberstack.workers import P1Settings
         from rememberstack.workers import ReconcileHandler
+        from rememberstack.workers import RoleSettings
+        from rememberstack.workers import SkeletonCheckSettings
         from rememberstack.workers import StructureHandler
         from rememberstack.workers import StructurerSettings
 
@@ -413,6 +415,8 @@ class SelfHostProfile:
                 artifact_store=self._artifact_store,
                 model_provider=self._model_provider,
                 settings=StructurerSettings.model_validate({}),
+                check_settings=SkeletonCheckSettings.model_validate({}),
+                role_settings=RoleSettings.model_validate({}),
             )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
@@ -591,9 +595,13 @@ def _model_bindings() -> dict[str, str]:
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
     from rememberstack.workers import P1Settings
+    from rememberstack.workers import RoleSettings
+    from rememberstack.workers import SkeletonCheckSettings
     from rememberstack.workers import StructurerSettings
 
     structurer = StructurerSettings.model_validate({})
+    skeleton_check = SkeletonCheckSettings.model_validate({})
+    roles = RoleSettings.model_validate({})
     e1 = E1Settings.model_validate({})
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
@@ -602,7 +610,9 @@ def _model_bindings() -> dict[str, str]:
     p1 = P1Settings.model_validate({})
     openrouter = OpenRouterSettings.model_validate({})
     return {
-        "structure": structurer.model,
+        "structure_fallback": structurer.model,
+        "skeleton_check": skeleton_check.model,
+        "section_role": roles.model,
         "chunk_embedding": e1.embedding_model,
         "context_prefix": e1.prefix_model,
         "claim_extraction": e2.extract_model,

@@ -161,9 +161,12 @@ _SELECT_CHUNK_SOURCE = text(
 
 _SELECT_SECTIONS = text(
     """
-    SELECT section_id, node_path, role, block_start, block_end
-    FROM document_sections
-    WHERE representation_id = :representation_id
+    SELECT s.section_id, s.node_path, s.role, s.block_start, s.block_end
+    FROM document_sections s
+    JOIN document_representations r
+      ON r.representation_id = s.representation_id
+     AND r.current_structure_generation_id = s.structure_generation_id
+    WHERE s.representation_id = :representation_id
     ORDER BY string_to_array(node_path, '.')::int[]
     """
 )

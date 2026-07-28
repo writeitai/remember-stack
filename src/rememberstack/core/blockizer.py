@@ -18,8 +18,15 @@ from markdown_it.token import Token
 from rememberstack.model import Block
 from rememberstack.model import BlockType
 
-BLOCKIZER_VERSION: Final = "blockizer-2026.07:markdown-it-py-4:gfm-tables"
-"""Pins the parser library generation and enabled-extension set (e1 §2)."""
+BLOCKIZER_VERSION: Final = (
+    "blockizer-2026.07b:markdown-it-py-4:gfm-tables:heading-metadata"
+)
+"""Pins the parser profile and D79 heading metadata contract.
+
+The ``07b`` bump changes only ``blocks.json`` metadata. Segmentation, offsets,
+normalization for ``block_hash``, and therefore the block/chunk grid are byte
+identical to ``blockizer-2026.07:markdown-it-py-4:gfm-tables``.
+"""
 
 _ATOMIC_CONTAINERS: Final = {
     "table_open": ("table_close", BlockType.TABLE),
@@ -61,6 +68,12 @@ def normalized_block_text(*, raw: str) -> str:
     joined = " ".join(line.strip() for line in raw.splitlines())
     composed = unicodedata.normalize("NFC", joined)
     return " ".join(composed.split())
+
+
+def normalized_heading_title(*, title: str) -> str:
+    """D79 title normalization: NFKC → casefold → whitespace collapse."""
+    compatible = unicodedata.normalize("NFKC", title)
+    return " ".join(compatible.casefold().split())
 
 
 def block_hash(*, raw: str) -> str:
@@ -130,12 +143,16 @@ def _emit(
             ),
         )
     if token.type == "heading_open":
+        inline = tokens[index + 1]
+        heading_title = _heading_text(token=inline)
         return 3, _block_from_lines(
             token=token,
             block_type=BlockType.HEADING,
             document_md=document_md,
             line_offsets=line_offsets,
             ordinal=ordinal,
+            heading_level=int(token.tag.removeprefix("h")),
+            heading_title=heading_title,
         )
     if token.type == "paragraph_open":
         return 3, _block_from_lines(
@@ -172,6 +189,8 @@ def _block_from_lines(
     document_md: str,
     line_offsets: tuple[int, ...],
     ordinal: int,
+    heading_level: int | None = None,
+    heading_title: str | None = None,
 ) -> Block:
     """Build the block record from a token's source line map."""
     if token.map is None:
@@ -186,4 +205,31 @@ def _block_from_lines(
         char_start=char_start,
         char_end=char_start + len(raw),
         block_hash=block_hash(raw=raw),
+        heading_level=heading_level,
+        heading_title=heading_title,
+        normalized_title=(
+            normalized_heading_title(title=heading_title)
+            if heading_title is not None
+            else None
+        ),
     )
+
+
+def _heading_text(*, token: Token) -> str:
+    """Render a heading inline token to plain title text without re-tokenizing.
+
+    The canonical markdown-it parse already produced child tokens. Reusing
+    them preserves D57's single-tokenizer rule while removing emphasis/link
+    markup from the title used by the parser, stats, and deterministic roles.
+    """
+    if token.children is None:
+        return token.content.strip()
+    pieces: list[str] = []
+    for child in token.children:
+        if child.type in {"text", "code_inline"}:
+            pieces.append(child.content)
+        elif child.type == "image":
+            pieces.append(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            pieces.append(" ")
+    return " ".join("".join(pieces).split())

@@ -573,7 +573,9 @@ _SELECT_CORPUS_DOCUMENTS = text(
     LEFT JOIN content_objects c
            ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
     LEFT JOIN document_sections s
-           ON s.version_id = v.version_id AND s.node_path = '0'
+           ON s.representation_id = r.representation_id
+          AND s.structure_generation_id = r.current_structure_generation_id
+          AND s.node_path = '0'
     WHERE d.deployment_id = :deployment_id AND d.deleted_at IS NULL
     ORDER BY d.doc_id
     """

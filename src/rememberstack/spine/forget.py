@@ -947,6 +947,11 @@ _OBJECT_KEYS = text(
         ) uri(object_key)
         WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
         UNION ALL
+        SELECT generation.pageindex_uri
+        FROM document_structure_generations generation
+        WHERE generation.deployment_id = :deployment_id
+          AND generation.doc_id = :doc_id
+        UNION ALL
         SELECT compilation.session_transcript_uri
         FROM knowledge_compilations compilation
         WHERE compilation.deployment_id = :deployment_id

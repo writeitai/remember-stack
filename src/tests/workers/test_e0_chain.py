@@ -9,6 +9,7 @@ from collections.abc import Iterator
 import json
 from pathlib import Path
 from uuid import UUID
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -34,7 +35,9 @@ from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import SectionTreeRecord
+from rememberstack.model import SkeletonStats
 from rememberstack.model import SnappedSection
+from rememberstack.model import StructureRouteTag
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
@@ -432,8 +435,13 @@ def test_stale_structure_never_overwrites_the_live_representation(rig: _E0Rig) -
     )
     assert after["current_representation_id"] == live
     section = rig.row(
-        sql="SELECT representation_id FROM document_sections"
-        " WHERE version_id = :version_id",
+        sql="SELECT s.representation_id FROM document_sections s"
+        " JOIN document_representations r"
+        " ON r.representation_id = s.representation_id"
+        " AND r.current_structure_generation_id = s.structure_generation_id"
+        " JOIN document_versions v"
+        " ON v.current_representation_id = r.representation_id"
+        " WHERE s.version_id = :version_id AND s.node_path = '0'",
         params={"version_id": ingested.version_id},
     )
     assert section["representation_id"] == live
@@ -492,31 +500,11 @@ def _structure_worker(rig: _E0Rig, provider: object) -> Worker:
 
 
 def test_full_structure_route_persists_the_snapped_tree(rig: _E0Rig) -> None:
-    """WP-3.3: the LLM proposal lands as a snapped multi-section tree — rows
-    with parent links and sanitized roles, placement on the root, and the
-    pageindex.json sidecar next to document.md."""
-    findings = _STRUCTURED_SOURCE.index("## Findings")
-    recommendations = _STRUCTURED_SOURCE.index("## Recommendations")
+    """D79 parser rows, deterministic roles, null placement, versioned sidecar."""
     provider = FakeModelProvider(
         generate_payloads={
-            "StructureResponse": {
-                "placement": "/surveys/field-reports/",
-                "sections": [
-                    {
-                        "title": "Findings",
-                        "role": "results",
-                        "char_start": findings,
-                        "char_end": recommendations,
-                        "summary": "What the survey found.",
-                    },
-                    {
-                        "title": "Recommendations",
-                        "role": "ACTION_ITEMS",  # invented: must degrade to body
-                        "char_start": recommendations,
-                        "char_end": len(_STRUCTURED_SOURCE),
-                    },
-                ],
-            }
+            "SkeletonCheckResponse": {"verdict": "coherent"},
+            "RoleClassificationResponse": {"assignments": []},
         }
     )
     ingested = rig.ingestor.ingest(
@@ -557,31 +545,35 @@ def test_full_structure_route_persists_the_snapped_tree(rig: _E0Rig) -> None:
             ),
             {"version_id": ingested.version_id},
         ).scalar_one()
-    assert [row["node_path"] for row in sections] == ["0", "0.0", "0.1"]
-    root, first, second = sections
-    assert root["placement_path"] == "/surveys/field-reports/"
-    assert first["parent_section_id"] == root["section_id"]
-    assert second["parent_section_id"] == root["section_id"]
-    assert first["role"] == "results"
-    assert second["role"] == "body"  # the invented role degraded
-    assert first["block_end"] == second["block_start"] - 1  # tiled partition
-    assert structurer == "pageindex_llm"
+    assert [row["node_path"] for row in sections] == ["0", "0.0", "0.0.0", "0.0.1"]
+    root, report, findings, recommendations = sections
+    assert root["placement_path"] is None
+    assert report["parent_section_id"] == root["section_id"]
+    assert findings["parent_section_id"] == report["section_id"]
+    assert recommendations["parent_section_id"] == report["section_id"]
+    assert findings["role"] == "results"
+    assert recommendations["role"] == "body"
+    assert findings["block_end"] == recommendations["block_start"] - 1
+    assert structurer == "parser"
 
     representation = rig.row(
-        sql="SELECT blocks_uri FROM document_representations"
+        sql="SELECT blocks_uri, pageindex_uri FROM document_representations"
         " WHERE version_id = :version_id",
         params={"version_id": ingested.version_id},
     )
-    sidecar_key = str(representation["blocks_uri"]).rsplit("/", 1)[0]
     sidecar = json.loads(
-        rig.artifact_store.read_bytes(key=ObjectKey(f"{sidecar_key}/pageindex.json"))
+        rig.artifact_store.read_bytes(
+            key=ObjectKey(str(representation["pageindex_uri"]))
+        )
     )
-    assert sidecar["placement"] == "/surveys/field-reports/"
-    assert len(sidecar["sections"]) == 3
+    assert sidecar["placement"] is None
+    assert sidecar["generations"]["summary"] is None
+    assert sidecar["generations"]["placement"] is None
+    assert len(sidecar["sections"]) == 4
 
 
-def test_failed_structurer_degrades_to_the_synthetic_root(rig: _E0Rig) -> None:
-    """A dead model seat never fails a document — the root serves it."""
+def test_failed_checker_is_explicit_and_fail_open_on_the_parser(rig: _E0Rig) -> None:
+    """A dead checker is provider_error, never false coherence or fallback."""
 
     class _DeadProvider:
         def generate(self, *, request: object, response_type: object) -> object:
@@ -607,11 +599,30 @@ def test_failed_structurer_degrades_to_the_synthetic_root(rig: _E0Rig) -> None:
     ).outcome
     assert outcome is RunResultOutcome.SUCCEEDED
     section = rig.row(
-        sql="SELECT node_path, role::text AS role FROM document_sections"
+        sql="SELECT count(*) AS count FROM document_sections s"
+        " JOIN document_representations r"
+        " ON r.current_structure_generation_id = s.structure_generation_id"
+        " WHERE s.version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert section == {"count": 4}
+    check = rig.row(
+        sql="SELECT check_outcome::text AS outcome"
+        " FROM document_skeleton_checks WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert check == {"outcome": "provider_error"}
+    representation = rig.row(
+        sql="SELECT representation_id FROM document_representations"
         " WHERE version_id = :version_id",
         params={"version_id": ingested.version_id},
     )
-    assert section == {"node_path": "0", "role": "body"}
+    checks = rig.catalog.skeleton_checks(
+        representation_id=representation["representation_id"]  # type: ignore[arg-type]
+    )
+    assert len(checks) == 1
+    assert checks[0].check_outcome == "provider_error"
+    assert checks[0].provider_failure is not None
 
 
 def test_retried_tree_write_returns_the_first_attempts_truth(rig: _E0Rig) -> None:
@@ -633,6 +644,28 @@ def test_retried_tree_write_returns_the_first_attempts_truth(rig: _E0Rig) -> Non
         params={"version_id": ingested.version_id},
     )
     representation_id = representation["representation_id"]
+    generation_id = uuid4()
+    stats = SkeletonStats(
+        stats_version="test",
+        section_count=0,
+        duplicate_title_ratio=None,
+        max_title_multiplicity=None,
+        sibling_duplicate_ratio=None,
+        level_jump_count=None,
+        numbering_coverage=None,
+        numbering_inversions=None,
+        numbering_scheme_switches=None,
+        tiny_section_ratio=None,
+        zero_direct_body_ratio=None,
+        oversized_leaf_ratio=None,
+        heading_density=None,
+        title_length_p50=None,
+        title_length_p95=None,
+        long_title_ratio=None,
+        low_letter_ratio=None,
+        empty_title_ratio=None,
+        max_sibling_fanout=None,
+    )
 
     def _record(title: str) -> SectionTreeRecord:
         return SectionTreeRecord(
@@ -640,6 +673,7 @@ def test_retried_tree_write_returns_the_first_attempts_truth(rig: _E0Rig) -> Non
             doc_id=ingested.doc_id,
             version_id=ingested.version_id,
             representation_id=representation_id,  # type: ignore[arg-type]
+            structure_generation_id=generation_id,
             sections=(
                 SnappedSection(
                     node_path="0",
@@ -652,15 +686,52 @@ def test_retried_tree_write_returns_the_first_attempts_truth(rig: _E0Rig) -> Non
                     char_end=len(_STRUCTURED_SOURCE),
                     summary="",
                     ordinal=0,
+                    normalized_title=title,
                 ),
             ),
             placement_path=f"/{title}/",
             structurer_name="pageindex_llm",
             structurer_version="test-structurer",
+            skeleton_version="test-skeleton",
+            skeleton_hash="first-hash",
+            skeleton_producer_family="N/A",
+            skeleton_check_version=None,
+            roles_version="test-role",
+            selecting_check_id=None,
+            route_tag=StructureRouteTag.LEGACY,
+            candidate_skeleton_hash="first-hash",
+            stats_version="test",
+            stats=stats,
+            pageindex_uri="test/pageindex.json",
         )
 
     first = rig.catalog.record_section_tree(record=_record("first"))
-    retry = rig.catalog.record_section_tree(record=_record("second"))
+    retry_input = _record("second")
+    retry_input = retry_input.model_copy(
+        update={
+            "sections": (
+                *retry_input.sections,
+                SnappedSection(
+                    node_path="0.0",
+                    parent_path="0",
+                    title="retry-only child",
+                    role="body",
+                    block_start=1,
+                    block_end=8,
+                    char_start=1,
+                    char_end=len(_STRUCTURED_SOURCE),
+                    summary="",
+                    ordinal=1,
+                    heading_level=1,
+                    normalized_title="retry-only child",
+                ),
+            ),
+            "skeleton_hash": "retry-hash",
+            "candidate_skeleton_hash": "retry-hash",
+        }
+    )
+    retry = rig.catalog.record_section_tree(record=retry_input)
     assert first.sections[0].title == "first"
-    assert retry.sections[0].title == "first"  # the first attempt's row won
+    assert [section.title for section in retry.sections] == ["first"]
     assert retry.placement_path == "/first/"
+    assert retry.skeleton_hash == "first-hash"

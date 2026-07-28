@@ -1,14 +1,18 @@
-"""The E0 document catalog: lineage, version, representation, and section writes.
+"""The E0 document catalog: lineage, representation, and D79 generations.
 
 Spine-owned SQL for the D36 sub-worker chain over the D55 lineage model:
 `record_upload` lands content + lineage + version rows and enqueues convert
 atomically; `record_representation` lands one immutable conversion output
-(D65); `record_synthetic_root` completes the chain — section row, live
-representation pointer, version/lineage currency — in one transaction.
+(D65); immutable section generations carry an explicit current pointer and
+skeleton checks append independently under D52.
 """
 
+from decimal import Decimal
+import json
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -25,7 +29,10 @@ from rememberstack.model import ProcessingTarget
 from rememberstack.model import RepresentationNotFoundError
 from rememberstack.model import RepresentationRecord
 from rememberstack.model import SectionTreeRecord
+from rememberstack.model import SkeletonCheckRecord
+from rememberstack.model import SkeletonStats
 from rememberstack.model import SnappedSection
+from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import SyntheticRootRecord
 from rememberstack.model import UploadRecord
@@ -209,19 +216,45 @@ class DocumentCatalog:
         return StructureSource.model_validate(dict(row))
 
     def record_synthetic_root(self, *, record: SyntheticRootRecord) -> None:
-        """Complete the E0 chain with the single full-span root (D39).
+        """Compatibility helper for callers that explicitly request a root.
 
-        The degenerate section tree: one ``role=body`` root covering every
-        block — what a short document (or a degraded structurer) gets. An
-        empty document yields the empty range ``0..-1`` on the inclusive
-        block grid (D57) and a zero-width char span.
+        The D79 worker uses ``record_section_tree`` directly. This helper wraps
+        older internal callers in one deterministic legacy generation.
         """
+        generation_id = uuid5(
+            NAMESPACE_URL,
+            "rememberstack:legacy-synthetic:"
+            f"{record.representation_id}:{record.structurer_version}",
+        )
+        stats = SkeletonStats(
+            stats_version="legacy-synthetic",
+            section_count=0,
+            duplicate_title_ratio=None,
+            max_title_multiplicity=None,
+            sibling_duplicate_ratio=None,
+            level_jump_count=None,
+            numbering_coverage=None,
+            numbering_inversions=None,
+            numbering_scheme_switches=None,
+            tiny_section_ratio=None,
+            zero_direct_body_ratio=None,
+            oversized_leaf_ratio=None,
+            heading_density=None,
+            title_length_p50=None,
+            title_length_p95=None,
+            long_title_ratio=None,
+            low_letter_ratio=None,
+            empty_title_ratio=None,
+            max_sibling_fanout=None,
+        )
+        digest = str(generation_id).replace("-", "")
         self.record_section_tree(
             record=SectionTreeRecord(
                 deployment_id=record.deployment_id,
                 doc_id=record.doc_id,
                 version_id=record.version_id,
                 representation_id=record.representation_id,
+                structure_generation_id=generation_id,
                 sections=(
                     SnappedSection(
                         node_path="0",
@@ -234,26 +267,82 @@ class DocumentCatalog:
                         char_end=record.markdown_chars,
                         summary="",
                         ordinal=0,
+                        normalized_title=(record.title or "").casefold(),
                     ),
                 ),
                 placement_path=None,
                 structurer_name="synthetic_root",
                 structurer_version=record.structurer_version,
+                skeleton_version=record.structurer_version,
+                skeleton_hash=digest,
+                skeleton_producer_family="N/A",
+                skeleton_check_version=None,
+                roles_version=record.structurer_version,
+                selecting_check_id=None,
+                route_tag=StructureRouteTag.LEGACY,
+                candidate_skeleton_hash=digest,
+                stats_version=stats.stats_version,
+                stats=stats,
+                pageindex_uri=f"legacy://pageindex/{generation_id}.json",
             )
+        )
+
+    def record_skeleton_check(self, *, record: SkeletonCheckRecord) -> None:
+        """Append one checker record without ever storing completion text."""
+        payload = record.model_dump(mode="json")
+        payload["stats"] = json.dumps(
+            payload["stats"], ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        failure = payload["provider_failure"]
+        payload["provider_failure"] = (
+            json.dumps(
+                failure, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
+            if failure is not None
+            else None
+        )
+        with self._engine.begin() as connection:
+            connection.execute(_INSERT_SKELETON_CHECK, payload)
+
+    def skeleton_checks(
+        self, *, representation_id: UUID
+    ) -> tuple[SkeletonCheckRecord, ...]:
+        """Read a representation's append-only checks in insertion order."""
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_SKELETON_CHECKS, {"representation_id": representation_id}
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            SkeletonCheckRecord.model_validate(
+                {
+                    **dict(row),
+                    "stats": dict(row["stats"]),
+                    "cost_usd": (
+                        Decimal(row["cost_usd"])
+                        if row["cost_usd"] is not None
+                        else None
+                    ),
+                }
+            )
+            for row in rows
         )
 
     def record_section_tree(self, *, record: SectionTreeRecord) -> PersistedSectionTree:
         """Complete the E0 chain for one representation in one transaction (D39/D54).
 
-        Inserts the section rows (root first, parents resolved by path),
-        marks the representation ready, swaps the version's live-reading
+        Inserts one immutable generation and its rows (root first, parents
+        resolved by path), marks the representation ready, swaps the version's live-reading
         pointer, and moves the lineage's current-version pointer — so
         currency flips only when the chain is whole. The walking skeleton's
         chain ends at structure; when the E1/E2 stages land, this flip moves
         with the chain's end (D54's rule is "after conversion→E1→E2
         completes"). Every statement is idempotent for a retried attempt
-        (section rows conflict on ``(version_id, node_path)`` and keep their
-        first-written ids), the pointer swap never overwrites a different
+        (a generation-id conflict skips the entire proposed tree and keeps the
+        first-written generation), the pointer swap never overwrites a different
         live representation, and the currency pointer only moves FORWARD by
         version number — a delayed older version completing after a newer
         one must not drag the lineage back to stale content.
@@ -263,78 +352,100 @@ class DocumentCatalog:
         artifacts (the sidecar) must be built from it, not from the input.
         """
         with self._engine.begin() as connection:
+            generation_payload = record.model_dump(mode="json")
+            generation_payload["stats"] = json.dumps(
+                generation_payload["stats"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            inserted_generation = connection.execute(
+                _INSERT_STRUCTURE_GENERATION, generation_payload
+            ).scalar_one_or_none()
             ids_by_path: dict[str, UUID] = {}
-            for section in record.sections:
-                parent_id = (
-                    ids_by_path.get(section.parent_path)
-                    if section.parent_path is not None
-                    else None
-                )
-                section_id = connection.execute(
-                    _INSERT_SECTION,
-                    {
-                        "section_id": uuid4(),
-                        "deployment_id": record.deployment_id,
-                        "doc_id": record.doc_id,
-                        "version_id": record.version_id,
-                        "representation_id": record.representation_id,
-                        "parent_section_id": parent_id,
-                        "node_path": section.node_path,
-                        "block_start": section.block_start,
-                        "block_end": section.block_end,
-                        "title": section.title or None,
-                        "role": section.role,
-                        "char_start": section.char_start,
-                        "char_end": section.char_end,
-                        "ordinal": section.ordinal,
-                        "summary": section.summary or None,
-                        "placement_path": (
-                            record.placement_path
-                            if section.parent_path is None
-                            else None
-                        ),
-                        "structurer_version": record.structurer_version,
-                    },
-                ).scalar_one_or_none()
-                if section_id is None:  # a retry: the first attempt's row won
+            if inserted_generation is not None:
+                for section in record.sections:
+                    parent_id = (
+                        ids_by_path[section.parent_path]
+                        if section.parent_path is not None
+                        else None
+                    )
                     section_id = connection.execute(
-                        _SELECT_SECTION_BY_PATH,
+                        _INSERT_SECTION,
                         {
+                            "section_id": uuid4(),
+                            "deployment_id": record.deployment_id,
+                            "doc_id": record.doc_id,
                             "version_id": record.version_id,
+                            "representation_id": record.representation_id,
+                            "structure_generation_id": record.structure_generation_id,
+                            "parent_section_id": parent_id,
                             "node_path": section.node_path,
+                            "block_start": section.block_start,
+                            "block_end": section.block_end,
+                            "title": section.title or None,
+                            "role": section.role,
+                            "char_start": section.char_start,
+                            "char_end": section.char_end,
+                            "ordinal": section.ordinal,
+                            "heading_level": section.heading_level,
+                            "normalized_title": section.normalized_title,
+                            "summary": section.summary or None,
+                            "placement_path": (
+                                record.placement_path
+                                if section.parent_path is None
+                                else None
+                            ),
+                            "structurer_version": record.structurer_version,
                         },
                     ).scalar_one()
-                ids_by_path[section.node_path] = section_id
-            connection.execute(
-                _MARK_REPRESENTATION_READY,
-                {
-                    "representation_id": record.representation_id,
-                    "structurer_name": record.structurer_name,
-                    "structurer_version": record.structurer_version,
-                },
-            )
-            connection.execute(
-                _MARK_VERSION_READY,
-                {
-                    "version_id": record.version_id,
-                    "representation_id": record.representation_id,
-                },
-            )
-            connection.execute(
-                _MARK_LINEAGE_CURRENT,
-                {"doc_id": record.doc_id, "version_id": record.version_id},
-            )
-            connection.execute(  # the lineage pointer moved: older versions
-                _SUPERSEDE_PRIOR_VERSIONS,  # are superseded as of now (D55)
-                {"doc_id": record.doc_id, "version_id": record.version_id},
-            )
+                    ids_by_path[section.node_path] = section_id
             persisted = (
                 connection.execute(
-                    _SELECT_SECTION_TREE, {"version_id": record.version_id}
+                    _SELECT_SECTION_TREE,
+                    {"structure_generation_id": record.structure_generation_id},
                 )
                 .mappings()
                 .all()
             )
+            if not persisted:
+                raise RuntimeError(
+                    "structure generation exists without its root section"
+                )
+            generation = (
+                connection.execute(
+                    _SELECT_STRUCTURE_GENERATION,
+                    {"structure_generation_id": record.structure_generation_id},
+                )
+                .mappings()
+                .one()
+            )
+            if record.make_current:
+                connection.execute(
+                    _MARK_REPRESENTATION_READY,
+                    {
+                        "representation_id": record.representation_id,
+                        "structure_generation_id": record.structure_generation_id,
+                        "pageindex_uri": generation["pageindex_uri"],
+                        "structurer_name": generation["route_tag"],
+                        "structurer_version": persisted[0]["structurer_version"],
+                    },
+                )
+                connection.execute(
+                    _MARK_VERSION_READY,
+                    {
+                        "version_id": record.version_id,
+                        "representation_id": record.representation_id,
+                    },
+                )
+                connection.execute(
+                    _MARK_LINEAGE_CURRENT,
+                    {"doc_id": record.doc_id, "version_id": record.version_id},
+                )
+                connection.execute(  # the lineage pointer moved: older versions
+                    _SUPERSEDE_PRIOR_VERSIONS,  # are superseded as of now (D55)
+                    {"doc_id": record.doc_id, "version_id": record.version_id},
+                )
         return PersistedSectionTree(
             sections=tuple(
                 SnappedSection(
@@ -352,11 +463,27 @@ class DocumentCatalog:
                     char_end=row["char_end"],
                     summary=row["summary"] or "",
                     ordinal=row["ordinal"],
+                    heading_level=row["heading_level"],
+                    normalized_title=row["normalized_title"],
                 )
                 for row in persisted
             ),
             placement_path=persisted[0]["placement_path"],
             structurer_version=persisted[0]["structurer_version"] or "",
+            structure_generation_id=generation["structure_generation_id"],
+            pageindex_uri=generation["pageindex_uri"],
+            skeleton_version=generation["skeleton_version"],
+            skeleton_hash=generation["skeleton_hash"],
+            skeleton_producer_family=generation["skeleton_producer_family"],
+            skeleton_check_version=generation["skeleton_check_version"],
+            roles_version=generation["roles_version"],
+            summary_version=generation["summary_version"],
+            placement_version=generation["placement_version"],
+            selecting_check_id=generation["selecting_check_id"],
+            route_tag=generation["route_tag"],
+            candidate_skeleton_hash=generation["candidate_skeleton_hash"],
+            stats_version=generation["stats_version"],
+            stats=SkeletonStats.model_validate(generation["stats"]),
         )
 
 
@@ -510,7 +637,7 @@ _MARK_VERSION_STRUCTURING = text(
 _SELECT_STRUCTURE_SOURCE = text(
     """
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
-           r.blocks_uri, r.markdown_uri, d.title
+           r.blocks_uri, r.markdown_uri, d.title, d.source_kind
     FROM document_representations r
     JOIN document_versions v ON v.version_id = r.version_id
     JOIN documents d ON d.doc_id = v.doc_id
@@ -518,28 +645,90 @@ _SELECT_STRUCTURE_SOURCE = text(
     """
 )
 
+_INSERT_SKELETON_CHECK = text(
+    """
+    INSERT INTO document_skeleton_checks (
+        check_id, processing_id, deployment_id, doc_id, version_id,
+        representation_id, candidate_skeleton_hash, stats_version, stats,
+        sampled_input_hash, check_outcome, checker_component_version,
+        checker_model, checker_model_hash, checker_prompt_hash,
+        checker_schema_hash, provider_failure, tokens_in, tokens_out,
+        cost_usd, latency_ms
+    ) VALUES (
+        :check_id, :processing_id, :deployment_id, :doc_id, :version_id,
+        :representation_id, :candidate_skeleton_hash, :stats_version,
+        CAST(:stats AS jsonb), :sampled_input_hash,
+        CAST(:check_outcome AS skeleton_check_outcome),
+        :checker_component_version, :checker_model, :checker_model_hash,
+        :checker_prompt_hash, :checker_schema_hash,
+        CAST(:provider_failure AS jsonb), :tokens_in, :tokens_out,
+        :cost_usd, :latency_ms
+    )
+    """
+)
+
+_SELECT_SKELETON_CHECKS = text(
+    """
+    SELECT check_id, processing_id, deployment_id, doc_id, version_id,
+           representation_id, candidate_skeleton_hash, stats_version, stats,
+           sampled_input_hash, check_outcome::text AS check_outcome,
+           checker_component_version, checker_model, checker_model_hash,
+           checker_prompt_hash, checker_schema_hash, provider_failure,
+           tokens_in, tokens_out, cost_usd, latency_ms
+    FROM document_skeleton_checks
+    WHERE representation_id = :representation_id
+    ORDER BY checked_at, check_id
+    """
+)
+
+_INSERT_STRUCTURE_GENERATION = text(
+    """
+    INSERT INTO document_structure_generations (
+        structure_generation_id, deployment_id, doc_id, version_id,
+        representation_id, skeleton_version, skeleton_hash,
+        skeleton_producer_family, skeleton_check_version, roles_version,
+        summary_version, placement_version, selecting_check_id, route_tag,
+        candidate_skeleton_hash, stats_version, stats, pageindex_uri
+    ) VALUES (
+        :structure_generation_id, :deployment_id, :doc_id, :version_id,
+        :representation_id, :skeleton_version, :skeleton_hash,
+        :skeleton_producer_family, :skeleton_check_version, :roles_version,
+        :summary_version, :placement_version, :selecting_check_id,
+        CAST(:route_tag AS structure_route_tag), :candidate_skeleton_hash,
+        :stats_version, CAST(:stats AS jsonb), :pageindex_uri
+    )
+    ON CONFLICT (structure_generation_id) DO NOTHING
+    RETURNING structure_generation_id
+    """
+)
+
 _INSERT_SECTION = text(
     """
     INSERT INTO document_sections (
         section_id, deployment_id, doc_id, version_id, representation_id,
-        parent_section_id, node_path, block_start, block_end,
+        structure_generation_id, parent_section_id, node_path, block_start, block_end,
         title, role, char_start, char_end, ordinal,
-        summary, placement_path, structurer_version
+        heading_level, normalized_title, summary, placement_path, structurer_version
     ) VALUES (
         :section_id, :deployment_id, :doc_id, :version_id, :representation_id,
-        :parent_section_id, :node_path, :block_start, :block_end,
+        :structure_generation_id, :parent_section_id, :node_path, :block_start, :block_end,
         :title, CAST(:role AS section_role), :char_start, :char_end, :ordinal,
-        :summary, :placement_path, :structurer_version
+        :heading_level, :normalized_title, :summary, :placement_path, :structurer_version
     )
-    ON CONFLICT (version_id, node_path) DO NOTHING
+    ON CONFLICT (structure_generation_id, node_path) DO NOTHING
     RETURNING section_id
     """
 )
 
-_SELECT_SECTION_BY_PATH = text(
+_SELECT_STRUCTURE_GENERATION = text(
     """
-    SELECT section_id FROM document_sections
-    WHERE version_id = :version_id AND node_path = :node_path
+    SELECT structure_generation_id, skeleton_version, skeleton_hash,
+           skeleton_producer_family, skeleton_check_version, roles_version,
+           summary_version, placement_version, selecting_check_id,
+           route_tag::text AS route_tag, candidate_skeleton_hash,
+           stats_version, stats, pageindex_uri
+    FROM document_structure_generations
+    WHERE structure_generation_id = :structure_generation_id
     """
 )
 
@@ -547,9 +736,9 @@ _SELECT_SECTION_TREE = text(
     """
     SELECT node_path, title, role::text AS role, block_start, block_end,
            char_start, char_end, summary, ordinal, placement_path,
-           structurer_version
+           structurer_version, heading_level, normalized_title
     FROM document_sections
-    WHERE version_id = :version_id
+    WHERE structure_generation_id = :structure_generation_id
     ORDER BY ordinal
     """
 )
@@ -560,8 +749,11 @@ _MARK_REPRESENTATION_READY = text(
     SET structurer_name = :structurer_name,
         structurer_version = :structurer_version,
         section_index_version = :structurer_version,
+        current_structure_generation_id = :structure_generation_id,
+        pageindex_uri = :pageindex_uri,
         status = 'ready'
-    WHERE representation_id = :representation_id AND status = 'structuring'
+    WHERE representation_id = :representation_id
+      AND status IN ('structuring', 'ready')
     """
 )
 

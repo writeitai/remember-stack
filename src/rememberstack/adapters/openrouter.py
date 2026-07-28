@@ -25,6 +25,7 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
@@ -120,6 +121,12 @@ class OpenRouterProviderError(ProviderCallError):
     """OpenRouter returned an error or an unusable response body."""
 
 
+class OpenRouterInvalidResponseError(
+    OpenRouterProviderError, ProviderInvalidResponseError
+):
+    """OpenRouter completed a generation without a schema-valid output."""
+
+
 class OpenRouterModelProvider:
     """Structured generations and embeddings over the OpenRouter HTTP API."""
 
@@ -162,7 +169,7 @@ class OpenRouterModelProvider:
         try:
             decoded = json.loads(content)
         except json.JSONDecodeError as err:
-            raise OpenRouterProviderError(
+            raise OpenRouterInvalidResponseError(
                 f"{response_type.__name__}: completion content is not JSON"
                 f" ({_content_fingerprint(content=content)})",
                 usage=usage,
@@ -170,7 +177,7 @@ class OpenRouterModelProvider:
         try:
             output = response_type.model_validate(decoded)
         except ValidationError as error:
-            raise OpenRouterProviderError(
+            raise OpenRouterInvalidResponseError(
                 f"completion body failed {response_type.__name__} validation",
                 usage=usage,
             ) from error
@@ -204,7 +211,7 @@ class OpenRouterModelProvider:
         )
         content = _completion_content(body=body)
         if content is None:
-            raise OpenRouterProviderError(
+            raise OpenRouterInvalidResponseError(
                 f"{response_type.__name__}: provider returned no completion"
                 f" content ({_completion_diagnosis(body=body)})",
                 usage=usage,

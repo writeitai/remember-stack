@@ -17,11 +17,13 @@ from rememberstack.adapters.openrouter import StrictSchemaError
 from rememberstack.model import ClaimifyResponse
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import FactLabelResponse
+from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import ModelRequest
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ProviderAccountingError
+from rememberstack.model import RoleClassificationResponse
 from rememberstack.model import SelectionResponse
-from rememberstack.model import StructureResponse
+from rememberstack.model import SkeletonCheckResponse
 
 
 class _Answer(BaseModel):
@@ -297,7 +299,14 @@ def test_generation_uses_strict_schema_for_defaulted_response_fields(
 
 
 @pytest.mark.parametrize(
-    "response_type", (StructureResponse, SelectionResponse, ClaimifyResponse)
+    "response_type",
+    (
+        FallbackStructureResponse,
+        SkeletonCheckResponse,
+        RoleClassificationResponse,
+        SelectionResponse,
+        ClaimifyResponse,
+    ),
 )
 def test_strict_schema_closes_every_nested_object_and_removes_defaults(
     response_type: type[BaseModel],
