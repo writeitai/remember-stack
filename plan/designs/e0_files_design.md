@@ -279,6 +279,9 @@ unchanged):
 
   ```
   parse candidate skeleton → compute + persist stats → density / oversized-leaf gates
+    (a gate demotion enters the SAME fallback → TERMINAL-check sequence below —
+    every fallback-produced tree faces the terminal judge, however the
+    document got demoted; clarified 2026-07-28 with Wave-1 implementation)
     → eligibility (≥ MIN_CHECK_SECTIONS non-root sections; below it: outcome
       not_run_short, skeleton accepted)
     → check call → coherent: keep parsed skeleton

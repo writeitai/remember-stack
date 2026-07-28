@@ -32,7 +32,10 @@ LONG_TITLE: Final = 120
 MAX_FALLBACK_DEPTH: Final = 16
 """Preserves the D57 snap's pathological-recursion ceiling."""
 
-SKELETON_STATS_VERSION: Final = "e0-skeleton-stats-2026.07:d79-v1:min3-tiny80-long120"
+SKELETON_STATS_VERSION: Final = "e0-skeleton-stats-2026.07:d79-v2:min3-tiny80-long120"
+"""d79-v2: level_jump_count uses raw heading levels ONLY — pairs missing a
+raw level are excluded and an all-anchor tree reports null, never a
+structurally fake zero from materialized tree depth."""
 """Pins every formula, zero case, normalization, and named floor below."""
 
 SKELETON_PARSER_VERSION: Final = (
@@ -215,7 +218,21 @@ def analyze_skeleton(
         len(siblings) - len({section.normalized_title for section in siblings})
         for siblings in children.values()
     )
-    levels = tuple(_stat_level(section=section) for section in candidates)
+    # Raw markdown levels only (§4.1): anchor-derived sections carry no
+    # heading_level, and materialized tree depth changes by at most one per
+    # step — feeding it in would report a structurally fake zero. Pairs with
+    # a missing side are excluded; a tree with no raw levels at all reports
+    # level_jump_count null rather than a number the data cannot support.
+    raw_levels = tuple(section.heading_level for section in candidates)
+    level_jumps: int | None = (
+        sum(
+            max(0, right - left - 1)
+            for left, right in zip(raw_levels, raw_levels[1:], strict=False)
+            if left is not None and right is not None
+        )
+        if any(level is not None for level in raw_levels)
+        else None
+    )
     numbering = tuple(_leading_number(title=title) for title in titles)
     inversions, switches = _numbering_run_stats(
         children=children,
@@ -230,10 +247,7 @@ def analyze_skeleton(
         duplicate_title_ratio=1.0 - (len(multiplicities) / count),
         max_title_multiplicity=max(multiplicities.values(), default=0),
         sibling_duplicate_ratio=sibling_duplicates / count,
-        level_jump_count=sum(
-            max(0, right - left - 1)
-            for left, right in zip(levels, levels[1:], strict=False)
-        ),
+        level_jump_count=level_jumps,
         numbering_coverage=sum(item is not None for item in numbering) / count,
         numbering_inversions=inversions,
         numbering_scheme_switches=switches,
@@ -626,10 +640,6 @@ def _to_roman(*, value: int) -> str:
             parts.append(symbol)
             value -= number
     return "".join(parts)
-
-
-def _stat_level(*, section: SnappedSection) -> int:
-    return section.heading_level or min(section.node_path.count("."), 6)
 
 
 def _nearest_rank(*, values: tuple[int, ...], percentile: float) -> float:

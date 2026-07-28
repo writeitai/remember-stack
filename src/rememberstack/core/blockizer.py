@@ -35,6 +35,26 @@ _ATOMIC_CONTAINERS: Final = {
 _LIST_OPENERS: Final = frozenset({"bullet_list_open", "ordered_list_open"})
 
 
+def blocks_from_sidecar(
+    *, blocks_doc: dict[str, object], document_md: str
+) -> tuple[Block, ...]:
+    """Load a blocks.json sidecar, re-blockizing when its version is stale.
+
+    The sidecar is a CACHE of the pinned blockizer's output, never a second
+    source of truth: on a version mismatch (e.g. pre-``07b`` sidecars without
+    heading metadata) the blocks are re-derived from ``document.md`` instead
+    of failing validation. The ``07`` → ``07b`` bump is grid-byte-identical —
+    the recompute changes metadata only — so STRUCTURE/CHUNK work queued or
+    retried across the upgrade keeps flowing instead of dead-lettering on a
+    permanently stale representation. Strictness stays on the produce side.
+    """
+    if blocks_doc.get("blockizer_version") == BLOCKIZER_VERSION:
+        payloads = blocks_doc["blocks"]
+        assert isinstance(payloads, list)
+        return tuple(Block.model_validate(payload) for payload in payloads)
+    return blockize(document_md=document_md)
+
+
 def blockize(*, document_md: str) -> tuple[Block, ...]:
     """Derive the deterministic block sequence from a document.md rendering.
 

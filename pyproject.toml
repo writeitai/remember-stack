@@ -103,9 +103,6 @@ packages = ["src/rememberstack"]
 src = ["src", "benchmarks"]
 target-version = "py312"
 line-length = 88
-# Vendored agent skills are maintained outside the product-code style surface
-# and task workflows explicitly treat `.agents/**` as read-only.
-extend-exclude = [".agents"]
 
 [tool.ruff.format]
 skip-magic-trailing-comma = true

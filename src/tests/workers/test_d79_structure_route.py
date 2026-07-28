@@ -13,6 +13,7 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.core import analyze_skeleton
 from rememberstack.core import blockize
+from rememberstack.core import BLOCKIZER_VERSION
 from rememberstack.core import parse_heading_skeleton
 from rememberstack.core import skeleton_hash
 from rememberstack.model import ClaimedWork
@@ -23,6 +24,7 @@ from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import SectionTreeRecord
+from rememberstack.model import SkeletonCheckOutcome
 from rememberstack.model import SkeletonCheckRecord
 from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
@@ -143,6 +145,7 @@ def _run(
         key=ObjectKey("doc/blocks.json"),
         content=json.dumps(
             {
+                "blockizer_version": BLOCKIZER_VERSION,
                 "markdown_chars": len(source),
                 "blocks": [block.model_dump(mode="json") for block in blocks],
             }
@@ -312,17 +315,25 @@ def test_shared_density_and_leaf_metrics_drive_direct_fallback_routes(
         min_density=min_density,
         max_leaf=max_leaf,
     )
-    assert catalog.checks == []
+    # Every fallback tree faces the terminal judge (§4.1) — gate demotions
+    # included. These fallback trees are root-only, so the terminal check is
+    # not_run_short: recorded, fail-open, route tag kept.
+    assert [check.check_outcome for check in catalog.checks] == [
+        SkeletonCheckOutcome.NOT_RUN_SHORT
+    ]
     generation = catalog.generations[-1]
     assert generation.route_tag is route
+    assert generation.selecting_check_id == catalog.checks[0].check_id
+    # Generation rows describe the SELECTED tree; check records describe the
+    # candidates they judged (review convention).
+    assert generation.candidate_skeleton_hash == generation.skeleton_hash
     parsed = parse_heading_skeleton(
         blocks=blockize(document_md=source),
         title="Routing proof",
         markdown_chars=len(source),
     )
-    assert generation.candidate_skeleton_hash == skeleton_hash(sections=parsed)
     if route is StructureRouteTag.FALLBACK_LEAF:
-        assert generation.skeleton_hash != generation.candidate_skeleton_hash
+        assert generation.skeleton_hash != skeleton_hash(sections=parsed)
 
 
 def test_checker_prompt_is_hard_capped_and_samples_mid_document_anomalies() -> None:
@@ -389,3 +400,109 @@ def test_roles_use_rules_then_title_classifier_with_body_as_failure_default(
         "references",
         "body",
     ]
+
+
+def test_checker_bump_does_not_mint_a_new_generation_when_route_holds(
+    tmp_path: Path,
+) -> None:
+    """The generation id is seeded from route + selected tree, never the
+    checker version (review: a checker bump must not churn generations or
+    re-chunk when the route does not flip)."""
+    source = "# A\n\nbody\n\n# B\n"
+    store = LocalFSObjectStore(root=tmp_path)
+    blocks = blockize(document_md=source)
+    store.write_bytes(key=ObjectKey("doc/document.md"), content=source.encode())
+    store.write_bytes(
+        key=ObjectKey("doc/blocks.json"),
+        content=json.dumps(
+            {
+                "blockizer_version": BLOCKIZER_VERSION,
+                "markdown_chars": len(source),
+                "blocks": [block.model_dump(mode="json") for block in blocks],
+            }
+        ).encode(),
+    )
+    catalog = _Catalog()
+    for checker_model in ("checker/generation-one", "checker/generation-two"):
+        StructureHandler(
+            catalog=catalog,  # type: ignore[arg-type]
+            artifact_store=store,
+            model_provider=None,
+            settings=StructurerSettings(
+                min_heading_density_per_10k=0, max_oversized_leaf_ratio=1
+            ),
+            check_settings=SkeletonCheckSettings(model=checker_model),
+            role_settings=RoleSettings(model="roles/fake"),
+        ).handle(work=_work(), meter=NoopCostMeter())
+    assert len(catalog.generations) == 2  # append-only recorder sees both runs
+    assert (
+        len({record.structure_generation_id for record in catalog.generations}) == 1
+    )  # ...but they derive the SAME id: ON CONFLICT makes the second a no-op
+    assert len(catalog.checks) == 2  # while every check outcome is ledgered
+
+
+def test_role_classifier_failure_defaults_to_body(tmp_path: Path) -> None:
+    """A role-classifier provider failure must degrade to body, not retry-loop."""
+
+    def _router(prompt: str, response_type: str) -> dict[str, object]:
+        if response_type == "RoleClassificationResponse":
+            raise ProviderCallError("role seat down")
+        if response_type == "SkeletonCheckResponse":
+            return {"verdict": "coherent"}
+        return {"sections": []}
+
+    catalog = _run(
+        tmp_path=tmp_path,
+        provider=FakeModelProvider(generate_router=_router),
+        source=(
+            "# Zephyr Blorptangle\n\nbody\n\n# Quixotic Framblewort\n\nbody\n\n"
+            "# Crenulated Sprocketry\n\nbody\n\n# Vorpal Mimsy\n\nbody\n"
+        ),
+    )
+    generation = catalog.generations[-1]
+    assert generation.route_tag is StructureRouteTag.PARSER
+    roles = {section.node_path: section.role for section in generation.sections}
+    assert set(roles.values()) == {"body"}
+
+
+def test_stale_blocks_sidecar_reblockizes_instead_of_dead_lettering(
+    tmp_path: Path,
+) -> None:
+    """A pre-metadata blocks.json (old blockizer version, heading blocks
+    without level/title) structures fine: the sidecar is a cache, and a
+    version mismatch re-derives blocks from document.md (review MAJOR)."""
+    source = "# A\n\nbody\n\n# B\n\nmore body\n"
+    store = LocalFSObjectStore(root=tmp_path)
+    legacy_blocks = [
+        {
+            key: value
+            for key, value in block.model_dump(mode="json").items()
+            if key not in ("heading_level", "heading_title", "normalized_title")
+        }
+        for block in blockize(document_md=source)
+    ]
+    store.write_bytes(key=ObjectKey("doc/document.md"), content=source.encode())
+    store.write_bytes(
+        key=ObjectKey("doc/blocks.json"),
+        content=json.dumps(
+            {
+                "blockizer_version": "blockizer-2026.07:markdown-it-py-4:gfm-tables",
+                "markdown_chars": len(source),
+                "blocks": legacy_blocks,
+            }
+        ).encode(),
+    )
+    catalog = _Catalog()
+    StructureHandler(
+        catalog=catalog,  # type: ignore[arg-type]
+        artifact_store=store,
+        model_provider=None,
+        settings=StructurerSettings(
+            min_heading_density_per_10k=0, max_oversized_leaf_ratio=1
+        ),
+        check_settings=SkeletonCheckSettings(model="checker/fake"),
+        role_settings=RoleSettings(model="roles/fake"),
+    ).handle(work=_work(), meter=NoopCostMeter())
+    generation = catalog.generations[-1]
+    assert generation.route_tag is StructureRouteTag.PARSER
+    assert [section.title for section in generation.sections[1:]] == ["A", "B"]

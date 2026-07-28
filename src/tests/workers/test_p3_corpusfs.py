@@ -475,3 +475,63 @@ def test_pathological_titles_and_refs_are_contained(
     assert len(field_lines) == 1
     assert "attacker-controlled" not in field_lines[0]
     assert "\\n" in hostile  # the newline was escaped, not emitted raw
+
+
+def test_non_current_generations_never_leak_into_the_tree(
+    corpus: _Corpus, tmp_path: Path
+) -> None:
+    """P3 reads ONLY the representation's current generation: a second,
+    non-current generation with a poison section must leave the built tree
+    byte-identical (review: nothing proved the join excludes history)."""
+    before, _ = _build(corpus, tmp_path / "before")
+    with corpus.engine.begin() as connection:
+        representation = connection.execute(
+            text(
+                "SELECT r.representation_id, r.version_id, v.doc_id"
+                " FROM document_representations r"
+                " JOIN document_versions v ON v.version_id = r.version_id LIMIT 1"
+            )
+        ).one()
+        stale_generation = uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO document_structure_generations ("
+                " structure_generation_id, deployment_id, doc_id, version_id,"
+                " representation_id, skeleton_version, skeleton_hash,"
+                " skeleton_producer_family, route_tag, candidate_skeleton_hash,"
+                " stats_version, stats) VALUES ("
+                " :generation, :d, :doc, :v, :r, 'stale-v', 'stale-hash', 'N/A',"
+                " 'parser', 'stale-hash', 'stale-stats', CAST('{}' AS jsonb))"
+            ),
+            {
+                "generation": stale_generation,
+                "d": _DEPLOYMENT_ID,
+                "doc": representation.doc_id,
+                "v": representation.version_id,
+                "r": representation.representation_id,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
+                " version_id, representation_id, structure_generation_id, node_path,"
+                " block_start, block_end, title, role, char_start, char_end,"
+                " ordinal, structurer_version)"
+                " VALUES (:s, :d, :doc, :v, :r, :generation, '0', 0, 1,"
+                " 'POISON NON-CURRENT SECTION', 'body', 0, 10, 0, 'stale-v')"
+            ),
+            {
+                "s": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "doc": representation.doc_id,
+                "v": representation.version_id,
+                "r": representation.representation_id,
+                "generation": stale_generation,
+            },
+        )
+    after, _ = _build(corpus, tmp_path / "after")
+    assert before.paths() == after.paths()
+    for path in sorted(after.paths()):
+        content = after.read(path)
+        assert "POISON" not in content
+        assert after.read(path) == before.read(path)

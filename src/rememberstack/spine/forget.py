@@ -1369,6 +1369,23 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
+    # D79 audit tables are erased EXPLICITLY, never via implied cascade:
+    # generations first (their selecting_check_id references checks with
+    # default NO ACTION), then checks, then representations. A future FK
+    # edit must not silently strand titles/stats/failure envelopes of a
+    # forgotten document.
+    text(
+        """
+        DELETE FROM document_structure_generations
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_skeleton_checks
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
     text(
         """
         DELETE FROM document_representations
@@ -1494,6 +1511,12 @@ _VERIFY_POSTGRES_SCRUB = text(
                OR deleted_at IS NULL)
         UNION ALL
         SELECT 1 FROM document_sections
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_structure_generations
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_skeleton_checks
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM chunks

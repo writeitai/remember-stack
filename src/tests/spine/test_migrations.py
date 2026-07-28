@@ -303,6 +303,23 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
                     "representation": representation_id,
                 },
             )
+            connection.execute(
+                text(
+                    "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
+                    " version_id, representation_id, node_path, block_start, block_end,"
+                    " title, role, char_start, char_end, ordinal, structurer_version)"
+                    " VALUES (:section, :deployment, :doc, :version, :representation,"
+                    " '0.1', 0, 0, 'Legacy Child', 'body', 0, 1, 1,"
+                    " 'e0-structure-2026.07c:temp0-1')"
+                ),
+                {
+                    "section": uuid4(),
+                    "deployment": deployment_id,
+                    "doc": doc_id,
+                    "version": version_id,
+                    "representation": representation_id,
+                },
+            )
 
         command.upgrade(config=config, revision="head")
         with engine.connect() as connection:
@@ -313,13 +330,10 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
                         " g.skeleton_version, g.skeleton_producer_family,"
                         " g.roles_version, g.summary_version,"
                         " g.placement_version, g.pageindex_uri,"
-                        " r.current_structure_generation_id,"
-                        " s.structure_generation_id AS section_generation"
+                        " r.current_structure_generation_id"
                         " FROM document_structure_generations g"
                         " JOIN document_representations r"
                         " ON r.representation_id = g.representation_id"
-                        " JOIN document_sections s"
-                        " ON s.representation_id = g.representation_id"
                         " WHERE g.representation_id = :representation"
                     ),
                     {"representation": representation_id},
@@ -335,7 +349,25 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
         assert row["placement_version"] is None
         assert row["pageindex_uri"] == "legacy/pageindex.json"
         assert row["current_structure_generation_id"] == row["structure_generation_id"]
-        assert row["section_generation"] == row["structure_generation_id"]
+        with engine.connect() as connection:
+            sections = (
+                connection.execute(
+                    text(
+                        "SELECT node_path, structure_generation_id, normalized_title"
+                        " FROM document_sections"
+                        " WHERE representation_id = :representation ORDER BY node_path"
+                    ),
+                    {"representation": representation_id},
+                )
+                .mappings()
+                .all()
+            )
+        # a MULTI-section legacy tree wraps under ONE generation (review gap)
+        assert [section["node_path"] for section in sections] == ["0", "0.1"]
+        assert {section["structure_generation_id"] for section in sections} == {
+            row["structure_generation_id"]
+        }
+        assert {section["normalized_title"] for section in sections} == {""}
     finally:
         engine.dispose()
         command.downgrade(config=config, revision="base")

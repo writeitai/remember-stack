@@ -127,3 +127,42 @@ def test_nested_list_items_stay_inside_their_parent_block() -> None:
     assert [block.type.value for block in blocks] == ["list_item", "list_item"]
     parent_raw = source[blocks[0].char_start : blocks[0].char_end]
     assert "nested child" in parent_raw
+
+
+def test_packing_is_byte_identical_under_different_heading_metadata() -> None:
+    """The chunk grid depends on segmentation and hashes, never on heading
+    metadata: repacking with every heading's metadata replaced yields
+    byte-identical chunks. This is the pre-vs-post-07b equivalence proof the
+    single hardcoded digest cannot give (review)."""
+    source = (_CORPUS / "seed_mixed.md").read_text()
+    blocks = blockize(document_md=source)
+    # model_copy skips validation, letting us fake arbitrary metadata drift
+    mutated = tuple(
+        block.model_copy(
+            update={"heading_title": "REPLACED", "normalized_title": "replaced"}
+        )
+        if block.heading_title is not None
+        else block
+        for block in blocks
+    )
+    sections = (
+        SectionSpan(
+            section_id=UUID("00000000-0000-0000-0000-000000000079"),
+            node_path="0",
+            role="body",
+            block_start=0,
+            block_end=len(blocks) - 1,
+        ),
+    )
+    params = ChunkerParams(
+        token_budget=20, anchor_modulus=24, anchor_min_gap_tokens=200
+    )
+    original = pack_blocks(
+        blocks=blocks, sections=sections, document_md=source, params=params
+    )
+    repacked = pack_blocks(
+        blocks=mutated, sections=sections, document_md=source, params=params
+    )
+    assert [chunk.model_dump(mode="json") for chunk in original] == [
+        chunk.model_dump(mode="json") for chunk in repacked
+    ]

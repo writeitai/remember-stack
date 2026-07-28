@@ -201,7 +201,9 @@ class SkeletonCheckRecord(BaseModel):
     candidate_skeleton_hash: str
     stats_version: str
     stats: SkeletonStats
-    sampled_input_hash: str
+    sampled_input_hash: str | None
+    """Null when no prompt was ever rendered (not_run_short) — a hash of an
+    unsent input would be bookkeeping fiction."""
     check_outcome: SkeletonCheckOutcome
     checker_component_version: str
     checker_model: str

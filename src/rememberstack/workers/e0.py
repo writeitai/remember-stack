@@ -25,13 +25,13 @@ from uuid import uuid4
 from uuid import uuid5
 
 from pydantic import Field
-from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.core import analyze_skeleton
 from rememberstack.core import blockize
 from rememberstack.core import BLOCKIZER_VERSION
+from rememberstack.core import blocks_from_sidecar
 from rememberstack.core import ConversionRouter
 from rememberstack.core import deterministic_section_role
 from rememberstack.core import LONG_TITLE
@@ -102,9 +102,11 @@ SKELETON_CHECK_PROMPT_CEILING: Final = 16_000
 
 E0_SKELETON_CHECK_VERSION: Final = (
     f"e0-skeleton-check-2026.07a:{SKELETON_STATS_VERSION}"
-    f":sample-v1:enum-v1:ceiling{SKELETON_CHECK_PROMPT_CEILING}"
+    f":sample-v2:enum-v1:ceiling{SKELETON_CHECK_PROMPT_CEILING}"
 )
-"""Checker prompt/sampling/schema generation."""
+"""Checker prompt/sampling/schema generation. sample-v2: the greedy fit went
+arithmetic (conservative digit/newline padding), so boundary selections can
+differ from the per-trial re-render greedy it replaced."""
 
 ROLE_PROMPT_CEILING: Final = 12_000
 """Hard total title-only role prompt ceiling, pinned by the role version."""
@@ -553,12 +555,10 @@ class StructureHandler:
         blocks_doc = json.loads(
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
-        blocks = tuple(
-            Block.model_validate(payload) for payload in blocks_doc["blocks"]
-        )
         markdown = self._artifact_store.read_bytes(
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
+        blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=markdown)
         parsed = parse_heading_skeleton(
             blocks=blocks,
             title=source.title,
@@ -581,18 +581,44 @@ class StructureHandler:
         producer_family = "N/A"
 
         if parsed_analysis.heading_density < self._settings.min_heading_density_per_10k:
-            route = StructureRouteTag.FALLBACK_DENSITY
-            selected, producer_family = self._fallback(
-                source=source, blocks=blocks, markdown=markdown, meter=meter
+            (
+                route,
+                selected,
+                selection_analysis,
+                selection_candidate_hash,
+                selecting_check_id,
+                producer_family,
+            ) = self._fallback_with_terminal(
+                source=source,
+                work=work,
+                blocks=blocks,
+                markdown=markdown,
+                meter=meter,
+                parsed_root=parsed[0],
+                kept_route=StructureRouteTag.FALLBACK_DENSITY,
             )
+            check_version = configured_check_version
         elif (
             parsed_analysis.oversized_leaf_ratio
             > self._settings.max_oversized_leaf_ratio
         ):
-            route = StructureRouteTag.FALLBACK_LEAF
-            selected, producer_family = self._fallback(
-                source=source, blocks=blocks, markdown=markdown, meter=meter
+            (
+                route,
+                selected,
+                selection_analysis,
+                selection_candidate_hash,
+                selecting_check_id,
+                producer_family,
+            ) = self._fallback_with_terminal(
+                source=source,
+                work=work,
+                blocks=blocks,
+                markdown=markdown,
+                meter=meter,
+                parsed_root=parsed[0],
+                kept_route=StructureRouteTag.FALLBACK_LEAF,
             )
+            check_version = configured_check_version
         else:
             initial_outcome, initial_check_id = self._check(
                 source=source,
@@ -607,7 +633,6 @@ class StructureHandler:
             if _is_incoherent(outcome=initial_outcome):
                 self._persist_generation(
                     source=source,
-                    phase="parser-demoted",
                     sections=parsed,
                     route=StructureRouteTag.PARSER_DEMOTED_CHECK,
                     analysis=parsed_analysis,
@@ -618,39 +643,28 @@ class StructureHandler:
                     producer_family="N/A",
                     make_current=False,
                 )
-                fallback, fallback_producer_family = self._fallback(
-                    source=source, blocks=blocks, markdown=markdown, meter=meter
-                )
-                fallback_analysis = analyze_skeleton(
-                    sections=fallback, blocks=blocks, markdown_chars=len(markdown)
-                )
-                fallback_hash = skeleton_hash(sections=fallback)
-                terminal_outcome, terminal_check_id = self._check(
+                (
+                    route,
+                    selected,
+                    selection_analysis,
+                    selection_candidate_hash,
+                    selecting_check_id,
+                    producer_family,
+                ) = self._fallback_with_terminal(
                     source=source,
                     work=work,
-                    sections=fallback,
-                    analysis=fallback_analysis,
+                    blocks=blocks,
+                    markdown=markdown,
                     meter=meter,
-                    terminal=True,
+                    parsed_root=parsed[0],
+                    kept_route=StructureRouteTag.FALLBACK_AFTER_CHECK,
                 )
-                selecting_check_id = terminal_check_id
-                selection_analysis = fallback_analysis
-                selection_candidate_hash = fallback_hash
-                if _is_incoherent(outcome=terminal_outcome):
-                    selected = (parsed[0],)
-                    route = StructureRouteTag.SYNTHETIC_AFTER_CHECK
-                    producer_family = "N/A"
-                else:
-                    selected = fallback
-                    route = StructureRouteTag.FALLBACK_AFTER_CHECK
-                    producer_family = fallback_producer_family
             else:
                 route = StructureRouteTag.PARSER
 
         with_roles = self._assign_roles(sections=selected, meter=meter)
         self._persist_generation(
             source=source,
-            phase="final",
             sections=with_roles,
             route=route,
             analysis=selection_analysis,
@@ -677,6 +691,65 @@ class StructureHandler:
                     },
                 ),
             )
+        )
+
+    def _fallback_with_terminal(
+        self,
+        *,
+        source: StructureSource,
+        work: ClaimedWork,
+        blocks: tuple[Block, ...],
+        markdown: str,
+        meter: CostMeterPort,
+        parsed_root: SnappedSection,
+        kept_route: StructureRouteTag,
+    ) -> tuple[
+        StructureRouteTag, tuple[SnappedSection, ...], SkeletonAnalysis, str, UUID, str
+    ]:
+        """Every fallback tree faces the terminal judge (§4.1 state machine).
+
+        The plausible-wrong-tree failure mode does not care which gate demoted
+        the document, so density/leaf demotions get the same terminal check as
+        incoherent-verdict demotions. Terminal incoherence degrades to the
+        synthetic root — honest no-structure over a plausible-wrong tree; the
+        check-record chain preserves which gate started the demotion. The
+        returned analysis/candidate hash always describe the SELECTED tree —
+        generation rows describe what is persisted, check records describe the
+        candidates they judged.
+        """
+        fallback, producer_family = self._fallback(
+            source=source, blocks=blocks, markdown=markdown, meter=meter
+        )
+        fallback_analysis = analyze_skeleton(
+            sections=fallback, blocks=blocks, markdown_chars=len(markdown)
+        )
+        terminal_outcome, terminal_check_id = self._check(
+            source=source,
+            work=work,
+            sections=fallback,
+            analysis=fallback_analysis,
+            meter=meter,
+            terminal=True,
+        )
+        if _is_incoherent(outcome=terminal_outcome):
+            synthetic = (parsed_root,)
+            return (
+                StructureRouteTag.SYNTHETIC_AFTER_CHECK,
+                synthetic,
+                analyze_skeleton(
+                    sections=synthetic, blocks=blocks, markdown_chars=len(markdown)
+                ),
+                skeleton_hash(sections=synthetic),
+                terminal_check_id,
+                "N/A",
+            )
+        return (
+            kept_route,
+            fallback,
+            fallback_analysis,
+            skeleton_hash(sections=fallback),
+            terminal_check_id,
+            producer_family,
         )
 
     def _fallback(
@@ -756,14 +829,18 @@ class StructureHandler:
         terminal: bool,
     ) -> tuple[SkeletonCheckOutcome, UUID]:
         """Append one explicit checker outcome; failures are fail-open."""
-        prompt = _render_check_prompt(
-            source=source, sections=sections, analysis=analysis
-        )
-        sampled_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         outcome = SkeletonCheckOutcome.NOT_RUN_SHORT
         usage: ProviderCallUsage | None = None
         failure: dict[str, str | int | float | bool | None] | None = None
+        # A prompt no call will ever send gets no render and no hash — a
+        # not_run_short record with a sampled_input_hash would bookkeep an
+        # input that never existed (and rendering is the expensive part).
+        sampled_hash: str | None = None
         if len(sections) - 1 >= MIN_CHECK_SECTIONS:
+            prompt = _render_check_prompt(
+                source=source, sections=sections, analysis=analysis
+            )
+            sampled_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
             if self._model_provider is None:
                 outcome = SkeletonCheckOutcome.PROVIDER_ERROR
                 failure = {"error_type": "provider_unavailable", "has_usage": False}
@@ -781,9 +858,15 @@ class StructureHandler:
                     outcome = SkeletonCheckOutcome(generated.output.verdict)
                 except ProviderAccountingError:
                     raise
-                except (ProviderInvalidResponseError, ValidationError) as error:
+                except (
+                    ProviderInvalidResponseError,
+                    # ValueError covers pydantic ValidationError AND the
+                    # off-enum verdict coercion from a non-OpenRouter
+                    # provider — both are invalid responses, not outages
+                    ValueError,
+                ) as error:
                     outcome = SkeletonCheckOutcome.INVALID_RESPONSE
-                    usage = getattr(error, "usage", None)
+                    usage = getattr(error, "usage", None) or usage
                     failure = _failure_envelope(error=error, usage=usage)
                 except ProviderCallError as error:
                     outcome = SkeletonCheckOutcome.PROVIDER_ERROR
@@ -883,7 +966,6 @@ class StructureHandler:
         self,
         *,
         source: StructureSource,
-        phase: str,
         sections: tuple[SnappedSection, ...],
         route: StructureRouteTag,
         analysis: SkeletonAnalysis,
@@ -894,14 +976,23 @@ class StructureHandler:
         producer_family: str,
         make_current: bool,
     ) -> None:
-        """Append one generation, then write its versioned sidecar."""
+        """Append one generation, then write its versioned sidecar.
+
+        The generation identity is seeded from the SELECTED tree and route —
+        never from the checker version. Both halves of the D79 rule follow
+        from one seed: a checker bump over an unchanged route+tree derives
+        the same id (ON CONFLICT no-op — no minted generation, no pointer
+        churn), while a genuine route flip or a different fallback tree
+        changes the seed and appends a real generation. Role version stays
+        in the seed because roles change the section rows themselves.
+        """
         skeleton_version = _skeleton_version(settings=self._settings)
         generation_id = uuid5(
             NAMESPACE_URL,
             "rememberstack:structure:"
-            f"{source.representation_id}:{E0_STRUCTURE_VERSION}:{phase}:"
-            f"{skeleton_version}:{check_version or 'none'}:"
-            f"{roles_version or 'none'}",
+            f"{source.representation_id}:{E0_STRUCTURE_VERSION}:"
+            f"{route.value}:{skeleton_hash(sections=sections)}:"
+            f"{skeleton_version}:{roles_version or 'none'}",
         )
         sidecar_key = (
             source.blocks_uri.rsplit("/", 1)[0]
@@ -1000,42 +1091,53 @@ def _render_check_prompt(
     sections: tuple[SnappedSection, ...],
     analysis: SkeletonAnalysis,
 ) -> str:
-    """Anomaly-first deterministic sampling, rendered back in document order."""
+    """Anomaly-first deterministic sampling, rendered back in document order.
+
+    Linear, not quadratic: every candidate line renders exactly once, the
+    static envelope (stats block, header) renders exactly once, and the
+    greedy fit tracks lengths arithmetically — the previous shape re-rendered
+    the full prompt per candidate, ~5s of pure CPU on a 6,000-heading
+    document. The fit is conservative (worst-case count digits, a newline
+    per line), so the final render can only land under the ceiling; the
+    assert is the belt to that suspenders.
+    """
     candidates = sections[1:]
     priorities = _anomaly_priority(sections=candidates, analysis=analysis)
-    selected: set[int] = set()
+    line_for = tuple(
+        _check_line(
+            section=section,
+            direct_body_chars=analysis.direct_body_chars[section.node_path],
+        )
+        for section in candidates
+    )
+    stats_json = json.dumps(
+        analysis.stats.model_dump(mode="json"),
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
 
-    def compose(indexes: set[int]) -> str:
-        ordered = sorted(indexes)
-        lines = [
-            _check_line(
-                section=candidates[index],
-                direct_body_chars=analysis.direct_body_chars[
-                    candidates[index].node_path
-                ],
-            )
-            for index in ordered
-        ]
+    def compose(ordered: tuple[int, ...]) -> str:
         return _CHECK_PROMPT_TEMPLATE.format(
             instruction=_CHECK_INSTRUCTION,
             title=(source.title or "(untitled)")[:LONG_TITLE],
             source_kind=source.source_kind[:LONG_TITLE],
-            stats=json.dumps(
-                analysis.stats.model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
+            stats=stats_json,
             included=len(ordered),
             omitted=len(candidates) - len(ordered),
-            lines="\n".join(lines),
+            lines="\n".join(line_for[index] for index in ordered),
         )
 
+    overhead = len(compose(()))
+    budget = SKELETON_CHECK_PROMPT_CEILING - overhead
+    selected: set[int] = set()
+    used = 0
     for index in priorities:
-        trial = {*selected, index}
-        if len(compose(trial)) <= SKELETON_CHECK_PROMPT_CEILING:
-            selected = trial
-    rendered = compose(selected)
+        cost = len(line_for[index]) + 1  # +1: the joining newline, worst case
+        if used + cost <= budget:
+            selected.add(index)
+            used += cost
+    rendered = compose(tuple(sorted(selected)))
     if len(rendered) > SKELETON_CHECK_PROMPT_CEILING:
         raise AssertionError("checker prompt base exceeds its versioned hard ceiling")
     return rendered
@@ -1070,12 +1172,12 @@ def _anomaly_priority(
     jumps = sorted(
         (
             (
-                max(
-                    0,
-                    (right.heading_level or right.node_path.count("."))
-                    - (left.heading_level or left.node_path.count("."))
-                    - 1,
-                ),
+                # raw levels only — a pair missing a raw level is no jump,
+                # matching the d79-v2 stat rule (tree depth would fake zero
+                # or invent jumps that steer the sample)
+                max(0, right.heading_level - left.heading_level - 1)
+                if left.heading_level is not None and right.heading_level is not None
+                else 0,
                 index + 1,
             )
             for index, (left, right) in enumerate(
@@ -1120,8 +1222,11 @@ def _check_line(*, section: SnappedSection, direct_body_chars: int) -> str:
     title = section.title
     if len(title) > LONG_TITLE:
         title = title[: LONG_TITLE - 1] + "…"
+    # anchor-derived sections carry no raw level; "null" tells the judge the
+    # truth instead of a tree depth masquerading as one
+    level = "null" if section.heading_level is None else str(section.heading_level)
     return (
-        f"(level={section.heading_level or section.node_path.count('.')}, "
+        f"(level={level}, "
         f"title={json.dumps(title, ensure_ascii=False)}, "
         f"direct_body_chars={direct_body_chars})"
     )

@@ -3,6 +3,7 @@
 from rememberstack.core.blockizer import block_hash
 from rememberstack.core.blockizer import blockize
 from rememberstack.core.blockizer import BLOCKIZER_VERSION
+from rememberstack.core.blockizer import blocks_from_sidecar
 from rememberstack.core.blockizer import normalized_block_text
 from rememberstack.core.blockizer import normalized_heading_title
 from rememberstack.core.chunker import chunk_content_hash
@@ -101,6 +102,7 @@ __all__ = (
     "PredicateSignatureDefinition",
     "block_hash",
     "blockize",
+    "blocks_from_sidecar",
     "normalized_block_text",
     "normalized_heading_title",
     "HOT_MIME_PREFIXES",

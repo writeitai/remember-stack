@@ -43,7 +43,7 @@ CREATE TABLE document_skeleton_checks (
   candidate_skeleton_hash text NOT NULL,
   stats_version     text NOT NULL,
   stats             jsonb NOT NULL,
-  sampled_input_hash text NOT NULL,
+  sampled_input_hash text,  -- null: not_run_short renders no prompt (#165 review)
   check_outcome     skeleton_check_outcome NOT NULL,
   checker_component_version text NOT NULL,
   checker_model     text NOT NULL,
@@ -180,7 +180,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Keep current trees, then remove the D79 provenance surface."""
+    """Keep current trees, then remove the D79 provenance surface.
+
+    Effectively one-way on real deployments: non-current generations and all
+    check records are dropped (honest data loss), and restoring the legacy
+    ``UNIQUE (version_id, node_path)`` constraint fails outright when the
+    blockizer bump has produced two representations for one version — each
+    carries a root row. Downgrade exists for CI round-trips, not operations.
+    """
     op.execute(
         """
         DELETE FROM document_sections s
