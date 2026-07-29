@@ -161,7 +161,8 @@ _SELECT_CHUNK_SOURCE = text(
 
 _SELECT_SECTIONS = text(
     """
-    SELECT s.section_id, s.node_path, s.role, s.block_start, s.block_end
+    SELECT s.section_id, s.node_path, s.role, s.block_start, s.block_end,
+           s.summary
     FROM document_sections s
     JOIN document_representations r
       ON r.representation_id = s.representation_id

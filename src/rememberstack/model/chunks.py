@@ -27,6 +27,7 @@ class SectionSpan(BaseModel):
     role: str
     block_start: int = Field(ge=0)
     block_end: int = Field(ge=-1)
+    summary: str | None = None
 
 
 class ChunkSource(BaseModel):

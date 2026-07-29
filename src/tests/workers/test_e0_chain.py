@@ -39,6 +39,7 @@ from rememberstack.model import SectionTreeRecord
 from rememberstack.model import SkeletonStats
 from rememberstack.model import SnappedSection
 from rememberstack.model import StructureRouteTag
+from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
@@ -1305,6 +1306,15 @@ def test_summary_seat_swap_copies_skeleton_and_moves_pointer(
         str(row["summary"]) for row in second_sections
     }
     assert second_sections[0]["placement_path"] == "/field-research/beta/"
+    consumed = ChunkCatalog(engine=rig.engine).chunk_source(
+        representation_id=representation["representation_id"]  # type: ignore[arg-type]
+    )
+    assert [section.summary for section in consumed.sections] == [
+        row["summary"] for row in second_sections
+    ]
+    assert not {row["summary"] for row in first_sections}.intersection(
+        section.summary for section in consumed.sections
+    )
     assert not any(
         request.model != "summary/model-beta"
         for request in second_provider.generated_requests

@@ -43,6 +43,8 @@ from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.p1_index import ChunkIndexPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.section_orientation import render_section_orientation
+from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSION
 
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
@@ -50,20 +52,26 @@ E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 E1_EMBED_VERSION: Final = "e1-embed-2026.07"
 """The embed stage's component version (model identity rides settings/stamps)."""
 
-E1_PREFIXER_VERSION: Final = "e1-prefix-2026.07b:temp0-1"
+E1_PREFIXER_VERSION: Final = f"e1-prefix-2026.07c:temp0-1:{SECTION_ORIENTATION_VERSION}"
 """The context-prefix call's prompt generation (D58; conventional mode, D63).
-07b pins temperature=0.0 — generation parameters are part of provenance."""
+07b pins temperature=0.0 — generation parameters are part of provenance.
+07c adds D79's bounded current-generation section-summary orientation."""
 
-E2_EXTRACTOR_VERSION: Final = "e2-extract-2026.07e:loss-ledger-1"
+E2_EXTRACTOR_VERSION: Final = (
+    f"e2-extract-2026.07f:loss-ledger-1:{SECTION_ORIENTATION_VERSION}"
+)
 """The extractor generation baked into extraction_input_hash (D56); the E2
-stage (WP-1.3) binds its handler to this same constant. 07e ledgers Claimify
-omissions and grounding-gate rejections on the D33 transcript (#161); 07d
-pinned temperature=0.0 on the Selection call (Claimify already carried it)."""
+stage (WP-1.3) binds its handler to this same constant. 07f adds D79 summary
+orientation to the bundle without making summaries hash or grounding inputs;
+07e ledgers Claimify omissions and grounding-gate rejections on the D33
+transcript (#161); 07d pinned temperature=0.0 on the Selection call (Claimify
+already carried it)."""
 
 _PREFIX_PROMPT_TEMPLATE: Final = (
     "In one sentence, state where this passage sits in the document — "
     "document title, section, and what surrounds it. Passage from "
-    "{title!r}, section path {section_path}, chunk {ordinal}:\n\n{head}"
+    "{title!r}, section path {section_path}, chunk {ordinal}"
+    "{section_orientation}:\n\n{head}"
 )
 
 
@@ -317,12 +325,7 @@ class EmbedChunksHandler:
         if carried is not None:
             return carried.context_prefix
         head = document_md[chunk.char_start : chunk.char_end][:400]
-        prompt = _PREFIX_PROMPT_TEMPLATE.format(
-            title=source.title or "untitled",
-            section_path=chunk.section_path,
-            ordinal=chunk.ordinal,
-            head=head,
-        )
+        prompt = _prefix_prompt(source=source, chunk=chunk, head=head)
         response = self._model_provider.generate(
             request=ModelRequest(
                 model=self._settings.prefix_model, prompt=prompt, temperature=0.0
@@ -333,6 +336,28 @@ class EmbedChunksHandler:
             call_key=f"prefix:{chunk.chunk_id}", tier="prefix", usage=response.usage
         )
         return response.output.prefix
+
+
+def _prefix_prompt(*, source: ChunkSource, chunk: ChunkForEmbedding, head: str) -> str:
+    """Render the prefix input; degraded summaries preserve the old bytes."""
+    orientation = render_section_orientation(
+        sections=source.sections, target_path=chunk.section_path
+    )
+    section_orientation = (
+        ""
+        if orientation is None
+        else (
+            "\nSECTION SUMMARIES (orientation only; never quote as source):\n"
+            f"{orientation}"
+        )
+    )
+    return _PREFIX_PROMPT_TEMPLATE.format(
+        title=source.title or "untitled",
+        section_path=chunk.section_path,
+        ordinal=chunk.ordinal,
+        section_orientation=section_orientation,
+        head=head,
+    )
 
 
 def _chunk_record(

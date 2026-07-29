@@ -180,6 +180,11 @@ class _E2Rig:
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
         self.provider = FakeModelProvider(
             generate_payloads={
+                "FallbackStructureResponse": {"sections": []},
+                "RootSummaryPlacementResponse": {
+                    "summary": "A Project Atlas launch report.",
+                    "placement_path": "/projects/atlas/",
+                },
                 "ContextPrefix": {"prefix": _PREFIX},
                 "SelectionResponse": _SELECTION_PAYLOAD,
                 "ClaimifyResponse": _CLAIMIFY_PAYLOAD,
@@ -214,7 +219,9 @@ class _E2Rig:
         registry.register(
             stage=PipelineStage.STRUCTURE,
             handler=StructureHandler(
-                catalog=document_catalog, artifact_store=artifact_store
+                catalog=document_catalog,
+                artifact_store=artifact_store,
+                model_provider=self.provider,
             ),
         )
         registry.register(
@@ -402,6 +409,17 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
         request.temperature == 0.0 for request in rig.provider.generated_requests
     )
     assert all(call["cost_usd"] == 0 for call in metered_calls)
+    summary_line = "TARGET 0: A Project Atlas launch report."
+    assert any(
+        "state where this passage sits" in prompt and summary_line in prompt
+        for prompt in rig.provider.generated_prompts
+    )
+    assert any(
+        "Selection stage of a claim extractor" in prompt
+        and "SECTION SUMMARIES (orientation only; never quote as source):" in prompt
+        and summary_line in prompt
+        for prompt in rig.provider.generated_prompts
+    )
 
 
 def test_rerunning_extraction_replays_without_model_calls(rig: _E2Rig) -> None:

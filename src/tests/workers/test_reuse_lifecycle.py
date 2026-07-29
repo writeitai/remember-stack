@@ -86,6 +86,14 @@ def _paragraphs(*, edited: bool) -> str:
 
 def _canned(prompt: str, type_name: str) -> dict[str, object]:
     """Deterministic Selection/Claimify payloads grounded in the real bundle."""
+    if type_name == "FallbackStructureResponse":
+        return {"sections": []}
+    if type_name == "RootSummaryPlacementResponse":
+        marker = "edited" if "entirely different" in prompt else "original"
+        return {
+            "summary": f"The {marker} reuse-spike document.",
+            "placement_path": "/reuse-spike/",
+        }
     if type_name == "ContextPrefix":
         return {"prefix": "Sits in the reuse spike corpus."}
     match = _TARGET_PATTERN.search(prompt)
@@ -175,7 +183,11 @@ class _ReuseRig:
         )
         registry.register(
             stage=PipelineStage.STRUCTURE,
-            handler=StructureHandler(catalog=catalog, artifact_store=artifact_store),
+            handler=StructureHandler(
+                catalog=catalog,
+                artifact_store=artifact_store,
+                model_provider=self.provider,
+            ),
         )
         registry.register(
             stage=PipelineStage.CHUNK,
@@ -332,6 +344,73 @@ def test_reuse_cost_is_proportional_to_the_edit(rig: _ReuseRig) -> None:
         f" selection_v2={selection_v2} prefix_v2={prefix_v2}"
         f" embeds_v2={embeds_v2} hit_rate={hit_rate:.2f}"
     )
+
+
+def test_summary_change_keeps_hash_and_reuses_unchanged_chunks(rig: _ReuseRig) -> None:
+    """An ancestor re-summary never fans out into chunk re-extraction."""
+    first = rig.observe(content=_paragraphs(edited=False))
+    rig.drain()
+    baseline_selection = rig.selection_calls()
+    with rig.engine.connect() as connection:
+        first_summary = connection.execute(
+            text(
+                "SELECT s.summary FROM document_sections s"
+                " JOIN document_representations r"
+                " ON r.representation_id = s.representation_id"
+                " AND r.current_structure_generation_id = s.structure_generation_id"
+                " WHERE s.version_id = :version_id AND s.node_path = '0'"
+            ),
+            {"version_id": first.version_id},
+        ).scalar_one()
+
+    second = rig.observe(content=_paragraphs(edited=True))
+    rig.drain()
+    selection_v2 = rig.selection_calls() - baseline_selection
+    with rig.engine.connect() as connection:
+        second_summary = connection.execute(
+            text(
+                "SELECT s.summary FROM document_sections s"
+                " JOIN document_representations r"
+                " ON r.representation_id = s.representation_id"
+                " AND r.current_structure_generation_id = s.structure_generation_id"
+                " WHERE s.version_id = :version_id AND s.node_path = '0'"
+            ),
+            {"version_id": second.version_id},
+        ).scalar_one()
+        v2_chunk_count = connection.execute(
+            text("SELECT count(*) FROM chunks WHERE version_id = :version_id"),
+            {"version_id": second.version_id},
+        ).scalar_one()
+        reused = (
+            connection.execute(
+                text(
+                    "SELECT c2.extraction_input_hash AS second_hash,"
+                    " c1.extraction_input_hash AS first_hash"
+                    " FROM chunks c2"
+                    " JOIN chunks c1"
+                    " ON c1.doc_id = c2.doc_id"
+                    " AND c1.extraction_input_hash = c2.extraction_input_hash"
+                    " WHERE c1.version_id = :first_version"
+                    " AND c2.version_id = :second_version"
+                    " AND EXISTS (SELECT 1 FROM chunk_claims cc"
+                    "             WHERE cc.chunk_id = c2.chunk_id)"
+                    " AND NOT EXISTS (SELECT 1 FROM claims cl"
+                    "                 WHERE cl.chunk_id = c2.chunk_id)"
+                    " LIMIT 1"
+                ),
+                {
+                    "first_version": first.version_id,
+                    "second_version": second.version_id,
+                },
+            )
+            .mappings()
+            .one()
+        )
+
+    assert first_summary == "The original reuse-spike document."
+    assert second_summary == "The edited reuse-spike document."
+    assert reused["first_hash"] == reused["second_hash"]
+    assert 0 < selection_v2 < v2_chunk_count
 
 
 def test_reused_chunks_carry_identical_claims_and_prefixes(rig: _ReuseRig) -> None:
