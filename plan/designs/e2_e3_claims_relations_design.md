@@ -119,13 +119,25 @@ the same rule as decontextualization. E2 parses them deterministically into
 `claims.claim_valid_*`; a malformed string falls back to unknown/null for the temporal fields
 without rejecting the claim. Most claims have no stated world-time and leave these null/unknown.
 
+**Amendment (2026-07-29, union grounding):** layer-2 membership is checked against the **union of
+source-derived bundle elements**: the TARGET CHUNK slice, deterministic document header, both
+available same-section neighbours, and the stored context prefix. The model-emitted
+`added_context.source_kind` remains recorded on claims and decision rows as a best-effort provenance
+pointer, but it is advisory: a wrong tag cannot reject text that exists verbatim elsewhere in that
+union. This corrects the GLM-5.2 smoke failure recorded in the #161 loss ledger: 371 of 411 grounding
+rejections were `added_context_unverified` mislabel deaths; sampled claims were correct
+decontextualizations, while names present verbatim in TARGET CHUNK turn lines were tagged `header`
+(258) or `prefix` (99). Only 27 claims from 19 documents survived the old element-local gate.
+**Section summaries and every other LLM-orientation text remain excluded from the union**, so the
+fact-injection defense is unchanged and D79 consumption rules are unchanged.
+
 Acceptance layers four checks, cheapest first:
 
 1. **Anchor** (deterministic): the `source_span` must be a real, in-bounds slice of the target chunk —
    a check the model cannot talk its way past.
-2. **Window-membership** (deterministic): every *added* substring must verbatim-exist in the bundle
-   element it was attributed to. A claim that invents "in San Francisco" with no bundle source is
-   rejected.
+2. **Window-membership** (deterministic): every *added* substring must verbatim-exist somewhere in
+   the source-derived union above. The attribution tag is advisory. A claim that invents "in San
+   Francisco" with no union member containing it is rejected.
 3. **Entailment self-verdict** (in-call, ~free): the model asserts the chunk + bundle entail the
    claim; includes the rule that "*X said* Y" entails "X said Y", not "Y".
 4. **Sampled independent audit** (offline, not per-claim): a separate judge re-checks a sample, because
@@ -169,7 +181,7 @@ lands a claim is indistinguishable from a keep that produced a claim the gate re
 | `decision_type` | When written | `source_span` | `edit_detail` |
 |---|---|---|---|
 | `claimify_omitted` | A kept Selection span for which Claimify returned **no claim at all** (the model simply skipped it). One row per dead keep. | The Selection span. | null |
-| `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>}`. |
+| `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>, "searched_elements": [...]}`. |
 
 **Invariant — every kept span is accounted for end-to-end.** Two independent rules (revised
 2026-07-27 after review — one keep can decompose into several returned claims with mixed fates,
