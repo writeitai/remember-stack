@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v5 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v5 protocols."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
+ProtocolKey = Literal["full-v5", "full-v5-strong"]
+ProtocolName = Literal["RS-LoCoMo-Full-v5", "RS-LoCoMo-Full-v5-strong"]
+AnswerAgentModel = Literal["openai/gpt-4o-mini", "openai/gpt-5.6-luna"]
+JudgeModel = Literal["openai/gpt-5.6-luna"]
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
 ]
@@ -108,7 +112,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v5"] = "RS-LoCoMo-Full-v5"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v5"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -124,8 +128,8 @@ class RunConfiguration(FrozenModel):
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
     knowledge_mode: Literal["not_composed"] = "not_composed"
-    answer_agent_model: Literal["openai/gpt-4o-mini"] = "openai/gpt-4o-mini"
-    judge_model: Literal["openai/gpt-5.6-luna"] = "openai/gpt-5.6-luna"
+    answer_agent_model: AnswerAgentModel = "openai/gpt-4o-mini"
+    judge_model: JudgeModel = "openai/gpt-5.6-luna"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1
@@ -318,6 +322,8 @@ class RunState(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    protocol_name: ProtocolName
+    protocol_fingerprint: NonEmpty
     ingests: dict[str, IngestRecord] = Field(default_factory=dict)
     readiness: dict[str, PipelineReadinessReport] = Field(default_factory=dict)
     answers: dict[str, AnswerRecord] = Field(default_factory=dict)
@@ -350,7 +356,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: Literal["RS-LoCoMo-Full-v5"] = "RS-LoCoMo-Full-v5"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v5"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

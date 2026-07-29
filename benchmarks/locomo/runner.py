@@ -31,6 +31,7 @@ from benchmarks.locomo.dataset import load_dataset
 from benchmarks.locomo.dataset import load_manifest
 from benchmarks.locomo.dataset import manifest_bytes_hash
 from benchmarks.locomo.dataset import validate_manifest
+from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
 from benchmarks.locomo.model import BenchmarkFailure
@@ -43,6 +44,7 @@ from benchmarks.locomo.model import LoCoMoDataset
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import PreflightProbe
 from benchmarks.locomo.model import PreparedDocument
+from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import RetrievedClaim
@@ -53,17 +55,16 @@ from benchmarks.locomo.model import SessionDiagnosticSummary
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
-from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
+from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
-from benchmarks.locomo.protocol import EXPECTED_TOOL_CATALOG_SHA256
 from benchmarks.locomo.protocol import JUDGE_MODEL
-from benchmarks.locomo.protocol import JUDGE_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import MAX_AGENT_CALLS
 from benchmarks.locomo.protocol import MAX_TOOL_CALLS
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
-from benchmarks.locomo.protocol import PROTOCOL_NAME
+from benchmarks.locomo.protocol import protocol_for_key
+from benchmarks.locomo.protocol import protocol_for_name
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
@@ -129,8 +130,15 @@ class _LangfuseActivationSettings(BaseSettings):
         return public_key, secret_key, host
 
 
-def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfiguration:
+def prepare_run(
+    *,
+    dataset_path: Path,
+    tier: str,
+    output: Path,
+    protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
+) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
+    selected_protocol = protocol_for_key(protocol)
     dataset = load_dataset(dataset_path)
     manifest = load_manifest(tier)
     questions = validate_manifest(dataset=dataset, manifest=manifest)
@@ -147,7 +155,7 @@ def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfigurat
     )
     revision = _repository_revision()
     base = {
-        "protocol_name": PROTOCOL_NAME,
+        "protocol_name": selected_protocol.name,
         "adapter_version": ADAPTER_VERSION,
         "repository_revision": revision,
         "dataset_commit": DATASET_COMMIT,
@@ -158,19 +166,25 @@ def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfigurat
         "documents_sha256": _models_hash(values=documents),
         "item_count": len(manifest.item_ids),
         "sample_ids": sample_ids,
-        "max_tool_calls_per_question": MAX_TOOL_CALLS,
-        "max_agent_calls_per_question": MAX_AGENT_CALLS,
+        "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
+        "max_agent_calls_per_question": (
+            selected_protocol.max_agent_calls_per_question
+        ),
         "knowledge_mode": "not_composed",
-        "answer_agent_model": ANSWER_AGENT_MODEL,
-        "judge_model": JUDGE_MODEL,
-        "answer_agent_temperature": TEMPERATURE,
-        "judge_temperature": TEMPERATURE,
-        "judge_repetitions": 1,
-        "tool_catalog_sha256": EXPECTED_TOOL_CATALOG_SHA256,
-        "answer_prompt_sha256": prompt_sha256(template=ANSWER_AGENT_PROMPT_TEMPLATE),
-        "judge_prompt_sha256": prompt_sha256(template=JUDGE_PROMPT_TEMPLATE),
-        "answer_schema_sha256": schema_sha256(model=AnswerAgentStep),
-        "judge_schema_sha256": schema_sha256(model=JudgeOutput),
+        "answer_agent_model": selected_protocol.answer_agent_model,
+        "judge_model": selected_protocol.judge_model,
+        "answer_agent_temperature": selected_protocol.answer_agent_temperature,
+        "judge_temperature": selected_protocol.judge_temperature,
+        "judge_repetitions": selected_protocol.judge_repetitions,
+        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+        "answer_prompt_sha256": prompt_sha256(
+            template=selected_protocol.answer_prompt_template
+        ),
+        "judge_prompt_sha256": prompt_sha256(
+            template=selected_protocol.judge_prompt_template
+        ),
+        "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
+        "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
     configuration = RunConfiguration(
         **base,
@@ -181,7 +195,13 @@ def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfigurat
     _atomic_model(path=output / _RUN_FILE, value=configuration)
     _atomic_model(path=output / _MANIFEST_FILE, value=manifest)
     _atomic_models(path=output / _DOCUMENTS_FILE, values=documents)
-    _atomic_model(path=output / _STATE_FILE, value=RunState())
+    _atomic_model(
+        path=output / _STATE_FILE,
+        value=RunState(
+            protocol_name=configuration.protocol_name,
+            protocol_fingerprint=configuration.protocol_fingerprint,
+        ),
+    )
     return configuration
 
 
@@ -193,7 +213,10 @@ class ProviderPreflightError(BenchmarkRunError):
 
 
 def preflight_provider(
-    *, provider: ModelProviderPort, embedding_model: str
+    *,
+    provider: ModelProviderPort,
+    embedding_model: str,
+    answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
 ) -> tuple[str, ...]:
     """Prove the credential and both model kinds work before spending real time.
 
@@ -209,20 +232,20 @@ def preflight_provider(
     try:
         response = provider.generate(
             request=ModelRequest(
-                model=ANSWER_AGENT_MODEL, prompt=_PREFLIGHT_PROMPT, temperature=0.0
+                model=answer_agent_model, prompt=_PREFLIGHT_PROMPT, temperature=0.0
             ),
             response_type=PreflightProbe,
         )
     except (OpenRouterProviderError, ProviderAccountingError) as error:
         raise ProviderPreflightError(
-            f"chat model {ANSWER_AGENT_MODEL} is not usable: {error}"
+            f"chat model {answer_agent_model} is not usable: {error}"
         ) from error
     if not response.output.ok:
         raise ProviderPreflightError(
-            f"chat model {ANSWER_AGENT_MODEL} answered the probe with ok=false;"
+            f"chat model {answer_agent_model} answered the probe with ok=false;"
             " the provider is reachable but not usable for this run"
         )
-    checks.append(f"chat {ANSWER_AGENT_MODEL}: ok")
+    checks.append(f"chat {answer_agent_model}: ok")
 
     try:
         provider.embed(
@@ -284,7 +307,9 @@ def ingest_sample(
                 " preflight cannot check the model the pipeline will actually use"
             )
         for line in preflight_provider(
-            provider=provider, embedding_model=embedding_model
+            provider=provider,
+            embedding_model=embedding_model,
+            answer_agent_model=context.configuration.answer_agent_model,
         ):
             print(f"preflight: {line}", file=sys.stderr)
     if max_documents < len(documents):
@@ -413,7 +438,9 @@ def answer_sample(
         if question.item_id not in context.state.answers
     )
     called = sum(record.agent_call_count for record in context.state.answers.values())
-    worst_case = called + len(remaining) * MAX_AGENT_CALLS
+    worst_case = (
+        called + len(remaining) * context.configuration.max_agent_calls_per_question
+    )
     if worst_case > max_agent_calls:
         raise ExecutionGuardError(
             f"max-agent-calls {max_agent_calls} cannot cover at most"
@@ -440,6 +467,16 @@ def answer_sample(
                     state=context.state,
                     max_agent_calls=max_agent_calls,
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
+                    answer_agent_model=context.configuration.answer_agent_model,
+                    answer_agent_temperature=(
+                        context.configuration.answer_agent_temperature
+                    ),
+                    max_tool_calls_per_question=(
+                        context.configuration.max_tool_calls_per_question
+                    ),
+                    max_agent_calls_per_question=(
+                        context.configuration.max_agent_calls_per_question
+                    ),
                 )
             else:
                 with tracer.question(
@@ -454,6 +491,16 @@ def answer_sample(
                         state=context.state,
                         max_agent_calls=max_agent_calls,
                         max_evaluator_cost_usd=max_evaluator_cost_usd,
+                        answer_agent_model=context.configuration.answer_agent_model,
+                        answer_agent_temperature=(
+                            context.configuration.answer_agent_temperature
+                        ),
+                        max_tool_calls_per_question=(
+                            context.configuration.max_tool_calls_per_question
+                        ),
+                        max_agent_calls_per_question=(
+                            context.configuration.max_agent_calls_per_question
+                        ),
                         question_trace=question_trace,
                     )
                     if question_trace is not None:
@@ -527,6 +574,8 @@ def judge_sample(
                     state=context.state,
                     max_judge_calls=max_judge_calls,
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
+                    judge_model=context.configuration.judge_model,
+                    judge_temperature=context.configuration.judge_temperature,
                 )
             else:
                 with tracer.question(
@@ -539,6 +588,8 @@ def judge_sample(
                         state=context.state,
                         max_judge_calls=max_judge_calls,
                         max_evaluator_cost_usd=max_evaluator_cost_usd,
+                        judge_model=context.configuration.judge_model,
+                        judge_temperature=context.configuration.judge_temperature,
                         question_trace=question_trace,
                     )
                     if question_trace is not None:
@@ -609,6 +660,7 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
             diagnostic_complete.append(float(diagnostic.complete))
     usages = _all_usages(state=context.state)
     summary = RunSummary(
+        protocol_name=context.configuration.protocol_name,
         protocol_fingerprint=context.configuration.protocol_fingerprint,
         tier=context.configuration.tier,
         questions=len(questions),
@@ -740,7 +792,12 @@ def _load_run(*, run_dir: Path) -> _RunContext:
         dataset=dataset,
         questions=questions,
     )
-    _validate_state(state=state, documents=documents, questions=questions)
+    _validate_state(
+        configuration=configuration,
+        state=state,
+        documents=documents,
+        questions=questions,
+    )
     return _RunContext(
         configuration=configuration,
         manifest=manifest,
@@ -761,6 +818,7 @@ def _validate_run(
     questions: tuple[LoCoMoQuestion, ...],
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
+    selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
         raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v5")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
@@ -775,11 +833,6 @@ def _validate_run(
         raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v5")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
-    if (
-        configuration.answer_agent_temperature != TEMPERATURE
-        or configuration.judge_temperature != TEMPERATURE
-    ):
-        raise BenchmarkRunError("run temperature differs from RS-LoCoMo-Full-v5")
     if _models_hash(values=documents) != configuration.documents_sha256:
         raise BenchmarkRunError("prepared document manifest changed")
     if len(questions) != configuration.item_count:
@@ -819,15 +872,28 @@ def _validate_run(
     }
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
-    current_hashes = {
-        "tool_catalog_sha256": EXPECTED_TOOL_CATALOG_SHA256,
-        "answer_prompt_sha256": prompt_sha256(template=ANSWER_AGENT_PROMPT_TEMPLATE),
-        "judge_prompt_sha256": prompt_sha256(template=JUDGE_PROMPT_TEMPLATE),
-        "answer_schema_sha256": schema_sha256(model=AnswerAgentStep),
-        "judge_schema_sha256": schema_sha256(model=JudgeOutput),
+    current_pin = {
+        "answer_agent_model": selected_protocol.answer_agent_model,
+        "judge_model": selected_protocol.judge_model,
+        "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
+        "max_agent_calls_per_question": (
+            selected_protocol.max_agent_calls_per_question
+        ),
+        "answer_agent_temperature": selected_protocol.answer_agent_temperature,
+        "judge_temperature": selected_protocol.judge_temperature,
+        "judge_repetitions": selected_protocol.judge_repetitions,
+        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+        "answer_prompt_sha256": prompt_sha256(
+            template=selected_protocol.answer_prompt_template
+        ),
+        "judge_prompt_sha256": prompt_sha256(
+            template=selected_protocol.judge_prompt_template
+        ),
+        "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
+        "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
-    for field, actual in current_hashes.items():
-        if getattr(configuration, field) != actual:
+    for field, expected in current_pin.items():
+        if getattr(configuration, field) != expected:
             raise BenchmarkRunError(f"current {field} differs from prepared run")
     _validate_documents(
         run_dir=run_dir,
@@ -881,11 +947,17 @@ def _validate_documents(
 
 def _validate_state(
     *,
+    configuration: RunConfiguration,
     state: RunState,
     documents: tuple[PreparedDocument, ...],
     questions: tuple[LoCoMoQuestion, ...],
 ) -> None:
     """Reject unknown, mismatched, or unaccounted checkpoint records."""
+    if (
+        state.protocol_name != configuration.protocol_name
+        or state.protocol_fingerprint != configuration.protocol_fingerprint
+    ):
+        raise BenchmarkRunError("run state protocol pin differs from run configuration")
     document_map = {document.source_ref: document for document in documents}
     question_map = {question.item_id: question for question in questions}
     if not set(state.ingests) <= set(document_map):
@@ -1063,6 +1135,10 @@ def _answer_one(
     state: RunState,
     max_agent_calls: int,
     max_evaluator_cost_usd: Decimal,
+    answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
+    answer_agent_temperature: float = TEMPERATURE,
+    max_tool_calls_per_question: int = MAX_TOOL_CALLS,
+    max_agent_calls_per_question: int = MAX_AGENT_CALLS,
     question_trace: QuestionTrace | None = None,
 ) -> AnswerRecord:
     """Let a bounded agent choose ordinary public recipes, then answer."""
@@ -1072,7 +1148,7 @@ def _answer_one(
     agent_latency_ms = 0
     tool_latency_ms = 0
     prior_calls = sum(record.agent_call_count for record in state.answers.values())
-    for _ in range(MAX_AGENT_CALLS):
+    for _ in range(max_agent_calls_per_question):
         if prior_calls + len(usages) >= max_agent_calls:
             raise ExecutionGuardError(
                 "answer-agent call ceiling reached before next call"
@@ -1086,13 +1162,15 @@ def _answer_one(
         agent_observation = (
             None
             if question_trace is None
-            else question_trace.start_agent_call(model=ANSWER_AGENT_MODEL)
+            else question_trace.start_agent_call(model=answer_agent_model)
         )
         started = time.monotonic_ns()
         try:
             response = provider.generate(
                 request=ModelRequest(
-                    model=ANSWER_AGENT_MODEL, prompt=prompt, temperature=TEMPERATURE
+                    model=answer_agent_model,
+                    prompt=prompt,
+                    temperature=answer_agent_temperature,
                 ),
                 response_type=AnswerAgentStep,
             )
@@ -1280,7 +1358,7 @@ def _answer_one(
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
             )
-        if len(trace) >= MAX_TOOL_CALLS:
+        if len(trace) >= max_tool_calls_per_question:
             return _failed_answer(
                 question=question,
                 kind="invalid_response",
@@ -1364,6 +1442,8 @@ def _judge_answer(
     state: RunState,
     max_judge_calls: int,
     max_evaluator_cost_usd: Decimal,
+    judge_model: str = JUDGE_MODEL,
+    judge_temperature: float = TEMPERATURE,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Return a local wrong for answer failures or invoke the configured judge."""
@@ -1376,6 +1456,8 @@ def _judge_answer(
         state=state,
         max_judge_calls=max_judge_calls,
         max_evaluator_cost_usd=max_evaluator_cost_usd,
+        judge_model=judge_model,
+        judge_temperature=judge_temperature,
         question_trace=question_trace,
     )
 
@@ -1388,6 +1470,8 @@ def _judge_one(
     state: RunState,
     max_judge_calls: int,
     max_evaluator_cost_usd: Decimal,
+    judge_model: str = JUDGE_MODEL,
+    judge_temperature: float = TEMPERATURE,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Invoke the judge once; every call failure becomes a visible wrong."""
@@ -1400,19 +1484,19 @@ def _judge_one(
     judge_observation = (
         None
         if question_trace is None
-        else question_trace.start_judge_call(model=JUDGE_MODEL)
+        else question_trace.start_judge_call(model=judge_model)
     )
     started = time.monotonic_ns()
     try:
         response = provider.generate(
             request=ModelRequest(
-                model=JUDGE_MODEL,
+                model=judge_model,
                 prompt=render_judge_prompt(
                     question=question.question,
                     gold_answer=question.answer or "",
                     generated_answer=answer.generated_answer or "",
                 ),
-                temperature=TEMPERATURE,
+                temperature=judge_temperature,
             ),
             response_type=JudgeOutput,
         )

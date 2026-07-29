@@ -4,7 +4,9 @@ from datetime import datetime
 from datetime import timezone
 import hashlib
 import json
+from pathlib import Path
 
+from benchmarks.locomo import cli
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
@@ -12,9 +14,11 @@ from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
+from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_TOOL_CATALOG_SHA256
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import PROTOCOL_NAME
+from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
@@ -132,14 +136,78 @@ def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
 
 
 def test_protocol_is_v5_and_answer_prompt_has_loop_guards() -> None:
-    """v4 fingerprint: protocol name plus the answer-loop discipline lines."""
+    """The default v5 identity and answer-loop discipline remain unchanged."""
     assert PROTOCOL_NAME == "RS-LoCoMo-Full-v5"
+    assert DEFAULT_PROTOCOL_KEY == "full-v5"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
     assert "claims_verbatim or" in prompt
     assert "claims_hybrid_rrf at least once" in prompt
     assert 'answering "Unknown"' in prompt
+
+
+def test_typed_protocol_registry_changes_only_answer_agent_identity() -> None:
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v5", "full-v5-strong")
+    default = PROTOCOL_REGISTRY["full-v5"]
+    strong = PROTOCOL_REGISTRY["full-v5-strong"]
+
+    assert default.name == "RS-LoCoMo-Full-v5"
+    assert default.answer_agent_model == "openai/gpt-4o-mini"
+    assert strong.name == "RS-LoCoMo-Full-v5-strong"
+    assert strong.answer_agent_model == "openai/gpt-5.6-luna"
+    identical_fields = (
+        "judge_model",
+        "answer_prompt_template",
+        "judge_prompt_template",
+        "answer_schema",
+        "judge_schema",
+        "tool_catalog_sha256",
+        "max_tool_calls_per_question",
+        "max_agent_calls_per_question",
+        "answer_agent_temperature",
+        "judge_temperature",
+        "judge_repetitions",
+    )
+    assert all(
+        getattr(default, field) == getattr(strong, field) for field in identical_fields
+    )
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected"),
+    (((), "full-v5"), (("--protocol", "full-v5-strong"), "full-v5-strong")),
+)
+def test_prepare_cli_selects_protocol_only_at_prepare(
+    extra_args: tuple[str, ...], expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected: list[object] = []
+
+    class _Prepared:
+        def model_dump_json(self) -> str:
+            return "{}"
+
+    def fake_prepare_run(**values: object) -> _Prepared:
+        selected.append(values["protocol"])
+        return _Prepared()
+
+    monkeypatch.setattr(cli, "prepare_run", fake_prepare_run)
+
+    exit_code = cli.main(
+        [
+            "prepare",
+            "--dataset",
+            str(Path("synthetic.json")),
+            "--tier",
+            "smoke",
+            "--output",
+            str(Path("run")),
+            *extra_args,
+        ]
+    )
+
+    assert exit_code == 0
+    assert selected == [expected]
 
 
 def test_judge_never_receives_tool_trace() -> None:
