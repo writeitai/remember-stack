@@ -7,8 +7,6 @@ import json
 import time
 from typing import Any
 from typing import Final
-from typing import Literal
-from typing import TypeAlias
 from typing import TypeVar
 
 import httpx
@@ -26,13 +24,11 @@ from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
-ReasoningEffort: TypeAlias = Literal[
-    "none", "minimal", "low", "medium", "high", "xhigh", "max"
-]
 """Allowed OpenRouter reasoning-effort values (global pin or per-model map)."""
 
 _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
@@ -178,7 +174,7 @@ class OpenRouterModelProvider:
             payload["temperature"] = request.temperature
         if self._settings.max_completion_tokens is not None:
             payload["max_tokens"] = self._settings.max_completion_tokens
-        effort = self._reasoning_effort_for(model=request.model)
+        effort = self._reasoning_effort_for(request=request)
         if effort is not None:
             payload["reasoning"] = {"effort": effort}
 
@@ -203,11 +199,18 @@ class OpenRouterModelProvider:
             ) from error
         return GeneratedResponse(output=output, usage=usage)
 
-    def _reasoning_effort_for(self, *, model: str) -> ReasoningEffort | None:
-        """Resolve effort for one model: per-model map entry, else global pin."""
+    def _reasoning_effort_for(self, *, request: ModelRequest) -> ReasoningEffort | None:
+        """Resolve explicit request effort before deployment-level defaults.
+
+        An explicitly supplied ``None`` means omit the provider field. Requests
+        from existing engine seats do not set the field, so they retain the
+        per-model-map and global-setting behavior unchanged.
+        """
+        if "reasoning_effort" in request.model_fields_set:
+            return request.reasoning_effort
         mapped = self._settings.reasoning_effort_map
-        if mapped is not None and model in mapped:
-            return mapped[model]
+        if mapped is not None and request.model in mapped:
+            return mapped[request.model]
         return self._settings.reasoning_effort
 
     def _completion_text(

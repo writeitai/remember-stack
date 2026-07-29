@@ -32,6 +32,7 @@ DEFAULT_PROTOCOL_KEY: Final = "full-v5"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
+ANSWER_READER_RETRY_BUDGET: Final = 2
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
     "34d2069ae37fabf033d2b1f0fae2ed9e7c1ad5c3f6e1fd14b2971344cd89c3a6"
 )
@@ -50,6 +51,7 @@ EXPECTED_PIPELINE_STAGES: Final = (
 EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
 ANSWER_AGENT_MODEL: Final = "openai/gpt-4o-mini"
 STRONG_ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
+STRONG_ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 TEMPERATURE: Final = 0.0
 
@@ -119,6 +121,8 @@ class LoCoMoProtocol:
     answer_agent_temperature: float
     judge_temperature: float
     judge_repetitions: int
+    answer_reader_retry_budget: int
+    answer_agent_reasoning_effort: str | None
 
 
 _FULL_V5 = LoCoMoProtocol(
@@ -136,6 +140,8 @@ _FULL_V5 = LoCoMoProtocol(
     answer_agent_temperature=TEMPERATURE,
     judge_temperature=TEMPERATURE,
     judge_repetitions=1,
+    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
+    answer_agent_reasoning_effort=None,
 )
 _FULL_V5_STRONG = LoCoMoProtocol(
     key="full-v5-strong",
@@ -152,6 +158,8 @@ _FULL_V5_STRONG = LoCoMoProtocol(
     answer_agent_temperature=TEMPERATURE,
     judge_temperature=TEMPERATURE,
     judge_repetitions=1,
+    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
+    answer_agent_reasoning_effort=STRONG_ANSWER_AGENT_REASONING_EFFORT,
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(

@@ -127,8 +127,10 @@ class RunConfiguration(FrozenModel):
     sample_ids: Annotated[tuple[NonEmpty, ...], Field(min_length=1)]
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
+    answer_reader_retry_budget: Literal[2] = 2
     knowledge_mode: Literal["not_composed"] = "not_composed"
     answer_agent_model: AnswerAgentModel = "openai/gpt-4o-mini"
+    answer_agent_reasoning_effort: Literal["none"] | None = None
     judge_model: JudgeModel = "openai/gpt-5.6-luna"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
@@ -276,6 +278,7 @@ class AnswerRecord(FrozenModel):
     retrieval_latency_ms: int = Field(ge=0)
     reader_called: bool
     agent_call_count: int = Field(default=0, ge=0)
+    reader_attempts: int = Field(default=0, ge=0)
     reader_latency_ms: int | None = Field(default=None, ge=0)
     generated_answer: str | None = None
     reader_usage: ProviderCallUsage | None = None
@@ -294,6 +297,10 @@ class AnswerRecord(FrozenModel):
             raise ValueError("reader usage requires a reader call")
         if self.reader_called != (self.agent_call_count > 0):
             raise ValueError("reader_called must match agent_call_count")
+        if self.reader_attempts > self.agent_call_count:
+            raise ValueError("reader attempts cannot exceed agent calls")
+        if self.generated_answer is not None and self.reader_attempts < 1:
+            raise ValueError("a generated answer requires a reader attempt")
         return self
 
 
@@ -367,6 +374,7 @@ class RunSummary(FrozenModel):
     session_diagnostic: SessionDiagnosticSummary
     failures: dict[str, int]
     answer_agent_calls: int = Field(ge=0)
+    total_reader_retries: int = Field(ge=0)
     judge_calls: int = Field(ge=0)
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)

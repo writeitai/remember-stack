@@ -29,6 +29,8 @@ answer-agent model       openai/gpt-4o-mini
 answer temperature       0
 max tool calls/question  8
 max agent calls/question 9
+reader retries           2 additional attempts within the 9-call cap
+answer reasoning effort  adapter default (no field sent)
 judge model              openai/gpt-5.6-luna
 judge temperature        0
 judge repetitions        1
@@ -61,14 +63,45 @@ The tool-catalog hash changed, so the protocol version bumps — the v4 smoke
 scores (glm-4.7-flash arm) were taken against the pre-truncation catalog and
 are not directly comparable.
 
-**v5-strong variant (2026-07-29):** `RS-LoCoMo-Full-v5-strong` changes only
-the answer agent to `openai/gpt-5.6-luna`. It exists because three smoke
+**v5-strong variant (2026-07-29):** `RS-LoCoMo-Full-v5-strong` initially
+changed only the answer agent to `openai/gpt-5.6-luna`. It exists because three smoke
 passes on a healthy store (coarse evidence-session recall 0.5, with the gold
 evidence at rank 1) scored only 1–2/8 with `openai/gpt-4o-mini`, which looped
 past the tool-call limit or returned invalid responses. Scores from
 `RS-LoCoMo-Full-v5` and `RS-LoCoMo-Full-v5-strong` are never comparable. The
 weak-agent `RS-LoCoMo-Full-v5` protocol remains the default measurement of
 what a harness consumer experiences.
+
+**Reader retry and answer-effort pin (2026-07-29):** strong-agent smoke runs
+showed a separate harness failure. After tool use, `openai/gpt-5.6-luna`
+sometimes returned reasoning prose instead of the required JSON answer object.
+That happened on 3 of 8 questions in one pass and 1 of 8 in another. With no
+retry, each malformed completion permanently scored that question as zero.
+
+The answer reader now retries that same model call up to two times, for three
+attempts total. A retry uses the ordinary agent-call ledger: it consumes both
+the nine-call per-question allowance and the run's `max_agent_calls` ceiling.
+If either allowance is exhausted, the item keeps the same terminal failure it
+would have recorded before. Tool-selection calls before any recipe result and
+judge calls do not receive this retry. Each answer record stores
+`reader_attempts`; the run summary adds `total_reader_retries` without changing
+the existing failure categories.
+
+The same smoke work found that setting Luna's reasoning effort to `none` in the
+benchmark process environment reduced malformed answers from 3/8 to 1/8 and
+raised the score from 1/8 to 3/8. Environment-only configuration was not
+reproducible because two runs with identical `run.json` files could behave
+differently. The strong protocol therefore pins `answer_agent_reasoning_effort`
+to `none` and sends it explicitly on every answer-agent call, including tool
+selection and final reading. The default `full-v5` protocol pins `None`, which
+means no effort field is sent for its non-reasoning `gpt-4o-mini` answer agent.
+Engine worker seats still use the existing environment map; this override is
+only on benchmark answer requests.
+
+Both stable protocol names and CLI keys remain unchanged, but both fingerprints
+rolled on 2026-07-29 because the retry budget and effort choice are now part of
+protocol identity. All earlier runs were smoke-tier diagnostics, so no
+published result is invalidated.
 
 ### 2.1 Why v2+ uses a stronger judge
 
@@ -195,12 +228,10 @@ flags, an error code, and for non-JSON content a length and digest. Model output
 can restate customer material and these strings reach `processing_state.last_error`
 and the logs, so the text itself is never included.
 
-Whether such failures should be retried inside the adapter is **open**. Retrying
-was implemented and then withdrawn: it was built on the assumption that an empty
-completion is a transient, and the failure actually observed is non-empty
-content, so the retry never applied to it. The work ledger already grants each
-item several attempts; whether that is sufficient needs a measured failure rate
-first.
+Retries do not belong inside the shared adapter because engine workers already
+own their work-ledger retry policy. The measured answer-reader failure above is
+handled only in the benchmark answer loop, where its two additional attempts
+are fingerprinted and charged to the existing agent-call budgets.
 
 ## 3. Ingestion mapping
 
@@ -322,8 +353,11 @@ For each question:
    `MemoryClient.run_recipe()`.
 4. Append arguments, latency, and the complete envelope.
 5. For `action="answer"`, require at least one tool call and at most six words.
-6. Stop at eight tools or nine model calls; exhaustion is a visible wrong, not a retry.
-7. Checkpoint the terminal answer or failure.
+6. After at least one tool result, retry a completion that cannot produce the
+   required JSON step up to two times. Every attempt counts toward the normal
+   call budgets; tool selection before retrieval is never retried.
+7. Stop at eight tools or nine model calls; budget exhaustion is a visible wrong.
+8. Checkpoint the terminal answer or failure, including `reader_attempts`.
 
 The agent is instructed to orient, verify current facts, and audit evidence while respecting
 grain, validity, freshness, truncation, typed negatives, and hydration drops. It receives no gold
@@ -346,8 +380,13 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
+  --protocol full-v5 \
   --output .benchmark-runs/locomo-smoke
 ```
+
+`--protocol` exists only on `prepare`. Use `full-v5-strong` there to select the
+strong answer agent; ingest, answer, judge, and summarize read the pinned choice
+from the prepared run and expose no protocol override.
 
 Per isolated sample:
 
