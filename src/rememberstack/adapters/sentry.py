@@ -7,12 +7,15 @@ validated a non-empty DSN. Importing RememberStack never imports ``sentry_sdk``.
 from __future__ import annotations
 
 from importlib import import_module
+import logging
 from threading import Lock
 from typing import Any
 from typing import Protocol
 from typing import Self
 
 from rememberstack.model import TelemetryEvent
+
+_logger = logging.getLogger(__name__)
 
 
 class _Scope(Protocol):
@@ -100,12 +103,15 @@ class SentryTelemetry:
     ) -> None:
         """Capture the exception with only stage, lane, and processing tags."""
         attributes = {attribute.name: attribute.value for attribute in event.attributes}
-        with self._sdk.new_scope() as scope:
-            for name in ("stage", "lane", "processing_id"):
-                value = attributes.get(name)
-                if value is not None:
-                    scope.set_tag(name, str(value))
-            self._sdk.capture_exception(exception)
+        try:
+            with self._sdk.new_scope() as scope:
+                for name in ("stage", "lane", "processing_id"):
+                    value = attributes.get(name)
+                    if value is not None:
+                        scope.set_tag(name, str(value))
+                self._sdk.capture_exception(exception)
+        except Exception:
+            _logger.warning("optional Sentry exception capture failed", exc_info=True)
 
 
 def _load_sdk() -> _SentrySdk:
@@ -128,6 +134,10 @@ def _metadata_only_event(
         # Worker failures are explicitly captured with route tags after their
         # ledger transition. Drop LoggingIntegration's earlier untagged copy.
         return None
+    # The current capture surface intentionally admits only SDK-owned envelope
+    # fields plus the exception type/stack scrubbed below. Every caller-owned
+    # top-level text field known to that surface is removed here; extending the
+    # integrations requires extending this list before the new data is enabled.
     for key in (
         "breadcrumbs",
         "extra",

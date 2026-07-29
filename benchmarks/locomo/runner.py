@@ -8,6 +8,7 @@ from datetime import timezone
 from decimal import Decimal
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -79,6 +80,8 @@ from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from benchmarks.locomo.tracing import LocomoTracer
@@ -453,12 +456,13 @@ def answer_sample(
                         max_evaluator_cost_usd=max_evaluator_cost_usd,
                         question_trace=question_trace,
                     )
-                    question_trace.finish_answer(
-                        final_answer=record.generated_answer,
-                        failure_kind=(
-                            None if record.failure is None else record.failure.kind
-                        ),
-                    )
+                    if question_trace is not None:
+                        question_trace.finish_answer(
+                            final_answer=record.generated_answer,
+                            failure_kind=(
+                                None if record.failure is None else record.failure.kind
+                            ),
+                        )
             context.state.answers[question.item_id] = record
             _save_state(run_dir=run_dir, state=context.state)
     finally:
@@ -537,13 +541,14 @@ def judge_sample(
                         max_evaluator_cost_usd=max_evaluator_cost_usd,
                         question_trace=question_trace,
                     )
-                    question_trace.finish_judge(
-                        final_answer=answer.generated_answer,
-                        verdict=judge.label,
-                        failure_kind=(
-                            None if judge.failure is None else judge.failure.kind
-                        ),
-                    )
+                    if question_trace is not None:
+                        question_trace.finish_judge(
+                            final_answer=answer.generated_answer,
+                            verdict=judge.label,
+                            failure_kind=(
+                                None if judge.failure is None else judge.failure.kind
+                            ),
+                        )
             context.state.judges[question.item_id] = judge
             _save_state(run_dir=run_dir, state=context.state)
     finally:
@@ -1036,12 +1041,16 @@ def _configured_langfuse_tracer(*, context: _RunContext) -> LocomoTracer | None:
         f"{configuration.repository_revision}:"
         f"{configuration.prepared_at.isoformat()}"
     )
-    return create_langfuse_tracer(
-        public_key=public_key,
-        secret_key=secret_key,
-        host=host,
-        run_identity=run_identity,
-    )
+    try:
+        return create_langfuse_tracer(
+            public_key=public_key,
+            secret_key=secret_key,
+            host=host,
+            run_identity=run_identity,
+        )
+    except Exception:
+        _logger.warning("optional Langfuse tracer initialization failed", exc_info=True)
+        return None
 
 
 def _answer_one(

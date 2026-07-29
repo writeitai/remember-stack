@@ -532,7 +532,11 @@ class SelfHostProfile:
 
 
 def create_api() -> FastAPI:
-    """Uvicorn factory for the self-host API process."""
+    """Uvicorn factory that initializes process-global API error tracking.
+
+    The API process has no worker telemetry fanout, so the returned Sentry sink
+    is intentionally unused after its process-global SDK initialization.
+    """
     settings = SelfHostSettings.model_validate({})
     _initialize_error_tracking(command="api", deployment_slug=settings.deployment_slug)
     return SelfHostProfile.from_settings().api()

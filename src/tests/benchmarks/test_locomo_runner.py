@@ -275,6 +275,7 @@ class _FakeLangfuseContext:
         traceback: object | None,
     ) -> None:
         del exception_type, exception, traceback
+        self._observation.end()
 
 
 class _FakeLangfuseClient:
@@ -412,11 +413,7 @@ def test_langfuse_fake_transport_is_observer_only_and_content_bounded(
     ]
     assert len(roots) == 2
     assert roots[0].started["trace_context"] == roots[1].started["trace_context"]
-    assert all(
-        observation.ended
-        for observation in fake_client.observations
-        if observation not in roots
-    )
+    assert all(observation.ended for observation in fake_client.observations)
     wire = json.dumps(
         [
             {"started": observation.started, "updates": observation.updates}
@@ -433,6 +430,121 @@ def test_langfuse_fake_transport_is_observer_only_and_content_bounded(
     assert '"verdict": "CORRECT"' in wire
     assert '"usage_details"' in wire
     assert '"cost_details"' in wire
+
+
+class _RaisingLangfuseObservation(_FakeLangfuseObservation):
+    """Record cleanup attempts while raising from update and end."""
+
+    def update(self, **values: object) -> Self:
+        super().update(**values)
+        raise RuntimeError("observation update unavailable")
+
+    def end(self) -> Self:
+        self.ended = True
+        raise RuntimeError("observation end unavailable")
+
+
+class _RaisingLangfuseClient(_FakeLangfuseClient):
+    """Fail across start, finish, context cleanup, and flush lifecycle points."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.trace_ids = 0
+
+    def create_trace_id(self, *, seed: str | None = None) -> str:
+        self.trace_ids += 1
+        if self.trace_ids > 1:
+            raise RuntimeError("observation start unavailable")
+        return super().create_trace_id(seed=seed)
+
+    def flush(self) -> None:
+        self.flushes += 1
+        raise RuntimeError("observation flush unavailable")
+
+    def _start(self, *, values: dict[str, object]) -> _FakeLangfuseObservation:
+        observation = _RaisingLangfuseObservation(started=values)
+        self.observations.append(observation)
+        return observation
+
+
+def test_raising_langfuse_lifecycle_cannot_change_outputs_or_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Answer/judge outputs and checkpoints ignore every observer failure."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    monkeypatch.setattr(runner, "_elapsed_ms", lambda _started: 1)
+    for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delitem(sys.modules, "benchmarks.locomo.tracing", raising=False)
+    monkeypatch.delitem(sys.modules, "langfuse", raising=False)
+
+    plain_dir = tmp_path / "plain-errors"
+    traced_dir = tmp_path / "traced-errors"
+    for run_dir in (plain_dir, traced_dir):
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+
+    raw_clients: list[httpx.Client] = []
+
+    def execute_run(*, run_dir: Path) -> tuple[tuple[object, ...], tuple[object, ...]]:
+        raw_client = httpx.Client(
+            base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+        )
+        raw_clients.append(raw_client)
+        client = MemoryClient(client=raw_client)
+        provider = FakeModelProvider(generate_router=_private_tool_answer_and_judge)
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        answers = answer_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_questions=1,
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            client=client,
+            provider=provider,
+        )
+        judges = judge_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_judge_calls=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            provider=provider,
+        )
+        return answers, judges
+
+    try:
+        plain_outputs = execute_run(run_dir=plain_dir)
+        raising_client = _RaisingLangfuseClient()
+        module = ModuleType("langfuse")
+        module.Langfuse = lambda **_: raising_client  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "langfuse", module)
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public-test-key")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret-test-key")
+        monkeypatch.setenv("LANGFUSE_HOST", "https://langfuse.test")
+        traced_outputs = execute_run(run_dir=traced_dir)
+    finally:
+        for raw_client in raw_clients:
+            raw_client.close()
+
+    assert traced_outputs == plain_outputs
+    assert json.loads((traced_dir / "state.json").read_text()) == json.loads(
+        (plain_dir / "state.json").read_text()
+    )
+    assert raising_client.flushes == 2
+    assert raising_client.trace_ids == 2
+    assert raising_client.observations
+    assert all(observation.ended for observation in raising_client.observations)
 
 
 def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(

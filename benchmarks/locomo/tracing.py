@@ -11,10 +11,14 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from contextlib import contextmanager
 from importlib import import_module
+import logging
+import sys
 from typing import Protocol
 from typing import Self
 
 from rememberstack.model import ProviderCallUsage
+
+_logger = logging.getLogger(__name__)
 
 
 class _Observation(Protocol):
@@ -81,21 +85,51 @@ class LocomoTracer:
     @contextmanager
     def question(
         self, *, item_id: str, question: str, stage: str
-    ) -> Iterator[QuestionTrace]:
-        """Open one answer/judge root on the question's deterministic trace."""
-        trace_id = self._client.create_trace_id(seed=f"{self._run_identity}:{item_id}")
-        with self._client.start_as_current_observation(
-            name=f"locomo.{stage}",
-            as_type="agent" if stage == "answer" else "span",
-            trace_context={"trace_id": trace_id},
-            input={"question": question},
-            metadata={"item_id": item_id, "stage": stage},
-        ) as root:
-            yield QuestionTrace(client=self._client, root=root)
+    ) -> Iterator[QuestionTrace | None]:
+        """Open one best-effort answer/judge root on a deterministic trace."""
+        try:
+            trace_id = self._client.create_trace_id(
+                seed=f"{self._run_identity}:{item_id}"
+            )
+            manager = self._client.start_as_current_observation(
+                name=f"locomo.{stage}",
+                as_type="agent" if stage == "answer" else "span",
+                trace_context={"trace_id": trace_id},
+                input={"question": question},
+                metadata={"item_id": item_id, "stage": stage},
+            )
+            root = manager.__enter__()
+        except Exception:
+            _logger.warning(
+                "optional Langfuse question observation start failed", exc_info=True
+            )
+            yield None
+            return
+
+        trace = QuestionTrace(client=self._client, root=root)
+        try:
+            yield trace
+        finally:
+            exception_details = sys.exc_info()
+            try:
+                trace.end_started()
+            finally:
+                try:
+                    # Ignore a truthy result: tracing must not suppress an exception
+                    # raised by the answer or judge protocol.
+                    manager.__exit__(*exception_details)
+                except Exception:
+                    _logger.warning(
+                        "optional Langfuse question observation end failed",
+                        exc_info=True,
+                    )
 
     def flush(self) -> None:
-        """Flush all observations at the end of the answer or judge stage."""
-        self._client.flush()
+        """Best-effort flush observations at the end of a protocol stage."""
+        try:
+            self._client.flush()
+        except Exception:
+            _logger.warning("optional Langfuse flush failed", exc_info=True)
 
 
 class QuestionTrace:
@@ -106,39 +140,77 @@ class QuestionTrace:
         self._client = client
         self._root = root
         self._agent_calls = 0
+        self._started: list[ModelCall | ToolCall] = []
 
-    def start_agent_call(self, *, model: str) -> ModelCall:
-        """Start one answer-agent generation without recording its prompt."""
+    def start_agent_call(self, *, model: str) -> ModelCall | None:
+        """Best-effort start one generation without recording its prompt."""
         self._agent_calls += 1
-        observation = self._client.start_observation(
+        return self._start_model_call(
             name="locomo.answer-agent",
-            as_type="generation",
             model=model,
             metadata={"call_index": self._agent_calls},
         )
-        return ModelCall(observation=observation)
 
-    def start_tool_call(self, *, name: str, arguments: dict[str, object]) -> ToolCall:
-        """Start one tool span with value-free argument shape metadata."""
-        observation = self._client.start_observation(
-            name="locomo.tool",
-            as_type="tool",
-            input=_arguments_summary(arguments=arguments),
-            metadata={"tool_name": name},
-        )
-        return ToolCall(observation=observation)
+    def start_tool_call(
+        self, *, name: str, arguments: dict[str, object]
+    ) -> ToolCall | None:
+        """Best-effort start one content-free tool observation."""
+        try:
+            observation = self._client.start_observation(
+                name="locomo.tool",
+                as_type="tool",
+                input=_arguments_summary(arguments=arguments),
+                metadata={"tool_name": name},
+            )
+        except Exception:
+            _logger.warning(
+                "optional Langfuse tool observation start failed", exc_info=True
+            )
+            return None
+        call = ToolCall(observation=observation)
+        self._started.append(call)
+        return call
 
-    def start_judge_call(self, *, model: str) -> ModelCall:
-        """Start one judge generation without recording its rendered prompt."""
-        observation = self._client.start_observation(
-            name="locomo.judge", as_type="generation", model=model
-        )
-        return ModelCall(observation=observation)
+    def start_judge_call(self, *, model: str) -> ModelCall | None:
+        """Best-effort start one judge generation without its prompt."""
+        return self._start_model_call(name="locomo.judge", model=model)
+
+    def _start_model_call(
+        self, *, name: str, model: str, metadata: dict[str, object] | None = None
+    ) -> ModelCall | None:
+        """Start and retain one generation so the root can always close it."""
+        try:
+            values: dict[str, object] = {
+                "name": name,
+                "as_type": "generation",
+                "model": model,
+            }
+            if metadata is not None:
+                values["metadata"] = metadata
+            observation = self._client.start_observation(**values)
+        except Exception:
+            _logger.warning(
+                "optional Langfuse model observation start failed", exc_info=True
+            )
+            return None
+        call = ModelCall(observation=observation)
+        self._started.append(call)
+        return call
+
+    def end_started(self) -> None:
+        """End every child observation, including unfinished error paths."""
+        for observation in reversed(self._started):
+            try:
+                observation.end()
+            except Exception:
+                _logger.warning(
+                    "optional Langfuse child observation cleanup failed", exc_info=True
+                )
 
     def finish_answer(
         self, *, final_answer: str | None, failure_kind: str | None
     ) -> None:
-        """Finish the answer root with only the allowed final answer body."""
+        """Best-effort finish the answer root with the allowed answer body."""
         values: dict[str, object] = {
             "metadata": {
                 "outcome": "failed" if failure_kind is not None else "answered",
@@ -147,18 +219,27 @@ class QuestionTrace:
         }
         if final_answer is not None:
             values["output"] = {"final_answer": final_answer}
-        self._root.update(**values)
+        self._update_root(values=values)
 
     def finish_judge(
         self, *, final_answer: str | None, verdict: str, failure_kind: str | None
     ) -> None:
-        """Finish the judge root with the persisted answer and bounded verdict."""
+        """Best-effort finish the judge root with answer and bounded verdict."""
         values: dict[str, object] = {
             "metadata": {"verdict": verdict, "failure_kind": failure_kind}
         }
         if final_answer is not None:
             values["output"] = {"final_answer": final_answer}
-        self._root.update(**values)
+        self._update_root(values=values)
+
+    def _update_root(self, *, values: dict[str, object]) -> None:
+        """Update the root without allowing the observer to affect protocol flow."""
+        try:
+            self._root.update(**values)
+        except Exception:
+            _logger.warning(
+                "optional Langfuse question observation update failed", exc_info=True
+            )
 
 
 class ModelCall:
@@ -178,22 +259,39 @@ class ModelCall:
         final_answer: str | None = None,
         verdict: str | None = None,
     ) -> None:
-        """Update and end the generation exactly once."""
+        """Best-effort update and end the generation exactly once."""
         if self._ended:
             return
-        metadata: dict[str, object] = {"latency_ms": latency_ms, "outcome": outcome}
-        if usage is not None:
-            metadata["provider_latency_ms"] = usage.latency_ms
-        if verdict is not None:
-            metadata["verdict"] = verdict
-        values: dict[str, object] = {"metadata": metadata}
-        if usage is not None:
-            values.update(_usage_values(usage=usage))
-        if final_answer is not None:
-            values["output"] = {"final_answer": final_answer}
-        self._observation.update(**values)
-        self._observation.end()
+        try:
+            metadata: dict[str, object] = {"latency_ms": latency_ms, "outcome": outcome}
+            if usage is not None:
+                metadata["provider_latency_ms"] = usage.latency_ms
+            if verdict is not None:
+                metadata["verdict"] = verdict
+            values: dict[str, object] = {"metadata": metadata}
+            if usage is not None:
+                values.update(_usage_values(usage=usage))
+            if final_answer is not None:
+                values["output"] = {"final_answer": final_answer}
+            self._observation.update(**values)
+        except Exception:
+            _logger.warning(
+                "optional Langfuse model observation update failed", exc_info=True
+            )
+        finally:
+            self.end()
+
+    def end(self) -> None:
+        """Best-effort end an unfinished generation exactly once."""
+        if self._ended:
+            return
         self._ended = True
+        try:
+            self._observation.end()
+        except Exception:
+            _logger.warning(
+                "optional Langfuse model observation end failed", exc_info=True
+            )
 
 
 class ToolCall:
@@ -205,14 +303,31 @@ class ToolCall:
         self._ended = False
 
     def finish(self, *, latency_ms: int, outcome: str) -> None:
-        """End the span with only latency and success/failure metadata."""
+        """Best-effort finish one tool span with bounded metadata."""
         if self._ended:
             return
-        self._observation.update(
-            output={"outcome": outcome}, metadata={"latency_ms": latency_ms}
-        )
-        self._observation.end()
+        try:
+            self._observation.update(
+                output={"outcome": outcome}, metadata={"latency_ms": latency_ms}
+            )
+        except Exception:
+            _logger.warning(
+                "optional Langfuse tool observation update failed", exc_info=True
+            )
+        finally:
+            self.end()
+
+    def end(self) -> None:
+        """Best-effort end an unfinished tool span exactly once."""
+        if self._ended:
+            return
         self._ended = True
+        try:
+            self._observation.end()
+        except Exception:
+            _logger.warning(
+                "optional Langfuse tool observation end failed", exc_info=True
+            )
 
 
 def _usage_values(*, usage: ProviderCallUsage) -> dict[str, object]:

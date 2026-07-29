@@ -5,8 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import UTC
 import json
+import logging
 from typing import Self
 from uuid import UUID
+
+import pytest
 
 from rememberstack.model import TelemetryAttribute
 from rememberstack.model import TelemetryEvent
@@ -148,3 +151,29 @@ def test_sentry_initializes_once_and_captures_only_worker_metadata() -> None:
         name = "rememberstack.workers.base"
 
     assert before_send({"message": "duplicate"}, {"log_record": _WorkerLog()}) is None
+
+
+def test_sentry_capture_failure_is_logged_and_suppressed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A remote capture failure cannot replace the worker's recorded outcome."""
+    from rememberstack.adapters.sentry import SentryTelemetry
+
+    class _RaisingSentrySdk(_FakeSentrySdk):
+        def capture_exception(self, error: BaseException) -> object:
+            del error
+            raise RuntimeError("remote capture unavailable")
+
+    caplog.set_level(logging.WARNING, logger="rememberstack.adapters.sentry")
+    telemetry = SentryTelemetry(sdk=_RaisingSentrySdk())
+
+    telemetry.export_exception(
+        event=TelemetryEvent(
+            name="worker.run",
+            occurred_at=datetime(2026, 7, 29, tzinfo=UTC),
+            attributes=(),
+        ),
+        exception=RuntimeError("authoritative worker failure"),
+    )
+
+    assert "optional Sentry exception capture failed" in caplog.text
