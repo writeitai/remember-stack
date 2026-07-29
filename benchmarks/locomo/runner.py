@@ -55,6 +55,7 @@ from benchmarks.locomo.model import SessionDiagnosticSummary
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
+from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
@@ -77,6 +78,8 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.sdk import MemoryApiError
@@ -170,8 +173,12 @@ def prepare_run(
         "max_agent_calls_per_question": (
             selected_protocol.max_agent_calls_per_question
         ),
+        "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
         "knowledge_mode": "not_composed",
         "answer_agent_model": selected_protocol.answer_agent_model,
+        "answer_agent_reasoning_effort": (
+            selected_protocol.answer_agent_reasoning_effort
+        ),
         "judge_model": selected_protocol.judge_model,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
@@ -471,11 +478,17 @@ def answer_sample(
                     answer_agent_temperature=(
                         context.configuration.answer_agent_temperature
                     ),
+                    answer_agent_reasoning_effort=(
+                        context.configuration.answer_agent_reasoning_effort
+                    ),
                     max_tool_calls_per_question=(
                         context.configuration.max_tool_calls_per_question
                     ),
                     max_agent_calls_per_question=(
                         context.configuration.max_agent_calls_per_question
+                    ),
+                    answer_reader_retry_budget=(
+                        context.configuration.answer_reader_retry_budget
                     ),
                 )
             else:
@@ -495,11 +508,17 @@ def answer_sample(
                         answer_agent_temperature=(
                             context.configuration.answer_agent_temperature
                         ),
+                        answer_agent_reasoning_effort=(
+                            context.configuration.answer_agent_reasoning_effort
+                        ),
                         max_tool_calls_per_question=(
                             context.configuration.max_tool_calls_per_question
                         ),
                         max_agent_calls_per_question=(
                             context.configuration.max_agent_calls_per_question
+                        ),
+                        answer_reader_retry_budget=(
+                            context.configuration.answer_reader_retry_budget
                         ),
                         question_trace=question_trace,
                     )
@@ -703,6 +722,10 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
         answer_agent_calls=sum(
             record.agent_call_count for record in context.state.answers.values()
         ),
+        total_reader_retries=sum(
+            max(record.reader_attempts - 1, 0)
+            for record in context.state.answers.values()
+        ),
         judge_calls=sum(
             record.model_called for record in context.state.judges.values()
         ),
@@ -858,8 +881,10 @@ def _validate_run(
         "sample_ids": configuration.sample_ids,
         "max_tool_calls_per_question": configuration.max_tool_calls_per_question,
         "max_agent_calls_per_question": configuration.max_agent_calls_per_question,
+        "answer_reader_retry_budget": configuration.answer_reader_retry_budget,
         "knowledge_mode": configuration.knowledge_mode,
         "answer_agent_model": configuration.answer_agent_model,
+        "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
         "judge_model": configuration.judge_model,
         "answer_agent_temperature": configuration.answer_agent_temperature,
         "judge_temperature": configuration.judge_temperature,
@@ -878,6 +903,10 @@ def _validate_run(
         "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
         "max_agent_calls_per_question": (
             selected_protocol.max_agent_calls_per_question
+        ),
+        "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
+        "answer_agent_reasoning_effort": (
+            selected_protocol.answer_agent_reasoning_effort
         ),
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
@@ -1137,8 +1166,10 @@ def _answer_one(
     max_evaluator_cost_usd: Decimal,
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
     answer_agent_temperature: float = TEMPERATURE,
+    answer_agent_reasoning_effort: ReasoningEffort | None = None,
     max_tool_calls_per_question: int = MAX_TOOL_CALLS,
     max_agent_calls_per_question: int = MAX_AGENT_CALLS,
+    answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
     question_trace: QuestionTrace | None = None,
 ) -> AnswerRecord:
     """Let a bounded agent choose ordinary public recipes, then answer."""
@@ -1147,9 +1178,11 @@ def _answer_one(
     usages: list[ProviderCallUsage] = []
     agent_latency_ms = 0
     tool_latency_ms = 0
+    agent_call_count = 0
+    reader_attempts = 0
     prior_calls = sum(record.agent_call_count for record in state.answers.values())
     for _ in range(max_agent_calls_per_question):
-        if prior_calls + len(usages) >= max_agent_calls:
+        if prior_calls + agent_call_count >= max_agent_calls:
             raise ExecutionGuardError(
                 "answer-agent call ceiling reached before next call"
             )
@@ -1165,12 +1198,14 @@ def _answer_one(
             else question_trace.start_agent_call(model=answer_agent_model)
         )
         started = time.monotonic_ns()
+        agent_call_count += 1
         try:
             response = provider.generate(
                 request=ModelRequest(
                     model=answer_agent_model,
                     prompt=prompt,
                     temperature=answer_agent_temperature,
+                    reasoning_effort=answer_agent_reasoning_effort,
                 ),
                 response_type=AnswerAgentStep,
             )
@@ -1186,7 +1221,8 @@ def _answer_one(
                 message=str(error),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
-                agent_call_count=len(usages) + 1,
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts + int(bool(trace)),
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1206,8 +1242,47 @@ def _answer_one(
                 message=str(error),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
-                agent_call_count=len(usages) + 1,
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
+                claims=_claims_from_trace(
+                    trace=tuple(trace), doc_sessions=doc_sessions
+                ),
+                tool_calls=tuple(trace),
+                usages=tuple(usages),
+            )
+        except ProviderInvalidResponseError as error:
+            call_latency_ms = _elapsed_ms(started)
+            agent_latency_ms += call_latency_ms
+            if error.usage is not None:
+                usages.append(error.usage)
+                state.evaluator_cost_usd += error.usage.cost_usd
+            if trace:
+                reader_attempts += 1
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=error.usage,
+                    latency_ms=call_latency_ms,
+                    outcome="provider_error",
+                )
+            can_retry = (
+                bool(trace)
+                and reader_attempts <= answer_reader_retry_budget
+                and agent_call_count < max_agent_calls_per_question
+                and prior_calls + agent_call_count < max_agent_calls
+                and state.evaluator_cost_usd < max_evaluator_cost_usd
+            )
+            if can_retry:
+                continue
+            return _failed_answer(
+                question=question,
+                kind="reader",
+                message=str(error),
+                retrieval_latency_ms=tool_latency_ms,
+                retrieval_succeeded=bool(trace),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
+                reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
                 ),
@@ -1231,9 +1306,8 @@ def _answer_one(
                 message=str(error),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
-                agent_call_count=(
-                    len(usages) if error.usage is not None else len(usages) + 1
-                ),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts + int(bool(trace)),
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1266,7 +1340,10 @@ def _answer_one(
                 ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
-                agent_call_count=len(usages),
+                agent_call_count=agent_call_count,
+                reader_attempts=(
+                    reader_attempts + int(step.action == "answer" and bool(trace))
+                ),
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1288,7 +1365,8 @@ def _answer_one(
                     message="answer agent finished without consulting RememberStack",
                     retrieval_latency_ms=tool_latency_ms,
                     retrieval_succeeded=False,
-                    agent_call_count=len(usages),
+                    agent_call_count=agent_call_count,
+                    reader_attempts=reader_attempts,
                     reader_latency_ms=agent_latency_ms,
                     tool_calls=tuple(trace),
                     usages=tuple(usages),
@@ -1307,7 +1385,8 @@ def _answer_one(
                     message="answer agent exceeded the six-word answer limit",
                     retrieval_latency_ms=tool_latency_ms,
                     retrieval_succeeded=True,
-                    agent_call_count=len(usages),
+                    agent_call_count=agent_call_count,
+                    reader_attempts=reader_attempts + 1,
                     reader_latency_ms=agent_latency_ms,
                     claims=_claims_from_trace(
                         trace=tuple(trace), doc_sessions=doc_sessions
@@ -1338,7 +1417,8 @@ def _answer_one(
                 retrieval_succeeded=True,
                 retrieval_latency_ms=tool_latency_ms,
                 reader_called=True,
-                agent_call_count=len(usages),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts + 1,
                 reader_latency_ms=agent_latency_ms,
                 generated_answer=answer,
                 reader_usage=_aggregate_usage(usages=tuple(usages)),
@@ -1350,7 +1430,8 @@ def _answer_one(
                 message=f"answer agent requested unknown tool {step.tool_name!r}",
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
-                agent_call_count=len(usages),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1365,7 +1446,8 @@ def _answer_one(
                 message="answer agent exceeded the per-question tool-call limit",
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=True,
-                agent_call_count=len(usages),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1399,7 +1481,8 @@ def _answer_one(
                 message=str(error),
                 retrieval_latency_ms=tool_latency_ms + failed_latency,
                 retrieval_succeeded=False,
-                agent_call_count=len(usages),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1426,7 +1509,8 @@ def _answer_one(
         message="answer agent exhausted its step budget without a final answer",
         retrieval_latency_ms=tool_latency_ms,
         retrieval_succeeded=bool(trace),
-        agent_call_count=len(usages),
+        agent_call_count=agent_call_count,
+        reader_attempts=reader_attempts,
         reader_latency_ms=agent_latency_ms,
         claims=_claims_from_trace(trace=tuple(trace), doc_sessions=doc_sessions),
         tool_calls=tuple(trace),
@@ -1596,6 +1680,7 @@ def _failed_answer(
     retrieval_latency_ms: int,
     retrieval_succeeded: bool,
     agent_call_count: int,
+    reader_attempts: int = 0,
     reader_latency_ms: int | None = None,
     claims: tuple[RetrievedClaim, ...] = (),
     tool_calls: tuple[ToolCallRecord, ...] = (),
@@ -1618,6 +1703,7 @@ def _failed_answer(
         retrieval_latency_ms=retrieval_latency_ms,
         reader_called=agent_call_count > 0,
         agent_call_count=agent_call_count,
+        reader_attempts=reader_attempts,
         reader_latency_ms=reader_latency_ms,
         reader_usage=_aggregate_usage(usages=usages) if usages else None,
         failure=_failure(kind=kind, message=message),

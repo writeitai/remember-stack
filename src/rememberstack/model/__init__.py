@@ -232,6 +232,7 @@ from rememberstack.model.model_provider import ProviderAccountingError
 from rememberstack.model.model_provider import ProviderCallError
 from rememberstack.model.model_provider import ProviderCallUsage
 from rememberstack.model.model_provider import ProviderInvalidResponseError
+from rememberstack.model.model_provider import ReasoningEffort
 from rememberstack.model.model_provider import StructuredResponseModel
 from rememberstack.model.mounts import PublishedMounts
 from rememberstack.model.object_store import ObjectAlreadyExistsError
@@ -462,6 +463,7 @@ __all__ = (
     "ProviderCallError",
     "ProviderCallUsage",
     "ProviderInvalidResponseError",
+    "ReasoningEffort",
     "PublishedMounts",
     "QueueRoute",
     "PageRef",

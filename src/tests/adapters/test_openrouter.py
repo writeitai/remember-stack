@@ -21,6 +21,7 @@ from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import ModelRequest
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ProviderAccountingError
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import RoleClassificationResponse
 from rememberstack.model import SelectionResponse
 from rememberstack.model import SkeletonCheckResponse
@@ -240,6 +241,51 @@ def test_generation_per_model_reasoning_effort_map_overrides_global(
         {"effort": "high"},  # map entry equals global but still explicit
         {"effort": "high"},  # absent from map → global fallback
     ]
+
+
+@pytest.mark.parametrize(
+    ("request_effort", "expected"), (("none", {"effort": "none"}), (None, None))
+)
+def test_generation_request_reasoning_effort_overrides_environment_map(
+    monkeypatch: pytest.MonkeyPatch,
+    request_effort: ReasoningEffort | None,
+    expected: dict[str, str] | None,
+) -> None:
+    """A benchmark pin wins over ambient engine-seat reasoning configuration."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {
+                "api_key": "test-key",
+                "reasoning_effort": "medium",
+                "reasoning_effort_map": {"openai/gpt-5.6-luna": "high"},
+            }
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        observed.update(payload)
+        assert path == "/chat/completions"
+        return {
+            "model": "openai/gpt-5.6-luna",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.generate(
+            request=ModelRequest(
+                model="openai/gpt-5.6-luna",
+                prompt="Where?",
+                reasoning_effort=request_effort,
+            ),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert observed.get("reasoning") == expected
 
 
 def test_generation_per_model_map_falls_back_when_global_unset(

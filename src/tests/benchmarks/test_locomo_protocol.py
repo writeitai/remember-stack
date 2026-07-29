@@ -147,15 +147,19 @@ def test_protocol_is_v5_and_answer_prompt_has_loop_guards() -> None:
     assert 'answering "Unknown"' in prompt
 
 
-def test_typed_protocol_registry_changes_only_answer_agent_identity() -> None:
+def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == ("full-v5", "full-v5-strong")
     default = PROTOCOL_REGISTRY["full-v5"]
     strong = PROTOCOL_REGISTRY["full-v5-strong"]
 
     assert default.name == "RS-LoCoMo-Full-v5"
     assert default.answer_agent_model == "openai/gpt-4o-mini"
+    assert default.answer_agent_reasoning_effort is None
     assert strong.name == "RS-LoCoMo-Full-v5-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
+    assert strong.answer_agent_reasoning_effort == "none"
+    assert default.answer_reader_retry_budget == 2
+    assert strong.answer_reader_retry_budget == 2
     identical_fields = (
         "judge_model",
         "answer_prompt_template",
@@ -165,6 +169,7 @@ def test_typed_protocol_registry_changes_only_answer_agent_identity() -> None:
         "tool_catalog_sha256",
         "max_tool_calls_per_question",
         "max_agent_calls_per_question",
+        "answer_reader_retry_budget",
         "answer_agent_temperature",
         "judge_temperature",
         "judge_repetitions",

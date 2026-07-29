@@ -45,6 +45,7 @@ from benchmarks.locomo.runner import summarize_run
 import httpx
 import pytest
 
+from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import EmbeddingRequest
@@ -87,6 +88,109 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert answer.agent_call_count == 2
     assert [call.name for call in answer.tool_calls] == ["claims_verbatim"]
     assert len(provider.generated_prompts) == 2
+
+
+def test_reader_retries_two_invalid_completions_then_succeeds() -> None:
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal(0), invalid_reader_completions=2)
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is None
+    assert answer.generated_answer == "Prague"
+    assert answer.reader_attempts == 3
+    assert answer.agent_call_count == 4
+    assert provider.answer_calls == 4
+    assert answer.reader_usage is not None
+    assert answer.reader_usage.tokens_in == 40
+
+
+def test_reader_fails_after_three_invalid_completions() -> None:
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal(0), invalid_reader_completions=3)
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.kind == "reader"
+    assert answer.failure.message == (
+        "AnswerAgentStep: completion content is not JSON (synthetic)"
+    )
+    assert answer.reader_attempts == 3
+    assert answer.agent_call_count == 4
+    assert provider.answer_calls == 4
+
+
+def test_reader_retry_stops_when_run_agent_call_budget_is_exhausted() -> None:
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal(0), invalid_reader_completions=3)
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=3,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.message == (
+        "AnswerAgentStep: completion content is not JSON (synthetic)"
+    )
+    assert answer.reader_attempts == 2
+    assert answer.agent_call_count == 3
+    assert provider.answer_calls == 3
+
+
+def test_invalid_tool_selection_completion_is_not_retried() -> None:
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal(0), invalid_tool_selection=True)
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.kind == "reader"
+    assert answer.reader_attempts == 0
+    assert answer.agent_call_count == 1
+    assert provider.answer_calls == 1
 
 
 def test_answer_without_consulting_memory_is_rejected() -> None:
@@ -176,12 +280,22 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
 
 
 @pytest.mark.parametrize(
-    ("protocol", "answer_agent_model"),
-    (("full-v5", "openai/gpt-4o-mini"), ("full-v5-strong", "openai/gpt-5.6-luna")),
+    (
+        "protocol",
+        "answer_agent_model",
+        "reasoning_effort",
+        "invalid_reader_completions",
+    ),
+    (
+        ("full-v5", "openai/gpt-4o-mini", None, 0),
+        ("full-v5-strong", "openai/gpt-5.6-luna", "none", 2),
+    ),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
     answer_agent_model: str,
+    reasoning_effort: str | None,
+    invalid_reader_completions: int,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,7 +312,9 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     )
     client = MemoryClient(client=raw_client)
     preflight_provider = _PreflightProvider()
-    provider = _CostProvider(cost=Decimal(0))
+    provider = _CostProvider(
+        cost=Decimal(0), invalid_reader_completions=invalid_reader_completions
+    )
     try:
         ingests = ingest_sample(
             run_dir=run_dir,
@@ -252,11 +368,31 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     assert first_answers == second_answers
     assert first_judges == second_judges
     assert preflight_provider.models == [answer_agent_model]
-    assert provider.models == [answer_agent_model, answer_agent_model, JUDGE_MODEL]
+    expected_answer_calls = 2 + invalid_reader_completions
+    assert provider.models == [
+        *([answer_agent_model] * expected_answer_calls),
+        JUDGE_MODEL,
+    ]
+    answer_payloads = [
+        request.model_dump(exclude_none=True)
+        for request in provider.requests[:expected_answer_calls]
+    ]
+    assert [payload.get("reasoning_effort") for payload in answer_payloads] == (
+        [reasoning_effort] * expected_answer_calls
+    )
+    assert all(
+        "reasoning_effort" in request.model_fields_set
+        for request in provider.requests[:expected_answer_calls]
+    )
+    assert (
+        "reasoning_effort"
+        not in provider.requests[expected_answer_calls].model_fields_set
+    )
     summary = summarize_run(run_dir=run_dir)
     assert summary.judge_correct == 1
     assert summary.official_f1 == 1
-    assert summary.answer_agent_calls == 2
+    assert summary.answer_agent_calls == expected_answer_calls
+    assert summary.total_reader_retries == invalid_reader_completions
 
 
 class _FakeLangfuseObservation:
@@ -646,13 +782,17 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
 
     assert weak.protocol_name == "RS-LoCoMo-Full-v5"
     assert weak.answer_agent_model == "openai/gpt-4o-mini"
+    assert weak.answer_agent_reasoning_effort is None
+    assert weak.answer_reader_retry_budget == 2
     assert weak.protocol_fingerprint == (
-        "e532af4e7b349df3532388356eabe7acec474f778ba9fdcc01b397c3abe140d6"
+        "fed22cd1e43ac423e000dda3284721eb5f80c4a92f5ae75d366c32944560fc98"
     )
     assert strong.protocol_name == "RS-LoCoMo-Full-v5-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
+    assert strong.answer_agent_reasoning_effort == "none"
+    assert strong.answer_reader_retry_budget == 2
     assert strong.protocol_fingerprint == (
-        "5014757da1a0e75bf256dc2126a71adfe83747bfff2439519640c3cfc41e9979"
+        "08e5ff12286f7b3c859b157d27d1773bc026132ffffd0f595688f994e143fa8f"
     )
     assert strong.protocol_fingerprint != weak.protocol_fingerprint
 
@@ -672,6 +812,16 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
     )
     assert summarize_run(run_dir=weak_dir).protocol_name == weak.protocol_name
     assert summarize_run(run_dir=strong_dir).protocol_name == strong.protocol_name
+
+    identity = weak.model_dump(
+        mode="json", exclude={"prepared_at", "dataset_path", "protocol_fingerprint"}
+    )
+    for field, changed_value in (
+        ("answer_reader_retry_budget", 1),
+        ("answer_agent_reasoning_effort", "none"),
+    ):
+        changed = {**identity, field: changed_value}
+        assert runner._canonical_hash(changed) != weak.protocol_fingerprint
 
 
 def test_protocol_mutation_is_rejected(
@@ -842,17 +992,40 @@ class _PreflightProvider:
 class _CostProvider:
     """Structured provider with exact non-zero usage for shared-ledger tests."""
 
-    def __init__(self, *, cost: Decimal) -> None:
+    def __init__(
+        self,
+        *,
+        cost: Decimal,
+        invalid_reader_completions: int = 0,
+        invalid_tool_selection: bool = False,
+    ) -> None:
         self.cost = cost
+        self.invalid_reader_completions = invalid_reader_completions
+        self.invalid_tool_selection = invalid_tool_selection
         self.models: list[str] = []
+        self.requests: list[ModelRequest] = []
         self.answer_calls = 0
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
     ) -> GeneratedResponse[ResponseT]:
         self.models.append(request.model)
+        self.requests.append(request)
         if response_type is AnswerAgentStep:
             self.answer_calls += 1
+            if (self.invalid_tool_selection and self.answer_calls == 1) or (
+                1 < self.answer_calls <= self.invalid_reader_completions + 1
+            ):
+                raise OpenRouterInvalidResponseError(
+                    "AnswerAgentStep: completion content is not JSON (synthetic)",
+                    usage=ProviderCallUsage(
+                        model_name=request.model,
+                        tokens_in=10,
+                        tokens_out=1,
+                        cost_usd=self.cost,
+                        latency_ms=1,
+                    ),
+                )
             payload = (
                 {
                     "action": "tool",
