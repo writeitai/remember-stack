@@ -4,8 +4,9 @@ Per chunk: a Selection call judges every proposition (keep / keep-flagged /
 drop — drops and flags go to the D33 ledger), then one fused call
 decontextualizes, decomposes, and self-grounds the keeps. The deterministic
 grounding gate (D32 layers 1-2) accepts a claim only if its verbatim source
-span anchors inside the chunk and every added substring exists in the union of
-the bundle's source-derived texts. The model's source tag is advisory provenance,
+span anchors inside the chunk and every content token in added text exists in
+the union of the bundle's source-derived texts. A closed set of functional
+scaffolding tokens is permitted; the model's source tag is advisory provenance,
 not an acceptance boundary. Every kept span ends in accepted claim(s),
 grounding_rejected row(s), or a claimify_omitted row so Claimify-stage losses
 are never silent (#161).
@@ -17,6 +18,7 @@ from datetime import datetime
 from datetime import UTC
 from enum import StrEnum
 import logging
+import re
 from typing import Final
 from uuid import UUID
 from uuid import uuid4
@@ -62,6 +64,70 @@ _OUTCOMES: Final = "|".join(outcome.value for outcome in SelectionOutcome)
 # Truncation ceiling for claim_span / invented text stored in edit_detail jsonb —
 # keeps the ledger row small without hiding the gate identity (#161).
 _LEDGER_SPAN_MAX: Final = 512
+
+_ADDED_CONTEXT_TOKEN_RE: Final = re.compile(r"\w+|['’][sS](?!\w)|[^\w\s]")
+_WORD_TOKEN_RE: Final = re.compile(r"\w+")
+
+_ADDED_CONTEXT_FUNCTIONAL_ALLOWLIST: Final = frozenset(
+    {
+        "said",
+        "says",
+        "saying",
+        "asked",
+        "asks",
+        "told",
+        "tells",
+        "mentioned",
+        "mentions",
+        "wrote",
+        "writes",
+        "according",
+        "that",
+        "the",
+        "a",
+        "an",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "and",
+        "or",
+        "is",
+        "was",
+        "were",
+        "be",
+        "been",
+        "she",
+        "he",
+        "they",
+        "her",
+        "his",
+        "their",
+        "it",
+        "its",
+        "this",
+        "these",
+        "those",
+        "with",
+        "for",
+        "as",
+        "by",
+        "from",
+        ",",
+        ".",
+        ":",
+        ";",
+        '"',
+        "'",
+        "“",
+        "”",
+        "‘",
+        "’",
+        "'s",
+    }
+)
+"""Closed non-content vocabulary tolerated by D32 layer-2 token membership."""
 
 _SELECTION_PROMPT: Final = """You are the Selection stage of a claim extractor.
 Judge every proposition in the TARGET CHUNK: keep statements making a specific,
@@ -385,6 +451,7 @@ class GroundingRejection:
     kind: str | None = None
     text: str | None = None
     searched_elements: tuple[str, ...] = ()
+    failed_tokens: tuple[str, ...] = ()
 
 
 def _grounded_claim(
@@ -402,16 +469,19 @@ def _grounded_claim(
 
     Layer 1 (anchor): the source span must be a real in-bounds slice of the
     target chunk, and must overlap a span Selection kept — the fused call can
-    never resurrect a dropped proposition. Layer 2 (window membership): every
-    added substring must verbatim-exist in the union of source-derived bundle
-    texts. The model's ``source_kind`` is preserved as advisory provenance but
-    cannot reject a grounded addition by being wrong. Section summaries are
-    excluded from this union (the stored prefix, though LLM text, is a
-    designed union member — D79's accepted second-order channel). A failed check
-    returns which gate fired so the D33 ledger can record
-    ``grounding_rejected`` (#161). Semantic invention behind a real span is
-    layer-3/4 territory: the in-call self-verdict is stored advisory, and the
-    sampled independent audit owns the honest measurement.
+    never resurrect a dropped proposition. Layer 2 (window membership):
+    tokenize each non-empty addition, then require every content token to
+    appear case-insensitively at a word boundary in the source-derived bundle
+    union. Only the closed functional allowlist may supply absent scaffolding;
+    numeric tokens are never allowlisted. The model's ``source_kind`` is
+    preserved as advisory provenance but cannot reject a grounded addition by
+    being wrong. Section summaries are excluded from this union (the stored
+    prefix, though LLM text, is a designed union member — D79's accepted
+    second-order channel). A failed check returns which gate fired and which
+    tokens failed so the D33 ledger can record ``grounding_rejected`` (#161).
+    Semantic invention behind a real span is layer-3/4 territory: the in-call
+    self-verdict is stored advisory, and the sampled independent audit owns the
+    honest measurement.
     """
     claim_span = candidate.source_span
     anchor_at = document_md.find(claim_span, chunk.char_start, chunk.char_end)
@@ -432,13 +502,19 @@ def _grounded_claim(
         source=source, chunks=chunks, index=index, document_md=document_md
     )
     for added in candidate.added_context:
-        if not any(added.text in text for _, text in grounding_elements):
+        if not added.text.strip():
+            continue
+        failed_tokens = _failed_added_context_tokens(
+            text=added.text, grounding_elements=grounding_elements
+        )
+        if failed_tokens:
             return GroundingRejection(
                 gate=GroundingGate.ADDED_CONTEXT_UNVERIFIED,
                 claim_span=claim_span,
                 kind=added.source_kind,
                 text=added.text,
                 searched_elements=tuple(name for name, _ in grounding_elements),
+                failed_tokens=failed_tokens,
             )
     valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
         candidate=candidate
@@ -636,6 +712,49 @@ def _source_grounding_elements(
     return tuple(elements)
 
 
+def _failed_added_context_tokens(
+    *, text: str, grounding_elements: tuple[tuple[str, str], ...]
+) -> tuple[str, ...]:
+    """Return normalized addition tokens that fail D32 layer-2 membership.
+
+    All numeric tokens must appear in the source union even if the functional
+    allowlist is later edited incorrectly. Repeated failures are reported once,
+    in first-seen order, for compact and useful decision-ledger diagnostics.
+    """
+    failed: list[str] = []
+    for token in _added_context_tokens(text):
+        if _token_in_grounding_union(
+            token=token, grounding_elements=grounding_elements
+        ):
+            continue
+        if any(character.isnumeric() for character in token):
+            failed.append(token)
+        elif token not in _ADDED_CONTEXT_FUNCTIONAL_ALLOWLIST:
+            failed.append(token)
+    return tuple(dict.fromkeys(failed))
+
+
+def _added_context_tokens(text: str) -> tuple[str, ...]:
+    """Tokenize Unicode words and punctuation, keeping possessive ``'s`` whole."""
+    return tuple(
+        "'s" if token.casefold() == "’s" else token.casefold()
+        for token in _ADDED_CONTEXT_TOKEN_RE.findall(text)
+    )
+
+
+def _token_in_grounding_union(
+    *, token: str, grounding_elements: tuple[tuple[str, str], ...]
+) -> bool:
+    """Case-insensitive source membership with word boundaries for word tokens."""
+    if _WORD_TOKEN_RE.fullmatch(token):
+        token_pattern = re.compile(
+            rf"(?<!\w){re.escape(token)}(?!\w)", flags=re.IGNORECASE
+        )
+        return any(token_pattern.search(text) for _, text in grounding_elements)
+    folded_token = token.casefold()
+    return any(folded_token in text.casefold() for _, text in grounding_elements)
+
+
 def _header_text(*, source: ChunkSource) -> str:
     """The deterministic document header shared by every chunk's bundle."""
     modified = source.source_modified_at or source.published_at
@@ -769,6 +888,7 @@ def _grounding_rejected_decision(
         edit_detail["kind"] = _truncate_for_ledger(rejection.kind or "")
         edit_detail["text"] = _truncate_for_ledger(rejection.text or "")
         edit_detail["searched_elements"] = list(rejection.searched_elements)
+        edit_detail["failed_tokens"] = list(rejection.failed_tokens)
     return DecisionRecord(
         decision_id=uuid4(),
         deployment_id=source.deployment_id,

@@ -10,6 +10,8 @@ from typing import cast
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import pytest
+
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.model import AddedContext
@@ -104,11 +106,13 @@ def _chunk(*, document_md: str = _DOC_MD) -> ChunkForEmbedding:
     )
 
 
-def _kept_ranges_for(*spans: str) -> tuple[tuple[int, int], ...]:
+def _kept_ranges_for(
+    *spans: str, document_md: str = _DOC_MD
+) -> tuple[tuple[int, int], ...]:
     """Absolute ranges for the given verbatim spans inside the fixture doc."""
     ranges: list[tuple[int, int]] = []
     for span in spans:
-        at = _DOC_MD.find(span)
+        at = document_md.find(span)
         assert at >= 0, span
         ranges.append((at, at + len(span)))
     return tuple(ranges)
@@ -118,18 +122,19 @@ def _ground(
     *,
     candidate: CandidateClaim,
     kept_spans: tuple[str, ...] = (_KEEP_LAUNCH, _KEEP_STANCE),
+    document_md: str = _DOC_MD,
 ) -> object:
     """Run the grounding gate against the fixture document and keeps."""
-    chunk = _chunk()
+    chunk = _chunk(document_md=document_md)
     return _grounded_claim(
         candidate=candidate,
         source=_source(),
         chunk=chunk,
         chunks=(chunk,),
         index=0,
-        document_md=_DOC_MD,
+        document_md=document_md,
         flagged_spans=set(),
-        kept_ranges=_kept_ranges_for(*kept_spans),
+        kept_ranges=_kept_ranges_for(*kept_spans, document_md=document_md),
     )
 
 
@@ -197,6 +202,7 @@ def test_gate_added_context_unverified_writes_grounding_rejected() -> None:
     assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED
     assert result.kind == "neighbour"
     assert result.text == "in San Francisco"
+    assert result.failed_tokens == ("san", "francisco")
 
     decision = _grounding_rejected_decision(
         source=_source(), chunk=_chunk(), rejection=result
@@ -209,7 +215,106 @@ def test_gate_added_context_unverified_writes_grounding_rejected() -> None:
         "kind": "neighbour",
         "text": "in San Francisco",
         "searched_elements": _SEARCHED_SOURCE_ELEMENTS,
+        "failed_tokens": ["san", "francisco"],
     }
+
+
+def test_attribution_scaffolding_passes_across_speaker_colon() -> None:
+    """Prompt-mandated attribution survives when the speaker is a turn label."""
+    document_md = "Melanie: Yeah, I painted that lake sunrise last year!"
+    result = _ground(
+        candidate=CandidateClaim(
+            claim_text='Melanie said, "I painted that lake sunrise last year!"',
+            source_span="Yeah, I painted that lake sunrise last year!",
+            added_context=(
+                AddedContext(text='Melanie said, "', source_kind="neighbour"),
+            ),
+            entailment_self_verdict=True,
+            is_attributed=True,
+        ),
+        kept_spans=(document_md,),
+        document_md=document_md,
+    )
+
+    assert isinstance(result, ClaimRecord)
+
+
+@pytest.mark.parametrize("addition", ["Caroline said that", "Caroline's"])
+def test_functional_and_possessive_scaffolding_passes(addition: str) -> None:
+    """Names stay source-bound while attribution words and possessives pass."""
+    result = _ground(
+        candidate=CandidateClaim(
+            claim_text=f"{addition} the launch happened.",
+            source_span="I went to the launch.",
+            added_context=(AddedContext(text=addition, source_kind="header"),),
+            entailment_self_verdict=True,
+            is_attributed=True,
+        ),
+        kept_spans=(_KEEP_CAROLINE,),
+    )
+
+    assert isinstance(result, ClaimRecord)
+
+
+@pytest.mark.parametrize(
+    ("addition", "failed_tokens"),
+    [("at the pride parade", ("pride", "parade")), ("in Paris", ("paris",))],
+)
+def test_invented_content_tokens_still_fail(
+    addition: str, failed_tokens: tuple[str, ...]
+) -> None:
+    """Functional glue cannot carry an invented noun through layer 2."""
+    result = _ground(
+        candidate=CandidateClaim(
+            claim_text=f"Project Atlas launched {addition}.",
+            source_span="Project Atlas launched in 2024",
+            added_context=(AddedContext(text=addition, source_kind="neighbour"),),
+            entailment_self_verdict=True,
+        )
+    )
+
+    assert isinstance(result, GroundingRejection)
+    assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED
+    assert result.failed_tokens == failed_tokens
+
+
+def test_numeric_token_requires_source_union_membership() -> None:
+    """No functional allowance can introduce an absent computed year."""
+    candidate = CandidateClaim(
+        claim_text="Project Atlas launched in 2022.",
+        source_span="Project Atlas launched in 2024",
+        added_context=(AddedContext(text="in 2022", source_kind="header"),),
+        entailment_self_verdict=True,
+    )
+
+    absent = _ground(candidate=candidate)
+    assert isinstance(absent, GroundingRejection)
+    assert absent.failed_tokens == ("2022",)
+
+    document_md = _DOC_MD + "The archive covers 2022.\n"
+    present = _ground(candidate=candidate, document_md=document_md)
+    assert isinstance(present, ClaimRecord)
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        AddedContext.model_construct(text="", source_kind="neighbour"),
+        AddedContext(text=" \t", source_kind="neighbour"),
+    ],
+)
+def test_empty_added_context_is_a_no_op(addition: AddedContext) -> None:
+    """Empty model output neither rejects nor removes an otherwise valid claim."""
+    result = _ground(
+        candidate=CandidateClaim(
+            claim_text="Project Atlas launched in 2024.",
+            source_span="Project Atlas launched in 2024",
+            added_context=(addition,),
+            entailment_self_verdict=True,
+        )
+    )
+
+    assert isinstance(result, ClaimRecord)
 
 
 def test_target_chunk_addition_with_wrong_header_label_is_accepted() -> None:
@@ -386,6 +491,31 @@ def test_handler_rejection_suppresses_omission_only_for_its_keep() -> None:
     assert rows[DecisionType.CLAIMIFY_OMITTED] == [_KEEP_STANCE]
 
 
+def test_handler_empty_added_context_survives_without_rejection() -> None:
+    """Whitespace-only additions are no-ops, not grounding ledger losses."""
+    recorder = _run_extract(
+        selection={"candidates": [{"source_span": _KEEP_LAUNCH, "outcome": "keep"}]},
+        claimify={
+            "claims": [
+                {
+                    "claim_text": "Project Atlas launched in 2024.",
+                    "source_span": "Project Atlas launched in 2024",
+                    "added_context": [{"text": "   ", "source_kind": "neighbour"}],
+                    "entailment_self_verdict": True,
+                }
+            ]
+        },
+    )
+
+    assert [claim.claim_text for claim in recorder.claims] == [
+        "Project Atlas launched in 2024."
+    ]
+    assert not any(
+        decision.decision_type is DecisionType.GROUNDING_REJECTED
+        for decision in recorder.decisions
+    )
+
+
 def test_handler_rejects_summary_only_added_context_fact_injection() -> None:
     """Summary text is visible orientation but cannot ground an addition."""
     recorder = _run_extract(
@@ -416,6 +546,7 @@ def test_handler_rejects_summary_only_added_context_fact_injection() -> None:
         "kind": "summary",
         "text": "Project Orion",
         "searched_elements": _SEARCHED_SOURCE_ELEMENTS,
+        "failed_tokens": ["orion"],
     }
     assert not any(
         decision.decision_type is DecisionType.CLAIMIFY_OMITTED
@@ -552,6 +683,7 @@ def test_summary_text_fails_membership_under_every_legal_kind() -> None:
             assert result.kind == kind
             assert result.text == text
             assert list(result.searched_elements) == _SEARCHED_SOURCE_ELEMENTS
+            assert result.failed_tokens == (text.split()[-1].casefold(),)
 
 
 def test_handler_union_grounding_preserves_loss_ledger_balance() -> None:

@@ -147,13 +147,45 @@ decontextualizations, while names present verbatim in TARGET CHUNK turn lines we
 **Section summaries and every other LLM-orientation text remain excluded from the union**, so the
 fact-injection defense is unchanged and D79 consumption rules are unchanged.
 
+**Amendment (2026-07-29, token-tolerant union grounding):** the membership unit is now a token,
+not the whole added connective phrase. E2 tokenizes Unicode words and punctuation, splitting a
+possessive such as `Caroline's` into `caroline` and `'s`. A token passes when the same token occurs
+case-insensitively at a word boundary in any source-derived union element, or when it belongs to this
+closed functional allowlist:
+
+- attribution scaffolding: `said`, `says`, `saying`, `asked`, `asks`, `told`, `tells`, `mentioned`,
+  `mentions`, `wrote`, `writes`, `according`;
+- pure function words: `that`, `the`, `a`, `an`, `of`, `to`, `in`, `on`, `at`, `and`, `or`, `is`,
+  `was`, `were`, `be`, `been`, `she`, `he`, `they`, `her`, `his`, `their`, `it`, `its`, `this`,
+  `these`, `those`, `with`, `for`, `as`, `by`, `from`;
+- punctuation: `,`, `.`, `:`, `;`, straight or curly single/double quote tokens, and `'s`.
+
+Empty or whitespace-only additions add no information and are skipped. Numeric tokens are **never**
+allowlisted: `in 2022` fails when `2022` is absent from the union and passes only when `2022` occurs
+there. All proper names and other content nouns, verbs, and adjectives obey the same source-only
+rule. Thus `Melanie said, ` passes against a `Melanie:` speaker label (`said` and punctuation are
+functional; `Melanie` has a word-boundary match), while `in Paris` fails when `Paris` is absent.
+Every content token of every accepted addition therefore remains traceable verbatim, ignoring case,
+to source-derived bundle text; token tolerance creates no outside-knowledge channel.
+
+The reason is a measured prompt/gate contradiction. The prompt requires attributed claims to stay
+attributed and pronouns/possessives to be decontextualized, but whole-string membership rejected the
+resulting grammar because source transcripts use forms such as speaker-label colons rather than
+`X said`. In the conv-26 GLM-5.2 E2 07h ledger, 144 claims were grounding-rejected and this mandated
+scaffolding was the dominant class (about 40–60%); 13 empty additions were rejected too. A gold claim
+from `Melanie: Yeah, I painted that lake sunrise last year!` died solely because its addition was
+`Melanie said, `. Failed additions still reject and drop the claim, and their
+`grounding_rejected.edit_detail` now includes `failed_tokens` for diagnosis.
+
 Acceptance layers four checks, cheapest first:
 
 1. **Anchor** (deterministic): the `source_span` must be a real, in-bounds slice of the target chunk —
    a check the model cannot talk its way past.
-2. **Window-membership** (deterministic): every *added* substring must verbatim-exist somewhere in
-   the source-derived union above. The attribution tag is advisory. A claim that invents "in San
-   Francisco" with no union member containing it is rejected.
+2. **Window-membership** (deterministic): tokenize every non-empty addition; every content and numeric
+   token must occur in the source-derived union above, while only the closed functional allowlist may
+   supply absent scaffolding. The attribution tag is advisory. A claim that invents `in San
+   Francisco` with neither content token in the union is rejected and records `san` and `francisco`
+   as its failed tokens.
 3. **Entailment self-verdict** (in-call, ~free): the model asserts the chunk + bundle entail the
    claim; includes the rule that "*X said* Y" entails "X said Y", not "Y".
 4. **Sampled independent audit** (offline, not per-claim): a separate judge re-checks a sample, because
@@ -169,9 +201,9 @@ Acceptance layers four checks, cheapest first:
    at the converter's disclosed precision — `media_design.md` §4.)
 
 So in the example, `"Project Atlas launched last year"` is accepted: its anchor is the verbatim "It
-launched last year", and "Project Atlas" (→ neighbour) is the only `added_context` entry. The resolved
-bounds are emitted only in the structured valid-time fields and do not enter the membership gate.
-The attributed stance is grounded separately.
+launched last year", and "Project Atlas" (→ neighbour) is the only `added_context` entry. Both content
+tokens occur in the source-derived union. The resolved bounds are emitted only in the structured
+valid-time fields and do not enter the membership gate. The attributed stance is grounded separately.
 
 ### 3.4 Nothing is silently lost (D33, D35)
 
@@ -198,7 +230,7 @@ lands a claim is indistinguishable from a keep that produced a claim the gate re
 | `decision_type` | When written | `source_span` | `edit_detail` |
 |---|---|---|---|
 | `claimify_omitted` | A kept Selection span for which Claimify returned **no claim at all** (the model simply skipped it). One row per dead keep. | The Selection span. | null |
-| `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>, "searched_elements": [...]}`. |
+| `grounding_rejected` | A Claimify-returned claim rejected by a D32 gate. One row per rejected claim. | The claim's returned `source_span` (even if not findable in the chunk). | `{"gate": "span_not_found" \| "outside_kept_ranges" \| "added_context_unverified", "claim_span": <truncated>}`; for `added_context_unverified` also `{"kind": ..., "text": <truncated>, "searched_elements": [...], "failed_tokens": [...]}`. |
 
 **Invariant — every kept span is accounted for end-to-end.** Two independent rules (revised
 2026-07-27 after review — one keep can decompose into several returned claims with mixed fates,
