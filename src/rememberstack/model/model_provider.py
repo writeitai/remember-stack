@@ -3,6 +3,7 @@
 from decimal import Decimal
 from typing import Annotated
 from typing import Generic
+from typing import Literal
 from typing import Self
 from typing import TypeAlias
 from typing import TypeVar
@@ -16,6 +17,9 @@ _NonEmptyText = Annotated[str, Field(min_length=1)]
 _EmbeddingVector = Annotated[tuple[float, ...], Field(min_length=1)]
 StructuredResponseModel: TypeAlias = BaseModel
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
+ReasoningEffort: TypeAlias = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
 
 
 class ProviderAccountingError(Exception):
@@ -64,6 +68,7 @@ class ModelRequest(BaseModel):
     model: _NonEmptyText
     prompt: _NonEmptyText
     temperature: float | None = Field(default=None, ge=0, le=2)
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class EmbeddingRequest(BaseModel):

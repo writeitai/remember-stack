@@ -16,11 +16,14 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
+  --protocol full-v5 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. Do not run remote stages until reviewing
+eight-question smoke plan. `--protocol` is prepare-only: choose `full-v5` (the
+default) or `full-v5-strong` there, and every later stage reads that immutable
+choice from `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
 Build the image from the revision under test — Compose otherwise serves the
@@ -58,6 +61,18 @@ call per answer. The shared evaluator-cost value is a reported-spend stop thresh
 call can cross it, is recorded, and stops the run. Use the provider account cap as the hard
 monetary boundary. If that leaves later questions unanswered, they remain visible as zero-scored
 missing records; resuming them requires an explicitly higher threshold.
+
+After at least one recipe result, an answer-agent completion that is not a valid
+JSON answer step is retried at most twice. Those attempts consume the same
+nine-call per-question and run-absolute call budgets; they are not extra calls
+outside the cap. Each item records `reader_attempts`, and the summary records
+`total_reader_retries`. Tool-selection failures before retrieval and judge
+failures are not retried.
+
+The strong protocol pins answer-agent reasoning effort to `none` on every answer
+call. The default `full-v5` protocol sends no per-call effort field for its
+non-reasoning `gpt-4o-mini` answer agent. Ambient OpenRouter effort-map settings
+therefore cannot change either prepared protocol's answer behavior.
 
 P3 is built and freshness-checked as part of the ordinary deployment, but the remote recipe
 agent has no filesystem mount. This protocol therefore does not attribute answer quality to P3
