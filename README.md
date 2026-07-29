@@ -5,11 +5,11 @@
 | Name                                                                                          |    Stmts |     Miss |   Branch |   BrPart |     Cover |   Missing |
 |---------------------------------------------------------------------------------------------- | -------: | -------: | -------: | -------: | --------: | --------: |
 | src/rememberstack/\_\_init\_\_.py                                                             |        6 |        2 |        0 |        0 |     66.7% |       8-9 |
-| src/rememberstack/adapters/\_\_init\_\_.py                                                    |       17 |        3 |        4 |        2 |     76.2% | 33-37, 42 |
+| src/rememberstack/adapters/\_\_init\_\_.py                                                    |       17 |        2 |        4 |        1 |     85.7% |     33-37 |
 | src/rememberstack/adapters/codex\_writer.py                                                   |       82 |        3 |       20 |        3 |     94.1% |172, 203, 215 |
 | src/rememberstack/adapters/markitdown\_converter.py                                           |       24 |        2 |        0 |        0 |     91.7% |     40-41 |
 | src/rememberstack/adapters/openrouter.py                                                      |      200 |       10 |       60 |        4 |     93.8% |271-277, 322-323, 344-345, 347, 351-\>353, 354-\>363, 367 |
-| src/rememberstack/adapters/selfhost/\_\_init\_\_.py                                           |       24 |        1 |        2 |        1 |     92.3% |        54 |
+| src/rememberstack/adapters/selfhost/\_\_init\_\_.py                                           |       25 |        1 |        2 |        1 |     92.6% |        56 |
 | src/rememberstack/adapters/selfhost/forget.py                                                 |       43 |        1 |       10 |        1 |     96.2% |        19 |
 | src/rememberstack/adapters/selfhost/git.py                                                    |       98 |        6 |       32 |        8 |     89.2% |55, 75-\>127, 154, 184-185, 199-\>227, 263, 307, 331-\>329 |
 | src/rememberstack/adapters/selfhost/lance.py                                                  |      124 |       12 |       40 |       15 |     83.5% |46, 67, 131, 154, 156, 158-\>160, 180-\>185, 185-\>exit, 196, 278, 284, 286, 291, 299, 316 |
@@ -18,8 +18,9 @@
 | src/rememberstack/adapters/selfhost/object\_store.py                                          |       60 |        2 |       26 |        2 |     95.3% |  102, 104 |
 | src/rememberstack/adapters/selfhost/projection.py                                             |       36 |        3 |       12 |        3 |     87.5% |52, 60, 78 |
 | src/rememberstack/adapters/selfhost/queue.py                                                  |       65 |        1 |       10 |        2 |     96.0% |111-\>118, 135 |
-| src/rememberstack/adapters/selfhost/telemetry.py                                              |       21 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/adapters/selfhost/telemetry.py                                              |       43 |        7 |        6 |        1 |     79.6% | 58, 63-68 |
 | src/rememberstack/adapters/selfhost/watcher.py                                                |       31 |        1 |       10 |        1 |     95.1% |        39 |
+| src/rememberstack/adapters/sentry.py                                                          |       74 |        9 |       28 |        6 |     85.3% |119-125, 152-\>160, 154-\>160, 157, 166, 169, 172 |
 | src/rememberstack/adapters/testing/\_\_init\_\_.py                                            |        6 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/testing/cost\_meter.py                                             |        4 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/testing/model\_provider.py                                         |       35 |        1 |        4 |        1 |     94.9% |        50 |
@@ -103,7 +104,7 @@
 | src/rememberstack/ports/queue.py                                                              |        8 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/telemetry.py                                                          |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/profiles/\_\_init\_\_.py                                                    |       10 |        7 |        4 |        0 |     21.4% |     14-22 |
-| src/rememberstack/profiles/selfhost.py                                                        |      294 |      185 |       38 |        1 |     33.1% |109, 113-119, 137-143, 148-150, 174, 178-205, 212-286, 290-305, 325-327, 331-354, 358-500, 505, 510-547, 552-553, 589, 650 |
+| src/rememberstack/profiles/selfhost.py                                                        |      322 |      195 |       44 |        4 |     35.8% |115, 130, 134-140, 159-166, 171-173, 198, 202-229, 236-310, 314-336, 356-358, 362-385, 389-531, 540-542, 547-587, 595, 599, 610-611, 647, 708 |
 | src/rememberstack/profiles/selfhost\_forget.py                                                |       55 |       55 |        2 |        0 |      0.0% |     3-153 |
 | src/rememberstack/profiles/selfhost\_operations.py                                            |       44 |        5 |        4 |        1 |     87.5% |48, 62-64, 95 |
 | src/rememberstack/spine/\_\_init\_\_.py                                                       |       48 |        0 |        0 |        0 |    100.0% |           |
@@ -189,7 +190,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        3 |       18 |        3 |     90.9% |83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **14446** | **1122** | **3094** |  **553** | **89.5%** |           |
+| **TOTAL**                                                                                     | **14571** | **1147** | **3134** |  **562** | **89.4%** |           |
 
 
 ## Setup coverage badge
