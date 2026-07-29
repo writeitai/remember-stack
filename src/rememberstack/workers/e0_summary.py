@@ -9,6 +9,7 @@ tree depth run in parallel, while the tree itself reduces bottom-up.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.core import count_tokens
+from rememberstack.core import LONG_TITLE
 from rememberstack.model import Block
 from rememberstack.model import ModelRequest
 from rememberstack.model import ObjectKey
@@ -38,28 +40,33 @@ from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.document_catalog import DocumentCatalog
 
 SUMMARY_CALL_TOKEN_CEILING: Final = 2_048
-"""Hard per-request ceiling under the pinned whitespace-token counter."""
+"""Per-request ceiling under the pinned whitespace-token counter."""
+
+SUMMARY_CALL_CHAR_CEILING: Final = 16_384
+"""Hard per-request character ceiling for tokenizer-hostile source text."""
 
 SUMMARY_BALANCED_FAN_IN: Final = 8
 """Maximum ordered child/partial one-liners in one reduction call."""
 
 SUMMARY_MAX_CHARS: Final = 512
-"""Closed response-schema ceiling for every one-line summary."""
+"""Post-parse ceiling for every normalized one-line provider value."""
 
 SUMMARY_PARALLELISM: Final = 8
-"""Maximum independent same-depth section calls in flight."""
+"""Scheduling-only concurrency; unversioned because it cannot affect prompts."""
 
 SUMMARY_TOKEN_COUNTER_VERSION: Final = "whitespace-token-counter-v1"
 """Names ``count_tokens`` semantics in summary-generation provenance."""
 
 E0_SUMMARY_VERSION: Final = (
-    "e0-summary-2026.07a:d79-bottom-up:block-shard-v1:"
-    f"{SUMMARY_TOKEN_COUNTER_VERSION}:ceiling{SUMMARY_CALL_TOKEN_CEILING}:"
-    f"balanced-fan-in{SUMMARY_BALANCED_FAN_IN}:line{SUMMARY_MAX_CHARS}"
+    "e0-summary-2026.07b:d79-bottom-up:block-shard-v2:"
+    f"{SUMMARY_TOKEN_COUNTER_VERSION}:token-ceiling{SUMMARY_CALL_TOKEN_CEILING}:"
+    f"char-ceiling{SUMMARY_CALL_CHAR_CEILING}:"
+    f"ceiling-reduction-v2:balanced-fan-in{SUMMARY_BALANCED_FAN_IN}:"
+    f"title-cap{LONG_TITLE}:normalized-line{SUMMARY_MAX_CHARS}:rendered-key-v1"
 )
 """Bottom-up summarizer algorithm and all output-affecting constants."""
 
-E0_PLACEMENT_VERSION: Final = "e0-placement-2026.07a:d79-root-reduction-v1"
+E0_PLACEMENT_VERSION: Final = "e0-placement-2026.07b:d79-root-reduction-v2"
 """D39 advisory placement emitted by the document-level summary reduction."""
 
 _SUMMARY_INSTRUCTION: Final = """Write exactly one factual orientation line \
@@ -136,8 +143,11 @@ _GENERATION_PARAMS: Final = {
     "temperature": 0.0,
     "token_counter": SUMMARY_TOKEN_COUNTER_VERSION,
     "token_ceiling": SUMMARY_CALL_TOKEN_CEILING,
+    "char_ceiling": SUMMARY_CALL_CHAR_CEILING,
     "balanced_fan_in": SUMMARY_BALANCED_FAN_IN,
+    "title_max_chars": LONG_TITLE,
     "summary_max_chars": SUMMARY_MAX_CHARS,
+    "placement_version": E0_PLACEMENT_VERSION,
 }
 
 
@@ -257,12 +267,16 @@ class SectionSummarizer:
                 complete_child_lines = tuple(
                     line for line in child_lines if line is not None
                 )
+                rendered_child_lines = _render_child_lines(
+                    child_sections=child_sections, child_summaries=complete_child_lines
+                )
                 key = _summary_cache_key(
                     section=section,
                     direct_blocks=direct[section.node_path],
-                    child_summaries=complete_child_lines,
+                    child_lines=rendered_child_lines,
                     model=self._settings.model,
                     source_kind=source.source_kind,
+                    markdown=markdown,
                 )
                 cached = cache.get(key)
                 if cached is not None:
@@ -344,6 +358,7 @@ class SectionSummarizer:
         sections: tuple[SnappedSection, ...],
         placement_path: str,
         blocks: tuple[Block, ...],
+        markdown: str,
     ) -> SummaryResult:
         """Re-key stored successful summaries without calling the provider.
 
@@ -372,14 +387,19 @@ class SectionSummarizer:
             )
             if summary is None or any(value is None for value in child_summaries):
                 raise ValueError("only complete summary generations can be replayed")
-            cache_keys[section.node_path] = _summary_cache_key(
-                section=section,
-                direct_blocks=direct[section.node_path],
+            rendered_child_lines = _render_child_lines(
+                child_sections=children.get(section.node_path, ()),
                 child_summaries=tuple(
                     value for value in child_summaries if value is not None
                 ),
+            )
+            cache_keys[section.node_path] = _summary_cache_key(
+                section=section,
+                direct_blocks=direct[section.node_path],
+                child_lines=rendered_child_lines,
                 model=self._settings.model,
                 source_kind=source.source_kind,
+                markdown=markdown,
             )
         return SummaryResult(
             sections=sections,
@@ -404,25 +424,15 @@ class SectionSummarizer:
             return _CallResult(summary=None, placement_path=None)
 
         events: list[_MeterEvent] = []
-        child_lines = tuple(
-            f"{child.node_path} | {child.title} | {summary}"
-            for child, summary in zip(child_sections, child_summaries, strict=True)
+        child_lines = _render_child_lines(
+            child_sections=child_sections, child_summaries=child_summaries
         )
-        reduced_children = self._reduce_lines(
-            section=section,
-            lines=child_lines,
-            call_kind="child-reduction",
-            call_key_prefix=f"summary:{section.node_path}:children",
-            events=events,
-        )
-        if reduced_children is None:
-            return _CallResult(None, None, tuple(events))
 
         final_prompt = _render_final_prompt(
             source=source,
             section=section,
             blocks=direct_blocks,
-            child_lines=reduced_children,
+            child_lines=child_lines,
             markdown=markdown,
         )
         if _within_ceiling(prompt=final_prompt):
@@ -451,13 +461,20 @@ class SectionSummarizer:
             if partial.summary is None:
                 return _CallResult(None, None, tuple(events))
             context_lines.append(f"direct-shard-{shard_index} | {partial.summary}")
-        context_lines.extend(reduced_children)
+        context_lines.extend(child_lines)
         reduced_context = self._reduce_lines(
             section=section,
             lines=tuple(context_lines),
             call_kind="context-reduction",
             call_key_prefix=f"summary:{section.node_path}:context",
             events=events,
+            render_final=lambda lines: _render_final_prompt(
+                source=source,
+                section=section,
+                blocks=(),
+                child_lines=lines,
+                markdown=markdown,
+            ),
         )
         if reduced_context is None:
             return _CallResult(None, None, tuple(events))
@@ -480,20 +497,27 @@ class SectionSummarizer:
         call_kind: str,
         call_key_prefix: str,
         events: list[_MeterEvent],
+        render_final: Callable[[tuple[str, ...]], str],
     ) -> tuple[str, ...] | None:
-        """Balanced fan-in reduction; every intermediate call is bounded."""
+        """Reduce only until the rendered final prompt fits both ceilings."""
         current = lines
         level = 0
-        while len(current) > SUMMARY_BALANCED_FAN_IN:
+        used_singleton_pass = False
+        while not _within_ceiling(prompt=render_final(current)):
+            groups = _bounded_reduction_groups(
+                section=section, lines=current, call_kind=call_kind
+            )
+            if groups is None:
+                return None
+            if all(len(group) == 1 for group in groups):
+                if used_singleton_pass:
+                    return None
+                used_singleton_pass = True
             reduced: list[str] = []
-            for group_index, group in enumerate(
-                _balanced_groups(values=current, fan_in=SUMMARY_BALANCED_FAN_IN)
-            ):
+            for group_index, group in enumerate(groups):
                 prompt = _render_reduce_prompt(
                     section=section, lines=group, call_kind=call_kind
                 )
-                if not _within_ceiling(prompt=prompt):
-                    return None
                 result = self._invoke_summary(
                     prompt=prompt,
                     call_key=(f"{call_key_prefix}:level:{level}:group:{group_index}"),
@@ -529,10 +553,14 @@ class SectionSummarizer:
                         usage=generated.usage,
                     )
                 )
+                normalized_summary = _normalize_one_line(generated.output.summary)
+                normalized_placement = _normalize_one_line(
+                    generated.output.placement_path
+                )
+                if normalized_summary is None or normalized_placement is None:
+                    return _CallResult(None, None, tuple(events))
                 return _CallResult(
-                    generated.output.summary,
-                    generated.output.placement_path,
-                    tuple(events),
+                    normalized_summary, normalized_placement, tuple(events)
                 )
             generated_summary = self._model_provider.generate(
                 request=ModelRequest(
@@ -547,7 +575,10 @@ class SectionSummarizer:
                     usage=generated_summary.usage,
                 )
             )
-            return _CallResult(generated_summary.output.summary, None, tuple(events))
+            normalized_summary = _normalize_one_line(generated_summary.output.summary)
+            if normalized_summary is None:
+                return _CallResult(None, None, tuple(events))
+            return _CallResult(normalized_summary, None, tuple(events))
         except ProviderCallError as error:
             if error.usage is not None:
                 events.append(
@@ -572,11 +603,11 @@ class SectionSummarizer:
                 ),
                 response_type=SectionSummaryResponse,
             )
-            return _CallResult(
-                generated.output.summary,
-                None,
-                (_MeterEvent(call_key=call_key, tier=tier, usage=generated.usage),),
-            )
+            normalized_summary = _normalize_one_line(generated.output.summary)
+            event = _MeterEvent(call_key=call_key, tier=tier, usage=generated.usage)
+            if normalized_summary is None:
+                return _CallResult(None, None, (event,))
+            return _CallResult(normalized_summary, None, (event,))
         except ProviderCallError as error:
             if error.usage is not None:
                 return _CallResult(
@@ -597,36 +628,45 @@ class SectionSummarizer:
     def _load_cache(self, *, doc_id: UUID) -> dict[str, _CacheValue]:
         """Read prior successful generation sidecars; corruption is a cache miss."""
         cache: dict[str, _CacheValue] = {}
-        for uri in self._catalog.summary_cache_sidecars(
-            doc_id=doc_id, summary_version=self.version
-        ):
+        for uri in self._catalog.summary_cache_sidecars(doc_id=doc_id):
             try:
                 payload = json.loads(
                     self._artifact_store.read_bytes(key=ObjectKey(uri))
                 )
                 placement = payload.get("placement")
-                for section in payload.get("sections", ()):
+                sections = payload.get("sections", ())
+            except Exception:  # noqa: BLE001 - cache corruption is a miss
+                # Sidecars are immutable cache metadata, not an availability
+                # dependency. Missing/legacy/malformed objects simply miss.
+                continue
+            for section in sections:
+                try:
                     key = section.get("summary_cache_key")
                     summary = section.get("summary")
                     if not isinstance(key, str) or not isinstance(summary, str):
                         continue
                     validated = SectionSummaryResponse(summary=summary)
+                    normalized_summary = _normalize_one_line(validated.summary)
+                    if normalized_summary is None:
+                        continue
                     cached_placement: str | None = None
                     if section.get("node_path") == "0":
                         validated_root = RootSummaryPlacementResponse(
-                            summary=validated.summary, placement_path=placement
+                            summary=normalized_summary, placement_path=placement
                         )
-                        cached_placement = validated_root.placement_path
+                        cached_placement = _normalize_one_line(
+                            validated_root.placement_path
+                        )
+                        if cached_placement is None:
+                            continue
                     cache.setdefault(
                         key,
                         _CacheValue(
-                            summary=validated.summary, placement_path=cached_placement
+                            summary=normalized_summary, placement_path=cached_placement
                         ),
                     )
-            except Exception:  # noqa: BLE001 - cache corruption is a miss
-                # Sidecars are immutable cache metadata, not an availability
-                # dependency. Missing/legacy/malformed objects simply miss.
-                continue
+                except Exception:  # noqa: BLE001 - one bad entry is one miss
+                    continue
         return cache
 
 
@@ -666,22 +706,26 @@ def _summary_cache_key(
     *,
     section: SnappedSection,
     direct_blocks: tuple[Block, ...],
-    child_summaries: tuple[str, ...],
+    child_lines: tuple[str, ...],
     model: str,
     source_kind: str,
+    markdown: str,
 ) -> str:
     """The design's exact per-section content/configuration identity."""
     child_hashes = tuple(
-        hashlib.sha256(summary.encode("utf-8")).hexdigest()
-        for summary in child_summaries
+        hashlib.sha256(line.encode("utf-8")).hexdigest() for line in child_lines
     )
     prompt_hash = hashlib.sha256(
         json.dumps(
             {
                 "contract": _SUMMARY_PROMPT_HASH,
                 "node_path": section.node_path,
-                "title": section.title,
-                "source_kind": source_kind if section.node_path == "0" else None,
+                "title": _capped(section.title, fallback="(untitled section)"),
+                "source_kind": (
+                    _capped(source_kind, fallback="(unknown)")
+                    if section.node_path == "0"
+                    else None
+                ),
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -689,10 +733,13 @@ def _summary_cache_key(
         ).encode("utf-8")
     ).hexdigest()
     payload = {
-        "ordered_constituent_block_hashes": tuple(
-            block.block_hash for block in direct_blocks
+        "ordered_rendered_block_hashes": tuple(
+            hashlib.sha256(
+                _render_block(block=block, markdown=markdown).encode("utf-8")
+            ).hexdigest()
+            for block in direct_blocks
         ),
-        "child_summary_hashes": child_hashes,
+        "child_line_hashes": child_hashes,
         "model": model,
         "prompt_hash": prompt_hash,
         "generation_params": _GENERATION_PARAMS,
@@ -705,15 +752,16 @@ def _summary_cache_key(
     ).hexdigest()
 
 
+def _render_block(*, block: Block, markdown: str) -> str:
+    return (
+        f"[block ordinal={block.ordinal} type={block.type.value}"
+        f" hash={block.block_hash}]\n"
+        f"{markdown[block.char_start : block.char_end]}"
+    )
+
+
 def _render_blocks(*, blocks: Iterable[Block], markdown: str) -> str:
-    rendered = [
-        (
-            f"[block ordinal={block.ordinal} type={block.type.value}"
-            f" hash={block.block_hash}]\n"
-            f"{markdown[block.char_start : block.char_end]}"
-        )
-        for block in blocks
-    ]
+    rendered = [_render_block(block=block, markdown=markdown) for block in blocks]
     return "\n\n".join(rendered) if rendered else "(none)"
 
 
@@ -728,15 +776,15 @@ def _render_final_prompt(
     if section.node_path == "0":
         return _ROOT_TEMPLATE.format(
             instruction=_ROOT_INSTRUCTION,
-            title=source.title or "(untitled)",
-            source_kind=source.source_kind,
+            title=_capped(source.title, fallback="(untitled)"),
+            source_kind=_capped(source.source_kind, fallback="(unknown)"),
             blocks=_render_blocks(blocks=blocks, markdown=markdown),
             children="\n".join(child_lines) if child_lines else "(none)",
         )
     return _SECTION_TEMPLATE.format(
         instruction=_SUMMARY_INSTRUCTION,
         node_path=section.node_path,
-        title=section.title or "(untitled section)",
+        title=_capped(section.title, fallback="(untitled section)"),
         blocks=_render_blocks(blocks=blocks, markdown=markdown),
         children="\n".join(child_lines) if child_lines else "(none)",
     )
@@ -752,7 +800,7 @@ def _render_shard_prompt(
     return _SHARD_TEMPLATE.format(
         instruction=_SUMMARY_INSTRUCTION,
         node_path=section.node_path,
-        title=section.title or "(untitled section)",
+        title=_capped(section.title, fallback="(untitled section)"),
         shard_index=shard_index,
         blocks=_render_blocks(blocks=blocks, markdown=markdown),
     )
@@ -765,9 +813,23 @@ def _render_reduce_prompt(
         instruction=_REDUCE_INSTRUCTION,
         call_kind=call_kind,
         node_path=section.node_path,
-        title=section.title or "(untitled section)",
+        title=_capped(section.title, fallback="(untitled section)"),
         lines="\n".join(lines),
     )
+
+
+def _render_child_lines(
+    *, child_sections: tuple[SnappedSection, ...], child_summaries: tuple[str, ...]
+) -> tuple[str, ...]:
+    return tuple(
+        f"{child.node_path} | "
+        f"{_capped(child.title, fallback='(untitled section)')} | {summary}"
+        for child, summary in zip(child_sections, child_summaries, strict=True)
+    )
+
+
+def _capped(value: str | None, *, fallback: str) -> str:
+    return (value or fallback)[:LONG_TITLE]
 
 
 def _block_shards(
@@ -819,5 +881,43 @@ def _balanced_groups(
     return tuple(groups)
 
 
+def _bounded_reduction_groups(
+    *, section: SnappedSection, lines: tuple[str, ...], call_kind: str
+) -> tuple[tuple[str, ...], ...] | None:
+    """Choose the widest balanced groups whose rendered calls are bounded."""
+    if not lines:
+        return None
+    for fan_in in range(min(SUMMARY_BALANCED_FAN_IN, len(lines)), 1, -1):
+        groups = _balanced_groups(values=lines, fan_in=fan_in)
+        if all(
+            _within_ceiling(
+                prompt=_render_reduce_prompt(
+                    section=section, lines=group, call_kind=call_kind
+                )
+            )
+            for group in groups
+        ):
+            return groups
+    singleton_groups = tuple((line,) for line in lines)
+    if all(
+        _within_ceiling(
+            prompt=_render_reduce_prompt(
+                section=section, lines=group, call_kind=call_kind
+            )
+        )
+        for group in singleton_groups
+    ):
+        return singleton_groups
+    return None
+
+
+def _normalize_one_line(value: str) -> str | None:
+    normalized = " ".join(value.split())[:SUMMARY_MAX_CHARS].rstrip()
+    return normalized or None
+
+
 def _within_ceiling(*, prompt: str) -> bool:
-    return count_tokens(text=prompt) <= SUMMARY_CALL_TOKEN_CEILING
+    return (
+        count_tokens(text=prompt) <= SUMMARY_CALL_TOKEN_CEILING
+        and len(prompt) <= SUMMARY_CALL_CHAR_CEILING
+    )

@@ -382,10 +382,13 @@ unchanged):
   bounded: a leaf larger than the summary-call token ceiling is sharded at block grain and
   reduced; a parent call reads its **own direct blocks plus its children's one-liners** (a
   chapter's preamble is content too) with balanced fan-in when children are many. Calls are
-  parallel and cached per section; the cache key is the ordered constituent block hashes,
-  child-summary hashes, model, prompt, generation parameters, and summarizer version. This is
-  the call shape where cheap models are reliable: bounded context, no arithmetic, no giant
-  output. **Degradation convention:** `summary_version` is non-null only when every section
+  parallel and cached per section; the cache key hashes the ordered rendered block strings,
+  rendered child lines (path + capped title + summary), model, prompt, generation parameters,
+  and summarizer version. This is the call shape where cheap models are reliable: bounded
+  context, no arithmetic, no giant output. The versioned token estimate is whitespace-based;
+  the companion character ceiling is the hard bound for whitespace-poor/CJK/minified input,
+  and every rendered call must fit both. **Degradation convention:** `summary_version` is
+  non-null only when every section
   in the generation has a summary; any failed section call leaves that section null (and any
   ancestor that cannot receive all child one-liners null), may preserve successful summaries
   in independent subtrees, and makes the generation's `summary_version` null. Because root

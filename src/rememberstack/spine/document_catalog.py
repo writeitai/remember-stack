@@ -244,14 +244,11 @@ class DocumentCatalog:
             raise RuntimeError("current structure generation has no root section")
         return _persisted_tree(generation=generation, sections=persisted)
 
-    def summary_cache_sidecars(
-        self, *, doc_id: UUID, summary_version: str
-    ) -> tuple[str, ...]:
-        """Prior successful summary generations for sidecar cache lookup."""
+    def summary_cache_sidecars(self, *, doc_id: UUID) -> tuple[str, ...]:
+        """All prior sidecars that may contain keyed summary cache entries."""
         with self._engine.connect() as connection:
             rows = connection.execute(
-                _SELECT_SUMMARY_CACHE_SIDECARS,
-                {"doc_id": doc_id, "summary_version": summary_version},
+                _SELECT_SUMMARY_CACHE_SIDECARS, {"doc_id": doc_id}
             ).scalars()
             return tuple(str(uri) for uri in rows)
 
@@ -754,7 +751,6 @@ _SELECT_SUMMARY_CACHE_SIDECARS = text(
     SELECT pageindex_uri
     FROM document_structure_generations
     WHERE doc_id = :doc_id
-      AND summary_version = :summary_version
       AND pageindex_uri IS NOT NULL
     ORDER BY created_at DESC, structure_generation_id
     """

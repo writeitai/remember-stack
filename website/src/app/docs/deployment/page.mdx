@@ -25,7 +25,9 @@ placement reduction, default `z-ai/glm-4.7-flash`), and
 `REMEMBERSTACK_STRUCTURER_MODEL` — which names **only** the string-anchor
 fallback proposer for documents whose headings cannot be parsed or whose
 parsed tree fails the sanity check. Routine skeleton construction is
-deterministic; bounded summary calls still run on the selected tree.
+deterministic; bounded summary calls still run on the selected tree. Their
+versioned token estimate is whitespace-based, while a companion character
+ceiling is the hard request bound for whitespace-poor input.
 
 ## Start the stack
 

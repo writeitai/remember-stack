@@ -165,11 +165,11 @@ class RoleClassificationResponse(BaseModel):
 
 
 class SectionSummaryResponse(BaseModel):
-    """One bounded, single-line section summary and no auxiliary prose."""
+    """One section summary and no auxiliary prose."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    summary: str = Field(min_length=1, max_length=512, pattern=r"^[^\r\n]+$")
+    summary: str = Field(min_length=1)
 
 
 class RootSummaryPlacementResponse(BaseModel):
@@ -177,8 +177,8 @@ class RootSummaryPlacementResponse(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    summary: str = Field(min_length=1, max_length=512, pattern=r"^[^\r\n]+$")
-    placement_path: str = Field(min_length=3, max_length=512, pattern=r"^/[^\r\n]+/$")
+    summary: str = Field(min_length=1)
+    placement_path: str = Field(min_length=1)
 
 
 class SnappedSection(BaseModel):

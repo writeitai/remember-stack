@@ -85,12 +85,13 @@ from rememberstack.workers.e1 import E1_CHUNK_VERSION
 E0_CONVERT_VERSION: Final = "e0-convert-2026.07"
 """The convert sub-worker's component version (D12 idempotency key member)."""
 
-E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07e:d79-wave2"
+E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07f:d79-wave2"
 """The aggregate Wave-2 generation identity.
 
 Maps old ``e0-structure-2026.07c:temp0-1`` (one-shot offsets/tree/roles/
 summaries/placement) to the D79 split: deterministic/anchor skeleton, sanity
 check, role pass, bottom-up summaries, and root-reduction placement.
+The ``07f`` seed is input/seat identity only; provider output never mints.
 """
 
 E0_SKELETON_VERSION: Final = (
@@ -682,6 +683,8 @@ class StructureHandler:
                     self._persist_generation(
                         source=source,
                         sections=parsed,
+                        blocks=blocks,
+                        markdown=markdown,
                         route=StructureRouteTag.PARSER_DEMOTED_CHECK,
                         analysis=parsed_analysis,
                         candidate_skeleton_hash=parsed_hash,
@@ -714,6 +717,22 @@ class StructureHandler:
                 else:
                     route = StructureRouteTag.PARSER
 
+            if (
+                current is not None
+                and current.route_tag == route
+                and current.skeleton_version == configured_skeleton_version
+                and current.skeleton_hash == skeleton_hash(sections=selected)
+                and current.roles_version == configured_role_version
+                and current.summary_version == self._summarizer.version
+                and current.placement_version == self._summarizer.placement_version
+                and current.placement_path is not None
+                and all(section.summary is not None for section in current.sections)
+            ):
+                # A checker-only bump already appended its check record. If it
+                # kept the route and selected tree, the complete current seats
+                # remain authoritative: no roles/summaries or pointer write.
+                return _chunk_outcome(work=work, source=source)
+
             selected = self._assign_roles(sections=selected, meter=meter)
 
         if replay_summary is not None:
@@ -727,6 +746,7 @@ class StructureHandler:
                 sections=selected,
                 placement_path=replay_placement,
                 blocks=blocks,
+                markdown=markdown,
             )
         else:
             summary_result = self._summarizer.summarize(
@@ -739,6 +759,8 @@ class StructureHandler:
         self._persist_generation(
             source=source,
             sections=summary_result.sections,
+            blocks=blocks,
+            markdown=markdown,
             route=route,
             analysis=selection_analysis,
             candidate_skeleton_hash=selection_candidate_hash,
@@ -752,23 +774,7 @@ class StructureHandler:
             producer_family=producer_family,
             make_current=True,
         )
-        return HandlerOutcome(
-            follow_up=(
-                EnqueueWork(
-                    deployment_id=work.deployment_id,
-                    target_kind=work.target_kind,
-                    target_id=work.target_id,
-                    stage=PipelineStage.CHUNK,
-                    component_version=E1_CHUNK_VERSION,
-                    content_hash=work.content_hash,
-                    lane=work.lane,
-                    payload={
-                        "version_id": str(source.version_id),
-                        "representation_id": str(source.representation_id),
-                    },
-                ),
-            )
-        )
+        return _chunk_outcome(work=work, source=source)
 
     def _fallback_with_terminal(
         self,
@@ -1044,6 +1050,8 @@ class StructureHandler:
         *,
         source: StructureSource,
         sections: tuple[SnappedSection, ...],
+        blocks: tuple[Block, ...],
+        markdown: str,
         route: StructureRouteTag,
         analysis: SkeletonAnalysis,
         candidate_skeleton_hash: str,
@@ -1059,29 +1067,20 @@ class StructureHandler:
     ) -> None:
         """Append one generation, then write its versioned sidecar.
 
-        The generation identity is seeded from the SELECTED tree and route —
-        never from the checker version. Both halves of the D79 rule follow
-        from one seed: a checker bump over an unchanged route+tree derives
-        the same id (ON CONFLICT no-op — no minted generation, no pointer
-        churn), while a genuine route flip or a different fallback tree
-        changes the seed and appends a real generation. Role, summary, and
-        placement versions/content stay in the seed because they change the
-        immutable section rows/sidecar. The checker version remains excluded.
+        The generation identity is selected-input and seat identity only,
+        never checker version or provider output. A checker bump over an
+        unchanged route+tree derives the same id, while a route/tree or seat
+        change appends a generation. Degraded markers still re-mint repairs.
         """
         skeleton_version = _skeleton_version(settings=self._settings)
-        roles_hash = _roles_hash(sections=sections)
-        summaries_hash = _summaries_hash(sections=sections)
-        placement_hash = hashlib.sha256(
-            (placement_path or "<null>").encode("utf-8")
-        ).hexdigest()
         generation_id = uuid5(
             NAMESPACE_URL,
             "rememberstack:structure:"
             f"{source.representation_id}:{E0_STRUCTURE_VERSION}:"
             f"{route.value}:{skeleton_hash(sections=sections)}:"
-            f"{skeleton_version}:{roles_version or 'none'}:{roles_hash}:"
-            f"{summary_version or 'degraded'}:{summaries_hash}:"
-            f"{placement_version or 'degraded'}:{placement_hash}",
+            f"{skeleton_version}:{roles_version or 'none'}:"
+            f"{summary_version or 'degraded'}:"
+            f"{placement_version or 'degraded'}",
         )
         sidecar_key = (
             source.blocks_uri.rsplit("/", 1)[0]
@@ -1114,6 +1113,22 @@ class StructureHandler:
                 make_current=make_current,
             )
         )
+        persisted_cache_keys = summary_cache_keys
+        if persisted.sections != sections or persisted.placement_path != placement_path:
+            if persisted.placement_path is not None and all(
+                section.summary is not None for section in persisted.sections
+            ):
+                persisted_cache_keys = self._summarizer.replay(
+                    source=source,
+                    sections=persisted.sections,
+                    placement_path=persisted.placement_path,
+                    blocks=blocks,
+                    markdown=markdown,
+                ).cache_keys
+            else:
+                # A concurrent first write with different partial output did
+                # not necessarily see the prompts keyed by this attempt.
+                persisted_cache_keys = {}
         payload = _json_bytes(
             payload={
                 "structure_generation_id": str(persisted.structure_generation_id),
@@ -1138,7 +1153,9 @@ class StructureHandler:
                 "sections": [
                     {
                         **section.model_dump(mode="json"),
-                        "summary_cache_key": summary_cache_keys.get(section.node_path),
+                        "summary_cache_key": persisted_cache_keys.get(
+                            section.node_path
+                        ),
                     }
                     for section in persisted.sections
                 ],
@@ -1150,6 +1167,27 @@ class StructureHandler:
             )
         except ObjectAlreadyExistsError:
             pass
+
+
+def _chunk_outcome(*, work: ClaimedWork, source: StructureSource) -> HandlerOutcome:
+    """Continue the selected representation into deterministic chunking."""
+    return HandlerOutcome(
+        follow_up=(
+            EnqueueWork(
+                deployment_id=work.deployment_id,
+                target_kind=work.target_kind,
+                target_id=work.target_id,
+                stage=PipelineStage.CHUNK,
+                component_version=E1_CHUNK_VERSION,
+                content_hash=work.content_hash,
+                lane=work.lane,
+                payload={
+                    "version_id": str(source.version_id),
+                    "representation_id": str(source.representation_id),
+                },
+            ),
+        )
+    )
 
 
 def _render_fallback_prompt(
@@ -1377,22 +1415,6 @@ def _failure_envelope(
         "error_fingerprint": hashlib.sha256(str(error).encode("utf-8")).hexdigest(),
         "has_usage": usage is not None,
     }
-
-
-def _roles_hash(*, sections: tuple[SnappedSection, ...]) -> str:
-    """Content identity for role-bearing immutable section rows."""
-    payload = tuple((section.node_path, section.role) for section in sections)
-    return hashlib.sha256(
-        json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-
-def _summaries_hash(*, sections: tuple[SnappedSection, ...]) -> str:
-    """Content identity for ordered summary values, including nulls."""
-    payload = tuple((section.node_path, section.summary) for section in sections)
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def _is_incoherent(*, outcome: SkeletonCheckOutcome) -> bool:
