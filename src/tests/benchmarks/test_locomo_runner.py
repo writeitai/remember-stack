@@ -25,10 +25,13 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
+from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
+from benchmarks.locomo.protocol import JUDGE_MODEL
+from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.runner import _answer_one
 from benchmarks.locomo.runner import _judge_one
 from benchmarks.locomo.runner import answer_sample
@@ -72,7 +75,7 @@ def test_agent_calls_public_recipe_then_answers() -> None:
             provider=provider,
             tools=(_tool(),),
             doc_sessions={},
-            state=RunState(),
+            state=_run_state(),
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
         )
@@ -103,7 +106,7 @@ def test_answer_without_consulting_memory_is_rejected() -> None:
             provider=provider,
             tools=(_tool(),),
             doc_sessions={},
-            state=RunState(),
+            state=_run_state(),
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
         )
@@ -118,7 +121,7 @@ def test_answer_without_consulting_memory_is_rejected() -> None:
 def test_agent_and_judge_share_one_run_absolute_cost_threshold() -> None:
     client, raw_client = _memory_client()
     provider = _CostProvider(cost=Decimal("0.30"))
-    state = RunState()
+    state = _run_state()
     try:
         answer = _answer_one(
             question=_question(),
@@ -149,7 +152,7 @@ def test_agent_and_judge_share_one_run_absolute_cost_threshold() -> None:
 def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None:
     client, raw_client = _memory_client()
     provider = _CostProvider(cost=Decimal("0.70"))
-    state = RunState()
+    state = _run_state()
     try:
         answer = _answer_one(
             question=_question(),
@@ -172,17 +175,30 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
     assert provider.models == [ANSWER_AGENT_MODEL]
 
 
-def test_staged_mock_run_checks_readiness_and_resumes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("protocol", "answer_agent_model"),
+    (("full-v5", "openai/gpt-4o-mini"), ("full-v5-strong", "openai/gpt-5.6-luna")),
+)
+def test_staged_mock_run_uses_prepared_protocol_and_resumes(
+    protocol: ProtocolKey,
+    answer_agent_model: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
-    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    prepare_run(
+        dataset_path=tmp_path / "synthetic.json",
+        tier="smoke",
+        output=run_dir,
+        protocol=protocol,
+    )
     raw_client = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
     )
     client = MemoryClient(client=raw_client)
-    provider = FakeModelProvider(generate_router=_tool_answer_and_judge)
+    preflight_provider = _PreflightProvider()
+    provider = _CostProvider(cost=Decimal(0))
     try:
         ingests = ingest_sample(
             run_dir=run_dir,
@@ -191,7 +207,7 @@ def test_staged_mock_run_checks_readiness_and_resumes(
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
-            provider=_PreflightProvider(),
+            provider=preflight_provider,
         )
         first_answers = answer_sample(
             run_dir=run_dir,
@@ -235,7 +251,8 @@ def test_staged_mock_run_checks_readiness_and_resumes(
     assert len(ingests) == 1
     assert first_answers == second_answers
     assert first_judges == second_judges
-    assert len(provider.generated_prompts) == 3
+    assert preflight_provider.models == [answer_agent_model]
+    assert provider.models == [answer_agent_model, answer_agent_model, JUDGE_MODEL]
     summary = summarize_run(run_dir=run_dir)
     assert summary.judge_correct == 1
     assert summary.official_f1 == 1
@@ -610,6 +627,53 @@ def test_missing_records_remain_in_full_manifest_denominator(
     assert summary.failures == {"missing_answer": 1, "missing_judge": 1}
 
 
+def test_prepared_protocol_pins_and_fingerprints_are_distinct(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    weak_dir = tmp_path / "weak"
+    strong_dir = tmp_path / "strong"
+
+    weak = prepare_run(
+        dataset_path=tmp_path / "synthetic.json", tier="smoke", output=weak_dir
+    )
+    strong = prepare_run(
+        dataset_path=tmp_path / "synthetic.json",
+        tier="smoke",
+        output=strong_dir,
+        protocol="full-v5-strong",
+    )
+
+    assert weak.protocol_name == "RS-LoCoMo-Full-v5"
+    assert weak.answer_agent_model == "openai/gpt-4o-mini"
+    assert weak.protocol_fingerprint == (
+        "e532af4e7b349df3532388356eabe7acec474f778ba9fdcc01b397c3abe140d6"
+    )
+    assert strong.protocol_name == "RS-LoCoMo-Full-v5-strong"
+    assert strong.answer_agent_model == "openai/gpt-5.6-luna"
+    assert strong.protocol_fingerprint == (
+        "5014757da1a0e75bf256dc2126a71adfe83747bfff2439519640c3cfc41e9979"
+    )
+    assert strong.protocol_fingerprint != weak.protocol_fingerprint
+
+    weak_state = RunState.model_validate_json(
+        (weak_dir / "state.json").read_text(encoding="utf-8")
+    )
+    strong_state = RunState.model_validate_json(
+        (strong_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert (weak_state.protocol_name, weak_state.protocol_fingerprint) == (
+        weak.protocol_name,
+        weak.protocol_fingerprint,
+    )
+    assert (strong_state.protocol_name, strong_state.protocol_fingerprint) == (
+        strong.protocol_name,
+        strong.protocol_fingerprint,
+    )
+    assert summarize_run(run_dir=weak_dir).protocol_name == weak.protocol_name
+    assert summarize_run(run_dir=strong_dir).protocol_name == strong.protocol_name
+
+
 def test_protocol_mutation_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -739,12 +803,14 @@ class _PreflightProvider:
         self.fail = fail
         self.embed_calls = 0
         self.generate_calls = 0
+        self.models: list[str] = []
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
     ) -> GeneratedResponse[ResponseT]:
         """Return the tiny structured probe answer."""
         self.generate_calls += 1
+        self.models.append(request.model)
         if self.fail:
             raise OpenRouterProviderError("OpenRouter /chat/completions returned 401")
         return GeneratedResponse(
@@ -819,6 +885,12 @@ class _CostProvider:
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         raise AssertionError(f"unexpected embed call: {request.model}")
+
+
+def _run_state() -> RunState:
+    return RunState(
+        protocol_name=PROTOCOL_NAME, protocol_fingerprint="synthetic-test-fingerprint"
+    )
 
 
 def _patch_prepared_inputs(*, monkeypatch: pytest.MonkeyPatch) -> None:

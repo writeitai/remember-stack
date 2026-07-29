@@ -8,6 +8,8 @@ from decimal import InvalidOperation
 from pathlib import Path
 import sys
 
+from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ingest_sample
@@ -27,7 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "prepare":
             configuration = prepare_run(
-                dataset_path=args.dataset, tier=args.tier, output=args.output
+                dataset_path=args.dataset,
+                tier=args.tier,
+                output=args.output,
+                protocol=args.protocol,
             )
             print(configuration.model_dump_json())
             return 0
@@ -118,6 +123,9 @@ def _parser() -> argparse.ArgumentParser:
         "--tier", choices=("smoke", "development", "publication"), required=True
     )
     prepare.add_argument("--output", type=Path, required=True)
+    prepare.add_argument(
+        "--protocol", choices=tuple(PROTOCOL_REGISTRY), default=DEFAULT_PROTOCOL_KEY
+    )
 
     ingest = commands.add_parser(
         "ingest", help="upload one sample to a clean isolated deployment"

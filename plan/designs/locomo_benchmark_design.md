@@ -61,6 +61,15 @@ The tool-catalog hash changed, so the protocol version bumps — the v4 smoke
 scores (glm-4.7-flash arm) were taken against the pre-truncation catalog and
 are not directly comparable.
 
+**v5-strong variant (2026-07-29):** `RS-LoCoMo-Full-v5-strong` changes only
+the answer agent to `openai/gpt-5.6-luna`. It exists because three smoke
+passes on a healthy store (coarse evidence-session recall 0.5, with the gold
+evidence at rank 1) scored only 1–2/8 with `openai/gpt-4o-mini`, which looped
+past the tool-call limit or returned invalid responses. Scores from
+`RS-LoCoMo-Full-v5` and `RS-LoCoMo-Full-v5-strong` are never comparable. The
+weak-agent `RS-LoCoMo-Full-v5` protocol remains the default measurement of
+what a harness consumer experiences.
+
 ### 2.1 Why v2+ uses a stronger judge
 
 `RS-LoCoMo-Full-v1` used `openai/gpt-4o-mini` for both the answer agent and the judge. The

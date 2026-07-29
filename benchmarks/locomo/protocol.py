@@ -7,20 +7,28 @@ from dataclasses import dataclass
 import hashlib
 import json
 import string
+from types import MappingProxyType
 from typing import Final
+from typing import Mapping
 
 from nltk.stem import PorterStemmer
 import regex
 
+from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
+from benchmarks.locomo.model import JudgeModel
 from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
+from benchmarks.locomo.model import ProtocolKey
+from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v5"
+STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v5-strong"
+DEFAULT_PROTOCOL_KEY: Final = "full-v5"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -41,6 +49,7 @@ EXPECTED_PIPELINE_STAGES: Final = (
 )
 EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
 ANSWER_AGENT_MODEL: Final = "openai/gpt-4o-mini"
+STRONG_ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 TEMPERATURE: Final = 0.0
 
@@ -90,6 +99,77 @@ WRONG.
 Question: {question}
 Gold answer: {gold_answer}
 Generated answer: {generated_answer}"""
+
+
+@dataclass(frozen=True)
+class LoCoMoProtocol:
+    """One fully typed, immutable LoCoMo protocol pin."""
+
+    key: ProtocolKey
+    name: ProtocolName
+    answer_agent_model: AnswerAgentModel
+    judge_model: JudgeModel
+    answer_prompt_template: str
+    judge_prompt_template: str
+    answer_schema: type[AnswerAgentStep]
+    judge_schema: type[JudgeOutput]
+    tool_catalog_sha256: str
+    max_tool_calls_per_question: int
+    max_agent_calls_per_question: int
+    answer_agent_temperature: float
+    judge_temperature: float
+    judge_repetitions: int
+
+
+_FULL_V5 = LoCoMoProtocol(
+    key="full-v5",
+    name=PROTOCOL_NAME,
+    answer_agent_model=ANSWER_AGENT_MODEL,
+    judge_model=JUDGE_MODEL,
+    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
+    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
+    answer_schema=AnswerAgentStep,
+    judge_schema=JudgeOutput,
+    tool_catalog_sha256=EXPECTED_TOOL_CATALOG_SHA256,
+    max_tool_calls_per_question=MAX_TOOL_CALLS,
+    max_agent_calls_per_question=MAX_AGENT_CALLS,
+    answer_agent_temperature=TEMPERATURE,
+    judge_temperature=TEMPERATURE,
+    judge_repetitions=1,
+)
+_FULL_V5_STRONG = LoCoMoProtocol(
+    key="full-v5-strong",
+    name=STRONG_PROTOCOL_NAME,
+    answer_agent_model=STRONG_ANSWER_AGENT_MODEL,
+    judge_model=JUDGE_MODEL,
+    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
+    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
+    answer_schema=AnswerAgentStep,
+    judge_schema=JudgeOutput,
+    tool_catalog_sha256=EXPECTED_TOOL_CATALOG_SHA256,
+    max_tool_calls_per_question=MAX_TOOL_CALLS,
+    max_agent_calls_per_question=MAX_AGENT_CALLS,
+    answer_agent_temperature=TEMPERATURE,
+    judge_temperature=TEMPERATURE,
+    judge_repetitions=1,
+)
+
+PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
+    {_FULL_V5.key: _FULL_V5, _FULL_V5_STRONG.key: _FULL_V5_STRONG}
+)
+
+
+def protocol_for_key(key: ProtocolKey) -> LoCoMoProtocol:
+    """Resolve the one protocol explicitly selected during preparation."""
+    return PROTOCOL_REGISTRY[key]
+
+
+def protocol_for_name(name: ProtocolName) -> LoCoMoProtocol:
+    """Resolve a persisted protocol name for immutable-pin validation."""
+    return next(
+        protocol for protocol in PROTOCOL_REGISTRY.values() if protocol.name == name
+    )
+
 
 _DIALOG_ID = regex.compile(r"D([0-9]+):[0-9]+")
 _EXACT_DIALOG_ID = regex.compile(r"^D[0-9]+:[0-9]+$")
