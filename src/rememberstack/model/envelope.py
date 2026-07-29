@@ -209,6 +209,8 @@ class EvidenceResult(BaseModel):
     char_end: int
     is_attributed: bool
     is_current_testimony: bool
+    claim_valid_from: UTCDateTime | None = None
+    claim_valid_until: UTCDateTime | None = None
 
 
 class SourceRecord(BaseModel):

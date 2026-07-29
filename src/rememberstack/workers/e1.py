@@ -57,16 +57,16 @@ E1_PREFIXER_VERSION: Final = f"e1-prefix-2026.07c:temp0-1:{SECTION_ORIENTATION_V
 07b pins temperature=0.0 — generation parameters are part of provenance.
 07c adds D79's bounded current-generation section-summary orientation."""
 
-E2_EXTRACTOR_VERSION: Final = (
-    f"e2-extract-2026.07g:union-grounding-1:{SECTION_ORIENTATION_VERSION}"
-)
+E2_EXTRACTOR_VERSION: Final = f"e2-extract-2026.07h:union-grounding-1:temporal-anchor-1:{SECTION_ORIENTATION_VERSION}"
 """The extractor generation baked into extraction_input_hash (D56); the E2
-stage (WP-1.3) binds its handler to this same constant. 07g makes D32 layer-2
-grounding union-based across source-derived bundle texts with advisory source
-tags; 07f adds D79 summary orientation to the bundle without making summaries
-hash or grounding inputs; 07e ledgers Claimify omissions and grounding-gate
-rejections on the D33 transcript (#161); 07d pinned temperature=0.0 on the
-Selection call (Claimify already carried it)."""
+stage (WP-1.3) binds its handler to this same constant. 07h requires relative
+temporal expressions to resolve against an in-document absolute anchor into
+structured D41 valid-time while claim text keeps the source wording (#158);
+07g makes D32 layer-2 grounding union-based across source-derived bundle texts
+with advisory source tags; 07f adds D79 summary orientation to the bundle
+without making summaries hash or grounding inputs; 07e ledgers Claimify
+omissions and grounding-gate rejections on the D33 transcript (#161); 07d
+pinned temperature=0.0 on the Selection call (Claimify already carried it)."""
 
 _PREFIX_PROMPT_TEMPLATE: Final = (
     "In one sentence, state where this passage sits in the document — "

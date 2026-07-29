@@ -155,6 +155,13 @@ plans. Each returns the envelope.
 | `GET /hydrate/relation/{relation_id}` | the audit chain: a relation → its evidence claims → source documents |
 | `GET /transcript/relation/{relation_id}` | the decision history: why the system believes what it believes |
 
+Evidence rows returned by claim search and relation hydration include
+`claim_valid_from` and `claim_valid_until`. These are nullable ISO-8601
+timestamps bounding the source-asserted world interval (valid-time) during which
+the fact holds or happened, including bounds resolved from relative phrases
+against an in-document timestamp; they are evidence, not the fact layer's
+current-validity verdict.
+
 `resolve` always returns every exact-name candidate. Supplying focal entities only
 reorders those candidates: a candidate related to more of the supplied entities
 ranks first, and each candidate discloses its `context_hits`. Context therefore

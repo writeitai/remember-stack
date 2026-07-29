@@ -12,8 +12,33 @@ from rememberstack.model import ClaimValidKind
 from rememberstack.model import ClaimValidPrecision
 from rememberstack.spine.catalog_contract import CLAIM_VALID_KIND_VALUES
 from rememberstack.spine.catalog_contract import CLAIM_VALID_PRECISION_VALUES
+from rememberstack.workers.e2 import _CLAIMIFY_PROMPT
 from rememberstack.workers.e2 import _parse_claim_valid_time
 from rememberstack.workers.e2 import _parse_iso_timestamp
+
+
+def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> None:
+    """The extraction request makes #158's structured-only rule unmistakable."""
+    rendered = _CLAIMIFY_PROMPT.format(
+        keeps="- Melanie painted a lake sunrise last year.",
+        bundle=(
+            "DOCUMENT HEADER: title chat; source upload; date 2023-05-08;"
+            " language en\n"
+            "TARGET CHUNK:\nMelanie painted a lake sunrise last year."
+        ),
+    )
+
+    assert "TEMPORAL RESOLUTION IS REQUIRED" in rendered
+    assert "you MUST resolve the expression" in rendered
+    assert "computed absolute time ONLY in those structured" in rendered
+    assert "valid-time fields" in rendered
+    assert 'claim_text="painted a lake sunrise last year"' in rendered
+    assert "valid_from_iso=2022-01-01" in rendered
+    assert "valid_until_iso=2022-12-31" in rendered
+    assert "valid_precision=year" in rendered
+    assert "valid_from_iso=2023-05-07" in rendered
+    assert "valid_from_iso=2023-05-06" in rendered
+    assert "If the document has no absolute anchor" in rendered
 
 
 def test_claim_valid_enums_match_catalog_contract() -> None:
