@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from pathlib import Path
 import re
 from uuid import UUID
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -25,15 +26,18 @@ from sqlalchemy.engine import Engine
 from rememberstack.adapters.selfhost import LanceChunkIndex
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
+from rememberstack.model import ClaimedWork
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
+from rememberstack.model import ProcessingTarget
 from rememberstack.model import RunResultOutcome
 from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
@@ -45,6 +49,7 @@ from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
+from rememberstack.workers import E0_STRUCTURE_VERSION
 from rememberstack.workers import E1Settings
 from rememberstack.workers import E2_EXTRACTOR_VERSION
 from rememberstack.workers import E2Settings
@@ -52,6 +57,7 @@ from rememberstack.workers import EmbedChunksHandler
 from rememberstack.workers import ExtractClaimsHandler
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import StructureHandler
+from rememberstack.workers import SummarySettings
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
 
@@ -86,6 +92,14 @@ def _paragraphs(*, edited: bool) -> str:
 
 def _canned(prompt: str, type_name: str) -> dict[str, object]:
     """Deterministic Selection/Claimify payloads grounded in the real bundle."""
+    if type_name == "FallbackStructureResponse":
+        return {"sections": []}
+    if type_name == "RootSummaryPlacementResponse":
+        marker = "edited" if "entirely different" in prompt else "original"
+        return {
+            "summary": f"The {marker} reuse-spike document.",
+            "placement_path": "/reuse-spike/",
+        }
     if type_name == "ContextPrefix":
         return {"prefix": "Sits in the reuse spike corpus."}
     match = _TARGET_PATTERN.search(prompt)
@@ -158,6 +172,8 @@ class _ReuseRig:
         self.chunk_catalog = ChunkCatalog(engine=engine)
         self.claim_catalog = ClaimCatalog(engine=engine)
         catalog = DocumentCatalog(engine=engine)
+        self.document_catalog = catalog
+        self.artifact_store = artifact_store
         self.ingestor = UploadIngestor(
             catalog=catalog, raw_store=raw_store, admission=ForgetCatalog(engine=engine)
         )
@@ -175,7 +191,11 @@ class _ReuseRig:
         )
         registry.register(
             stage=PipelineStage.STRUCTURE,
-            handler=StructureHandler(catalog=catalog, artifact_store=artifact_store),
+            handler=StructureHandler(
+                catalog=catalog,
+                artifact_store=artifact_store,
+                model_provider=self.provider,
+            ),
         )
         registry.register(
             stage=PipelineStage.CHUNK,
@@ -334,6 +354,77 @@ def test_reuse_cost_is_proportional_to_the_edit(rig: _ReuseRig) -> None:
     )
 
 
+def test_summary_change_keeps_hash_and_reuses_unchanged_chunks(rig: _ReuseRig) -> None:
+    """A content edit that also changes the ancestor summary re-extracts only
+    the edited chunks — reuse breadth pinned by count. (This conflates a
+    content edit with the summary change by construction; the PURE
+    summary-swap isolation proof is the dedicated test below.)"""
+    first = rig.observe(content=_paragraphs(edited=False))
+    rig.drain()
+    baseline_selection = rig.selection_calls()
+    with rig.engine.connect() as connection:
+        first_summary = connection.execute(
+            text(
+                "SELECT s.summary FROM document_sections s"
+                " JOIN document_representations r"
+                " ON r.representation_id = s.representation_id"
+                " AND r.current_structure_generation_id = s.structure_generation_id"
+                " WHERE s.version_id = :version_id AND s.node_path = '0'"
+            ),
+            {"version_id": first.version_id},
+        ).scalar_one()
+
+    second = rig.observe(content=_paragraphs(edited=True))
+    rig.drain()
+    selection_v2 = rig.selection_calls() - baseline_selection
+    with rig.engine.connect() as connection:
+        second_summary = connection.execute(
+            text(
+                "SELECT s.summary FROM document_sections s"
+                " JOIN document_representations r"
+                " ON r.representation_id = s.representation_id"
+                " AND r.current_structure_generation_id = s.structure_generation_id"
+                " WHERE s.version_id = :version_id AND s.node_path = '0'"
+            ),
+            {"version_id": second.version_id},
+        ).scalar_one()
+        v2_chunk_count = connection.execute(
+            text("SELECT count(*) FROM chunks WHERE version_id = :version_id"),
+            {"version_id": second.version_id},
+        ).scalar_one()
+        reused = (
+            connection.execute(
+                text(
+                    "SELECT c2.extraction_input_hash AS second_hash,"
+                    " c1.extraction_input_hash AS first_hash"
+                    " FROM chunks c2"
+                    " JOIN chunks c1"
+                    " ON c1.doc_id = c2.doc_id"
+                    " AND c1.extraction_input_hash = c2.extraction_input_hash"
+                    " WHERE c1.version_id = :first_version"
+                    " AND c2.version_id = :second_version"
+                    " AND EXISTS (SELECT 1 FROM chunk_claims cc"
+                    "             WHERE cc.chunk_id = c2.chunk_id)"
+                    " AND NOT EXISTS (SELECT 1 FROM claims cl"
+                    "                 WHERE cl.chunk_id = c2.chunk_id)"
+                ),
+                {
+                    "first_version": first.version_id,
+                    "second_version": second.version_id,
+                },
+            )
+            .mappings()
+            .all()
+        )
+
+    assert first_summary == "The original reuse-spike document."
+    assert second_summary == "The edited reuse-spike document."
+    # Reuse breadth, not a tautology (review): every v2 chunk either reused a
+    # v1 extraction (rows here) or was freshly selected (selection_v2).
+    assert len(reused) == v2_chunk_count - selection_v2
+    assert 0 < selection_v2 < v2_chunk_count
+
+
 def test_reused_chunks_carry_identical_claims_and_prefixes(rig: _ReuseRig) -> None:
     """Re-attachment is exact: an unchanged chunk's occurrence links point at
     the SAME immutable claim rows as version 1, and its stored prefix is
@@ -430,3 +521,76 @@ def test_extractor_bump_re_extracts_reused_chunks(rig: _ReuseRig) -> None:
     assert not rig.claim_catalog.chunk_already_extracted(
         chunk_id=reused_chunk, extractor_version="e2-extract-9999.01"
     )
+
+
+def test_pure_summary_seat_swap_reextracts_and_reprefixes_nothing(
+    rig: _ReuseRig,
+) -> None:
+    """D79's literal promise, un-conflated (review): a re-summarization with
+    UNCHANGED content — a summary-seat swap minting a new generation — drives
+    zero new Selection calls, zero new ContextPrefix calls, and leaves every
+    chunk's extraction_input_hash byte-identical."""
+    first = rig.observe(content=_paragraphs(edited=False))
+    rig.drain()
+    base_selection = rig.selection_calls()
+    base_prefix = rig.prefix_calls()
+    with rig.engine.connect() as connection:
+        representation = connection.execute(
+            text(
+                "SELECT representation_id, current_structure_generation_id"
+                " FROM document_representations WHERE version_id = :version_id"
+            ),
+            {"version_id": first.version_id},
+        ).one()
+        hashes_before = connection.execute(
+            text(
+                "SELECT ordinal, extraction_input_hash FROM chunks"
+                " WHERE version_id = :version_id ORDER BY ordinal"
+            ),
+            {"version_id": first.version_id},
+        ).all()
+
+    StructureHandler(
+        catalog=rig.document_catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=rig.provider,
+        summary_settings=SummarySettings(model="summary/model-swapped"),
+    ).handle(
+        work=ClaimedWork(
+            processing_id=uuid4(),
+            deployment_id=_DEPLOYMENT_ID,
+            target_kind=ProcessingTarget.DOCUMENT_VERSION,
+            target_id=first.version_id,
+            stage=PipelineStage.STRUCTURE,
+            component_version=E0_STRUCTURE_VERSION,
+            content_hash=first.content_hash,
+            lane=ProcessingLane.STEADY,
+            attempt=1,
+            payload={
+                "version_id": str(first.version_id),
+                "representation_id": str(representation.representation_id),
+            },
+        ),
+        meter=NoopCostMeter(),
+    )
+    rig.drain()
+
+    with rig.engine.connect() as connection:
+        moved = connection.execute(
+            text(
+                "SELECT current_structure_generation_id"
+                " FROM document_representations WHERE version_id = :version_id"
+            ),
+            {"version_id": first.version_id},
+        ).scalar_one()
+        hashes_after = connection.execute(
+            text(
+                "SELECT ordinal, extraction_input_hash FROM chunks"
+                " WHERE version_id = :version_id ORDER BY ordinal"
+            ),
+            {"version_id": first.version_id},
+        ).all()
+    assert moved != representation.current_structure_generation_id
+    assert hashes_after == hashes_before
+    assert rig.selection_calls() == base_selection
+    assert rig.prefix_calls() == base_prefix

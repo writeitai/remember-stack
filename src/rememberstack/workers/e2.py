@@ -52,6 +52,7 @@ from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+from rememberstack.workers.section_orientation import render_section_orientation
 
 _logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ Each candidate's
 source_span must be a verbatim substring of the target chunk. Report one
 outcome per candidate, exactly one of: {outcomes}. The drop_* values carry the
 reason in the value itself; there is no separate reason field.
+SECTION SUMMARIES are orientation only and are never quotable source text.
 
 {bundle}"""
 
@@ -85,9 +87,10 @@ careful reader could not pick one interpretation from the bundle, omit the
 candidate. For each claim return: claim_text (standalone), source_span (the
 verbatim chunk substring it derives from), added_context (every substring you
 ADDED, each tagged header|neighbour|prefix with the exact text as it appears
-in that bundle element), entailment_self_verdict (does chunk+bundle entail the
-claim), is_attributed. When the source states or implies WHEN a fact holds or
-happened, resolve relative dates USING ONLY THE BUNDLE (as with
+in that bundle element; SECTION SUMMARIES are orientation only, never quotable
+and never an added_context source), entailment_self_verdict (does chunk+bundle
+entail the claim), is_attributed. When the source states or implies WHEN a fact
+holds or happened, resolve relative dates USING ONLY THE BUNDLE (as with
 decontextualization) and emit valid_kind, valid_from_iso, valid_until_iso, and
 valid_precision. Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit
 offset or Z; never emit a datetime without an offset. Otherwise leave
@@ -547,9 +550,16 @@ def _bundle_text(
 ) -> str:
     """Assemble the D31 context bundle for one target chunk."""
     chunk = chunks[index]
+    summaries = render_section_orientation(
+        sections=source.sections,
+        target_path=chunk.section_path,
+        target_section_id=chunk.section_id,
+    )
     return (
         f"DOCUMENT HEADER: {_header_text(source=source)}\n"
         f"SECTION: path {chunk.section_path}, role {chunk.section_role}\n"
+        "SECTION SUMMARIES (orientation only; never quote as source):\n"
+        f"{summaries or '(none)'}\n"
         f"CONTEXT PREFIX: {chunk.context_prefix or '(none)'}\n"
         f"PREVIOUS CHUNK:\n{_neighbour_text(chunks=chunks, index=index - 1, document_md=document_md, section_path=chunk.section_path)}\n"
         f"NEXT CHUNK:\n{_neighbour_text(chunks=chunks, index=index + 1, document_md=document_md, section_path=chunk.section_path)}\n"

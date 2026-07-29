@@ -2836,3 +2836,13 @@ shared tokenizer) with heading metadata (raw level, normalized title) exposed un
 `blockizer_version` bump — never a second parallel parse. Scope fence: the check judges the
 tree, not the text under it — intra-section reading-order scrambles are the conversion-layer
 track (D38, issue #168). Design detail: `plan/designs/e0_files_design.md` §4.1.
+
+**Amendment (2026-07-29, Wave-3 review of #165): the summary→prefix second-order channel.**
+Summaries feed the E1 prefix input (as this decision mandates) and the stored prefix is a
+quotable `added_context` element, so a summary-informed prefix is a bounded second-order path
+by which non-neighbouring content can reach the grounding surface. Adjudicated: status quo on
+quotability, widening of reach; accepted as layer-3/4 audit territory with an output-constraining
+prefix instruction (describe location only, never restate a summary's assertions). Also
+recorded: carried prefixes keep their summary generation until content re-chunks or the
+prefixer version bumps — the no-fan-out corollary. Detail: `plan/designs/e0_files_design.md`
+§4.1 consumption bullet.

@@ -19,6 +19,7 @@ from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimRecord
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
+from rememberstack.model import SectionSpan
 from rememberstack.model import SelectionCandidate
 from rememberstack.model import SelectionOutcome
 from rememberstack.workers import E2Settings
@@ -39,6 +40,7 @@ _DOC = UUID("81000000-0000-0000-0000-000000000002")
 _CHUNK = UUID("81000000-0000-0000-0000-000000000003")
 _VERSION = UUID("81000000-0000-0000-0000-000000000004")
 _REPR = UUID("81000000-0000-0000-0000-000000000005")
+_SECTION = UUID("81000000-0000-0000-0000-000000000006")
 
 # A short document with two keep-worthy spans and one advisory drop target.
 _DOC_MD = (
@@ -66,7 +68,16 @@ def _source() -> ChunkSource:
         published_at=None,
         language="en",
         structurer_version="test-structurer",
-        sections=(),
+        sections=(
+            SectionSpan(
+                section_id=_SECTION,
+                node_path="0",
+                role="body",
+                block_start=0,
+                block_end=0,
+                summary="Project Atlas was internally codenamed Project Orion.",
+            ),
+        ),
     )
 
 
@@ -82,7 +93,7 @@ def _chunk(*, document_md: str = _DOC_MD) -> ChunkForEmbedding:
         chunk_content_hash="sha256:fixture",
         extraction_input_hash="sha256:fixture-in",
         section_role="body",
-        section_path="/",
+        section_path="0",
         context_prefix="Sits in the Project Atlas launch report.",
         prefixer_version="test-prefixer",
     )
@@ -334,6 +345,42 @@ def test_handler_rejection_suppresses_omission_only_for_its_keep() -> None:
     assert rows[DecisionType.CLAIMIFY_OMITTED] == [_KEEP_STANCE]
 
 
+def test_handler_rejects_summary_only_added_context_fact_injection() -> None:
+    """Summary text is visible orientation but cannot ground an addition."""
+    recorder = _run_extract(
+        selection={"candidates": [{"source_span": _KEEP_LAUNCH, "outcome": "keep"}]},
+        claimify={
+            "claims": [
+                {
+                    "claim_text": "Project Orion launched in 2024.",
+                    "source_span": "Project Atlas launched in 2024",
+                    "added_context": [
+                        {"text": "Project Orion", "source_kind": "summary"}
+                    ],
+                    "entailment_self_verdict": True,
+                }
+            ]
+        },
+    )
+
+    assert recorder.claims == ()
+    rejection = next(
+        decision
+        for decision in recorder.decisions
+        if decision.decision_type is DecisionType.GROUNDING_REJECTED
+    )
+    assert rejection.edit_detail == {
+        "gate": "added_context_unverified",
+        "claim_span": "Project Atlas launched in 2024",
+        "kind": "summary",
+        "text": "Project Orion",
+    }
+    assert not any(
+        decision.decision_type is DecisionType.CLAIMIFY_OMITTED
+        for decision in recorder.decisions
+    )
+
+
 def test_handler_mixed_accept_and_reject_yields_no_omission() -> None:
     """One keep, two returned claims (one accepted, one rejected): both rows
     persist and the keep is NOT claimify_omitted."""
@@ -441,3 +488,23 @@ def test_decision_type_enum_includes_loss_ledger_values() -> None:
     )
     assert a.decision_id != b.decision_id
     assert isinstance(a.decision_id, UUID)
+
+
+def test_summary_text_fails_membership_under_every_legal_kind() -> None:
+    """The fact-injection probe, legal-kind edition (review): text that exists
+    ONLY in a section summary must fail layer-2 membership no matter which
+    legal element the model attributes it to — the poison has to be absent
+    from header, neighbour, AND prefix, not merely rejected as an unknown
+    kind."""
+    for kind in ("header", "neighbour", "prefix"):
+        result = _ground(
+            candidate=CandidateClaim(
+                claim_text="Project Orion launched in 2024.",
+                source_span="Project Atlas launched in 2024",
+                added_context=(AddedContext(text="Project Orion", source_kind=kind),),
+                entailment_self_verdict=True,
+            )
+        )
+        assert isinstance(result, GroundingRejection), kind
+        assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED, kind
+        assert result.kind == kind
