@@ -630,6 +630,11 @@ def _model_bindings() -> dict[str, str]:
         "p1_embedding": p1.embedding_model,
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
+        "openrouter_max_completion_tokens": (
+            str(openrouter.max_completion_tokens)
+            if openrouter.max_completion_tokens is not None
+            else "unset"
+        ),
         "openrouter_reasoning_effort": openrouter.reasoning_effort or "auto",
         # Canonical (sorted-key) form so the effective per-model effort policy
         # is part of measurement provenance, not hidden behind the global pin.
