@@ -66,6 +66,67 @@ def test_usage_fails_closed_when_required_accounting_is_unusable(
         _usage(body=body, requested_model="requested/model", latency_ms=1)
 
 
+@pytest.mark.parametrize(
+    ("settings_override", "expected"),
+    (({}, 32_000), ({"max_completion_tokens": None}, None)),
+)
+def test_generation_forwards_configured_max_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: dict[str, object],
+    expected: int | None,
+) -> None:
+    """The 32k default is sent, while explicit None leaves provider defaults."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {"api_key": "test-key", **settings_override}
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        observed.update(payload)
+        assert path == "/chat/completions"
+        return {
+            "model": "z-ai/glm-5.2",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.2", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert ("max_tokens" in observed) is (expected is not None)
+    assert observed.get("max_tokens") == expected
+
+
+def test_max_completion_tokens_empty_env_uses_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose's empty forwarded value keeps the deliberate 32k default."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS", "")
+
+    settings = OpenRouterSettings(api_key="test-key")
+
+    assert settings.max_completion_tokens == 32_000
+
+
+@pytest.mark.parametrize("invalid", (0, -1, "not-an-integer"))
+def test_max_completion_tokens_rejects_invalid_values(invalid: object) -> None:
+    """Zero, negative, and malformed caps cannot silently reach OpenRouter."""
+    with pytest.raises(ValidationError) as raised:
+        OpenRouterSettings.model_validate(
+            {"api_key": "test-key", "max_completion_tokens": invalid}
+        )
+
+    assert raised.value.errors()[0]["loc"] == ("max_completion_tokens",)
+
+
 @pytest.mark.parametrize(("temperature", "present"), ((None, False), (0.0, True)))
 def test_generation_forwards_temperature_only_when_declared(
     monkeypatch: pytest.MonkeyPatch, temperature: float | None, present: bool

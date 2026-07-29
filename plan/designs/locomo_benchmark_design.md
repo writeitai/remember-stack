@@ -162,6 +162,12 @@ reliably honour it. Two distinct violations were observed in real runs against
   appending a sentence period inside the `arguments_json` string, after the
   closing brace. The agent loop parses the first complete JSON object and
   records the trailing text on the trace row (§7).
+- **2026-07-29 — `z-ai/glm-5.2` cap exhaustion and mitigation.** OpenRouter
+  requests sent no `max_tokens`, so production E1/E2 calls exhausted the
+  provider default on reasoning: `finish_reason='length'`, `content=null`, and
+  `reasoning_present=True`, or truncated JSON (`Unterminated string`), produced
+  dead-letters. The adapter now sends a 32,000-token reasoning-plus-content
+  budget by default; the provider account cap remains the monetary boundary.
 
 Neither is reproducible on demand: the same fact-label prompt succeeded on 24
 consecutive retries after failing once, and three prompt variants each returned

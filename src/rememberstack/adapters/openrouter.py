@@ -38,6 +38,7 @@ ReasoningEffort: TypeAlias = Literal[
 _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
     ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 )
+_DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
 
 
 class StrictSchemaError(ValueError):
@@ -57,6 +58,15 @@ class OpenRouterSettings(BaseSettings):
     api_key: str = Field(min_length=1)
     base_url: str = Field(default="https://openrouter.ai/api/v1")
     timeout_s: float = Field(default=120.0, gt=0)
+    max_completion_tokens: int | None = Field(
+        default=_DEFAULT_MAX_COMPLETION_TOKENS, ge=1
+    )
+    """Combined reasoning-and-content budget for chat completions.
+
+    The 32k default gives reasoning models deliberate generation headroom;
+    the provider account cap remains the deployment's monetary boundary.
+    Explicit ``None`` omits ``max_tokens`` from the provider payload.
+    """
     embedding_provider: str | None = None
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
@@ -75,6 +85,14 @@ class OpenRouterSettings(BaseSettings):
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @field_validator("max_completion_tokens", mode="before")
+    @classmethod
+    def default_empty_max_completion_tokens(cls, value: object) -> object:
+        """Treat an empty env value as the deliberate 32k default."""
+        if isinstance(value, str) and not value.strip():
+            return _DEFAULT_MAX_COMPLETION_TOKENS
+        return value
 
     @field_validator("reasoning_effort_map", mode="before")
     @classmethod
@@ -158,6 +176,8 @@ class OpenRouterModelProvider:
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        if self._settings.max_completion_tokens is not None:
+            payload["max_tokens"] = self._settings.max_completion_tokens
         effort = self._reasoning_effort_for(model=request.model)
         if effort is not None:
             payload["reasoning"] = {"effort": effort}

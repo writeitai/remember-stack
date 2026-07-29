@@ -87,6 +87,26 @@ def test_model_bindings_report_embedding_provider_without_secrets(
     assert "test-key" not in bindings.values()
 
 
+@pytest.mark.parametrize(
+    ("configured", "reported"), (("64000", "64000"), ("", "32000"))
+)
+def test_compose_and_model_bindings_expose_max_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch, configured: str, reported: str
+) -> None:
+    """Compose forwards the cap and readiness fingerprints its effective value."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert (
+        "REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS:"
+        " ${REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS:-}"
+    ) in compose
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS", configured)
+
+    bindings = _model_bindings()
+
+    assert bindings["openrouter_max_completion_tokens"] == reported
+
+
 @pytest.mark.parametrize(("configured", "reported"), (("none", "none"), ("", "auto")))
 def test_model_bindings_report_reasoning_effort(
     monkeypatch: pytest.MonkeyPatch, configured: str, reported: str
