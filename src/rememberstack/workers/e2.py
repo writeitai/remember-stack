@@ -551,7 +551,9 @@ def _bundle_text(
     """Assemble the D31 context bundle for one target chunk."""
     chunk = chunks[index]
     summaries = render_section_orientation(
-        sections=source.sections, target_path=chunk.section_path
+        sections=source.sections,
+        target_path=chunk.section_path,
+        target_section_id=chunk.section_id,
     )
     return (
         f"DOCUMENT HEADER: {_header_text(source=source)}\n"

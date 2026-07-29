@@ -201,7 +201,7 @@ _SELECT_FOR_EMBEDDING = text(
     """
     SELECT c.chunk_id, c.doc_id, c.version_id, c.ordinal,
            c.char_start, c.char_end, c.context_prefix, c.prefixer_version,
-           c.chunk_content_hash, c.extraction_input_hash,
+           c.chunk_content_hash, c.extraction_input_hash, c.section_id,
            s.role AS section_role, s.node_path AS section_path
     FROM chunks c
     JOIN document_sections s ON s.section_id = c.section_id

@@ -488,3 +488,23 @@ def test_decision_type_enum_includes_loss_ledger_values() -> None:
     )
     assert a.decision_id != b.decision_id
     assert isinstance(a.decision_id, UUID)
+
+
+def test_summary_text_fails_membership_under_every_legal_kind() -> None:
+    """The fact-injection probe, legal-kind edition (review): text that exists
+    ONLY in a section summary must fail layer-2 membership no matter which
+    legal element the model attributes it to — the poison has to be absent
+    from header, neighbour, AND prefix, not merely rejected as an unknown
+    kind."""
+    for kind in ("header", "neighbour", "prefix"):
+        result = _ground(
+            candidate=CandidateClaim(
+                claim_text="Project Orion launched in 2024.",
+                source_span="Project Atlas launched in 2024",
+                added_context=(AddedContext(text="Project Orion", source_kind=kind),),
+                entailment_self_verdict=True,
+            )
+        )
+        assert isinstance(result, GroundingRejection), kind
+        assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED, kind
+        assert result.kind == kind

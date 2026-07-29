@@ -1,6 +1,7 @@
 """Bounded D79 section-summary orientation shared by E1 and E2."""
 
 from typing import Final
+from uuid import UUID
 
 from rememberstack.model import SectionSpan
 
@@ -15,15 +16,34 @@ SECTION_ORIENTATION_VERSION: Final = (
 
 
 def render_section_orientation(
-    *, sections: tuple[SectionSpan, ...], target_path: str
+    *,
+    sections: tuple[SectionSpan, ...],
+    target_path: str,
+    target_section_id: UUID | None = None,
 ) -> str | None:
     """Render non-null target/ancestor summaries under one hard character cap.
 
     The target is first so the most local orientation cannot be crowded out by
     a deep ancestor chain. Ancestors then run nearest-first. Missing summaries
     contribute no line; an entirely degraded generation returns ``None``.
+
+    ``target_section_id`` is the cross-generation guard (review finding): the
+    chunk grid carries the section ids of the generation it was cut under,
+    while ``sections`` is always the CURRENT generation. When the caller
+    passes the chunk's section id and the current generation's row at
+    ``target_path`` is a different section, the whole rendering degrades to
+    ``None`` — a path that merely coincides across a skeleton regeneration
+    must not attach another section's summaries. Rendering semantics for
+    matching generations are unchanged, so the contract version holds.
     """
     by_path = {section.node_path: section for section in sections}
+    target_row = by_path.get(target_path)
+    if (
+        target_section_id is not None
+        and target_row is not None
+        and target_row.section_id != target_section_id
+    ):
+        return None
     paths = _target_and_ancestor_paths(target_path=target_path)
     lines = tuple(
         f"{'TARGET' if index == 0 else 'ANCESTOR'} {path}: {summary}"

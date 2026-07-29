@@ -102,6 +102,10 @@ class ChunkForEmbedding(BaseModel):
     extraction_input_hash: str
     section_role: str
     section_path: str
+    section_id: UUID | None = None
+    """The section row the chunk was cut under — the cross-generation guard
+    input for summary orientation (optional: legacy constructors omit it and
+    the guard simply does not arm)."""
     context_prefix: str | None
     prefixer_version: str | None
 

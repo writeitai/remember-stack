@@ -419,7 +419,20 @@ unchanged):
      so a re-summarization — including an ancestor summary changing because a sibling leaf
      was edited — never silently invalidates or re-extracts unchanged chunks. Better
      summaries improve *future* extractions; they never fan out into document-wide
-     reprocessing.
+     reprocessing. Corollary (2026-07-29, Wave-3 review): the same no-fan-out rule means
+     better summaries reach the **prefix** only through re-chunked content or a
+     prefixer-version bump — a carried prefix keeps the summary generation it was written
+     under indefinitely, by design.
+
+  **Accepted second-order channel (2026-07-29, Wave-3 review).** Because summaries feed the
+  E1 prefix input and the stored prefix is itself a quotable `added_context` element, a
+  summary-informed prefix is a bounded second-order path by which content from
+  NON-neighbouring sections (a bottom-up parent one-liner distills sibling subtrees) can
+  reach the grounding surface — a reach the `_neighbour_text` same-scope rule deliberately
+  forbids for direct quotation. Status quo on *quotability* (the prefix was always LLM
+  text), a widening of *reach*. Accepted because the prefix's honesty was always layer-3/4
+  audit territory; mitigated in-prompt by instructing the prefixer to use summaries only to
+  DESCRIBE WHERE the passage sits, never to restate a summary's factual assertions.
 - **Provenance and migration.** `structurer_version` splits into generations: skeleton
   (deterministic parser + fallback contract), **skeleton check** (the sanity-check bullet
   above), role pass, summary seat, and placement — each hash-stamped per D12. Structure/summary generations are immutable with a current pointer

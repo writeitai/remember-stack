@@ -339,15 +339,26 @@ class EmbedChunksHandler:
 
 
 def _prefix_prompt(*, source: ChunkSource, chunk: ChunkForEmbedding, head: str) -> str:
-    """Render the prefix input; degraded summaries preserve the old bytes."""
+    """Render the prefix input; a degraded generation contributes zero bytes.
+
+    The instruction constrains the prefixer's OUTPUT, not just its reading:
+    summaries are abstractive LLM text, and the stored prefix is a quotable
+    added_context element downstream — a prefix that restates a summary's
+    claim would launder second-order content into the grounding surface
+    (review finding; accepted residual is location-description only).
+    """
     orientation = render_section_orientation(
-        sections=source.sections, target_path=chunk.section_path
+        sections=source.sections,
+        target_path=chunk.section_path,
+        target_section_id=chunk.section_id,
     )
     section_orientation = (
         ""
         if orientation is None
         else (
-            "\nSECTION SUMMARIES (orientation only; never quote as source):\n"
+            "\nSECTION SUMMARIES (background only — use them to describe"
+            " WHERE the passage sits; never restate or assert a fact from a"
+            " summary in your sentence):\n"
             f"{orientation}"
         )
     )

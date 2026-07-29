@@ -209,3 +209,41 @@ def test_e2_bundle_places_section_summaries_before_context_prefix() -> None:
     assert "TARGET 0.2.1: This subsection explains bounded orientation." in bundle
     assert "ANCESTOR 0.2: Chapter two covers routing." in bundle
     assert "ANCESTOR 0: The complete handbook." in bundle
+
+
+def test_e2_bundle_renders_none_for_a_degraded_generation() -> None:
+    """E2 keeps the element with the bundle's '(none)' idiom when every
+    summary is null — asymmetric with E1's zero bytes by design (the bundle
+    is a fixed element contract, the prefix prompt is not)."""
+    sections = tuple(
+        _section(section_id=index + 1, path=path, summary=None)
+        for index, path in enumerate(("0", "0.2", "0.2.1"))
+    )
+    bundle = _bundle_text(
+        source=_source(sections=sections),
+        chunks=(_chunk(),),
+        index=0,
+        document_md="chunk body...",
+    )
+    assert "SECTION SUMMARIES (orientation only; never quote as source):" in bundle
+    assert "\n(none)\n" in bundle
+
+
+def test_orientation_degrades_on_cross_generation_section_mismatch() -> None:
+    """A chunk cut under a superseded skeleton must not attach the current
+    generation's summaries via a merely-coincident node path (review): when
+    the chunk's section id does not match the current row at that path, the
+    whole rendering degrades to None."""
+    sections = _orientation_sections()
+    assert (
+        render_section_orientation(
+            sections=sections, target_path="0.2.1", target_section_id=_TARGET_SECTION
+        )
+        is not None
+    )
+    assert (
+        render_section_orientation(
+            sections=sections, target_path="0.2.1", target_section_id=UUID(int=999)
+        )
+        is None
+    )
