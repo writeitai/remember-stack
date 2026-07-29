@@ -4,10 +4,11 @@ Per chunk: a Selection call judges every proposition (keep / keep-flagged /
 drop — drops and flags go to the D33 ledger), then one fused call
 decontextualizes, decomposes, and self-grounds the keeps. The deterministic
 grounding gate (D32 layers 1-2) accepts a claim only if its verbatim source
-span anchors inside the chunk and every added substring exists in the bundle
-element it was attributed to — a check the model cannot talk its way past.
-Every kept span ends in accepted claim(s), grounding_rejected row(s), or a
-claimify_omitted row so Claimify-stage losses are never silent (#161).
+span anchors inside the chunk and every added substring exists in the union of
+the bundle's source-derived texts. The model's source tag is advisory provenance,
+not an acceptance boundary. Every kept span ends in accepted claim(s),
+grounding_rejected row(s), or a claimify_omitted row so Claimify-stage losses
+are never silent (#161).
 """
 
 from dataclasses import dataclass
@@ -86,16 +87,20 @@ standalone claims, preserving attribution ("X said Y" stays attributed); if a
 careful reader could not pick one interpretation from the bundle, omit the
 candidate. For each claim return: claim_text (standalone), source_span (the
 verbatim chunk substring it derives from), added_context (every substring you
-ADDED, each tagged header|neighbour|prefix with the exact text as it appears
-in that bundle element; SECTION SUMMARIES are orientation only, never quotable
-and never an added_context source), entailment_self_verdict (does chunk+bundle
-entail the claim), is_attributed. When the source states or implies WHEN a fact
-holds or happened, resolve relative dates USING ONLY THE BUNDLE (as with
-decontextualization) and emit valid_kind, valid_from_iso, valid_until_iso, and
-valid_precision. Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit
-offset or Z; never emit a datetime without an offset. Otherwise leave
-valid_kind/from/until null and valid_precision unknown. Event on a calendar day
-→ valid_kind=event_time, valid_precision=day, both ISO ends for that day.
+ADDED that is not already present in the TARGET CHUNK; in-chunk text needs no
+added_context entry). Tag each addition header|neighbour|prefix as a best-effort
+provenance pointer, but the tag is advisory: every addition must exist verbatim
+somewhere in the bundle's source-derived texts (TARGET CHUNK, DOCUMENT HEADER,
+same-section PREVIOUS/NEXT CHUNK, or stored CONTEXT PREFIX). SECTION SUMMARIES
+are orientation only, never quotable and never an added_context source. Also
+return entailment_self_verdict (does chunk+bundle entail the claim) and
+is_attributed. When the source states or implies WHEN a fact holds or happened,
+resolve relative dates USING ONLY THE BUNDLE (as with decontextualization) and
+emit valid_kind, valid_from_iso, valid_until_iso, and valid_precision. Use
+ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit offset or Z; never
+emit a datetime without an offset. Otherwise leave valid_kind/from/until null
+and valid_precision unknown. Event on a calendar day →
+valid_kind=event_time, valid_precision=day, both ISO ends for that day.
 Year-only → precision=year with that year's [start,end] ISO bounds; quarters
 are calendar quarters. Bounded
 precisions (day|month|quarter|year) require both ends; open requires from only;
@@ -352,6 +357,7 @@ class GroundingRejection:
     claim_span: str
     kind: str | None = None
     text: str | None = None
+    searched_elements: tuple[str, ...] = ()
 
 
 def _grounded_claim(
@@ -370,12 +376,14 @@ def _grounded_claim(
     Layer 1 (anchor): the source span must be a real in-bounds slice of the
     target chunk, and must overlap a span Selection kept — the fused call can
     never resurrect a dropped proposition. Layer 2 (window membership): every
-    added substring must verbatim-exist in the bundle element it was
-    attributed to. A failed check returns which gate fired so the D33 ledger
-    can record ``grounding_rejected`` (#161); the accept path is unchanged.
-    Semantic invention behind a real span is layer-3/4 territory: the in-call
-    self-verdict is stored advisory, and the sampled independent audit owns
-    the honest measurement.
+    added substring must verbatim-exist in the union of source-derived bundle
+    texts. The model's ``source_kind`` is preserved as advisory provenance but
+    cannot reject a grounded addition by being wrong. Section summaries and
+    all other LLM-orientation text are excluded from this union. A failed check
+    returns which gate fired so the D33 ledger can record
+    ``grounding_rejected`` (#161). Semantic invention behind a real span is
+    layer-3/4 territory: the in-call self-verdict is stored advisory, and the
+    sampled independent audit owns the honest measurement.
     """
     claim_span = candidate.source_span
     anchor_at = document_md.find(claim_span, chunk.char_start, chunk.char_end)
@@ -392,20 +400,17 @@ def _grounded_claim(
         return GroundingRejection(
             gate=GroundingGate.OUTSIDE_KEPT_RANGES, claim_span=claim_span
         )
+    grounding_elements = _source_grounding_elements(
+        source=source, chunks=chunks, index=index, document_md=document_md
+    )
     for added in candidate.added_context:
-        element = _bundle_element(
-            kind=added.source_kind,
-            source=source,
-            chunks=chunks,
-            index=index,
-            document_md=document_md,
-        )
-        if element is None or added.text not in element:
+        if not any(added.text in text for _, text in grounding_elements):
             return GroundingRejection(
                 gate=GroundingGate.ADDED_CONTEXT_UNVERIFIED,
                 claim_span=claim_span,
                 kind=added.source_kind,
                 text=added.text,
+                searched_elements=tuple(name for name, _ in grounding_elements),
             )
     valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
         candidate=candidate
@@ -567,30 +572,40 @@ def _bundle_text(
     )
 
 
-def _bundle_element(
+def _source_grounding_elements(
     *,
-    kind: str,
     source: ChunkSource,
     chunks: tuple[ChunkForEmbedding, ...],
     index: int,
     document_md: str,
-) -> str | None:
-    """The bundle element an added substring claims to come from, or None."""
-    if kind == "header":
-        return _header_text(source=source)
-    if kind == "prefix":
-        return chunks[index].context_prefix
-    if kind == "neighbour":
-        return "\n".join(
-            _neighbour_text(
-                chunks=chunks,
-                index=neighbour,
-                document_md=document_md,
-                section_path=chunks[index].section_path,
+) -> tuple[tuple[str, str], ...]:
+    """Return the complete D32 layer-2 membership union.
+
+    Every member is source-derived: the target chunk slice, deterministic
+    document header, available same-section neighbours, and the stored context
+    prefix. Section summaries are deliberately absent; D79 orientation text
+    must never become a fact-injection path.
+    """
+    chunk = chunks[index]
+    elements = [
+        ("target_chunk", document_md[chunk.char_start : chunk.char_end]),
+        ("document_header", _header_text(source=source)),
+    ]
+    for name, neighbour_index in (
+        ("previous_same_section_neighbour", index - 1),
+        ("next_same_section_neighbour", index + 1),
+    ):
+        if (
+            0 <= neighbour_index < len(chunks)
+            and chunks[neighbour_index].section_path == chunk.section_path
+        ):
+            neighbour = chunks[neighbour_index]
+            elements.append(
+                (name, document_md[neighbour.char_start : neighbour.char_end])
             )
-            for neighbour in (index - 1, index + 1)
-        )
-    return None
+    if chunk.context_prefix:
+        elements.append(("context_prefix", chunk.context_prefix))
+    return tuple(elements)
 
 
 def _header_text(*, source: ChunkSource) -> str:
@@ -725,6 +740,7 @@ def _grounding_rejected_decision(
         # kind is model-returned text too — bound every persisted field
         edit_detail["kind"] = _truncate_for_ledger(rejection.kind or "")
         edit_detail["text"] = _truncate_for_ledger(rejection.text or "")
+        edit_detail["searched_elements"] = list(rejection.searched_elements)
     return DecisionRecord(
         decision_id=uuid4(),
         deployment_id=source.deployment_id,

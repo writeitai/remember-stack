@@ -47,10 +47,13 @@ _DOC_MD = (
     "Project Atlas launched in 2024 in three markets.\n"
     "The team considers it a runaway success.\n"
     "You should try it yourself.\n"
+    "Caroline: I went to the launch.\n"
 )
 _KEEP_LAUNCH = "Project Atlas launched in 2024 in three markets."
 _KEEP_STANCE = "The team considers it a runaway success."
 _DROP_ADVICE = "You should try it yourself."
+_KEEP_CAROLINE = "Caroline: I went to the launch."
+_SEARCHED_SOURCE_ELEMENTS = ["target_chunk", "document_header", "context_prefix"]
 
 
 def _source() -> ChunkSource:
@@ -94,7 +97,9 @@ def _chunk(*, document_md: str = _DOC_MD) -> ChunkForEmbedding:
         extraction_input_hash="sha256:fixture-in",
         section_role="body",
         section_path="0",
-        context_prefix="Sits in the Project Atlas launch report.",
+        context_prefix=(
+            "Sits in the Project Atlas launch report; Melanie owns the launch context."
+        ),
         prefixer_version="test-prefixer",
     )
 
@@ -203,7 +208,43 @@ def test_gate_added_context_unverified_writes_grounding_rejected() -> None:
         "claim_span": claim_span,
         "kind": "neighbour",
         "text": "in San Francisco",
+        "searched_elements": _SEARCHED_SOURCE_ELEMENTS,
     }
+
+
+def test_target_chunk_addition_with_wrong_header_label_is_accepted() -> None:
+    """Production regression: an in-turn speaker name survives a wrong tag."""
+    result = _ground(
+        candidate=CandidateClaim(
+            claim_text="Caroline went to the launch.",
+            source_span="I went to the launch.",
+            added_context=(AddedContext(text="Caroline", source_kind="header"),),
+            entailment_self_verdict=True,
+            is_attributed=True,
+        ),
+        kept_spans=(_KEEP_CAROLINE,),
+    )
+
+    assert isinstance(result, ClaimRecord)
+    assert result.added_context[0].text == "Caroline"
+    assert result.added_context[0].source_kind == "header"
+
+
+def test_prefix_addition_with_wrong_neighbour_label_is_accepted() -> None:
+    """Attribution is telemetry; union membership is the acceptance gate."""
+    result = _ground(
+        candidate=CandidateClaim(
+            claim_text="Melanie considers Project Atlas a runaway success.",
+            source_span=_KEEP_STANCE,
+            added_context=(AddedContext(text="Melanie", source_kind="neighbour"),),
+            entailment_self_verdict=True,
+            is_attributed=True,
+        )
+    )
+
+    assert isinstance(result, ClaimRecord)
+    assert result.added_context[0].text == "Melanie"
+    assert result.added_context[0].source_kind == "neighbour"
 
 
 def test_accept_path_still_returns_claim_record() -> None:
@@ -374,6 +415,7 @@ def test_handler_rejects_summary_only_added_context_fact_injection() -> None:
         "claim_span": "Project Atlas launched in 2024",
         "kind": "summary",
         "text": "Project Orion",
+        "searched_elements": _SEARCHED_SOURCE_ELEMENTS,
     }
     assert not any(
         decision.decision_type is DecisionType.CLAIMIFY_OMITTED
@@ -493,18 +535,62 @@ def test_decision_type_enum_includes_loss_ledger_values() -> None:
 def test_summary_text_fails_membership_under_every_legal_kind() -> None:
     """The fact-injection probe, legal-kind edition (review): text that exists
     ONLY in a section summary must fail layer-2 membership no matter which
-    legal element the model attributes it to — the poison has to be absent
-    from header, neighbour, AND prefix, not merely rejected as an unknown
-    kind."""
-    for kind in ("header", "neighbour", "prefix"):
-        result = _ground(
-            candidate=CandidateClaim(
-                claim_text="Project Orion launched in 2024.",
-                source_span="Project Atlas launched in 2024",
-                added_context=(AddedContext(text="Project Orion", source_kind=kind),),
-                entailment_self_verdict=True,
+    legal element the model attributes it to. Both summary-only poison and a
+    wholly invented addition must be absent from the source-derived union."""
+    for text in ("Project Orion", "Project Zephyr"):
+        for kind in ("header", "neighbour", "prefix"):
+            result = _ground(
+                candidate=CandidateClaim(
+                    claim_text=f"{text} launched in 2024.",
+                    source_span="Project Atlas launched in 2024",
+                    added_context=(AddedContext(text=text, source_kind=kind),),
+                    entailment_self_verdict=True,
+                )
             )
-        )
-        assert isinstance(result, GroundingRejection), kind
-        assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED, kind
-        assert result.kind == kind
+            assert isinstance(result, GroundingRejection), (text, kind)
+            assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED, (text, kind)
+            assert result.kind == kind
+            assert result.text == text
+            assert list(result.searched_elements) == _SEARCHED_SOURCE_ELEMENTS
+
+
+def test_handler_union_grounding_preserves_loss_ledger_balance() -> None:
+    """Each returned claim still ends accepted or grounding_rejected."""
+    returned_claims = [
+        {
+            "claim_text": "Caroline went to the launch.",
+            "source_span": "I went to the launch.",
+            "added_context": [{"text": "Caroline", "source_kind": "header"}],
+            "entailment_self_verdict": True,
+            "is_attributed": True,
+        },
+        {
+            "claim_text": "Project Zephyr went to the launch.",
+            "source_span": "I went to the launch.",
+            "added_context": [{"text": "Project Zephyr", "source_kind": "prefix"}],
+            "entailment_self_verdict": True,
+        },
+    ]
+    recorder = _run_extract(
+        selection={"candidates": [{"source_span": _KEEP_CAROLINE, "outcome": "keep"}]},
+        claimify={"claims": returned_claims},
+    )
+
+    rejected = [
+        decision
+        for decision in recorder.decisions
+        if decision.decision_type is DecisionType.GROUNDING_REJECTED
+    ]
+    omitted = [
+        decision
+        for decision in recorder.decisions
+        if decision.decision_type is DecisionType.CLAIMIFY_OMITTED
+    ]
+    assert len(recorder.claims) + len(rejected) == len(returned_claims)
+    assert [claim.claim_text for claim in recorder.claims] == [
+        "Caroline went to the launch."
+    ]
+    assert recorder.claims[0].added_context[0].source_kind == "header"
+    assert rejected[0].edit_detail is not None
+    assert rejected[0].edit_detail["gate"] == "added_context_unverified"
+    assert omitted == []

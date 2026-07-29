@@ -670,13 +670,25 @@ claiming row — refined 2026-07-18).
 **Decision.** A claim stores both a standalone `claim_text` and a verbatim `source_span` + character
 offsets, plus an `added_context[]` list naming each added substring's bundle source. Acceptance layers,
 cheapest first: (1) deterministic **anchor** — the source span is a real slice of the chunk; (2)
-deterministic **window-membership** — every added substring verbatim-exists in its declared bundle
-source (rejects fabrication); (3) an in-call **entailment self-verdict** (incl. the "*X said* Y entails
-*X said Y*, not *Y*" rule); (4) a **sampled independent** entailment audit (never per-claim). Replaces
-the verbatim-substring gate, which is incompatible with decontextualization. No external knowledge.
+deterministic **window-membership** — every added substring verbatim-exists in the union of
+source-derived bundle elements, while its declared source tag is advisory provenance (rejects
+fabrication, not mislabeling); (3) an in-call **entailment self-verdict** (incl. the "*X said* Y
+entails *X said Y*, not *Y*" rule); (4) a **sampled independent** entailment audit (never per-claim).
+Replaces the verbatim-substring gate, which is incompatible with decontextualization. No external
+knowledge.
 
 **Context.** A decontextualized claim is a rewrite, so it is never a verbatim substring; grounding must
 be provenance + entailment, as every surveyed decompose-then-verify system does. (C6.)
+
+**Amendment (2026-07-29, union grounding).** Layer 2 searches the TARGET CHUNK slice, deterministic
+document header, both available same-section neighbours, and stored context prefix as one
+source-derived membership union. `added_context.source_kind` is still persisted as a best-effort
+pointer but cannot veto a verbatim union match. The #161 GLM-5.2 smoke loss ledger supplied the
+production evidence: 371 of 411 grounding rejections were `added_context_unverified` mislabel
+deaths; sampled correct decontextualizations added names present in TARGET CHUNK turn lines but
+tagged them `header` (258) or `prefix` (99), and only 27 claims from 19 documents survived.
+**Section summaries and all other LLM-orientation text remain outside the union; D79 consumption
+rules are unchanged.**
 
 **Refined by D65 (media).** For media-derived documents grounding is **two hops**: the anchor
 (layer 1) proves the claim derives from the *representation* (document.md); it cannot prove the
