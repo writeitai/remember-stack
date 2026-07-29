@@ -173,8 +173,8 @@
 | src/rememberstack/workers/base.py                                                             |      107 |        1 |       18 |        1 |     98.4% |       110 |
 | src/rememberstack/workers/e0.py                                                               |      422 |       23 |       72 |        9 |     93.1% |344-348, 741, 867-883, 943, 1027-\>1026, 1033, 1036, 1131, 1168-1169, 1210, 1275, 1357, 1392, 1453 |
 | src/rememberstack/workers/e0\_summary.py                                                      |      359 |       34 |      112 |       21 |     87.0% |389, 446, 462, 480, 489, 511, 513-515, 528, 539, 561, 580, 584, 598, 609, 611-626, 638-641, 651, 661, 850, 861, 872, 889, 901-911 |
-| src/rememberstack/workers/e1.py                                                               |      132 |        2 |       14 |        2 |     97.3% |  246, 472 |
-| src/rememberstack/workers/e2.py                                                               |      250 |        9 |       86 |        7 |     94.6% |233-237, 519, 561, 565, 634-\>636, 692, 711, 880 |
+| src/rememberstack/workers/e1.py                                                               |      132 |        2 |       14 |        2 |     97.3% |  248, 474 |
+| src/rememberstack/workers/e2.py                                                               |      278 |        9 |       98 |        7 |     95.2% |299-303, 595, 637, 641, 710-\>712, 811, 830, 1000 |
 | src/rememberstack/workers/e3.py                                                               |      133 |        6 |       36 |        5 |     93.5% |247-250, 357, 382, 406, 419 |
 | src/rememberstack/workers/forget.py                                                           |      130 |       17 |       26 |        2 |     85.3% |118-123, 179, 191-197, 289-297 |
 | src/rememberstack/workers/knowledge\_authored.py                                              |       77 |        5 |       16 |        3 |     91.4% |55, 109, 117, 128-129 |
@@ -190,7 +190,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        3 |       18 |        3 |     90.9% |83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **14577** | **1147** | **3136** |  **562** | **89.4%** |           |
+| **TOTAL**                                                                                     | **14605** | **1147** | **3148** |  **562** | **89.4%** |           |
 
 
 ## Setup coverage badge
