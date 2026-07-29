@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_41dff4d56a7feb12_selfhost_forget_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-29 10:58 +0000
+            created at 2026-07-29 12:46 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -714,19 +714,24 @@
     <p class="run run2"><span class="n"><a id="t630" href="#t630">630</a></span><span class="t">        <span class="str">"p1_embedding"</span><span class="op">:</span> <span class="nam">p1</span><span class="op">.</span><span class="nam">embedding_model</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t631" href="#t631">631</a></span><span class="t">        <span class="str">"fact_label"</span><span class="op">:</span> <span class="nam">p1</span><span class="op">.</span><span class="nam">label_model</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t632" href="#t632">632</a></span><span class="t">        <span class="str">"openrouter_embedding_provider"</span><span class="op">:</span> <span class="nam">openrouter</span><span class="op">.</span><span class="nam">embedding_provider</span> <span class="key">or</span> <span class="str">"auto"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t633" href="#t633">633</a></span><span class="t">        <span class="str">"openrouter_reasoning_effort"</span><span class="op">:</span> <span class="nam">openrouter</span><span class="op">.</span><span class="nam">reasoning_effort</span> <span class="key">or</span> <span class="str">"auto"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t634" href="#t634">634</a></span><span class="t">        <span class="com"># Canonical (sorted-key) form so the effective per-model effort policy</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t635" href="#t635">635</a></span><span class="t">        <span class="com"># is part of measurement provenance, not hidden behind the global pin.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t636" href="#t636">636</a></span><span class="t">        <span class="str">"openrouter_reasoning_effort_map"</span><span class="op">:</span> <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t637" href="#t637">637</a></span><span class="t">            <span class="nam">openrouter</span><span class="op">.</span><span class="nam">reasoning_effort_map</span><span class="op">,</span> <span class="nam">sort_keys</span><span class="op">=</span><span class="key">True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t638" href="#t638">638</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t639" href="#t639">639</a></span><span class="t">        <span class="key">if</span> <span class="nam">openrouter</span><span class="op">.</span><span class="nam">reasoning_effort_map</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t640" href="#t640">640</a></span><span class="t">        <span class="key">else</span> <span class="str">"unset"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t641" href="#t641">641</a></span><span class="t">    <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t642" href="#t642">642</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t643" href="#t643">643</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t644" href="#t644">644</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">644&#x202F;&#x219B;&#x202F;645</span><span class="annotate long">line 644 didn't jump to line 645 because the condition on line 644 was never true</span></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t645" href="#t645">645</a></span><span class="t">    <span class="nam">sys</span><span class="op">.</span><span class="nam">exit</span><span class="op">(</span><span class="nam">main</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t633" href="#t633">633</a></span><span class="t">        <span class="str">"openrouter_max_completion_tokens"</span><span class="op">:</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t634" href="#t634">634</a></span><span class="t">            <span class="nam">str</span><span class="op">(</span><span class="nam">openrouter</span><span class="op">.</span><span class="nam">max_completion_tokens</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t635" href="#t635">635</a></span><span class="t">            <span class="key">if</span> <span class="nam">openrouter</span><span class="op">.</span><span class="nam">max_completion_tokens</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t636" href="#t636">636</a></span><span class="t">            <span class="key">else</span> <span class="str">"unset"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t637" href="#t637">637</a></span><span class="t">        <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t638" href="#t638">638</a></span><span class="t">        <span class="str">"openrouter_reasoning_effort"</span><span class="op">:</span> <span class="nam">openrouter</span><span class="op">.</span><span class="nam">reasoning_effort</span> <span class="key">or</span> <span class="str">"auto"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t639" href="#t639">639</a></span><span class="t">        <span class="com"># Canonical (sorted-key) form so the effective per-model effort policy</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t640" href="#t640">640</a></span><span class="t">        <span class="com"># is part of measurement provenance, not hidden behind the global pin.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t641" href="#t641">641</a></span><span class="t">        <span class="str">"openrouter_reasoning_effort_map"</span><span class="op">:</span> <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t642" href="#t642">642</a></span><span class="t">            <span class="nam">openrouter</span><span class="op">.</span><span class="nam">reasoning_effort_map</span><span class="op">,</span> <span class="nam">sort_keys</span><span class="op">=</span><span class="key">True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t643" href="#t643">643</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t644" href="#t644">644</a></span><span class="t">        <span class="key">if</span> <span class="nam">openrouter</span><span class="op">.</span><span class="nam">reasoning_effort_map</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t645" href="#t645">645</a></span><span class="t">        <span class="key">else</span> <span class="str">"unset"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t646" href="#t646">646</a></span><span class="t">    <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t647" href="#t647">647</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t648" href="#t648">648</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t649" href="#t649">649</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">649&#x202F;&#x219B;&#x202F;650</span><span class="annotate long">line 649 didn't jump to line 650 because the condition on line 649 was never true</span></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t650" href="#t650">650</a></span><span class="t">    <span class="nam">sys</span><span class="op">.</span><span class="nam">exit</span><span class="op">(</span><span class="nam">main</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -736,7 +741,7 @@
             <a class="nav" href="z_41dff4d56a7feb12_selfhost_forget_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-29 10:58 +0000
+            created at 2026-07-29 12:46 +0000
         </p>
     </div>
 </footer>
