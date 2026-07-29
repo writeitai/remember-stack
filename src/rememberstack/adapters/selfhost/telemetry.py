@@ -1,12 +1,16 @@
 """Simple JSON-lines telemetry for self-hosted process logs."""
 
 import json
+import logging
 import sys
 from threading import Lock
 import traceback
 from typing import TextIO
 
 from rememberstack.model import TelemetryEvent
+from rememberstack.ports.telemetry import TelemetryPort
+
+_logger = logging.getLogger(__name__)
 
 
 class JsonLineTelemetry:
@@ -43,3 +47,35 @@ class JsonLineTelemetry:
         with self._lock:
             self._stream.write(line + "\n")
             self._stream.flush()
+
+
+class FanoutTelemetry:
+    """Send events to one authoritative local sink and optional remote sinks."""
+
+    def __init__(self, *, sinks: tuple[TelemetryPort, ...]) -> None:
+        """Retain a non-empty set whose first sink is authoritative."""
+        if not sinks:
+            raise ValueError("fanout telemetry requires at least one sink")
+        self._sinks = sinks
+
+    def export_event(self, *, event: TelemetryEvent) -> None:
+        """Export locally, then isolate every optional sink failure."""
+        self._sinks[0].export_event(event=event)
+        for sink in self._sinks[1:]:
+            try:
+                sink.export_event(event=event)
+            except Exception:
+                _logger.warning("optional telemetry event export failed", exc_info=True)
+
+    def export_exception(
+        self, *, event: TelemetryEvent, exception: BaseException
+    ) -> None:
+        """Export locally, then isolate every optional sink failure."""
+        self._sinks[0].export_exception(event=event, exception=exception)
+        for sink in self._sinks[1:]:
+            try:
+                sink.export_exception(event=event, exception=exception)
+            except Exception:
+                _logger.warning(
+                    "optional telemetry exception export failed", exc_info=True
+                )

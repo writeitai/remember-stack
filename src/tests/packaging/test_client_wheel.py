@@ -195,6 +195,7 @@ def _assert_dependency_split(*, wheel: Path) -> None:
         "benchmark",
         "connectors-watched-directory",
         "k",
+        "observability",
         "server",
     }
     assert any(requirement.startswith("sqlalchemy") for requirement in requirements)

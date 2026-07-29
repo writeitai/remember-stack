@@ -13,6 +13,7 @@ from uuid import UUID
 from alembic import command
 from alembic.config import Config
 from pydantic import Field
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 import sqlalchemy
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from rememberstack.adapters.selfhost import SelfHostWorkerLoop
+    from rememberstack.ports.telemetry import TelemetryPort
     from rememberstack.workers import StageHandler
 
 _SUPPORTED_WORKER_STAGES = (
@@ -96,6 +98,25 @@ class SelfHostSettings(BaseSettings):
     worker_session_s: float = Field(default=3_600.0, gt=0)
 
 
+class SentrySettings(BaseSettings):
+    """Strictly opt-in self-host error-tracking settings."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="REMEMBERSTACK_SENTRY_", env_ignore_empty=True, extra="ignore"
+    )
+
+    dsn: SecretStr | None = None
+    environment: str | None = None
+    sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    def configured_dsn(self) -> str | None:
+        """Return a non-empty DSN only when error tracking is explicitly enabled."""
+        if self.dsn is None:
+            return None
+        value = self.dsn.get_secret_value().strip()
+        return value or None
+
+
 class _FreshDeploymentReadiness:
     """Fail closed if a fresh quickstart sees portable forget history.
 
@@ -132,6 +153,7 @@ class SelfHostProfile:
         corpusfs_store: MinIOObjectStore,
         snapshot_store: MinIOObjectStore,
         model_provider: OpenRouterModelProvider,
+        error_telemetry: TelemetryPort | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process."""
         self._settings = settings
@@ -141,9 +163,10 @@ class SelfHostProfile:
         self._corpusfs_store = corpusfs_store
         self._snapshot_store = snapshot_store
         self._model_provider = model_provider
+        self._error_telemetry = error_telemetry
 
     @classmethod
-    def from_settings(cls) -> Self:
+    def from_settings(cls, *, error_telemetry: TelemetryPort | None = None) -> Self:
         """Load every external value through its typed settings boundary."""
         profile_settings = SelfHostSettings.model_validate({})
         minio_settings = MinIOSettings.model_validate({})
@@ -167,6 +190,7 @@ class SelfHostProfile:
             model_provider=OpenRouterModelProvider(
                 settings=OpenRouterSettings.model_validate({})
             ),
+            error_telemetry=error_telemetry,
         )
 
     def close(self) -> None:
@@ -287,6 +311,7 @@ class SelfHostProfile:
 
     def worker_loop(self, *, stage: PipelineStage) -> SelfHostWorkerLoop:
         """Build one continuous route's ordinary LISTEN/NOTIFY worker loop."""
+        from rememberstack.adapters.selfhost import FanoutTelemetry
         from rememberstack.adapters.selfhost import JsonLineTelemetry
         from rememberstack.adapters.selfhost import SelfHostTaskQueue
         from rememberstack.adapters.selfhost import SelfHostWorkerLoop
@@ -302,12 +327,18 @@ class SelfHostProfile:
         registry = HandlerRegistry()
         registry.register(stage=stage, handler=self._handler(stage=stage))
         ledger = WorkLedger(engine=self._engine, settings=WorkLedgerSettings())
+        local_telemetry = JsonLineTelemetry()
+        telemetry = (
+            local_telemetry
+            if self._error_telemetry is None
+            else FanoutTelemetry(sinks=(local_telemetry, self._error_telemetry))
+        )
         return SelfHostWorkerLoop(
             worker=Worker(
                 ledger=ledger,
                 registry=registry,
                 queue=SelfHostTaskQueue(ledger=ledger),
-                telemetry=JsonLineTelemetry(),
+                telemetry=telemetry,
             ),
             deployment_id=self._settings.deployment_id,
             stage=stage,
@@ -501,7 +532,13 @@ class SelfHostProfile:
 
 
 def create_api() -> FastAPI:
-    """Uvicorn factory for the self-host API process."""
+    """Uvicorn factory that initializes process-global API error tracking.
+
+    The API process has no worker telemetry fanout, so the returned Sentry sink
+    is intentionally unused after its process-global SDK initialization.
+    """
+    settings = SelfHostSettings.model_validate({})
+    _initialize_error_tracking(command="api", deployment_slug=settings.deployment_slug)
     return SelfHostProfile.from_settings().api()
 
 
@@ -533,7 +570,10 @@ def main(argv: list[str] | None = None) -> int:
             access_log=True,
         )
         return 0
-    profile = SelfHostProfile.from_settings()
+    error_telemetry = _initialize_error_tracking(
+        command=args.command, deployment_slug=settings.deployment_slug
+    )
+    profile = SelfHostProfile.from_settings(error_telemetry=error_telemetry)
     try:
         if args.command == "setup":
             profile.setup()
@@ -545,6 +585,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         profile.close()
+
+
+def _initialize_error_tracking(
+    *, command: str, deployment_slug: str
+) -> TelemetryPort | None:
+    """Initialize the optional Sentry sink only for long-lived profile entrypoints."""
+    if command not in {"api", "setup", "worker"}:
+        return None
+    settings = SentrySettings.model_validate({})
+    dsn = settings.configured_dsn()
+    if dsn is None:
+        return None
+    from rememberstack.adapters.sentry import initialize_sentry
+
+    environment = (settings.environment or "").strip() or deployment_slug
+    return initialize_sentry(
+        dsn=dsn, environment=environment, sample_rate=settings.sample_rate
+    )
 
 
 def _psycopg_url() -> str:

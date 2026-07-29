@@ -62,6 +62,10 @@ benchmark = [
     "nltk>=3.9",
     "regex>=2024.11.6",
 ]
+observability = [
+    "langfuse>=4.14.1,<5",
+    "sentry-sdk==2.66.1",
+]
 
 [project.scripts]
 remember = "rememberstack.surfaces.cli:main"

@@ -17,11 +17,11 @@ RUN addgroup --system app \
         --home /var/lib/rememberstack --no-create-home app \
     && mkdir -p /var/lib/rememberstack/forget-manifests \
     && chown -R app:app /var/lib/rememberstack \
-    && uv sync --locked --no-dev --extra server --no-install-project
+    && uv sync --locked --no-dev --extra observability --extra server --no-install-project
 
 COPY src ./src
 
-RUN uv sync --locked --no-dev --extra server
+RUN uv sync --locked --no-dev --extra observability --extra server
 
 # Provenance: the exact source revision baked into this image. The benchmark
 # harness compares it against the revision it prepared with, so a run can never
