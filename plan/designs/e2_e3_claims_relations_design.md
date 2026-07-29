@@ -31,9 +31,11 @@ source**, and only trustworthy if it is **actually supported** by that source. T
 
 > *"It launched last year in three markets. The team considers it a runaway success."*
 
-- **Understandability fails.** In isolation the model cannot know what *It* is or when *last year*
-  was, so it emits `"It launched last year in three markets"` — a claim no downstream step can use
-  (you can't resolve an entity called "It" or a date called "last year").
+- **Understandability fails.** In isolation the model cannot know what *It* is or which valid-time
+  bounds *last year* denotes, so it emits `"It launched last year in three markets"` — a claim whose
+  entity and valid-time cannot be resolved downstream. With the context bundle, the entity is
+  decontextualized in `claim_text`; the relative wording stays there, while its anchored resolution
+  lands only in the structured valid-time fields.
 - **Faithfulness is mis-aimed.** A *verbatim-quote* requirement rewards copying surface text, which is
   the opposite of making a claim standalone — and it has no opinion about whether `"The team considers
   it a runaway success"` (an opinion, not a checkable fact) should be a claim at all.
@@ -79,19 +81,19 @@ Over that bundle the model does three things, in order (the "Claimify" shape). E
    success" with no holder would drop. *(This stage is the single biggest quality lever — in
    the source research, removing it was the largest quality drop of any component.)*
 
-2. **Decontextualization — make it stand alone.** Resolve every pronoun, partial name, acronym, and
-   relative date **using the bundle, never outside knowledge**, and add the **minimum** context needed
+2. **Decontextualization — make it stand alone.** Resolve every pronoun, partial name, and acronym
+   **using the bundle, never outside knowledge**, and add the **minimum** context needed
    — over-stuffing both bloats the claim and risks asserting something the source didn't. Coreference
    is handled right here, in the same call (D19): no claim leaves E2 with a dangling pronoun. The
    discipline that makes this safe: **if a careful reader could not pick one interpretation from the
    bundle, drop the candidate** rather than guess. In the example, the neighbours name *Project Atlas*
-   and the header dates the document to 2024, so "It launched last year" becomes "Project Atlas
-   launched in 2024."
+   so "It launched last year" becomes "Project Atlas launched last year." The relative wording remains
+   in claim text; its absolute resolution is structured valid-time, described below.
 
 3. **Decomposition — split into atoms.** Break the disambiguated sentence into the simplest standalone
    claims, preserving attribution ("*X said* Y" stays attributed, it does not become a bare "Y"). The
-   example yields two: `"Project Atlas launched in 2024."` and `"Project Atlas launched in three
-   markets."`
+   example yields two: `"Project Atlas launched last year."` (with the resolved interval only in its
+   structured valid-time fields) and `"Project Atlas launched in three markets."`
 
 **Two calls, not one (D31).** Selection is run as its own (optionally voted) call, then
 decontextualization + decomposition + grounding run as a second fused call. Selection is split out
@@ -114,10 +116,24 @@ Grounding therefore stores **two things per claim** and accepts via **layered ch
 source-asserted valid-time as *nullable typed scalars only* (no free-form objects — strict-schema
 constraint from #145): `valid_kind` (`proposition_validity|event_time|measurement_period|effective_period`),
 `valid_from_iso` / `valid_until_iso` (ISO-8601 date or datetime strings), and `valid_precision`
-(`unknown|instant|day|month|quarter|year|open`). Relative dates resolve from bundle timestamps only,
-the same rule as decontextualization. E2 parses them deterministically into
+(`unknown|instant|day|month|quarter|year|open`). Relative dates resolve from bundle timestamps only;
+the #158 amendment below specifies their structured-only output. E2 parses them deterministically into
 `claims.claim_valid_*`; a malformed string falls back to unknown/null for the temporal fields
 without rejecting the claim. Most claims have no stated world-time and leave these null/unknown.
+
+**Amendment (2026-07-29, issue #158):** relative temporal expressions are resolved against an
+absolute timestamp in the document header whenever that arithmetic supports an honest interval.
+The computed date goes only into `valid_from_iso` / `valid_until_iso`; `claim_text` keeps the relative
+phrase as the source spoke it. For example, with a 2023-05-08 header, "visited yesterday" keeps that
+wording and emits the day bounds 2023-05-07, while "painted last year" emits the year bounds
+2022-01-01 through 2022-12-31 with `valid_precision=year`. With no absolute in-document anchor, or
+when a vague phrase cannot fit the available precision vocabulary without invention, E2 omits the
+structured time. D32 layer 2 does not gate these structured fields: its membership union applies only
+to text in `added_context`. The evidence-row builder used by `claims_verbatim`, claim hydration, and
+`explain` now returns `claim_valid_from` and `claim_valid_until`. A #158 non-goal is surfacing
+`valid_precision` or `valid_kind` on `EvidenceResult`: it exposes only `claim_valid_from` and
+`claim_valid_until`. Precision is inferable from the bounds for these cases (equal ends = day;
+calendar-year span = year); surfacing the enums is a possible follow-up, not part of #158.
 
 **Amendment (2026-07-29, union grounding):** layer-2 membership is checked against the **union of
 source-derived bundle elements**: the TARGET CHUNK slice, deterministic document header, both
@@ -152,9 +168,10 @@ Acceptance layers four checks, cheapest first:
    for media: claim → `source_span`, exact and deterministic; span → source map → raw locator,
    at the converter's disclosed precision — `media_design.md` §4.)
 
-So in the example, `"Project Atlas launched in 2024"` is accepted: its anchor is the verbatim "It
-launched last year", and the additions "Project Atlas" (→ neighbour) and "2024" (→ header) both exist
-in the bundle. The dropped opinion never reaches grounding.
+So in the example, `"Project Atlas launched last year"` is accepted: its anchor is the verbatim "It
+launched last year", and "Project Atlas" (→ neighbour) is the only `added_context` entry. The resolved
+bounds are emitted only in the structured valid-time fields and do not enter the membership gate.
+The attributed stance is grounded separately.
 
 ### 3.4 Nothing is silently lost (D33, D35)
 
@@ -273,16 +290,16 @@ internals (entity resolution, predicate registry, the supersession cascade) are 
 
 ## 6. End-to-end, in one example
 
-> Source chunk (inside a *Results* section of a 2024 product memo): *"It launched last year in three
+> Source chunk (inside a *Results* section of a 2025 product memo): *"It launched last year in three
 > markets. The team considers it a runaway success."* Neighbour text names **Project Atlas**.
 
 | Stage | What happens |
 |---|---|
-| **E1** | chunk + a context prefix ("…from the Results section of the Project Atlas 2024 memo…") |
+| **E1** | chunk + a context prefix ("…from the Results section of the Project Atlas 2025 memo…") |
 | **E2 Selection** | keep "launched last year in three markets"; **keep** "The team considers it a runaway success" as the team's attributed stance (D59 — a bare, holderless version would drop → ledger) |
-| **E2 Decontextualize** | "It"→Project Atlas (neighbour), "last year"→2024 (header) → *"Project Atlas launched in 2024 in three markets"* |
-| **E2 Decompose** | `"Project Atlas launched in 2024."` (emits `valid_kind=event_time`, `valid_from_iso`/`valid_until_iso` for 2024's bounds, `valid_precision=year` — D41; amendment 2026-07-27 / #146) + `"Project Atlas launched in three markets."` |
-| **E2 Grounding** | each accepted: anchor span present, additions trace to bundle, entailed; the date "2024" verbatim-exists in the bundle, so the asserted interval is grounded (D32) |
+| **E2 Decontextualize** | "It"→Project Atlas (neighbour), while "last year" stays source-faithful in claim text → *"Project Atlas launched last year in three markets"* |
+| **E2 Decompose** | `"Project Atlas launched last year."` (against the 2025 header, emits `valid_kind=event_time`, 2024 `valid_from_iso`/`valid_until_iso` bounds, `valid_precision=year` — D41; amendment 2026-07-29 / #158) + `"Project Atlas launched in three markets."` |
+| **E2 Grounding** | each accepted: anchor span present, textual additions trace to the bundle, entailed; structured valid-time does not enter D32's `added_context` membership gate |
 | **E3** | the stance claim becomes a **stance observation** on the team entity ("Acme's team considers Project Atlas a runaway success" — D59); neither decomposed launch claim yields a relation — "three markets" is a quantity and "2024" a date, neither a second entity (D2/D18); the temporal one carries `claim_valid_from = 2024` (**D41**), queryable as evidence. A later memo asserting 2023 makes a *second* immutable claim (`claim_valid_from = 2023`); with no relation to host them, **both stand** as evidence and there is no adjudicated supersession — the documented non-goal (`postgres_schema_design.md` §15). |
 
 ## 7. Decisions, and what is still a spike

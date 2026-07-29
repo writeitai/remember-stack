@@ -81,30 +81,57 @@ SECTION SUMMARIES are orientation only and are never quotable source text.
 
 _CLAIMIFY_PROMPT: Final = """You are the decontextualize+decompose+ground stage
 of a claim extractor. For each KEPT proposition below: resolve every pronoun,
-partial name, acronym, and relative date USING ONLY THE BUNDLE (never outside
-knowledge), adding the minimum context needed; split into the simplest
-standalone claims, preserving attribution ("X said Y" stays attributed); if a
-careful reader could not pick one interpretation from the bundle, omit the
-candidate. For each claim return: claim_text (standalone), source_span (the
-verbatim chunk substring it derives from), added_context (every substring you
-ADDED that is not already present in the TARGET CHUNK; in-chunk text needs no
-added_context entry). Tag each addition header|neighbour|prefix as a best-effort
-provenance pointer, but the tag is advisory: every addition must exist verbatim
-somewhere in the bundle's source-derived texts (TARGET CHUNK, DOCUMENT HEADER,
+partial name, and acronym USING ONLY THE BUNDLE (never outside knowledge),
+adding the minimum context needed; split into the simplest standalone claims,
+preserving attribution ("X said Y" stays attributed); if a careful reader
+could not pick one interpretation from the bundle, omit the candidate. For
+each claim return: claim_text (standalone), source_span (the verbatim chunk
+substring it derives from), added_context (every substring you ADDED that is
+not already present in the TARGET CHUNK; in-chunk text needs no added_context
+entry). Tag each addition header|neighbour|prefix as a best-effort provenance
+pointer, but the tag is advisory: every addition must exist verbatim somewhere
+in the bundle's source-derived texts (TARGET CHUNK, DOCUMENT HEADER,
 same-section PREVIOUS/NEXT CHUNK, or stored CONTEXT PREFIX). SECTION SUMMARIES
 are orientation only, never quotable and never an added_context source. Also
 return entailment_self_verdict (does chunk+bundle entail the claim) and
-is_attributed. When the source states or implies WHEN a fact holds or happened,
-resolve relative dates USING ONLY THE BUNDLE (as with decontextualization) and
-emit valid_kind, valid_from_iso, valid_until_iso, and valid_precision. Use
-ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit offset or Z; never
-emit a datetime without an offset. Otherwise leave valid_kind/from/until null
-and valid_precision unknown. Event on a calendar day →
-valid_kind=event_time, valid_precision=day, both ISO ends for that day.
-Year-only → precision=year with that year's [start,end] ISO bounds; quarters
-are calendar quarters. Bounded
-precisions (day|month|quarter|year) require both ends; open requires from only;
-instant sets both ends equal.
+is_attributed.
+
+TEMPORAL RESOLUTION IS REQUIRED. Whenever the source utterance contains a
+relative temporal expression ("yesterday", "last Saturday", "last year",
+"this morning", "a few weeks ago", and similar) AND the DOCUMENT HEADER
+provides an absolute date or timestamp, you MUST resolve the expression against
+that anchor and emit valid_kind, valid_from_iso, valid_until_iso, and
+valid_precision. Put the computed absolute time ONLY in those structured
+valid-time fields. The claim_text MUST stay faithful to the source: keep the
+relative phrase as spoken and never replace it with the computed date.
+
+Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit offset or Z;
+never emit a datetime without an offset. Calendar-day expressions use
+valid_kind=event_time, valid_precision=day, and the resolved date as both ISO
+ends. Year-only expressions use precision=year with that calendar year's
+[start,end] ISO bounds; months and quarters likewise use their calendar
+bounds. Bounded precisions (day|month|quarter|year) require both ends; open
+requires from only; instant sets both ends equal. Use only the precision the
+expression supports. For a vague expression that the schema cannot encode
+honestly ("a few weeks ago", or "last summer" without source-defined season
+bounds), use a coarser honest year only when the source supports it; otherwise
+omit valid-time. If the document has no absolute anchor, leave valid_kind,
+valid_from_iso, and valid_until_iso null and valid_precision unknown. Never
+invent an anchor or a date.
+
+Examples (DOCUMENT HEADER date → structured output):
+- date 2023-05-08; "went to the support group yesterday" →
+  claim_text="went to the support group yesterday",
+  valid_kind=event_time, valid_from_iso=2023-05-07,
+  valid_until_iso=2023-05-07, valid_precision=day.
+- date 2023-05-08; "painted a lake sunrise last year" →
+  claim_text="painted a lake sunrise last year", valid_kind=event_time,
+  valid_from_iso=2022-01-01, valid_until_iso=2022-12-31,
+  valid_precision=year.
+- date 2023-05-08; "met the organizer last Saturday" →
+  claim_text="met the organizer last Saturday", valid_kind=event_time,
+  valid_from_iso=2023-05-06, valid_until_iso=2023-05-06,
+  valid_precision=day.
 
 KEPT PROPOSITIONS:
 {keeps}

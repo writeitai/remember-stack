@@ -1215,7 +1215,8 @@ _CONFIRM_OBSERVATIONS = text(
 _CONFIRM_CLAIMS = text(
     """
     SELECT claim_id, doc_id, chunk_id, claim_text, source_span,
-           char_start, char_end, is_attributed, is_current_testimony
+           char_start, char_end, is_attributed, is_current_testimony,
+           claim_valid_from, claim_valid_until
     FROM claims
     WHERE deployment_id = :deployment_id
       AND claim_id = ANY(:claim_ids)
@@ -1237,7 +1238,8 @@ _HYDRATE_RELATION = text(
 _HYDRATE_EVIDENCE_CLAIMS = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony
+           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
+           c.claim_valid_from, c.claim_valid_until
     FROM relation_evidence e
     JOIN claims c ON c.claim_id = e.claim_id
     WHERE e.relation_id = :relation_id AND e.stance = 'supports'

@@ -943,6 +943,15 @@ restructuring, concluded the claim/relation split, D6, and relation-only superse
   upgrade is an expressivity child table (btree-indexed, D23-restamped), built only on measured demand.
   Full detail: `e2_e3_claims_relations_design.md` §5/§7, `postgres_schema_design.md` §8/§15/§17.
 
+**Amendment (2026-07-29, issue #158).** When a source uses a relative time such as "yesterday" or
+"last year" and its document header supplies an absolute date, E2 must resolve the relative time
+against that in-document anchor and store the result in `claim_valid_from` / `claim_valid_until` with
+the honest available precision. The claim text keeps the source's relative wording; the computed date
+exists only in the structured valid-time fields. If the document has no absolute anchor, E2 leaves the
+fields empty rather than guessing. D32's text-membership gate remains unchanged: it checks added claim
+text, not these structured fields. Evidence payloads, including `claims_verbatim` and `explain`, now
+surface `claim_valid_from` and `claim_valid_until`, so an answer agent can use the extracted time.
+
 ---
 
 ## D42. E0 records document origin at ingestion (external vs. system-generated)

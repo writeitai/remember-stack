@@ -487,12 +487,30 @@ def test_s5_sources_via_the_hydration_chain(rig: _ApiRig) -> None:
     relation = rig.client.get(
         "/lookup/relations", params={"subject_entity_id": alice["entity_id"]}
     ).json()["facts"][0]
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE claims"
+                " SET claim_valid_from = '2024-01-01+00',"
+                " claim_valid_until = '2024-12-31+00',"
+                " claim_valid_precision = 'year',"
+                " claim_valid_kind = 'event_time'"
+                " WHERE claim_text = 'Alice Novak joined Acme in 2024.'"
+            )
+        )
 
     hydrated = rig.client.get(f"/hydrate/relation/{relation['fact_id']}").json()
     assert hydrated["grain"] == "composite"
     assert len(hydrated["evidence"]) == 2  # both asserting claims
     for claim in hydrated["evidence"]:
         assert _SOURCE[claim["char_start"] : claim["char_end"]] == claim["source_span"]
+    by_text = {claim["claim_text"]: claim for claim in hydrated["evidence"]}
+    stamped = by_text["Alice Novak joined Acme in 2024."]
+    assert stamped["claim_valid_from"] == "2024-01-01T00:00:00Z"
+    assert stamped["claim_valid_until"] == "2024-12-31T00:00:00Z"
+    unstamped = by_text["Alice Novak works for Acme."]
+    assert unstamped["claim_valid_from"] is None
+    assert unstamped["claim_valid_until"] is None
     (source,) = hydrated["sources"]
     assert source["title"] == "staffing"
     assert source["markdown_uri"].endswith("/document.md")
@@ -624,6 +642,17 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
     lost currency is dropped and counted — never served. Claims answers are
     EVIDENCE grain, never current-fact. The first read also crosses an
     artificially small batch boundary through the real confirmation path."""
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE claims"
+                " SET claim_valid_from = '2024-01-01+00',"
+                " claim_valid_until = '2024-12-31+00',"
+                " claim_valid_precision = 'year',"
+                " claim_valid_kind = 'event_time'"
+                " WHERE claim_text = 'Alice Novak joined Acme in 2024.'"
+            )
+        )
     monkeypatch.setattr(query_engine_module, "INTERACTIVE_HYDRATION_BATCH_SIZE", 1)
     confirmation_calls = 0
 
@@ -652,6 +681,13 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
     assert first["dropped_by_hydration"] == 0
     for claim in first["evidence"]:
         assert claim["is_current_testimony"]
+    by_text = {claim["claim_text"]: claim for claim in first["evidence"]}
+    stamped = by_text["Alice Novak joined Acme in 2024."]
+    assert stamped["claim_valid_from"] == "2024-01-01T00:00:00Z"
+    assert stamped["claim_valid_until"] == "2024-12-31T00:00:00Z"
+    unstamped = by_text["Alice Novak works for Acme."]
+    assert unstamped["claim_valid_from"] is None
+    assert unstamped["claim_valid_until"] is None
 
     # currency flips on one claim in the spine; Lance still nominates it:
     with rig.engine.begin() as connection:
