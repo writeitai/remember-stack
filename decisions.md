@@ -670,12 +670,12 @@ claiming row — refined 2026-07-18).
 **Decision.** A claim stores both a standalone `claim_text` and a verbatim `source_span` + character
 offsets, plus an `added_context[]` list naming each added substring's bundle source. Acceptance layers,
 cheapest first: (1) deterministic **anchor** — the source span is a real slice of the chunk; (2)
-deterministic **window-membership** — every added substring verbatim-exists in the union of
-source-derived bundle elements, while its declared source tag is advisory provenance (rejects
-fabrication, not mislabeling); (3) an in-call **entailment self-verdict** (incl. the "*X said* Y
-entails *X said Y*, not *Y*" rule); (4) a **sampled independent** entailment audit (never per-claim).
-Replaces the verbatim-substring gate, which is incompatible with decontextualization. No external
-knowledge.
+deterministic **window-membership** — every content token in non-empty added text must occur in the
+union of source-derived bundle elements, while only a closed set of functional scaffolding tokens may
+be absent and the declared source tag remains advisory provenance (rejects fabrication, not
+mislabeling); (3) an in-call **entailment self-verdict** (incl. the "*X said* Y entails *X said Y*,
+not *Y*" rule); (4) a **sampled independent** entailment audit (never per-claim). Replaces the
+verbatim-substring gate, which is incompatible with decontextualization. No external knowledge.
 
 **Context.** A decontextualized claim is a rewrite, so it is never a verbatim substring; grounding must
 be provenance + entailment, as every surveyed decompose-then-verify system does. (C6.)
@@ -689,6 +689,39 @@ deaths; sampled correct decontextualizations added names present in TARGET CHUNK
 tagged them `header` (258) or `prefix` (99), and only 27 claims from 19 documents survived.
 **Section summaries remain outside the union (the stored prefix, though LLM-derived, is a designed union member per D79's accepted second-order channel); D79 consumption
 rules are unchanged.**
+
+**Amendment (2026-07-29, token-tolerant union grounding).** Layer 2 checks an addition at token
+grain instead of requiring its whole connective phrase to occur verbatim. It tokenizes Unicode words
+and punctuation and splits possessives (`Caroline's` → `caroline` + `'s`). Every token must either
+occur case-insensitively at a word boundary somewhere in the same source-derived union or belong to
+this closed functional allowlist:
+
+- attribution scaffolding: `said`, `says`, `saying`, `asked`, `asks`, `told`, `tells`, `mentioned`,
+  `mentions`, `wrote`, `writes`, `according`;
+- pure function words: `that`, `the`, `a`, `an`, `of`, `to`, `in`, `on`, `at`, `and`, `or`, `is`,
+  `was`, `were`, `be`, `been`, `she`, `he`, `they`, `her`, `his`, `their`, `it`, `its`, `this`,
+  `these`, `those`, `with`, `for`, `as`, `by`, `from`;
+- punctuation: `,`, `.`, `:`, `;`, straight or curly single/double quote tokens, and `'s`.
+
+Empty or whitespace-only additions are no-ops. **Numeric tokens are never allowlisted**: a number
+such as `2022` must occur in the union or the addition is rejected, preserving #158's rule that a
+computed date cannot enter claim text through `added_context`. Proper names and every other content
+noun, verb, or adjective likewise always require a union match; `Melanie` therefore passes beside
+the colon in a `Melanie:` speaker label, while an absent `Paris`, `pride`, or `parade` does not.
+The preserved invariant is that **every content token of every addition remains traceable verbatim
+(ignoring case) to source-derived bundle text**. The allowlist can supply grammar and
+attribution/decontextualization connective tissue, never outside facts.
+
+This amendment resolves a measured contradiction in the conv-26 GLM-5.2 E2 07h loss ledger:
+of 144 `grounding_rejected` decisions, the dominant class (about 40–60%) was scaffolding the prompt
+itself mandates — preserve attribution ("X said Y") and resolve pronouns/possessives — rejected only
+because exact connective strings such as `said` (13 rows), `Caroline said` (9), `said she` (7), or
+`Caroline's` (5) did not occur whole in a bundle element. Thirteen empty additions were also rejected
+despite adding nothing. Gold facts died as a result: the source turn `Melanie: Yeah, I painted that
+lake sunrise last year!` yielded a correct attributed claim, then layer 2 rejected
+`Melanie said, ` because the source used a speaker-label colon. Token-grain matching admits that
+prompt-required scaffolding without weakening content or numeric traceability. Rejections still drop
+the claim and are ledgered; `edit_detail.failed_tokens` names the tokens that failed.
 
 **Refined by D65 (media).** For media-derived documents grounding is **two hops**: the anchor
 (layer 1) proves the claim derives from the *representation* (document.md); it cannot prove the
@@ -890,9 +923,10 @@ files and K pages link to each other, in both directions, as consumers — never
 `claim_valid_from` / `claim_valid_until`, plus a `claim_valid_precision` (year/quarter/day/…/open/
 unknown) and a `claim_valid_kind` (proposition-validity vs. event-time vs. measurement-period). It is
 the structured form of the date decontextualization already resolves into the claim text ("launched
-*in 2024*"), emitted in the same E2 call and **grounded** by the existing window-membership check (the
-date must verbatim-exist in the bundle, D32). It is **evidence about *when***, epistemically identical
-to `claim_text` (evidence about *what*) and `source_span` (evidence about *where in the source*).
+*in 2024*"), emitted in the same E2 call. Date text introduced through `added_context` remains
+**grounded** by D32 — every numeric token must exist in the source-derived union — while #158 governs
+computed structured dates separately. It is **evidence about *when***, epistemically identical to
+`claim_text` (evidence about *what*) and `source_span` (evidence about *where in the source*).
 Adjudicated, current-fact validity stays **exclusively on relations** (`valid_from`/`valid_until` +
 `invalidated_at`, D3).
 
