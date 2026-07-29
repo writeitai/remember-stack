@@ -391,6 +391,7 @@ class SelfHostProfile:
         from rememberstack.workers import SkeletonCheckSettings
         from rememberstack.workers import StructureHandler
         from rememberstack.workers import StructurerSettings
+        from rememberstack.workers import SummarySettings
 
         documents = DocumentCatalog(engine=self._engine)
         chunks = ChunkCatalog(engine=self._engine)
@@ -417,6 +418,7 @@ class SelfHostProfile:
                 settings=StructurerSettings.model_validate({}),
                 check_settings=SkeletonCheckSettings.model_validate({}),
                 role_settings=RoleSettings.model_validate({}),
+                summary_settings=SummarySettings.model_validate({}),
             )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
@@ -598,10 +600,12 @@ def _model_bindings() -> dict[str, str]:
     from rememberstack.workers import RoleSettings
     from rememberstack.workers import SkeletonCheckSettings
     from rememberstack.workers import StructurerSettings
+    from rememberstack.workers import SummarySettings
 
     structurer = StructurerSettings.model_validate({})
     skeleton_check = SkeletonCheckSettings.model_validate({})
     roles = RoleSettings.model_validate({})
+    summaries = SummarySettings.model_validate({})
     e1 = E1Settings.model_validate({})
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
@@ -613,6 +617,7 @@ def _model_bindings() -> dict[str, str]:
         "structure_fallback": structurer.model,
         "skeleton_check": skeleton_check.model,
         "section_role": roles.model,
+        "section_summary": summaries.model,
         "chunk_embedding": e1.embedding_model,
         "context_prefix": e1.prefix_model,
         "claim_extraction": e2.extract_model,

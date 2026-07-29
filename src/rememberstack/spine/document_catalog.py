@@ -7,6 +7,7 @@ atomically; `record_representation` lands one immutable conversion output
 skeleton checks append independently under D52.
 """
 
+from collections.abc import Sequence
 from decimal import Decimal
 import json
 from uuid import NAMESPACE_URL
@@ -17,6 +18,7 @@ from uuid import uuid5
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine import RowMapping
 
 from rememberstack.model import ConvertSource
 from rememberstack.model import DocumentVersionNotFoundError
@@ -214,6 +216,41 @@ class DocumentCatalog:
                 f"document representation {representation_id} does not exist"
             )
         return StructureSource.model_validate(dict(row))
+
+    def current_section_tree(
+        self, *, representation_id: UUID
+    ) -> PersistedSectionTree | None:
+        """Load the representation's current immutable structure generation."""
+        with self._engine.connect() as connection:
+            generation = (
+                connection.execute(
+                    _SELECT_CURRENT_STRUCTURE_GENERATION,
+                    {"representation_id": representation_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if generation is None:
+                return None
+            persisted = (
+                connection.execute(
+                    _SELECT_SECTION_TREE,
+                    {"structure_generation_id": generation["structure_generation_id"]},
+                )
+                .mappings()
+                .all()
+            )
+        if not persisted:
+            raise RuntimeError("current structure generation has no root section")
+        return _persisted_tree(generation=generation, sections=persisted)
+
+    def summary_cache_sidecars(self, *, doc_id: UUID) -> tuple[str, ...]:
+        """All prior sidecars that may contain keyed summary cache entries."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _SELECT_SUMMARY_CACHE_SIDECARS, {"doc_id": doc_id}
+            ).scalars()
+            return tuple(str(uri) for uri in rows)
 
     def record_synthetic_root(self, *, record: SyntheticRootRecord) -> None:
         """Compatibility helper for callers that explicitly request a root.
@@ -446,45 +483,7 @@ class DocumentCatalog:
                     _SUPERSEDE_PRIOR_VERSIONS,  # are superseded as of now (D55)
                     {"doc_id": record.doc_id, "version_id": record.version_id},
                 )
-        return PersistedSectionTree(
-            sections=tuple(
-                SnappedSection(
-                    node_path=row["node_path"],
-                    parent_path=(
-                        row["node_path"].rsplit(".", 1)[0]
-                        if "." in row["node_path"]
-                        else None
-                    ),
-                    title=row["title"] or "",
-                    role=row["role"],
-                    block_start=row["block_start"],
-                    block_end=row["block_end"],
-                    char_start=row["char_start"],
-                    char_end=row["char_end"],
-                    summary=row["summary"] or "",
-                    ordinal=row["ordinal"],
-                    heading_level=row["heading_level"],
-                    normalized_title=row["normalized_title"],
-                )
-                for row in persisted
-            ),
-            placement_path=persisted[0]["placement_path"],
-            structurer_version=persisted[0]["structurer_version"] or "",
-            structure_generation_id=generation["structure_generation_id"],
-            pageindex_uri=generation["pageindex_uri"],
-            skeleton_version=generation["skeleton_version"],
-            skeleton_hash=generation["skeleton_hash"],
-            skeleton_producer_family=generation["skeleton_producer_family"],
-            skeleton_check_version=generation["skeleton_check_version"],
-            roles_version=generation["roles_version"],
-            summary_version=generation["summary_version"],
-            placement_version=generation["placement_version"],
-            selecting_check_id=generation["selecting_check_id"],
-            route_tag=generation["route_tag"],
-            candidate_skeleton_hash=generation["candidate_skeleton_hash"],
-            stats_version=generation["stats_version"],
-            stats=SkeletonStats.model_validate(generation["stats"]),
-        )
+        return _persisted_tree(generation=generation, sections=persisted)
 
 
 def _lineage_locked(*, connection: Connection, record: UploadRecord) -> UUID:
@@ -732,6 +731,31 @@ _SELECT_STRUCTURE_GENERATION = text(
     """
 )
 
+_SELECT_CURRENT_STRUCTURE_GENERATION = text(
+    """
+    SELECT g.structure_generation_id, g.skeleton_version, g.skeleton_hash,
+           g.skeleton_producer_family, g.skeleton_check_version, g.roles_version,
+           g.summary_version, g.placement_version, g.selecting_check_id,
+           g.route_tag::text AS route_tag, g.candidate_skeleton_hash,
+           g.stats_version, g.stats, g.pageindex_uri
+    FROM document_representations r
+    JOIN document_structure_generations g
+      ON g.representation_id = r.representation_id
+     AND g.structure_generation_id = r.current_structure_generation_id
+    WHERE r.representation_id = :representation_id
+    """
+)
+
+_SELECT_SUMMARY_CACHE_SIDECARS = text(
+    """
+    SELECT pageindex_uri
+    FROM document_structure_generations
+    WHERE doc_id = :doc_id
+      AND pageindex_uri IS NOT NULL
+    ORDER BY created_at DESC, structure_generation_id
+    """
+)
+
 _SELECT_SECTION_TREE = text(
     """
     SELECT node_path, title, role::text AS role, block_start, block_end,
@@ -742,6 +766,54 @@ _SELECT_SECTION_TREE = text(
     ORDER BY ordinal
     """
 )
+
+
+def _persisted_tree(
+    *, generation: RowMapping, sections: Sequence[RowMapping]
+) -> PersistedSectionTree:
+    """Materialize one immutable generation from SQL mapping rows."""
+    generation_row = generation
+    section_rows = sections
+    return PersistedSectionTree(
+        sections=tuple(
+            SnappedSection(
+                node_path=row["node_path"],
+                parent_path=(
+                    row["node_path"].rsplit(".", 1)[0]
+                    if "." in row["node_path"]
+                    else None
+                ),
+                title=row["title"] or "",
+                role=row["role"],
+                block_start=row["block_start"],
+                block_end=row["block_end"],
+                char_start=row["char_start"],
+                char_end=row["char_end"],
+                summary=row["summary"],
+                ordinal=row["ordinal"],
+                heading_level=row["heading_level"],
+                normalized_title=row["normalized_title"],
+            )
+            for row in section_rows
+        ),
+        placement_path=section_rows[0]["placement_path"],
+        structurer_version=section_rows[0]["structurer_version"] or "",
+        structure_generation_id=generation_row["structure_generation_id"],
+        pageindex_uri=generation_row["pageindex_uri"] or "",
+        skeleton_version=generation_row["skeleton_version"],
+        skeleton_hash=generation_row["skeleton_hash"],
+        skeleton_producer_family=generation_row["skeleton_producer_family"],
+        skeleton_check_version=generation_row["skeleton_check_version"],
+        roles_version=generation_row["roles_version"],
+        summary_version=generation_row["summary_version"],
+        placement_version=generation_row["placement_version"],
+        selecting_check_id=generation_row["selecting_check_id"],
+        route_tag=generation_row["route_tag"],
+        candidate_skeleton_hash=generation_row["candidate_skeleton_hash"],
+        stats_version=generation_row["stats_version"],
+        stats=SkeletonStats.model_validate(generation_row["stats"]),
+    )
+
 
 _MARK_REPRESENTATION_READY = text(
     """

@@ -200,6 +200,8 @@ def test_inventory_scrub_and_verification_preserve_independent_evidence(
         "mem://artifacts/target-markdown.md",
         "mem://artifacts/target-meta.json",
         "mem://artifacts/target-pageindex.json",
+        "mem://artifacts/target-structure-old-pageindex.json",
+        "mem://artifacts/target-structure-new-pageindex.json",
         "mem://artifacts/writer-transcript.json",
         f"mem://raw/target.bin?marker={_TOKEN}",
         "mem://artifacts/planner-transcript.json",
@@ -254,11 +256,11 @@ def test_readiness_rehonors_manifest_after_old_postgres_restore(
 
 _TARGET_CHECK_ID = UUID("75000000-0000-0000-0000-0000000000c1")
 _TARGET_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000c2")
+_TARGET_OLD_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000c3")
 
 
 def _seed_structure_provenance(*, connection: Connection) -> None:
-    """A D79 check record + generation for the target doc: hard-forget must
-    erase both EXPLICITLY (review MAJOR — never via implied cascade)."""
+    """A check plus two immutable generations/sidecars for hard-forget."""
     connection.execute(
         text(
             "INSERT INTO document_skeleton_checks ("
@@ -280,27 +282,35 @@ def _seed_structure_provenance(*, connection: Connection) -> None:
             "representation": _TARGET_REPRESENTATION_ID,
         },
     )
-    connection.execute(
-        text(
-            "INSERT INTO document_structure_generations ("
-            " structure_generation_id, deployment_id, doc_id, version_id,"
-            " representation_id, skeleton_version, skeleton_hash,"
-            " skeleton_producer_family, selecting_check_id, route_tag,"
-            " candidate_skeleton_hash, stats_version, stats"
-            ") VALUES ("
-            " :generation_id, :d, :doc, :version, :representation,"
-            " 'skeleton-v', 'hash', 'N/A', :check_id, 'parser', 'hash',"
-            " 'stats-v', CAST('{}' AS jsonb))"
+    for generation_id, pageindex_uri in (
+        (
+            _TARGET_OLD_GENERATION_ID,
+            "mem://artifacts/target-structure-old-pageindex.json",
         ),
-        {
-            "generation_id": _TARGET_GENERATION_ID,
-            "d": _DEPLOYMENT_ID,
-            "doc": _TARGET_DOC_ID,
-            "version": _TARGET_VERSION_ID,
-            "representation": _TARGET_REPRESENTATION_ID,
-            "check_id": _TARGET_CHECK_ID,
-        },
-    )
+        (_TARGET_GENERATION_ID, "mem://artifacts/target-structure-new-pageindex.json"),
+    ):
+        connection.execute(
+            text(
+                "INSERT INTO document_structure_generations ("
+                " structure_generation_id, deployment_id, doc_id, version_id,"
+                " representation_id, skeleton_version, skeleton_hash,"
+                " skeleton_producer_family, selecting_check_id, route_tag,"
+                " candidate_skeleton_hash, stats_version, stats, pageindex_uri"
+                ") VALUES ("
+                " :generation_id, :d, :doc, :version, :representation,"
+                " 'skeleton-v', 'hash', 'N/A', :check_id, 'parser', 'hash',"
+                " 'stats-v', CAST('{}' AS jsonb), :pageindex_uri)"
+            ),
+            {
+                "generation_id": generation_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": _TARGET_DOC_ID,
+                "version": _TARGET_VERSION_ID,
+                "representation": _TARGET_REPRESENTATION_ID,
+                "check_id": _TARGET_CHECK_ID,
+                "pageindex_uri": pageindex_uri,
+            },
+        )
 
 
 def _seed_documents(*, connection: Connection) -> None:

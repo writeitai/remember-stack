@@ -52,6 +52,7 @@ class _Catalog:
     def __init__(self) -> None:
         self.checks: list[SkeletonCheckRecord] = []
         self.generations: list[SectionTreeRecord] = []
+        self.current: PersistedSectionTree | None = None
 
     def structure_source(self, *, representation_id: UUID) -> StructureSource:
         assert representation_id == _REPRESENTATION
@@ -69,9 +70,19 @@ class _Catalog:
     def record_skeleton_check(self, *, record: SkeletonCheckRecord) -> None:
         self.checks.append(record)
 
+    def current_section_tree(
+        self, *, representation_id: UUID
+    ) -> PersistedSectionTree | None:
+        assert representation_id == _REPRESENTATION
+        return self.current
+
+    def summary_cache_sidecars(self, *, doc_id: UUID) -> tuple[str, ...]:
+        assert doc_id == _DOC
+        return ()
+
     def record_section_tree(self, *, record: SectionTreeRecord) -> PersistedSectionTree:
         self.generations.append(record)
-        return PersistedSectionTree(
+        persisted = PersistedSectionTree(
             sections=record.sections,
             placement_path=record.placement_path,
             structurer_version=record.structurer_version,
@@ -90,6 +101,9 @@ class _Catalog:
             stats_version=record.stats_version,
             stats=record.stats,
         )
+        if record.make_current:
+            self.current = persisted
+        return persisted
 
 
 def _work() -> ClaimedWork:
@@ -125,6 +139,13 @@ def _router(verdicts: Iterator[str]):
             }
         if response_type == "RoleClassificationResponse":
             return {"assignments": []}
+        if response_type == "SectionSummaryResponse":
+            return {"summary": "A bounded section summary."}
+        if response_type == "RootSummaryPlacementResponse":
+            return {
+                "summary": "A bounded document summary.",
+                "placement_path": "/routing/proof/",
+            }
         raise AssertionError(response_type)
 
     return route
@@ -405,9 +426,7 @@ def test_roles_use_rules_then_title_classifier_with_body_as_failure_default(
 def test_checker_bump_does_not_mint_a_new_generation_when_route_holds(
     tmp_path: Path,
 ) -> None:
-    """The generation id is seeded from route + selected tree, never the
-    checker version (review: a checker bump must not churn generations or
-    re-chunk when the route does not flip)."""
+    """A checker-only bump appends its check and stops at the complete tree."""
     source = "# A\n\nbody\n\n# B\n"
     store = LocalFSObjectStore(root=tmp_path)
     blocks = blockize(document_md=source)
@@ -423,22 +442,56 @@ def test_checker_bump_does_not_mint_a_new_generation_when_route_holds(
         ).encode(),
     )
     catalog = _Catalog()
-    for checker_model in ("checker/generation-one", "checker/generation-two"):
-        StructureHandler(
-            catalog=catalog,  # type: ignore[arg-type]
-            artifact_store=store,
-            model_provider=None,
-            settings=StructurerSettings(
-                min_heading_density_per_10k=0, max_oversized_leaf_ratio=1
-            ),
-            check_settings=SkeletonCheckSettings(model=checker_model),
-            role_settings=RoleSettings(model="roles/fake"),
-        ).handle(work=_work(), meter=NoopCostMeter())
-    assert len(catalog.generations) == 2  # append-only recorder sees both runs
+    summary_marker = {"value": "first"}
+    provider = FakeModelProvider(
+        generate_router=lambda prompt, response_type: (
+            {"verdict": "coherent"}
+            if response_type == "SkeletonCheckResponse"
+            else {"assignments": []}
+            if response_type == "RoleClassificationResponse"
+            else {"summary": f"{summary_marker['value']} one-line summary."}
+            if response_type == "SectionSummaryResponse"
+            else {
+                "summary": f"{summary_marker['value']} root summary.",
+                "placement_path": "/stable/topic/",
+            }
+        )
+    )
+    StructureHandler(
+        catalog=catalog,  # type: ignore[arg-type]
+        artifact_store=store,
+        model_provider=provider,
+        settings=StructurerSettings(
+            min_heading_density_per_10k=0, max_oversized_leaf_ratio=1
+        ),
+        check_settings=SkeletonCheckSettings(model="checker/generation-one"),
+        role_settings=RoleSettings(model="roles/fake"),
+    ).handle(work=_work(), meter=NoopCostMeter())
+    first_generation_id = catalog.generations[0].structure_generation_id
+    summary_calls = sum(
+        "Call kind:" in request.prompt for request in provider.generated_requests
+    )
+    summary_marker["value"] = "different"
+    StructureHandler(
+        catalog=catalog,  # type: ignore[arg-type]
+        artifact_store=store,
+        model_provider=provider,
+        settings=StructurerSettings(
+            min_heading_density_per_10k=0, max_oversized_leaf_ratio=1
+        ),
+        check_settings=SkeletonCheckSettings(model="checker/generation-two"),
+        role_settings=RoleSettings(model="roles/fake"),
+    ).handle(work=_work(), meter=NoopCostMeter())
+
+    assert len(catalog.generations) == 1
+    assert catalog.generations[0].structure_generation_id == first_generation_id
+    assert len(catalog.checks) == 2
     assert (
-        len({record.structure_generation_id for record in catalog.generations}) == 1
-    )  # ...but they derive the SAME id: ON CONFLICT makes the second a no-op
-    assert len(catalog.checks) == 2  # while every check outcome is ledgered
+        sum("Call kind:" in request.prompt for request in provider.generated_requests)
+        == summary_calls
+    )
+    assert catalog.generations[0].summary_version is not None
+    assert catalog.generations[0].placement_version is not None
 
 
 def test_role_classifier_failure_defaults_to_body(tmp_path: Path) -> None:

@@ -33,6 +33,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import ProviderCallError
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import SectionTreeRecord
 from rememberstack.model import SkeletonStats
@@ -41,14 +42,17 @@ from rememberstack.model import StructureRouteTag
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import E0_CONVERT_VERSION
+from rememberstack.workers import E0_STRUCTURE_VERSION
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import StructurerSettings
+from rememberstack.workers import SummarySettings
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
 
@@ -484,7 +488,9 @@ _STRUCTURED_SOURCE = "\n\n".join(
 )
 
 
-def _structure_worker(rig: _E0Rig, provider: object) -> Worker:
+def _structure_worker(
+    rig: _E0Rig, provider: object, *, summary_model: str = "summary/test"
+) -> Worker:
     """A worker whose structure stage runs the full LLM route."""
     registry = HandlerRegistry()
     registry.register(
@@ -494,17 +500,45 @@ def _structure_worker(rig: _E0Rig, provider: object) -> Worker:
             artifact_store=rig.artifact_store,
             model_provider=provider,  # type: ignore[arg-type]
             settings=StructurerSettings(min_blocks_for_llm=3),
+            summary_settings=SummarySettings(model=summary_model),
         ),
     )
     return Worker(ledger=rig.ledger, registry=registry)
 
 
-def test_full_structure_route_persists_the_snapped_tree(rig: _E0Rig) -> None:
-    """D79 parser rows, deterministic roles, null placement, versioned sidecar."""
+def _structure_work(
+    *, version_id: UUID, representation_id: UUID, content_hash: str
+) -> ClaimedWork:
+    return ClaimedWork(
+        processing_id=uuid4(),
+        deployment_id=_DEPLOYMENT_ID,
+        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+        target_id=version_id,
+        stage=PipelineStage.STRUCTURE,
+        component_version=E0_STRUCTURE_VERSION,
+        content_hash=content_hash,
+        lane=ProcessingLane.STEADY,
+        attempt=1,
+        payload={
+            "version_id": str(version_id),
+            "representation_id": str(representation_id),
+        },
+    )
+
+
+def test_full_structure_route_persists_summaries_and_root_placement(
+    rig: _E0Rig,
+) -> None:
+    """D79 parser rows, summaries, placement, sidecar, and P3 source query."""
     provider = FakeModelProvider(
         generate_payloads={
             "SkeletonCheckResponse": {"verdict": "coherent"},
             "RoleClassificationResponse": {"assignments": []},
+            "SectionSummaryResponse": {"summary": "A section orientation line."},
+            "RootSummaryPlacementResponse": {
+                "summary": "A field report about erosion.",
+                "placement_path": "/field-research/erosion/",
+            },
         }
     )
     ingested = rig.ingestor.ingest(
@@ -529,7 +563,8 @@ def test_full_structure_route_persists_the_snapped_tree(rig: _E0Rig) -> None:
             connection.execute(
                 text(
                     "SELECT node_path, parent_section_id, section_id, title,"
-                    " role::text AS role, block_start, block_end, placement_path"
+                    " role::text AS role, block_start, block_end, summary,"
+                    " placement_path"
                     " FROM document_sections WHERE version_id = :version_id"
                     " ORDER BY ordinal"
                 ),
@@ -547,7 +582,8 @@ def test_full_structure_route_persists_the_snapped_tree(rig: _E0Rig) -> None:
         ).scalar_one()
     assert [row["node_path"] for row in sections] == ["0", "0.0", "0.0.0", "0.0.1"]
     root, report, findings, recommendations = sections
-    assert root["placement_path"] is None
+    assert root["summary"] == "A field report about erosion."
+    assert root["placement_path"] == "/field-research/erosion/"
     assert report["parent_section_id"] == root["section_id"]
     assert findings["parent_section_id"] == report["section_id"]
     assert recommendations["parent_section_id"] == report["section_id"]
@@ -566,10 +602,18 @@ def test_full_structure_route_persists_the_snapped_tree(rig: _E0Rig) -> None:
             key=ObjectKey(str(representation["pageindex_uri"]))
         )
     )
-    assert sidecar["placement"] is None
-    assert sidecar["generations"]["summary"] is None
-    assert sidecar["generations"]["placement"] is None
+    assert sidecar["placement"] == "/field-research/erosion/"
+    assert sidecar["generations"]["summary"] is not None
+    assert sidecar["generations"]["placement"] is not None
+    assert all(section["summary"] for section in sidecar["sections"])
+    assert all(section["summary_cache_key"] for section in sidecar["sections"])
     assert len(sidecar["sections"]) == 4
+    # This is the exact current-generation query consumed by CorpusFsBuilder.
+    p3_document = ProjectionCatalog(engine=rig.engine).corpus_documents(
+        deployment_id=_DEPLOYMENT_ID
+    )[0]
+    assert p3_document["root_summary"] == "A field report about erosion."
+    assert p3_document["placement_path"] == "/field-research/erosion/"
 
 
 def test_failed_checker_is_explicit_and_fail_open_on_the_parser(rig: _E0Rig) -> None:
@@ -623,6 +667,648 @@ def test_failed_checker_is_explicit_and_fail_open_on_the_parser(rig: _E0Rig) -> 
     assert len(checks) == 1
     assert checks[0].check_outcome == "provider_error"
     assert checks[0].provider_failure is not None
+    degraded = rig.row(
+        sql="SELECT g.summary_version, g.placement_version, s.summary,"
+        " s.placement_path FROM document_representations r"
+        " JOIN document_structure_generations g"
+        " ON g.structure_generation_id = r.current_structure_generation_id"
+        " JOIN document_sections s"
+        " ON s.structure_generation_id = g.structure_generation_id"
+        " AND s.node_path = '0'"
+        " WHERE r.representation_id = :representation_id",
+        params={"representation_id": representation["representation_id"]},
+    )
+    assert degraded == {
+        "summary_version": None,
+        "placement_version": None,
+        "summary": None,
+        "placement_path": None,
+    }
+
+
+def test_summary_cache_recomputes_only_edited_leaf_and_ancestors(rig: _E0Rig) -> None:
+    """Two lineage versions: one edited leaf misses; its sibling cache-hits."""
+    summary_calls: list[str] = []
+
+    def route(prompt: str, response_type: str) -> dict[str, object]:
+        if response_type == "SkeletonCheckResponse":
+            return {"verdict": "coherent"}
+        if response_type == "RoleClassificationResponse":
+            return {"assignments": []}
+        path = (
+            "0"
+            if response_type == "RootSummaryPlacementResponse"
+            else prompt.split("Section path: ", 1)[1].splitlines()[0]
+        )
+        summary_calls.append(path)
+        edited = "EDITED" in prompt or "revised" in prompt
+        if response_type == "RootSummaryPlacementResponse":
+            return {
+                "summary": (
+                    "Revised field report." if edited else "Original field report."
+                ),
+                "placement_path": "/field-research/erosion/",
+            }
+        if path == "0.0.1":
+            return {
+                "summary": (
+                    "Recommendations revised."
+                    if edited
+                    else "Original recommendations."
+                )
+            }
+        if path == "0.0":
+            return {
+                "summary": (
+                    "Field report revised." if edited else "Original field report."
+                )
+            }
+        return {"summary": "Stable findings."}
+
+    provider = FakeModelProvider(generate_router=route)
+    worker = _structure_worker(rig, provider, summary_model="summary/cache-proof")
+
+    first = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="reports/erosion.md",
+        upload=DocumentUpload(
+            filename="erosion.md",
+            mime="text/markdown",
+            content=_STRUCTURED_SOURCE.encode("utf-8"),
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref="v1",
+        sync_cycle_id=None,
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    assert (
+        worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.STRUCTURE,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.SUCCEEDED
+    )
+    assert set(summary_calls[:2]) == {"0.0.0", "0.0.1"}
+    assert summary_calls[2:] == ["0.0", "0"]
+
+    summary_calls.clear()
+    edited_source = _STRUCTURED_SOURCE.replace(
+        "Publish the dataset.", "Publish the EDITED dataset."
+    )
+    second = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="reports/erosion.md",
+        upload=DocumentUpload(
+            filename="erosion.md",
+            mime="text/markdown",
+            content=edited_source.encode("utf-8"),
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref="v2",
+        sync_cycle_id=None,
+    )
+    assert second.doc_id == first.doc_id
+    assert second.version_id != first.version_id
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    assert (
+        worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.STRUCTURE,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.SUCCEEDED
+    )
+
+    assert summary_calls == ["0.0.1", "0.0", "0"]
+    rows = rig.row(
+        sql="SELECT count(*) AS generations,"
+        " count(*) FILTER (WHERE summary_version IS NOT NULL) AS complete"
+        " FROM document_structure_generations WHERE doc_id = :doc_id",
+        params={"doc_id": first.doc_id},
+    )
+    assert rows == {"generations": 2, "complete": 2}
+
+
+def test_complete_runs_with_different_outputs_keep_first_generation_truth(
+    rig: _E0Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Input/seat identity collides even when two full providers disagree."""
+
+    def provider(marker: str) -> FakeModelProvider:
+        def route(prompt: str, response_type: str) -> dict[str, object]:
+            if response_type == "SkeletonCheckResponse":
+                return {"verdict": "coherent"}
+            if response_type == "RoleClassificationResponse":
+                return {"assignments": []}
+            if response_type == "RootSummaryPlacementResponse":
+                return {
+                    "summary": f"{marker} root summary.",
+                    "placement_path": f"/field-research/{marker}/",
+                }
+            path = prompt.split("Section path: ", 1)[1].splitlines()[0]
+            return {"summary": f"{marker} summary for {path}."}
+
+        return FakeModelProvider(generate_router=route)
+
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="identity.md",
+            mime="text/markdown",
+            content=_STRUCTURED_SOURCE.encode("utf-8"),
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    representation = rig.row(
+        sql="SELECT representation_id FROM document_representations"
+        " WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    representation_id = representation["representation_id"]
+    work = _structure_work(
+        version_id=ingested.version_id,
+        representation_id=representation_id,  # type: ignore[arg-type]
+        content_hash=ingested.content_hash,
+    )
+    first_handler = StructureHandler(
+        catalog=rig.catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=provider("first"),
+        settings=StructurerSettings(min_blocks_for_llm=3),
+        summary_settings=SummarySettings(model="summary/identity-proof"),
+    )
+    first_handler.handle(work=work, meter=NoopCostMeter())
+    first_current = rig.row(
+        sql="SELECT current_structure_generation_id, pageindex_uri"
+        " FROM document_representations"
+        " WHERE representation_id = :representation_id",
+        params={"representation_id": representation_id},
+    )
+    first_generation_id = first_current["current_structure_generation_id"]
+
+    # Simulate two attempts that both observed no generation, with the first
+    # attempt's PostgreSQL commit surviving but its sidecar write missing.
+    rig.artifact_store.purge_objects(
+        keys=(ObjectKey(str(first_current["pageindex_uri"])),), prefixes=()
+    )
+    monkeypatch.setattr(
+        rig.catalog, "current_section_tree", lambda *, representation_id: None
+    )
+    monkeypatch.setattr(rig.catalog, "summary_cache_sidecars", lambda *, doc_id: ())
+    second_handler = StructureHandler(
+        catalog=rig.catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=provider("different"),
+        settings=StructurerSettings(min_blocks_for_llm=3),
+        summary_settings=SummarySettings(model="summary/identity-proof"),
+    )
+    second_handler.handle(work=work, meter=NoopCostMeter())
+
+    rows = rig.row(
+        sql="SELECT count(*) AS generations,"
+        " min(structure_generation_id::text) AS generation_id"
+        " FROM document_structure_generations"
+        " WHERE representation_id = :representation_id",
+        params={"representation_id": representation_id},
+    )
+    assert rows == {"generations": 1, "generation_id": str(first_generation_id)}
+    with rig.engine.connect() as connection:
+        summaries = connection.execute(
+            text(
+                "SELECT summary FROM document_sections"
+                " WHERE structure_generation_id = :generation_id"
+                " ORDER BY ordinal"
+            ),
+            {"generation_id": first_generation_id},
+        ).scalars()
+        assert all(str(summary).startswith("first ") for summary in summaries)
+    repaired_sidecar = json.loads(
+        rig.artifact_store.read_bytes(
+            key=ObjectKey(str(first_current["pageindex_uri"]))
+        )
+    )
+    assert repaired_sidecar["structure_generation_id"] == str(first_generation_id)
+    assert all(
+        str(section["summary"]).startswith("first ")
+        for section in repaired_sidecar["sections"]
+    )
+
+
+def test_identical_handler_replay_rewrites_missing_sidecar_without_calls(
+    rig: _E0Rig,
+) -> None:
+    """A same-seat retry replays the first generation's stored output."""
+    provider = FakeModelProvider(
+        generate_payloads={
+            "SkeletonCheckResponse": {"verdict": "coherent"},
+            "RoleClassificationResponse": {"assignments": []},
+            "SectionSummaryResponse": {"summary": "Replay section summary."},
+            "RootSummaryPlacementResponse": {
+                "summary": "Replay root summary.",
+                "placement_path": "/field-research/replay/",
+            },
+        }
+    )
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="replay.md",
+            mime="text/markdown",
+            content=_STRUCTURED_SOURCE.encode("utf-8"),
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    representation = rig.row(
+        sql="SELECT representation_id FROM document_representations"
+        " WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    representation_id = representation["representation_id"]
+    handler = StructureHandler(
+        catalog=rig.catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=provider,
+        settings=StructurerSettings(min_blocks_for_llm=3),
+        summary_settings=SummarySettings(model="summary/replay-proof"),
+    )
+    work = _structure_work(
+        version_id=ingested.version_id,
+        representation_id=representation_id,  # type: ignore[arg-type]
+        content_hash=ingested.content_hash,
+    )
+    handler.handle(work=work, meter=NoopCostMeter())
+    current = rig.row(
+        sql="SELECT current_structure_generation_id, pageindex_uri"
+        " FROM document_representations"
+        " WHERE representation_id = :representation_id",
+        params={"representation_id": representation_id},
+    )
+    first_generation_id = current["current_structure_generation_id"]
+    first_call_count = len(provider.generated_requests)
+    sidecar_key = ObjectKey(str(current["pageindex_uri"]))
+    rig.artifact_store.purge_objects(keys=(sidecar_key,), prefixes=())
+
+    handler.handle(work=work, meter=NoopCostMeter())
+
+    assert len(provider.generated_requests) == first_call_count
+    after = rig.row(
+        sql="SELECT current_structure_generation_id,"
+        " (SELECT count(*) FROM document_structure_generations"
+        "  WHERE representation_id = :representation_id) AS generations"
+        " FROM document_representations"
+        " WHERE representation_id = :representation_id",
+        params={"representation_id": representation_id},
+    )
+    assert after == {
+        "current_structure_generation_id": first_generation_id,
+        "generations": 1,
+    }
+    replayed_sidecar = json.loads(rig.artifact_store.read_bytes(key=sidecar_key))
+    assert replayed_sidecar["structure_generation_id"] == str(first_generation_id)
+    assert all(section["summary_cache_key"] for section in replayed_sidecar["sections"])
+
+
+def test_degraded_sidecar_repairs_only_failed_branch_and_ancestors(rig: _E0Rig) -> None:
+    """A failed mid-tree node preserves and later reuses its independent peers."""
+    source = "\n\n".join(
+        (
+            "# Broken branch",
+            "Broken branch preamble.",
+            "## Successful child",
+            "Successful child body.",
+            "# Healthy sibling",
+            "Healthy sibling body.",
+        )
+    )
+    first_calls: list[str] = []
+
+    def failing_route(prompt: str, response_type: str) -> dict[str, object]:
+        if response_type == "SkeletonCheckResponse":
+            return {"verdict": "coherent"}
+        if response_type == "RoleClassificationResponse":
+            return {"assignments": []}
+        path = (
+            "0"
+            if response_type == "RootSummaryPlacementResponse"
+            else prompt.split("Section path: ", 1)[1].splitlines()[0]
+        )
+        first_calls.append(path)
+        if path == "0.0":
+            raise ProviderCallError("only the branch summary fails")
+        if response_type == "RootSummaryPlacementResponse":
+            return {"summary": "Unexpected root.", "placement_path": "/unexpected/"}
+        return {"summary": f"Stable summary for {path}."}
+
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="partial.md", mime="text/markdown", content=source.encode("utf-8")
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    first_worker = _structure_worker(
+        rig,
+        FakeModelProvider(generate_router=failing_route),
+        summary_model="summary/repair-proof",
+    )
+    assert (
+        first_worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.STRUCTURE,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.SUCCEEDED
+    )
+    representation = rig.row(
+        sql="SELECT representation_id, current_structure_generation_id,"
+        " pageindex_uri FROM document_representations"
+        " WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    degraded_generation_id = representation["current_structure_generation_id"]
+    with rig.engine.connect() as connection:
+        degraded_rows = (
+            connection.execute(
+                text(
+                    "SELECT node_path, summary, placement_path"
+                    " FROM document_sections"
+                    " WHERE structure_generation_id = :generation_id"
+                    " ORDER BY ordinal"
+                ),
+                {"generation_id": degraded_generation_id},
+            )
+            .mappings()
+            .all()
+        )
+        degraded_slots = (
+            connection.execute(
+                text(
+                    "SELECT summary_version, placement_version"
+                    " FROM document_structure_generations"
+                    " WHERE structure_generation_id = :generation_id"
+                ),
+                {"generation_id": degraded_generation_id},
+            )
+            .mappings()
+            .one()
+        )
+    by_path = {row["node_path"]: row for row in degraded_rows}
+    assert first_calls[0] == "0.0.0"
+    assert set(first_calls[1:]) == {"0.0", "0.1"}
+    assert by_path["0.0.0"]["summary"] == "Stable summary for 0.0.0."
+    assert by_path["0.1"]["summary"] == "Stable summary for 0.1."
+    assert by_path["0.0"]["summary"] is None
+    assert by_path["0"]["summary"] is None
+    assert all(row["placement_path"] is None for row in degraded_rows)
+    assert dict(degraded_slots) == {"summary_version": None, "placement_version": None}
+    degraded_sidecar = json.loads(
+        rig.artifact_store.read_bytes(
+            key=ObjectKey(str(representation["pageindex_uri"]))
+        )
+    )
+    degraded_sidecar_by_path = {
+        section["node_path"]: section for section in degraded_sidecar["sections"]
+    }
+    assert degraded_sidecar["generations"]["summary"] is None
+    assert degraded_sidecar["generations"]["placement"] is None
+    assert degraded_sidecar_by_path["0.0"]["summary"] is None
+    assert degraded_sidecar_by_path["0"]["summary"] is None
+    assert degraded_sidecar_by_path["0.0.0"]["summary_cache_key"]
+    assert degraded_sidecar_by_path["0.1"]["summary_cache_key"]
+
+    repair_calls: list[str] = []
+
+    def healthy_route(prompt: str, response_type: str) -> dict[str, object]:
+        path = (
+            "0"
+            if response_type == "RootSummaryPlacementResponse"
+            else prompt.split("Section path: ", 1)[1].splitlines()[0]
+        )
+        repair_calls.append(path)
+        if response_type == "RootSummaryPlacementResponse":
+            return {
+                "summary": "Repaired root summary.",
+                "placement_path": "/field-research/repaired/",
+            }
+        return {"summary": f"Repaired summary for {path}."}
+
+    StructureHandler(
+        catalog=rig.catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=FakeModelProvider(generate_router=healthy_route),
+        settings=StructurerSettings(min_blocks_for_llm=3),
+        summary_settings=SummarySettings(model="summary/repair-proof"),
+    ).handle(
+        work=_structure_work(
+            version_id=ingested.version_id,
+            representation_id=representation["representation_id"],  # type: ignore[arg-type]
+            content_hash=ingested.content_hash,
+        ),
+        meter=NoopCostMeter(),
+    )
+
+    assert repair_calls == ["0.0", "0"]
+    repaired = rig.row(
+        sql="SELECT r.current_structure_generation_id, g.summary_version,"
+        " g.placement_version, s.summary, s.placement_path,"
+        " (SELECT count(*) FROM document_structure_generations"
+        "  WHERE representation_id = r.representation_id) AS generations"
+        " FROM document_representations r"
+        " JOIN document_structure_generations g"
+        " ON g.structure_generation_id = r.current_structure_generation_id"
+        " JOIN document_sections s"
+        " ON s.structure_generation_id = g.structure_generation_id"
+        " AND s.node_path = '0'"
+        " WHERE r.representation_id = :representation_id",
+        params={"representation_id": representation["representation_id"]},
+    )
+    assert repaired["current_structure_generation_id"] != degraded_generation_id
+    assert repaired["summary_version"] is not None
+    assert repaired["placement_version"] is not None
+    assert repaired["summary"] == "Repaired root summary."
+    assert repaired["placement_path"] == "/field-research/repaired/"
+    assert repaired["generations"] == 2
+
+
+def test_summary_seat_swap_copies_skeleton_and_moves_pointer(
+    rig: _E0Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A D70 swap mints summary/placement only; parser/check/roles are replayed."""
+
+    def provider(marker: str) -> FakeModelProvider:
+        def route(prompt: str, response_type: str) -> dict[str, object]:
+            if response_type == "SkeletonCheckResponse":
+                return {"verdict": "coherent"}
+            if response_type == "RoleClassificationResponse":
+                return {"assignments": []}
+            if response_type == "RootSummaryPlacementResponse":
+                return {
+                    "summary": f"{marker} root summary.",
+                    "placement_path": f"/field-research/{marker}/",
+                }
+            path = prompt.split("Section path: ", 1)[1].splitlines()[0]
+            return {"summary": f"{marker} summary for {path}."}
+
+        return FakeModelProvider(generate_router=route)
+
+    first_provider = provider("alpha")
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="survey.md",
+            mime="text/markdown",
+            content=_STRUCTURED_SOURCE.encode("utf-8"),
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    first_worker = _structure_worker(
+        rig, first_provider, summary_model="summary/model-alpha"
+    )
+    assert (
+        first_worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.STRUCTURE,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.SUCCEEDED
+    )
+    representation = rig.row(
+        sql="SELECT representation_id, current_structure_generation_id"
+        " FROM document_representations WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    first_generation = representation["current_structure_generation_id"]
+
+    def parser_must_not_run(**kwargs: object) -> object:
+        del kwargs
+        raise AssertionError("summary-seat swap re-parsed the representation")
+
+    monkeypatch.setattr(
+        "rememberstack.workers.e0.parse_heading_skeleton", parser_must_not_run
+    )
+    second_provider = provider("beta")
+    StructureHandler(
+        catalog=rig.catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=second_provider,
+        settings=StructurerSettings(min_blocks_for_llm=3),
+        summary_settings=SummarySettings(model="summary/model-beta"),
+    ).handle(
+        work=ClaimedWork(
+            processing_id=uuid4(),
+            deployment_id=_DEPLOYMENT_ID,
+            target_kind=ProcessingTarget.DOCUMENT_VERSION,
+            target_id=ingested.version_id,
+            stage=PipelineStage.STRUCTURE,
+            component_version=E0_STRUCTURE_VERSION,
+            content_hash=ingested.content_hash,
+            lane=ProcessingLane.STEADY,
+            attempt=1,
+            payload={
+                "version_id": str(ingested.version_id),
+                "representation_id": str(representation["representation_id"]),
+            },
+        ),
+        meter=NoopCostMeter(),
+    )
+
+    with rig.engine.connect() as connection:
+        generations = (
+            connection.execute(
+                text(
+                    "SELECT structure_generation_id, skeleton_version,"
+                    " skeleton_hash, skeleton_producer_family,"
+                    " skeleton_check_version, roles_version, summary_version,"
+                    " placement_version, selecting_check_id, route_tag::text,"
+                    " candidate_skeleton_hash, stats_version, stats"
+                    " FROM document_structure_generations"
+                    " WHERE representation_id = :representation_id"
+                    " ORDER BY created_at, structure_generation_id"
+                ),
+                {"representation_id": representation["representation_id"]},
+            )
+            .mappings()
+            .all()
+        )
+        section_rows = (
+            connection.execute(
+                text(
+                    "SELECT structure_generation_id, node_path, title,"
+                    " role::text AS role, block_start, block_end, char_start,"
+                    " char_end, ordinal, heading_level, normalized_title, summary,"
+                    " placement_path FROM document_sections"
+                    " WHERE representation_id = :representation_id"
+                    " ORDER BY structure_generation_id, ordinal"
+                ),
+                {"representation_id": representation["representation_id"]},
+            )
+            .mappings()
+            .all()
+        )
+        current = connection.execute(
+            text(
+                "SELECT current_structure_generation_id"
+                " FROM document_representations"
+                " WHERE representation_id = :representation_id"
+            ),
+            {"representation_id": representation["representation_id"]},
+        ).scalar_one()
+
+    assert len(generations) == 2
+    assert generations[0]["structure_generation_id"] == first_generation
+    assert generations[1]["structure_generation_id"] == current
+    assert current != first_generation
+    unchanged_generation_fields = (
+        "skeleton_version",
+        "skeleton_hash",
+        "skeleton_producer_family",
+        "skeleton_check_version",
+        "roles_version",
+        "selecting_check_id",
+        "route_tag",
+        "candidate_skeleton_hash",
+        "stats_version",
+        "stats",
+    )
+    assert {key: generations[0][key] for key in unchanged_generation_fields} == {
+        key: generations[1][key] for key in unchanged_generation_fields
+    }
+    assert generations[0]["summary_version"] != generations[1]["summary_version"]
+    assert generations[0]["placement_version"] != generations[1]["placement_version"]
+
+    by_generation: dict[object, list[dict[str, object]]] = {}
+    for row in section_rows:
+        by_generation.setdefault(row["structure_generation_id"], []).append(dict(row))
+    first_sections = by_generation[first_generation]
+    second_sections = by_generation[current]
+    skeleton_role_fields = (
+        "node_path",
+        "title",
+        "role",
+        "block_start",
+        "block_end",
+        "char_start",
+        "char_end",
+        "ordinal",
+        "heading_level",
+        "normalized_title",
+    )
+    assert [
+        {key: row[key] for key in skeleton_role_fields} for row in first_sections
+    ] == [{key: row[key] for key in skeleton_role_fields} for row in second_sections]
+    assert {str(row["summary"]) for row in first_sections} != {
+        str(row["summary"]) for row in second_sections
+    }
+    assert second_sections[0]["placement_path"] == "/field-research/beta/"
+    assert not any(
+        request.model != "summary/model-beta"
+        for request in second_provider.generated_requests
+    )
 
 
 def test_retried_tree_write_returns_the_first_attempts_truth(rig: _E0Rig) -> None:

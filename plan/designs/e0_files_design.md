@@ -382,10 +382,20 @@ unchanged):
   bounded: a leaf larger than the summary-call token ceiling is sharded at block grain and
   reduced; a parent call reads its **own direct blocks plus its children's one-liners** (a
   chapter's preamble is content too) with balanced fan-in when children are many. Calls are
-  parallel and cached per section; the cache key is the ordered constituent block hashes,
-  child-summary hashes, model, prompt, generation parameters, and summarizer version. This is
-  the call shape where cheap models are reliable: bounded context, no arithmetic, no giant
-  output.
+  parallel and cached per section; the cache key hashes the ordered rendered block strings,
+  rendered child lines (path + capped title + summary), model, prompt, generation parameters,
+  and summarizer version. This is the call shape where cheap models are reliable: bounded
+  context, no arithmetic, no giant output. The versioned token estimate is whitespace-based;
+  the companion character ceiling is the hard bound for whitespace-poor/CJK/minified input,
+  and every rendered call must fit both. **Degradation convention:** `summary_version` is
+  non-null only when every section
+  in the generation has a summary; any failed section call leaves that section null (and any
+  ancestor that cannot receive all child one-liners null), may preserve successful summaries
+  in independent subtrees, and makes the generation's `summary_version` null. Because root
+  placement is emitted by the same complete reduction, `placement_version` is non-null iff
+  `summary_version` and root `placement_path` are non-null; otherwise both placement fields
+  are null. Thus a partially useful tree is persisted without mislabeling a degraded run as a
+  complete summary generation.
 - **Placement rides the root reduction.** The one-shot call also produced the D39 placement
   hint; that responsibility moves to the **document-level (root) summary call**, which sees
   exactly what placement needs — the title, source kind, and the child one-liners. On the

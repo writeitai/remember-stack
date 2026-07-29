@@ -17,6 +17,9 @@ from rememberstack.workers.e0 import StructureHandler
 from rememberstack.workers.e0 import StructurerSettings
 from rememberstack.workers.e0 import UPLOAD_SOURCE_KIND
 from rememberstack.workers.e0 import UploadIngestor
+from rememberstack.workers.e0_summary import E0_PLACEMENT_VERSION
+from rememberstack.workers.e0_summary import E0_SUMMARY_VERSION
+from rememberstack.workers.e0_summary import SummarySettings
 from rememberstack.workers.e1 import ChunkHandler
 from rememberstack.workers.e1 import E1_CHUNK_VERSION
 from rememberstack.workers.e1 import E1_EMBED_VERSION
@@ -127,6 +130,8 @@ __all__ = (
     "E0_SKELETON_CHECK_VERSION",
     "E0_SKELETON_VERSION",
     "E0_STRUCTURE_VERSION",
+    "E0_PLACEMENT_VERSION",
+    "E0_SUMMARY_VERSION",
     "HandlerOutcome",
     "HandlerRegistry",
     "ForgetKnowledgeRebuilder",
@@ -157,6 +162,7 @@ __all__ = (
     "RoleSettings",
     "SkeletonCheckSettings",
     "StructurerSettings",
+    "SummarySettings",
     "SyncCycleRunner",
     "SyncSettings",
     "UPLOAD_SOURCE_KIND",
