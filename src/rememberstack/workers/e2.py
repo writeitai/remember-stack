@@ -162,14 +162,19 @@ are orientation only, never quotable and never an added_context source. Also
 return entailment_self_verdict (does chunk+bundle entail the claim) and
 is_attributed.
 
-TEMPORAL RESOLUTION IS REQUIRED. Whenever the source utterance contains a
-relative temporal expression ("yesterday", "last Saturday", "last year",
-"this morning", "a few weeks ago", and similar) AND the DOCUMENT HEADER
-provides an absolute date or timestamp, you MUST resolve the expression against
-that anchor and emit valid_kind, valid_from_iso, valid_until_iso, and
-valid_precision. Put the computed absolute time ONLY in those structured
-valid-time fields. The claim_text MUST stay faithful to the source: keep the
-relative phrase as spoken and never replace it with the computed date.
+TEMPORAL RESOLUTION IS REQUIRED regardless of claim form. This applies equally
+when claim_text preserves a direct quotation or attributed speech:
+a relative expression inside quoted or attributed text is never exempt.
+Whenever the source utterance contains a relative temporal expression
+("yesterday", "last Saturday", "last year", "this morning", "a few weeks ago",
+and similar) AND the DOCUMENT HEADER provides an absolute date or timestamp,
+you MUST resolve the expression against that anchor and emit valid_kind,
+valid_from_iso, valid_until_iso, and valid_precision.
+Put the computed absolute time ONLY in those structured valid-time fields. The
+claim_text MUST stay faithful to the source: keep the relative phrase as spoken
+and never replace it with the computed date. When claim_text preserves a direct
+quotation, the quoted text itself stays verbatim; its resolution goes only to
+the valid-time fields.
 
 Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit offset or Z;
 never emit a datetime without an offset. Calendar-day expressions use
@@ -186,10 +191,12 @@ valid_from_iso, and valid_until_iso null and valid_precision unknown. Never
 invent an anchor or a date.
 
 Examples (DOCUMENT HEADER date → structured output):
-- date 2023-05-08; "went to the support group yesterday" →
-  claim_text="went to the support group yesterday",
+- date 2023-05-08;
+  claim_text="Caroline said: I went to a support group yesterday" →
   valid_kind=event_time, valid_from_iso=2023-05-07,
   valid_until_iso=2023-05-07, valid_precision=day.
+  Note the quote form: the relative word stays inside the quoted claim_text;
+  the resolution goes only to the valid_* fields.
 - date 2023-05-08; "painted a lake sunrise last year" →
   claim_text="painted a lake sunrise last year", valid_kind=event_time,
   valid_from_iso=2022-01-01, valid_until_iso=2022-12-31,

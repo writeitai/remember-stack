@@ -985,6 +985,8 @@ exists only in the structured valid-time fields. If the document has no absolute
 fields empty rather than guessing. D32's text-membership gate remains unchanged: it checks added claim
 text, not these structured fields. Evidence payloads, including `claims_verbatim` and `explain`, now
 surface `claim_valid_from` and `claim_valid_until`, so an answer agent can use the extracted time.
+The same rule applies when the relative expression is inside a preserved direct quotation or
+attributed claim.
 
 ---
 

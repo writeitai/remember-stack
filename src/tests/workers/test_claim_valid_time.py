@@ -29,9 +29,15 @@ def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> Non
     )
 
     assert "TEMPORAL RESOLUTION IS REQUIRED" in rendered
+    assert "regardless of claim form" in rendered
+    assert "relative expression inside quoted or attributed text" in rendered
     assert "you MUST resolve the expression" in rendered
     assert "computed absolute time ONLY in those structured" in rendered
     assert "valid-time fields" in rendered
+    assert (
+        'claim_text="Caroline said: I went to a support group yesterday"' in rendered
+    )
+    assert "the relative word stays inside the quoted claim_text" in rendered
     assert 'claim_text="painted a lake sunrise last year"' in rendered
     assert "valid_from_iso=2022-01-01" in rendered
     assert "valid_until_iso=2022-12-31" in rendered
