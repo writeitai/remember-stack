@@ -213,6 +213,8 @@ system:
   metric).
 
 The deployment operator or cloud product chooses collection, retention, dashboards, and alerts.
+Instance provisioning — Langfuse self-host versus cloud, and GlitchTip versus Better Stack — is
+an infrastructure decision tracked separately from the engine.
 Those consumers must derive their view from this state/telemetry rather than becoming another
 authority for pipeline truth (D60/D61).
 

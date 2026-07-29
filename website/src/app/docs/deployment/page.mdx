@@ -49,6 +49,30 @@ It also contains an OpenRouter placeholder. Replace it before processing a
 corpus: the complete pipeline makes extraction and embedding calls. Pin explicit
 model IDs for reproducible work; do not use a rotating free-model router.
 
+## Optional observability
+
+Observability is strictly opt-in. The self-host image includes the
+`rememberstack[observability]` extra, but no exporter initializes unless its
+environment configuration is non-empty.
+
+Set `REMEMBERSTACK_SENTRY_DSN` to send metadata-only error events to a
+Sentry-protocol service such as Sentry, GlitchTip, or Bugsink.
+`REMEMBERSTACK_SENTRY_ENVIRONMENT` defaults to the deployment slug, and
+`REMEMBERSTACK_SENTRY_SAMPLE_RATE` defaults to `1.0`. Request bodies, local
+variables, breadcrumbs, PII, prompt/completion text, and exception messages are
+not sent. Caught worker failures carry only their stage, lane, and processing ID
+as routing tags; PostgreSQL and the existing JSON telemetry remain authoritative
+for retry and ledger state.
+
+LoCoMo answer and judge stages create Langfuse traces only when
+`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_HOST` are all set.
+Run the benchmark with both optional groups, for example
+`uv run --extra benchmark --extra observability python -m benchmarks.locomo`.
+The observer records per-call model/accounting metadata, content-free tool
+argument shapes, final answers, and verdicts, then flushes at stage end. It never
+sends source chunks, documents, rendered prompts, tool response bodies, or gold
+answers.
+
 Check the API and the deployment-seeded recipe registry:
 
 ```bash

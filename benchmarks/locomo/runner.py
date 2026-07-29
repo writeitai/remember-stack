@@ -14,10 +14,14 @@ import subprocess
 import sys
 import time
 from typing import Final
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import BaseModel
+from pydantic import SecretStr
 from pydantic import ValidationError
+from pydantic_settings import BaseSettings
+from pydantic_settings import SettingsConfigDict
 
 from benchmarks.locomo.dataset import DATASET_COMMIT
 from benchmarks.locomo.dataset import DATASET_SHA256
@@ -76,6 +80,10 @@ from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
+if TYPE_CHECKING:
+    from benchmarks.locomo.tracing import LocomoTracer
+    from benchmarks.locomo.tracing import QuestionTrace
+
 _RUN_FILE: Final = "run.json"
 _MANIFEST_FILE: Final = "manifest.json"
 _DOCUMENTS_FILE: Final = "documents.json"
@@ -89,6 +97,33 @@ class BenchmarkRunError(RuntimeError):
 
 class ExecutionGuardError(BenchmarkRunError):
     """A remote stage lacks an exact execution/cost/isolation acknowledgement."""
+
+
+class _LangfuseActivationSettings(BaseSettings):
+    """Standard Langfuse bindings used only to decide whether to load the shim."""
+
+    model_config = SettingsConfigDict(env_prefix="LANGFUSE_", extra="ignore")
+
+    public_key: SecretStr | None = None
+    secret_key: SecretStr | None = None
+    host: str | None = None
+
+    def configured_values(self) -> tuple[str, str, str] | None:
+        """Return credentials only when all three explicit opt-in values are set."""
+        public_key = (
+            ""
+            if self.public_key is None
+            else self.public_key.get_secret_value().strip()
+        )
+        secret_key = (
+            ""
+            if self.secret_key is None
+            else self.secret_key.get_secret_value().strip()
+        )
+        host = (self.host or "").strip()
+        if not public_key or not secret_key or not host:
+            return None
+        return public_key, secret_key, host
 
 
 def prepare_run(*, dataset_path: Path, tier: str, output: Path) -> RunConfiguration:
@@ -389,19 +424,46 @@ def answer_sample(
         for record in context.state.ingests.values()
         if record.sample_id == sample_id
     }
-    for question in remaining:
-        record = _answer_one(
-            question=question,
-            client=client,
-            provider=provider,
-            tools=tools,
-            doc_sessions=doc_sessions,
-            state=context.state,
-            max_agent_calls=max_agent_calls,
-            max_evaluator_cost_usd=max_evaluator_cost_usd,
-        )
-        context.state.answers[question.item_id] = record
-        _save_state(run_dir=run_dir, state=context.state)
+    tracer = _configured_langfuse_tracer(context=context)
+    try:
+        for question in remaining:
+            if tracer is None:
+                record = _answer_one(
+                    question=question,
+                    client=client,
+                    provider=provider,
+                    tools=tools,
+                    doc_sessions=doc_sessions,
+                    state=context.state,
+                    max_agent_calls=max_agent_calls,
+                    max_evaluator_cost_usd=max_evaluator_cost_usd,
+                )
+            else:
+                with tracer.question(
+                    item_id=question.item_id, question=question.question, stage="answer"
+                ) as question_trace:
+                    record = _answer_one(
+                        question=question,
+                        client=client,
+                        provider=provider,
+                        tools=tools,
+                        doc_sessions=doc_sessions,
+                        state=context.state,
+                        max_agent_calls=max_agent_calls,
+                        max_evaluator_cost_usd=max_evaluator_cost_usd,
+                        question_trace=question_trace,
+                    )
+                    question_trace.finish_answer(
+                        final_answer=record.generated_answer,
+                        failure_kind=(
+                            None if record.failure is None else record.failure.kind
+                        ),
+                    )
+            context.state.answers[question.item_id] = record
+            _save_state(run_dir=run_dir, state=context.state)
+    finally:
+        if tracer is not None:
+            tracer.flush()
     return tuple(context.state.answers[question.item_id] for question in questions)
 
 
@@ -447,25 +509,46 @@ def judge_sample(
     _require_cost_ceiling(
         spent=context.state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
     )
-    for question in questions:
-        if question.item_id in context.state.judges:
-            continue
-        answer = context.state.answers[question.item_id]
-        if answer.failure is not None:
-            judge = JudgeRecord(
-                item_id=question.item_id, label="WRONG", model_called=False
-            )
-        else:
-            judge = _judge_one(
-                question=question,
-                answer=answer,
-                provider=provider,
-                state=context.state,
-                max_judge_calls=max_judge_calls,
-                max_evaluator_cost_usd=max_evaluator_cost_usd,
-            )
-        context.state.judges[question.item_id] = judge
-        _save_state(run_dir=run_dir, state=context.state)
+    tracer = _configured_langfuse_tracer(context=context)
+    try:
+        for question in questions:
+            if question.item_id in context.state.judges:
+                continue
+            answer = context.state.answers[question.item_id]
+            if tracer is None:
+                judge = _judge_answer(
+                    question=question,
+                    answer=answer,
+                    provider=provider,
+                    state=context.state,
+                    max_judge_calls=max_judge_calls,
+                    max_evaluator_cost_usd=max_evaluator_cost_usd,
+                )
+            else:
+                with tracer.question(
+                    item_id=question.item_id, question=question.question, stage="judge"
+                ) as question_trace:
+                    judge = _judge_answer(
+                        question=question,
+                        answer=answer,
+                        provider=provider,
+                        state=context.state,
+                        max_judge_calls=max_judge_calls,
+                        max_evaluator_cost_usd=max_evaluator_cost_usd,
+                        question_trace=question_trace,
+                    )
+                    question_trace.finish_judge(
+                        final_answer=answer.generated_answer,
+                        verdict=judge.label,
+                        failure_kind=(
+                            None if judge.failure is None else judge.failure.kind
+                        ),
+                    )
+            context.state.judges[question.item_id] = judge
+            _save_state(run_dir=run_dir, state=context.state)
+    finally:
+        if tracer is not None:
+            tracer.flush()
     return tuple(context.state.judges[question.item_id] for question in questions)
 
 
@@ -939,6 +1022,28 @@ def _require_sample_ingested(*, context: _RunContext, sample_id: str) -> None:
         )
 
 
+def _configured_langfuse_tracer(*, context: _RunContext) -> LocomoTracer | None:
+    """Load the optional observer only when all standard bindings are non-empty."""
+    configured = _LangfuseActivationSettings.model_validate({}).configured_values()
+    if configured is None:
+        return None
+    public_key, secret_key, host = configured
+    from benchmarks.locomo.tracing import create_langfuse_tracer
+
+    configuration = context.configuration
+    run_identity = (
+        f"{configuration.protocol_fingerprint}:"
+        f"{configuration.repository_revision}:"
+        f"{configuration.prepared_at.isoformat()}"
+    )
+    return create_langfuse_tracer(
+        public_key=public_key,
+        secret_key=secret_key,
+        host=host,
+        run_identity=run_identity,
+    )
+
+
 def _answer_one(
     *,
     question: LoCoMoQuestion,
@@ -949,6 +1054,7 @@ def _answer_one(
     state: RunState,
     max_agent_calls: int,
     max_evaluator_cost_usd: Decimal,
+    question_trace: QuestionTrace | None = None,
 ) -> AnswerRecord:
     """Let a bounded agent choose ordinary public recipes, then answer."""
     tool_names = {tool.name for tool in tools}
@@ -968,6 +1074,11 @@ def _answer_one(
         prompt = render_answer_agent_prompt(
             question=question.question, tools=tools, trace=tuple(trace)
         )
+        agent_observation = (
+            None
+            if question_trace is None
+            else question_trace.start_agent_call(model=ANSWER_AGENT_MODEL)
+        )
         started = time.monotonic_ns()
         try:
             response = provider.generate(
@@ -977,6 +1088,11 @@ def _answer_one(
                 response_type=AnswerAgentStep,
             )
         except ProviderAccountingError as error:
+            call_latency_ms = _elapsed_ms(started)
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=None, latency_ms=call_latency_ms, outcome="accounting_error"
+                )
             return _failed_answer(
                 question=question,
                 kind="accounting",
@@ -984,7 +1100,7 @@ def _answer_one(
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
                 agent_call_count=len(usages) + 1,
-                reader_latency_ms=agent_latency_ms + _elapsed_ms(started),
+                reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
                 ),
@@ -992,6 +1108,11 @@ def _answer_one(
                 usages=tuple(usages),
             )
         except ValidationError as error:
+            call_latency_ms = _elapsed_ms(started)
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=None, latency_ms=call_latency_ms, outcome="invalid_response"
+                )
             return _failed_answer(
                 question=question,
                 kind="invalid_response",
@@ -999,7 +1120,7 @@ def _answer_one(
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
                 agent_call_count=len(usages) + 1,
-                reader_latency_ms=agent_latency_ms + _elapsed_ms(started),
+                reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
                 ),
@@ -1007,9 +1128,16 @@ def _answer_one(
                 usages=tuple(usages),
             )
         except OpenRouterProviderError as error:
+            call_latency_ms = _elapsed_ms(started)
             if error.usage is not None:
                 usages.append(error.usage)
                 state.evaluator_cost_usd += error.usage.cost_usd
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=error.usage,
+                    latency_ms=call_latency_ms,
+                    outcome="provider_error",
+                )
             return _failed_answer(
                 question=question,
                 kind="reader",
@@ -1019,17 +1147,29 @@ def _answer_one(
                 agent_call_count=(
                     len(usages) if error.usage is not None else len(usages) + 1
                 ),
-                reader_latency_ms=agent_latency_ms + _elapsed_ms(started),
+                reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
             )
-        agent_latency_ms += _elapsed_ms(started)
+        call_latency_ms = _elapsed_ms(started)
+        agent_latency_ms += call_latency_ms
         usages.append(response.usage)
         state.evaluator_cost_usd += response.usage.cost_usd
+        step = response.output
+        if agent_observation is not None and step.action == "tool":
+            agent_observation.finish(
+                usage=response.usage, latency_ms=call_latency_ms, outcome="tool"
+            )
         if state.evaluator_cost_usd > max_evaluator_cost_usd:
+            if agent_observation is not None and step.action == "answer":
+                agent_observation.finish(
+                    usage=response.usage,
+                    latency_ms=call_latency_ms,
+                    outcome="accounting_error",
+                )
             return _failed_answer(
                 question=question,
                 kind="accounting",
@@ -1047,9 +1187,14 @@ def _answer_one(
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
             )
-        step = response.output
         if step.action == "answer":
             if not trace:
+                if agent_observation is not None:
+                    agent_observation.finish(
+                        usage=response.usage,
+                        latency_ms=call_latency_ms,
+                        outcome="invalid_response",
+                    )
                 return _failed_answer(
                     question=question,
                     kind="invalid_response",
@@ -1063,6 +1208,12 @@ def _answer_one(
                 )
             answer = step.answer or ""
             if len(answer.split()) > 6:
+                if agent_observation is not None:
+                    agent_observation.finish(
+                        usage=response.usage,
+                        latency_ms=call_latency_ms,
+                        outcome="invalid_response",
+                    )
                 return _failed_answer(
                     question=question,
                     kind="invalid_response",
@@ -1078,6 +1229,13 @@ def _answer_one(
                     usages=tuple(usages),
                 )
             claims = _claims_from_trace(trace=tuple(trace), doc_sessions=doc_sessions)
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=response.usage,
+                    latency_ms=call_latency_ms,
+                    outcome="answer",
+                    final_answer=answer,
+                )
             return AnswerRecord(
                 item_id=question.item_id,
                 sample_id=question.sample_id,
@@ -1128,21 +1286,31 @@ def _answer_one(
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
             )
-        tool_started = time.monotonic_ns()
         # Validated by the model's own validator for tool steps, so this cannot
         # raise here; trailing junk (observed: a sentence period after the
         # closing brace at temperature 0) is recorded on the trace row.
         step_arguments, step_trailing = step.parsed_arguments()
+        tool_observation = (
+            None
+            if question_trace is None
+            else question_trace.start_tool_call(
+                name=step.tool_name or "", arguments=step_arguments
+            )
+        )
+        tool_started = time.monotonic_ns()
         try:
             envelope = client.run_recipe(
                 name=step.tool_name or "", arguments=step_arguments
             )
         except MemoryApiError as error:
+            failed_latency = _elapsed_ms(tool_started)
+            if tool_observation is not None:
+                tool_observation.finish(latency_ms=failed_latency, outcome="api_error")
             return _failed_answer(
                 question=question,
                 kind="tool",
                 message=str(error),
-                retrieval_latency_ms=tool_latency_ms + _elapsed_ms(tool_started),
+                retrieval_latency_ms=tool_latency_ms + failed_latency,
                 retrieval_succeeded=False,
                 agent_call_count=len(usages),
                 reader_latency_ms=agent_latency_ms,
@@ -1153,6 +1321,8 @@ def _answer_one(
                 usages=tuple(usages),
             )
         latency = _elapsed_ms(tool_started)
+        if tool_observation is not None:
+            tool_observation.finish(latency_ms=latency, outcome="succeeded")
         tool_latency_ms += latency
         trace.append(
             ToolCallRecord(
@@ -1177,6 +1347,30 @@ def _answer_one(
     )
 
 
+def _judge_answer(
+    *,
+    question: LoCoMoQuestion,
+    answer: AnswerRecord,
+    provider: ModelProviderPort,
+    state: RunState,
+    max_judge_calls: int,
+    max_evaluator_cost_usd: Decimal,
+    question_trace: QuestionTrace | None = None,
+) -> JudgeRecord:
+    """Return a local wrong for answer failures or invoke the configured judge."""
+    if answer.failure is not None:
+        return JudgeRecord(item_id=question.item_id, label="WRONG", model_called=False)
+    return _judge_one(
+        question=question,
+        answer=answer,
+        provider=provider,
+        state=state,
+        max_judge_calls=max_judge_calls,
+        max_evaluator_cost_usd=max_evaluator_cost_usd,
+        question_trace=question_trace,
+    )
+
+
 def _judge_one(
     *,
     question: LoCoMoQuestion,
@@ -1185,6 +1379,7 @@ def _judge_one(
     state: RunState,
     max_judge_calls: int,
     max_evaluator_cost_usd: Decimal,
+    question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Invoke the judge once; every call failure becomes a visible wrong."""
     called = sum(record.model_called for record in state.judges.values())
@@ -1192,6 +1387,11 @@ def _judge_one(
         raise ExecutionGuardError("judge call ceiling reached before next call")
     _require_cost_before_call(
         spent=state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
+    )
+    judge_observation = (
+        None
+        if question_trace is None
+        else question_trace.start_judge_call(model=JUDGE_MODEL)
     )
     started = time.monotonic_ns()
     try:
@@ -1208,40 +1408,69 @@ def _judge_one(
             response_type=JudgeOutput,
         )
     except ProviderAccountingError as error:
+        latency_ms = _elapsed_ms(started)
+        if judge_observation is not None:
+            judge_observation.finish(
+                usage=None, latency_ms=latency_ms, outcome="accounting_error"
+            )
         return JudgeRecord(
             item_id=question.item_id,
             label="WRONG",
             model_called=True,
-            latency_ms=_elapsed_ms(started),
+            latency_ms=latency_ms,
             failure=_failure(kind="accounting", message=str(error)),
         )
     except OpenRouterProviderError as error:
+        latency_ms = _elapsed_ms(started)
         if error.usage is not None:
             state.evaluator_cost_usd += error.usage.cost_usd
+        if judge_observation is not None:
+            judge_observation.finish(
+                usage=error.usage,
+                latency_ms=latency_ms,
+                outcome="provider_error",
+                verdict="WRONG",
+            )
         return JudgeRecord(
             item_id=question.item_id,
             label="WRONG",
             model_called=True,
             usage=error.usage,
-            latency_ms=_elapsed_ms(started),
+            latency_ms=latency_ms,
             failure=_failure(kind="judge", message=str(error)),
         )
     except ValidationError as error:
+        latency_ms = _elapsed_ms(started)
+        if judge_observation is not None:
+            judge_observation.finish(
+                usage=None,
+                latency_ms=latency_ms,
+                outcome="invalid_response",
+                verdict="WRONG",
+            )
         return JudgeRecord(
             item_id=question.item_id,
             label="WRONG",
             model_called=True,
-            latency_ms=_elapsed_ms(started),
+            latency_ms=latency_ms,
             failure=_failure(kind="judge", message=str(error)),
         )
     state.evaluator_cost_usd += response.usage.cost_usd
+    latency_ms = _elapsed_ms(started)
     if state.evaluator_cost_usd > max_evaluator_cost_usd:
+        if judge_observation is not None:
+            judge_observation.finish(
+                usage=response.usage,
+                latency_ms=latency_ms,
+                outcome="accounting_error",
+                verdict="WRONG",
+            )
         return JudgeRecord(
             item_id=question.item_id,
             label="WRONG",
             model_called=True,
             usage=response.usage,
-            latency_ms=_elapsed_ms(started),
+            latency_ms=latency_ms,
             failure=_failure(
                 kind="accounting",
                 message=(
@@ -1250,12 +1479,19 @@ def _judge_one(
                 ),
             ),
         )
+    if judge_observation is not None:
+        judge_observation.finish(
+            usage=response.usage,
+            latency_ms=latency_ms,
+            outcome="judged",
+            verdict=response.output.label,
+        )
     return JudgeRecord(
         item_id=question.item_id,
         label=response.output.label,
         model_called=True,
         usage=response.usage,
-        latency_ms=_elapsed_ms(started),
+        latency_ms=latency_ms,
     )
 
 

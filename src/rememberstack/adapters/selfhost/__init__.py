@@ -17,6 +17,7 @@ from rememberstack.adapters.selfhost.projection import SelfHostProjectionPurger
 from rememberstack.adapters.selfhost.queue import SelfHostTaskQueue
 from rememberstack.adapters.selfhost.queue import SelfHostWorkerLoop
 from rememberstack.adapters.selfhost.queue import TokenBucket
+from rememberstack.adapters.selfhost.telemetry import FanoutTelemetry
 from rememberstack.adapters.selfhost.telemetry import JsonLineTelemetry
 from rememberstack.adapters.selfhost.watcher import LocalDirectoryWatcher
 
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     "LanceChunkIndex",
+    "FanoutTelemetry",
     "LocalFSForgetManifestStore",
     "LocalGitRepository",
     "LocalDirectoryWatcher",

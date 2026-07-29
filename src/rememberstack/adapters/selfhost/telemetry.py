@@ -7,6 +7,7 @@ import traceback
 from typing import TextIO
 
 from rememberstack.model import TelemetryEvent
+from rememberstack.ports.telemetry import TelemetryPort
 
 
 class JsonLineTelemetry:
@@ -43,3 +44,25 @@ class JsonLineTelemetry:
         with self._lock:
             self._stream.write(line + "\n")
             self._stream.flush()
+
+
+class FanoutTelemetry:
+    """Send one unchanged event to each configured telemetry sink."""
+
+    def __init__(self, *, sinks: tuple[TelemetryPort, ...]) -> None:
+        """Retain an ordered, non-empty exporter set."""
+        if not sinks:
+            raise ValueError("fanout telemetry requires at least one sink")
+        self._sinks = sinks
+
+    def export_event(self, *, event: TelemetryEvent) -> None:
+        """Export an ordinary event to every sink in order."""
+        for sink in self._sinks:
+            sink.export_event(event=event)
+
+    def export_exception(
+        self, *, event: TelemetryEvent, exception: BaseException
+    ) -> None:
+        """Export the same event and original exception to every sink in order."""
+        for sink in self._sinks:
+            sink.export_exception(event=event, exception=exception)

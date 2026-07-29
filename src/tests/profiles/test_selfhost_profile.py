@@ -2,11 +2,14 @@
 
 from pathlib import Path
 import re
+import subprocess
+import sys
 
 import pytest
 
 from rememberstack.model import PipelineStage
 from rememberstack.profiles.selfhost import _expected_components
+from rememberstack.profiles.selfhost import _initialize_error_tracking
 from rememberstack.profiles.selfhost import _model_bindings
 from rememberstack.profiles.selfhost import _SUPPORTED_WORKER_STAGES
 
@@ -55,6 +58,84 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     assert composed_stages == _SUPPORTED_WORKER_STAGES
     assert 'profiles: ["operations"]' in compose
     assert 'command: ["project", "--plane", "all"]' in compose
+    for name in (
+        "REMEMBERSTACK_SENTRY_DSN",
+        "REMEMBERSTACK_SENTRY_ENVIRONMENT",
+        "REMEMBERSTACK_SENTRY_SAMPLE_RATE",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+    ):
+        assert f"{name}: ${{{name}:-}}" in compose
+
+
+def test_observability_imports_are_absent_without_environment_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default profile/benchmark imports do not load either optional SDK or shim."""
+    for name in (
+        "REMEMBERSTACK_SENTRY_DSN",
+        "REMEMBERSTACK_SENTRY_ENVIRONMENT",
+        "REMEMBERSTACK_SENTRY_SAMPLE_RATE",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys;"
+                " import rememberstack.profiles.selfhost;"
+                " import benchmarks.locomo.runner;"
+                " forbidden = {"
+                "'sentry_sdk', 'langfuse',"
+                " 'rememberstack.adapters.sentry',"
+                " 'benchmarks.locomo.tracing'};"
+                " loaded = forbidden.intersection(sys.modules);"
+                " assert not loaded, sorted(loaded)"
+            ),
+        ],
+        cwd=_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_sentry_environment_defaults_to_deployment_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Self-host startup passes the deployment slug and default sample rate."""
+    from rememberstack.adapters import sentry as sentry_adapter
+
+    marker = object()
+    calls: list[dict[str, object]] = []
+
+    def initialize(**values: object) -> object:
+        calls.append(values)
+        return marker
+
+    monkeypatch.setattr(sentry_adapter, "initialize_sentry", initialize)
+    monkeypatch.setenv("REMEMBERSTACK_SENTRY_DSN", "https://public@example.test/1")
+    monkeypatch.delenv("REMEMBERSTACK_SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("REMEMBERSTACK_SENTRY_SAMPLE_RATE", "")
+
+    telemetry = _initialize_error_tracking(
+        command="worker", deployment_slug="customer-memory"
+    )
+
+    assert telemetry is marker
+    assert calls == [
+        {
+            "dsn": "https://public@example.test/1",
+            "environment": "customer-memory",
+            "sample_rate": 1.0,
+        }
+    ]
 
 
 def test_compose_forwards_the_dedicated_summary_seat(
