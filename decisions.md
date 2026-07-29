@@ -687,7 +687,7 @@ pointer but cannot veto a verbatim union match. The #161 GLM-5.2 smoke loss ledg
 production evidence: 371 of 411 grounding rejections were `added_context_unverified` mislabel
 deaths; sampled correct decontextualizations added names present in TARGET CHUNK turn lines but
 tagged them `header` (258) or `prefix` (99), and only 27 claims from 19 documents survived.
-**Section summaries and all other LLM-orientation text remain outside the union; D79 consumption
+**Section summaries remain outside the union (the stored prefix, though LLM-derived, is a designed union member per D79's accepted second-order channel); D79 consumption
 rules are unchanged.**
 
 **Refined by D65 (media).** For media-derived documents grounding is **two hops**: the anchor

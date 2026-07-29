@@ -378,8 +378,9 @@ def _grounded_claim(
     never resurrect a dropped proposition. Layer 2 (window membership): every
     added substring must verbatim-exist in the union of source-derived bundle
     texts. The model's ``source_kind`` is preserved as advisory provenance but
-    cannot reject a grounded addition by being wrong. Section summaries and
-    all other LLM-orientation text are excluded from this union. A failed check
+    cannot reject a grounded addition by being wrong. Section summaries are
+    excluded from this union (the stored prefix, though LLM text, is a
+    designed union member — D79's accepted second-order channel). A failed check
     returns which gate fired so the D33 ledger can record
     ``grounding_rejected`` (#161). Semantic invention behind a real span is
     layer-3/4 territory: the in-call self-verdict is stored advisory, and the
