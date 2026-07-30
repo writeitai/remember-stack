@@ -49,18 +49,33 @@ package rather than re-deriving them:
   mandatory). The app has its own `package.json`/toolchain and is never published to PyPI —
   it is a delivery artifact beside D62's three (repo, package, images), not part of the
   library.
-- **GitHub Pages at canonical `remember.dev`** (D76) via
+- **GitHub Pages at canonical `docs.remember.dev`** (D66/D76) via
   `.github/workflows/docs-deploy.yml`: pushes to `main` touching `website/**` build
   (Next export + Pagefind index) and deploy; PRs run the build as a check only.
   Pages + custom domain require a one-time provisioning step (Pages source = GitHub
-  Actions; custom domain bound in Settings; apex DNS records in the `remember.dev` zone)
+  Actions; custom domain bound in Settings; DNS-only `CNAME` in the `remember.dev` zone)
   — the committed `public/CNAME` records intent but does not bind the domain; the
   checklist lives in `website/README.md`.
+- **The apex has a separate job.** `remember.dev` is the canonical product and
+  managed-cloud home. Cloud `/docs/**` describes the managed offering;
+  `docs.remember.dev` describes the open-source engine. This separation is one
+  RememberStack identity with explicit content authority, not separate product
+  brands. Rationale, rejected alternatives, failure behavior, and rollback:
+  `plan/analysis/docs_domain_ownership_reconciliation.md`.
 - **One trust boundary note (Rule 3):** the site is part of the open-source deliverable —
   hosting is repo-local (Pages), no private cloud project is an authority for it, and
   nothing correctness-determining lives there. A future hosting change may serve the same
   static artifact differently, but it does not change the canonical domain or move product
   truth outside this repository.
+
+The implementation contract is exact: GitHub Pages binds
+`docs.remember.dev`; authoritative DNS publishes a DNS-only `CNAME` from that
+hostname to `writeitai.github.io`; GitHub terminates TLS and HTTPS enforcement is
+enabled only after its certificate is approved. An unresolved record, pending
+certificate, missing `/_next/` asset, or missing Pagefind index is a failed
+cutover, not a reason to proxy the site through the managed cloud. Rollback
+restores the preceding Pages custom domain and removes or disables the
+`docs.remember.dev` record; the `remember.dev` product origin is never changed.
 
 ## 3. The truthfulness contract — how docs stay current through implementation
 
