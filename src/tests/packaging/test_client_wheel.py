@@ -163,7 +163,7 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         server.server_close()
         thread.join()
 
-    assert version.stdout.strip() == "RememberStack 0.1.0"
+    assert version.stdout.strip() == "RememberStack 0.2.0"
     assert json.loads(listing.stdout)["name"] == "entity_resolve"
     assert json.loads(query.stdout)["grain"] == "fact"
     assert json.loads(ingest.stdout)["created"] is True

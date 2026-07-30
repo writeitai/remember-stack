@@ -376,9 +376,15 @@ def test_a_transient_engine_fault_retries_on_a_fresh_connection(
     must never surface as a crash: the read retries on a FRESH connection
     and still returns the real citation chain (WP-4.5 defensive finding)."""
     reader = cast("GraphSnapshotReader", graph._reader)  # type: ignore[attr-defined]
+    # Capture one healthy connection for the retry path. The simulated first
+    # failure never touches this connection; using it for `fresh_connection`
+    # keeps the unit test deterministic instead of also rolling the real
+    # engine's nondeterministic INT128 coin a second time.
+    healthy = reader.fresh_connection()
     reader._connection = _FailDocCrossref(  # type: ignore[assignment]
-        real=reader.fresh_connection(), forever=False
+        real=healthy, forever=False
     )
+    reader.fresh_connection = lambda: healthy  # type: ignore[method-assign]
     docs = graph.docs  # type: ignore[attr-defined]
     chain = graph.citation_path(
         from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
