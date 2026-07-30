@@ -10,7 +10,7 @@ const hanken = Hanken_Grotesk({
   variable: "--font-hanken",
 });
 
-const siteUrl = "https://remember.dev";
+const siteUrl = "https://docs.remember.dev";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

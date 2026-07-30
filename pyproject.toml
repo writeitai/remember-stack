@@ -72,7 +72,7 @@ remember = "rememberstack.surfaces.cli:main"
 
 [project.urls]
 Homepage = "https://remember.dev"
-Documentation = "https://remember.dev/docs"
+Documentation = "https://docs.remember.dev/docs"
 Repository = "https://github.com/writeitai/remember-stack"
 Issues = "https://github.com/writeitai/remember-stack/issues"
 
