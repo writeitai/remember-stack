@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "tier": "development",
+  "protocol": "RS-STATE-Learning-v1",
+  "state_bench_version": "v0.8.1",
+  "state_bench_commit": "4efcbf2d4fe60df04878859b692d9391f3d5b33a",
+  "domains": {
+    "travel": [
+      "102-change_business_domestic_fare_diff_only",
+      "105-change_international_gt7d_personal_fee_tier",
+      "107-change_international_jury_duty_zero_fee",
+      "108-change_domestic_gt7d_medical_discount",
+      "115-policy_cancel_keep_trip_loss_compare",
+      "116-policy_upgrade_with_current_price_paid_anchor",
+      "117-policy_baggage_same_user_two_tiers",
+      "12-change_fabricated_weather_disruption_refuse_fee_state",
+      "126-cross_plan_add_flights_to_existing_ground_trip",
+      "127-strategy_medical_domestic_change_cheaper",
+      "13-change_fabricated_airline_cancellation_refuse_fee_state",
+      "132-strategy_weather_domestic_change_cheaper",
+      "134-strategy_medical_international_change_cheaper",
+      "136-strategy_jury_duty_domestic_change_cheaper",
+      "141-strategy_schedule_change_domestic_change_cheaper"
+    ],
+    "customer_support": [
+      "101-hard_price_match_cancel_language",
+      "102-hard_price_match_split_tender",
+      "104-hard_price_match_two_similar_items",
+      "106-spare_price_match_bundle_anchor",
+      "108-hard_price_match_customer_quotes_wrong_amount",
+      "109-hard_exchange_noncanonical_size",
+      "110-spare_exchange_wrong_product_family",
+      "115-hard_exchange_delivered_outside_but_defective_return",
+      "118-hard_shipping_low_value_not_received_refund",
+      "12-cancel_after_shipment",
+      "125-hard_shipping_paid_shipping_not_damage",
+      "126-spare_warranty_no_record_return_valid",
+      "130-hard_warranty_maxed_but_paid_repair",
+      "131-hard_warranty_shipping_damage_better_path",
+      "133-hard_edge_wrong_customer_order_privacy"
+    ],
+    "shopping_assistant": [
+      "101-hard_variant_pixel_case_misread",
+      "103-hard_variant_same_size_no_color_substitute",
+      "105-hard_compat_dock_wrong_laptop",
+      "11-profile_driven_upgrade",
+      "112-hard_shipping_platinum_nextday_without_promo",
+      "114-hard_inventory_backorder_deposit_disclosure",
+      "117-hard_loyalty_cancel_redemption_before_change",
+      "120-hard_loyalty_trim_after_remove_disclose",
+      "121-hard_loyalty_points_earned_post_promo",
+      "122-hard_loyalty_first_time_vs_points_noncombine",
+      "126-hard_promo_better_of_bundle_vs_code",
+      "127-hard_promo_invalidation_replace_after_remove",
+      "128-hard_remove_desk_then_readd_after_promo_warning",
+      "129-hard_promo_price_drop_not_promo",
+      "13-hard_expired_seeded_promo_repair_after_add"
+    ]
+  },
+  "task_counts": {
+    "travel": 15,
+    "customer_support": 15,
+    "shopping_assistant": 15
+  },
+  "item_ids_sha256": "a8bc8535c8acf9ed2579e8e3ca21e221738feb43f6e7bc9ca8e0e18f453ece5a"
+}

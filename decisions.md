@@ -2903,3 +2903,42 @@ prefix instruction (describe location only, never restate a summary's assertions
 recorded: carried prefixes keep their summary generation until content re-chunks or the
 prefixer version bumps — the no-fan-out corollary. Detail: `plan/designs/e0_files_design.md`
 §4.1 consumption bullet.
+
+## D80. Track B first suite is STATE-Bench Agent Learning Track
+
+**Date:** 2026-07-30  
+**Status:** accepted (setup)  
+**Amends:** Phase 8 portfolio sequencing (parallel Track B); does not replace D78 Track A.
+
+**Decision.** Phase 8 gains an explicit **Track B** product claim — *fixed agent harnesses
+do better with RememberStack* — evaluated first on **STATE-Bench Agent Learning Track** under
+protocol **`RS-STATE-Learning-v1`**, pinned to upstream commit
+`4efcbf2d4fe60df04878859b692d9391f3d5b33a` (`v0.8.1`, protocol_id
+`state_bench_v0.8.1_gpt54`). The harness freezes simulator, domain tools, and judge; the only
+memory seam is `retrieve_learnings(query, top_k=3) -> list[str]`. Official publication uses
+`top_k=3` and five runs. RememberStack participates through the ordinary public
+`MemoryClient` ingest + one frozen recipe (default `claims_hybrid_rrf`), never a
+benchmark-only query surface.
+
+**Sub-protocols.** Matched tables label **`shared`** (identical deterministic trajectory
+documents into every backend) versus **`native`** (each system's ordinary write path). Both
+are required for decision-useful claims; they must not be mixed in one table.
+
+**Parallelism.** Evaluation is inject-once / query-many: STATE `--num-workers` within a domain,
+process-level domain×arm matrix across domains, optional multi-host by domain. Unlike D78
+LoCoMo publication, a RememberStack arm reuses **one deployment per domain** for all test tasks
+after train ingest.
+
+**Rejected for first Track B bring-up.** MemoryArena (online write→act fit, preview/license
+variance); Mem2ActBench as primary (kept as fallback if locked GPT-5.4 sim/judge is
+unavailable); LongMemEval-V2 and full MemoryAgentBench (Track A shaped or wrong cost tier).
+
+**Out of scope for this suite.** Bi-temporal as-of, contradiction co-members, watched
+edit/retract/delete, hard-forget (WP-8.5); conversational LoCoMo headline scores (D78).
+
+**Consequences.** WP-8.7 owns the adapter under `benchmarks/state_bench/`. Track A WPs continue
+in parallel and must not block Track B prepare/smoke. No real locked-simulator publication run
+is authorized by the design until owner smoke + preflight caps complete. Design:
+[`plan/designs/state_bench_benchmark_design.md`](plan/designs/state_bench_benchmark_design.md);
+analysis:
+[`plan/analysis/state_bench_track_b_analysis.md`](plan/analysis/state_bench_track_b_analysis.md).
