@@ -1058,7 +1058,9 @@ CREATE INDEX ix_documents_live     ON documents (deployment_id) WHERE deleted_at
 CREATE INDEX ix_documents_entity   ON documents (document_entity_id) WHERE document_entity_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- document_versions — append-only observed snapshots of a lineage (D55). One row per
+-- document_versions — semantically append-only observed snapshots of a lineage (D55).
+-- source_version_ref is the sole mutable cursor: it may advance on identical-byte revision
+-- churn so polling converges; it never changes snapshot time or derived meaning. One row per
 -- (lineage, content) observation the connector chose to ingest (debounced — rapid edits
 -- coalesce; unchanged revision/etag or bytes never create a row). Carries everything that is
 -- true OF A SNAPSHOT: artifact URIs, conversion/structure provenance, processing status.
@@ -1071,9 +1073,9 @@ CREATE TABLE document_versions (
   doc_id          uuid NOT NULL,               -- composite FK below → documents (the lineage)
   content_hash    text NOT NULL,               -- → content_objects (composite FK below)
   version_no      integer NOT NULL,            -- 1..n within the lineage
-  source_version_ref text,                     -- connector revision/etag/generation, if the source has one
+  source_version_ref text,                     -- connector revision/etag/generation; may advance on an identical-byte no-op so polling converges, but is not semantic snapshot metadata
   sync_cycle_id   uuid,                        -- LOGICAL FK → connector_sync_cycles (created below): which cycle observed this version (retract barrier)
-  source_modified_at timestamptz,              -- when the SOURCE says this snapshot was authored/modified → derived claims' asserted_at
+  source_modified_at timestamptz,              -- immutable after version creation: when the SOURCE says this snapshot was authored/modified → deterministic E2 header + derived claims' asserted_at
   published_at    timestamptz,                 -- document's own date (resolves "last year"); world-time origin
   language        text,                        -- detected primary language (per version — it can change)
   current_representation_id uuid,              -- → document_representations (D65): the LIVE reading of this snapshot; swapped only after the new representation's conversion→E1→E2 chain completes (real FK added after that table)

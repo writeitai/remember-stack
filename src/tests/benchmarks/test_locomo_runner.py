@@ -290,8 +290,8 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
         "invalid_reader_completions",
     ),
     (
-        ("full-v5", "openai/gpt-4o-mini", None, 0),
-        ("full-v5-strong", "openai/gpt-5.6-luna", "none", 2),
+        ("full-v6", "openai/gpt-4o-mini", None, 0),
+        ("full-v6-strong", "openai/gpt-5.6-luna", "none", 2),
     ),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
@@ -776,8 +776,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v5","protocol_fingerprint":'
-        '"fed22cd1e43ac423e000dda3284721eb5f80c4a92f5ae75d366c32944560fc98",'
+        '{"protocol_name":"RS-LoCoMo-Full-v6","protocol_fingerprint":'
+        '"4b10f683eaa758ac79ef3481ce844efa7fe07e1a22535b41d09789f3bc1d82fc",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -886,22 +886,22 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
         dataset_path=tmp_path / "synthetic.json",
         tier="smoke",
         output=strong_dir,
-        protocol="full-v5-strong",
+        protocol="full-v6-strong",
     )
 
-    assert weak.protocol_name == "RS-LoCoMo-Full-v5"
+    assert weak.protocol_name == "RS-LoCoMo-Full-v6"
     assert weak.answer_agent_model == "openai/gpt-4o-mini"
     assert weak.answer_agent_reasoning_effort is None
     assert weak.answer_reader_retry_budget == 2
     assert weak.protocol_fingerprint == (
-        "fed22cd1e43ac423e000dda3284721eb5f80c4a92f5ae75d366c32944560fc98"
+        "4b10f683eaa758ac79ef3481ce844efa7fe07e1a22535b41d09789f3bc1d82fc"
     )
-    assert strong.protocol_name == "RS-LoCoMo-Full-v5-strong"
+    assert strong.protocol_name == "RS-LoCoMo-Full-v6-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert strong.answer_reader_retry_budget == 2
     assert strong.protocol_fingerprint == (
-        "08e5ff12286f7b3c859b157d27d1773bc026132ffffd0f595688f994e143fa8f"
+        "81a7fcc798a7042e0198d87bd39763258b829122fe7c316bcb2effff4bed8512"
     )
     assert strong.protocol_fingerprint != weak.protocol_fingerprint
 
@@ -1222,6 +1222,8 @@ def _patch_two_sample_inputs(
                     ordinal=1,
                     session_id="D1",
                     timestamp="1:00 pm on 1 May, 2023",
+                    source_modified_at=datetime(2023, 5, 1, 13, tzinfo=timezone.utc),
+                    source_timezone_basis="assumed_utc",
                     turns=(
                         LoCoMoTurn(
                             speaker="Alpha",
@@ -1314,6 +1316,8 @@ def _synthetic_dataset() -> LoCoMoDataset:
         ordinal=1,
         session_id="D1",
         timestamp="1:00 pm on 1 May, 2023",
+        source_modified_at=datetime(2023, 5, 1, 13, tzinfo=timezone.utc),
+        source_timezone_basis="assumed_utc",
         turns=(
             LoCoMoTurn(speaker="Alpha", dia_id="D1:1", text="Alpha lives in Prague."),
         ),
@@ -1405,6 +1409,60 @@ def _stock_tools() -> tuple[ToolDescriptor, ...]:
         sorted((*CANONICAL_RECIPES, *GRAPH_RECIPES), key=lambda recipe: recipe.name)
     )
     return recipe_descriptors(recipes=recipes)
+
+
+def test_ingest_forwards_and_records_assumed_utc_session_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The LoCoMo wall time reaches E0 as explicit, auditable UTC metadata."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    observed_source_times: list[str] = []
+
+    def capture_ingest(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/ingest":
+            observed_source_times.append(request.url.params["source_modified_at"])
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(capture_ingest)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+    finally:
+        raw_client.close()
+
+    documents = json.loads((run_dir / "documents.json").read_text(encoding="utf-8"))
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    ingest = next(iter(state["ingests"].values()))
+    assert observed_source_times == ["2023-05-01T13:00:00+00:00"]
+    assert documents[0]["source_modified_at"] == "2023-05-01T13:00:00Z"
+    assert documents[0]["source_timezone_basis"] == "assumed_utc"
+    assert ingest["source_modified_at"] == "2023-05-01T13:00:00Z"
+    assert ingest["source_timezone_basis"] == "assumed_utc"
+
+    ingest["source_modified_at"] = "2023-05-02T13:00:00Z"
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(BenchmarkRunError, match="ingest state changed"):
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
 
 
 def test_preflight_failure_stops_before_any_upload(

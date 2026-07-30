@@ -6,6 +6,8 @@ against the live spine (D48), every answer carrying the D49 envelope.
 """
 
 from collections.abc import Iterator
+from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -396,12 +398,14 @@ def test_push_ingest_preserves_stable_source_lineage(rig: _ApiRig) -> None:
         source_ref="external/document-42",
         source_version_ref="r1",
     )
+    second_timestamp = datetime(2023, 5, 1, 13, tzinfo=UTC)
     second = client.ingest(
         b"second revision\n",
         filename="stable.md",
         mime="text/markdown",
         source_kind="push-test",
         source_ref="external/document-42",
+        source_modified_at=second_timestamp,
         source_version_ref="r2",
     )
     replay = client.ingest(
@@ -410,7 +414,7 @@ def test_push_ingest_preserves_stable_source_lineage(rig: _ApiRig) -> None:
         mime="text/markdown",
         source_kind="push-test",
         source_ref="external/document-42",
-        source_version_ref="r2",
+        source_version_ref="r3",
     )
 
     assert first.created and second.created
@@ -442,8 +446,49 @@ def test_push_ingest_preserves_stable_source_lineage(rig: _ApiRig) -> None:
                 "second": second.version_id,
             },
         ).scalar_one()
+        cursor = (
+            connection.execute(
+                text(
+                    "SELECT source_version_ref, source_modified_at"
+                    " FROM document_versions WHERE version_id = :version_id"
+                ),
+                {"version_id": second.version_id},
+            )
+            .mappings()
+            .one()
+        )
     assert versions == 2
     assert convert_work == 2
+    assert cursor == {
+        "source_version_ref": "r3",
+        "source_modified_at": second_timestamp,
+    }
+
+
+@pytest.mark.parametrize(
+    "source_modified_at", ("2023-05-01T13:00:00", "2023-05-01T13:00:00+02:00")
+)
+def test_http_ingest_rejects_non_utc_source_time(
+    rig: _ApiRig, source_modified_at: str
+) -> None:
+    """Direct HTTP callers cannot bypass the SDK's aware-UTC invariant."""
+    response = rig.client.post(
+        "/ingest",
+        params={
+            "filename": "invalid-time.md",
+            "mime": "text/markdown",
+            "source_kind": "push-test",
+            "source_ref": f"invalid/{source_modified_at}",
+            "source_modified_at": source_modified_at,
+        },
+        content=b"must not ingest",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "source_modified_at must be timezone-aware UTC"
+    )
 
 
 def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:

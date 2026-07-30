@@ -22,6 +22,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import SecretStr
+from pydantic import TypeAdapter
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -98,6 +99,7 @@ _MANIFEST_FILE: Final = "manifest.json"
 _DOCUMENTS_FILE: Final = "documents.json"
 _STATE_FILE: Final = "state.json"
 _SUMMARY_FILE: Final = "summary.json"
+_DOCUMENTS_ADAPTER: Final = TypeAdapter(tuple[PreparedDocument, ...])
 
 
 class BenchmarkRunError(RuntimeError):
@@ -341,6 +343,7 @@ def ingest_sample(
             title=f"LoCoMo {sample_id} — session {document.session_id}",
             source_kind=document.source_kind,
             source_ref=document.source_ref,
+            source_modified_at=document.source_modified_at,
             versioning_mode="snapshot",
             source_version_ref=document.source_version_ref,
         )
@@ -363,6 +366,8 @@ def ingest_sample(
             session_id=document.session_id,
             source_ref=document.source_ref,
             content_sha256=document.content_sha256,
+            source_modified_at=document.source_modified_at,
+            source_timezone_basis=document.source_timezone_basis,
             deployment_id=ingested.deployment_id,
             doc_id=ingested.doc_id,
             version_id=ingested.version_id,
@@ -426,7 +431,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v5 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v6 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -898,6 +903,8 @@ def _prepare_documents(
                     session_id=session.session_id,
                     session_ordinal=session.ordinal,
                     timestamp=session.timestamp,
+                    source_modified_at=session.source_modified_at,
+                    source_timezone_basis=session.source_timezone_basis,
                     relative_path=relative.as_posix(),
                     filename=path.name,
                     content_sha256=hashlib.sha256(content).hexdigest(),
@@ -917,8 +924,9 @@ def _load_run(*, run_dir: Path) -> _RunContext:
     manifest = QuestionManifest.model_validate_json(
         (run_dir / _MANIFEST_FILE).read_text(encoding="utf-8")
     )
-    documents_json = json.loads((run_dir / _DOCUMENTS_FILE).read_text(encoding="utf-8"))
-    documents = tuple(PreparedDocument.model_validate(item) for item in documents_json)
+    documents = _DOCUMENTS_ADAPTER.validate_json(
+        (run_dir / _DOCUMENTS_FILE).read_text(encoding="utf-8")
+    )
     state = RunState.model_validate_json(
         (run_dir / _STATE_FILE).read_text(encoding="utf-8")
     )
@@ -960,7 +968,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v5")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v6")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -970,7 +978,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v5")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v6")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1072,6 +1080,8 @@ def _validate_documents(
                     session_id=session.session_id,
                     session_ordinal=session.ordinal,
                     timestamp=session.timestamp,
+                    source_modified_at=session.source_modified_at,
+                    source_timezone_basis=session.source_timezone_basis,
                     relative_path=relative.as_posix(),
                     filename=relative.name,
                     content_sha256=hashlib.sha256(content).hexdigest(),
@@ -1121,6 +1131,8 @@ def _validate_state(
             or record.sample_id != document.sample_id
             or record.session_id != document.session_id
             or record.content_sha256 != document.content_sha256
+            or record.source_modified_at != document.source_modified_at
+            or record.source_timezone_basis != document.source_timezone_basis
         ):
             raise BenchmarkRunError(f"ingest state changed for {source_ref}")
     for item_id, answer in state.answers.items():

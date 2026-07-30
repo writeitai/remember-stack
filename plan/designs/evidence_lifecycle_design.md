@@ -96,6 +96,13 @@ ordinary supersession path.)
    dated by *when the source said it*, D41), and processing status. Append-only; the lineage
    holds a `current_version_id` pointer.
 
+An identical-byte observation creates no new version. It may advance the existing row's
+`source_version_ref` as a connector-efficiency cursor, but it must not change or clear
+`source_modified_at`: that value already participated in E2's deterministic header and
+`extraction_input_hash` and fed immutable claim `asserted_at`. A source-time correction needs a
+future explicit metadata-correction/reprocessing contract; cursor advancement alone is never
+such a contract.
+
 **Versioning mode — the semantic dial (per lineage, connector default + override):**
 
 - **`snapshot`** *(the fail-safe default)*: every version is independent testimony *of its

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timezone
 import hashlib
 import json
 from pathlib import Path
@@ -37,6 +39,31 @@ EXPECTED_COUNTS: Final = {
     "category_5": 446,
 }
 _SESSION_KEY = re.compile(r"^session_([1-9][0-9]*)$")
+_SESSION_TIMESTAMP = re.compile(
+    r"^(?P<hour>[1-9]|1[0-2]):(?P<minute>[0-5][0-9]) "
+    r"(?P<meridiem>am|pm) on (?P<day>[1-9]|[12][0-9]|3[01]) "
+    r"(?P<month>[A-Za-z]+), (?P<year>[0-9]{4})$"
+)
+_MONTHS: Final = {
+    month: ordinal
+    for ordinal, month in enumerate(
+        (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ),
+        start=1,
+    )
+}
 _MANIFEST_ROOT = Path(__file__).with_name("manifests")
 
 
@@ -112,9 +139,9 @@ def load_manifest(tier: str) -> QuestionManifest:
             f"manifest file {tier!r} declares tier {manifest.tier!r}"
         )
     if manifest.dataset_commit != DATASET_COMMIT:
-        raise DatasetValidationError("manifest dataset commit is not RS-LoCoMo-v1")
+        raise DatasetValidationError("manifest dataset commit is not RS-LoCoMo-Full-v6")
     if manifest.dataset_sha256 != DATASET_SHA256:
-        raise DatasetValidationError("manifest dataset hash is not RS-LoCoMo-v1")
+        raise DatasetValidationError("manifest dataset hash is not RS-LoCoMo-Full-v6")
     actual = item_ids_hash(item_ids=manifest.item_ids)
     if actual != manifest.item_ids_sha256:
         raise DatasetValidationError(
@@ -151,6 +178,38 @@ def item_ids_hash(*, item_ids: tuple[str, ...]) -> str:
     return hashlib.sha256(("\n".join(item_ids) + "\n").encode()).hexdigest()
 
 
+def parse_session_timestamp(*, timestamp: str) -> datetime:
+    """Parse one unzoned LoCoMo wall time using the adapter's assumed-UTC policy."""
+    match = _SESSION_TIMESTAMP.fullmatch(timestamp)
+    if match is None:
+        raise DatasetValidationError(
+            f"LoCoMo session timestamp has unsupported format: {timestamp!r}"
+        )
+    month = _MONTHS.get(match.group("month"))
+    if month is None:
+        raise DatasetValidationError(
+            f"LoCoMo session timestamp has unknown month: {timestamp!r}"
+        )
+    hour = int(match.group("hour"))
+    if match.group("meridiem") == "am":
+        hour = 0 if hour == 12 else hour
+    elif hour != 12:
+        hour += 12
+    try:
+        return datetime(
+            year=int(match.group("year")),
+            month=month,
+            day=int(match.group("day")),
+            hour=hour,
+            minute=int(match.group("minute")),
+            tzinfo=timezone.utc,
+        )
+    except ValueError as error:
+        raise DatasetValidationError(
+            f"LoCoMo session timestamp is not a valid date: {timestamp!r}"
+        ) from error
+
+
 def manifest_bytes_hash(*, manifest: QuestionManifest) -> str:
     """Hash one canonical manifest value for the run fingerprint."""
     return hashlib.sha256(
@@ -185,6 +244,8 @@ def _parse_sample(*, raw: _RawSample, sample_position: int) -> LoCoMoSample:
                 ordinal=ordinal,
                 session_id=f"D{ordinal}",
                 timestamp=timestamp,
+                source_modified_at=parse_session_timestamp(timestamp=timestamp),
+                source_timezone_basis="assumed_utc",
                 turns=turns,
             )
         )

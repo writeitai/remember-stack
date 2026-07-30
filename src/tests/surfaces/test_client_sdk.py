@@ -221,14 +221,18 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
         client.ingest(b"x", filename="x.txt", source_kind="custom")
     with pytest.raises(ValueError, match="revisions"):
         client.ingest(b"x", filename="x.txt", source_version_ref="orphan")
-    with pytest.raises(ValueError, match="timezone-aware UTC"):
-        client.ingest(
-            b"x",
-            filename="x.txt",
-            source_kind="custom",
-            source_ref="x",
-            source_modified_at=datetime.now(tz=timezone(timedelta(hours=1))),
-        )
+    for invalid_timestamp in (
+        datetime.now(),
+        datetime.now(tz=timezone(timedelta(hours=1))),
+    ):
+        with pytest.raises(ValueError, match="timezone-aware UTC"):
+            client.ingest(
+                b"x",
+                filename="x.txt",
+                source_kind="custom",
+                source_ref="x",
+                source_modified_at=invalid_timestamp,
+            )
     with pytest.raises(ValueError, match="credential_ref"):
         ConnectorCreate(
             kind="remote",

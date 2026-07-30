@@ -1548,6 +1548,14 @@ coordinate is persisted on occurrence records and currency transitions.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
 
+> **Clarified 2026-07-30 (metadata no-op):** an identical-byte observation may
+> advance `source_version_ref` so a connector does not refetch forever, but it
+> never mutates the existing version's `source_modified_at`. That timestamp is
+> stable extraction input and feeds immutable claim `asserted_at`; changing or
+> clearing it without reprocessing would make the version row disagree with its
+> derived header and claims. The revision value is therefore a mutable connector
+> cursor, not permission to rewrite semantic snapshot metadata.
+
 **Decision.** The *logical document* is a **lineage** (stable `doc_id`) identified by
 connector-native **`(source_kind, source_ref)`** (Drive file ID, message ID, watched URL;
 renames/moves are metadata over a stable ref; a new ref is a new lineage). Lineages carry
@@ -2740,6 +2748,27 @@ may proceed to its first tagged artifact proof after CLA activation.
 > before "Unknown". Prompt, tool-catalog hash, and descriptors all change, so
 > the protocol version bumps. No v3 score is comparable. See the companion
 > design §2 (v3→v4 note) and §7.
+>
+> **Also amended 2026-07-27/29 (v5, strong variant, and reader recovery):**
+> `identity_as_of` discloses its recent-first bound and accepts a recoverable
+> limit, which changed the catalog and created v5. The separately fingerprinted
+> `RS-LoCoMo-Full-v5-strong` changes the answer agent to
+> `openai/gpt-5.6-luna` with reasoning effort `none`. Final-answer structured
+> reads may retry twice within the existing nine-call budget; the retry count is
+> durable and charged. Weak and strong results are not comparable, and all
+> pre-amendment measurements were smoke diagnostics. See companion design §2.
+>
+> **Also amended 2026-07-30 (v6 — explicit LoCoMo temporal ingestion):** the
+> dataset supplies session wall times without a timezone. V6 treats them as UTC
+> in this adapter only, records `source_timezone_basis=assumed_utc`, discloses
+> the assumption in rendered text, and sends the aware value as
+> `source_modified_at`. This repairs the boundary with E2, whose deterministic
+> document header must carry an absolute date before relative-time arithmetic is
+> allowed. The shared SDK and HTTP surface continue to reject naive or non-UTC
+> datetimes, durable models enforce the same invariant, and E0 validates before
+> writing raw bytes. Missing source time stays unknown. Rendered bytes,
+> ingestion metadata, and derived claim times change, so v5 and v6 scores are
+> not comparable. See the companion design §§2 and 3.
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;

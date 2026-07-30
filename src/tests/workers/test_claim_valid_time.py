@@ -6,15 +6,47 @@ locally and in CI — the catalog insert proof remains in test_e2_chain.py.
 
 from datetime import datetime
 from datetime import UTC
+from uuid import UUID
 
 from rememberstack.model import CandidateClaim
+from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimValidKind
 from rememberstack.model import ClaimValidPrecision
 from rememberstack.spine.catalog_contract import CLAIM_VALID_KIND_VALUES
 from rememberstack.spine.catalog_contract import CLAIM_VALID_PRECISION_VALUES
 from rememberstack.workers.e2 import _CLAIMIFY_PROMPT
+from rememberstack.workers.e2 import _header_text
 from rememberstack.workers.e2 import _parse_claim_valid_time
 from rememberstack.workers.e2 import _parse_iso_timestamp
+
+
+def test_document_header_keeps_absent_source_time_unknown() -> None:
+    """E2 must not replace missing source event time with ingestion time."""
+    source = ChunkSource(
+        deployment_id=UUID("79000000-0000-0000-0000-000000000001"),
+        doc_id=UUID("79000000-0000-0000-0000-000000000002"),
+        version_id=UUID("79000000-0000-0000-0000-000000000003"),
+        representation_id=UUID("79000000-0000-0000-0000-000000000004"),
+        markdown_uri="documents/unknown-time.md",
+        blocks_uri="documents/unknown-time.blocks.json",
+        title="Unknown time",
+        source_kind="upload",
+        source_modified_at=None,
+        published_at=None,
+        language="en",
+        structurer_version="test-structure-v1",
+        sections=(),
+    )
+
+    assert _header_text(source=source) == (
+        "title Unknown time; source upload; date unknown; language en"
+    )
+    dated = source.model_copy(
+        update={"source_modified_at": datetime(2023, 5, 1, 13, tzinfo=UTC)}
+    )
+    assert _header_text(source=dated) == (
+        "title Unknown time; source upload; date 2023-05-01; language en"
+    )
 
 
 def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> None:

@@ -87,7 +87,10 @@ Sends raw bytes with `filename` and `mime` query parameters. The optional
 must be supplied together. `source_modified_at`, `source_version_ref`, and
 `versioning_mode=snapshot|living` carry the feeder's version metadata. Changed
 bytes under the same identity append a document version; identical bytes are
-an idempotent no-op.
+an idempotent no-op. On that no-op, `source_version_ref` may advance as the
+connector cursor, but the existing version's `source_modified_at` never changes
+or clears because it already fed extraction. A supplied source timestamp must
+be timezone-aware UTC; omitting it preserves an unknown source time.
 
 ### `POST /readiness`
 

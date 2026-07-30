@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v5 protocols."""
+"""Typed values for the full-system RS-LoCoMo-Full-v6 protocols."""
 
 from __future__ import annotations
 
@@ -20,13 +20,15 @@ from rememberstack.model import Envelope
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
+from rememberstack.model import UTCDateTime
 
 NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v5", "full-v5-strong"]
-ProtocolName = Literal["RS-LoCoMo-Full-v5", "RS-LoCoMo-Full-v5-strong"]
+ProtocolKey = Literal["full-v6", "full-v6-strong"]
+ProtocolName = Literal["RS-LoCoMo-Full-v6", "RS-LoCoMo-Full-v6-strong"]
+SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal["openai/gpt-4o-mini", "openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
 FailureKind = Literal[
@@ -68,6 +70,8 @@ class LoCoMoSession(FrozenModel):
     ordinal: int = Field(ge=1)
     session_id: NonEmpty
     timestamp: NonEmpty
+    source_modified_at: UTCDateTime
+    source_timezone_basis: SourceTimezoneBasis
     turns: Annotated[tuple[LoCoMoTurn, ...], Field(min_length=1)]
 
 
@@ -114,7 +118,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v5"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v6"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -152,6 +156,8 @@ class PreparedDocument(FrozenModel):
     session_id: NonEmpty
     session_ordinal: int = Field(ge=1)
     timestamp: NonEmpty
+    source_modified_at: UTCDateTime
+    source_timezone_basis: SourceTimezoneBasis
     relative_path: NonEmpty
     filename: NonEmpty
     content_sha256: NonEmpty
@@ -168,6 +174,8 @@ class IngestRecord(FrozenModel):
     session_id: NonEmpty
     source_ref: NonEmpty
     content_sha256: NonEmpty
+    source_modified_at: UTCDateTime
+    source_timezone_basis: SourceTimezoneBasis
     deployment_id: UUID
     doc_id: UUID
     version_id: UUID
@@ -365,7 +373,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v5"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v6"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

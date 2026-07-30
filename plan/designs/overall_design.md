@@ -244,7 +244,7 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 | `media_design.md` | media (images/audio/video): converter routes, source locators, derivation disclosure, media search (D65) | **current** |
 | `docs_site_design.md` | public docs site: in-repo Next.js/MDX static module + same-PR truthfulness contract (D66) | **current** |
 | `hard_forget_design.md` | lineage hard-forget, active-store purge, and restore non-resurrection (D74) | **current** |
-| `locomo_benchmark_design.md` | pinned `RS-LoCoMo-v1 J@30` external benchmark adapter and guarded run protocol (D78) | **current** |
+| `locomo_benchmark_design.md` | pinned `RS-LoCoMo-Full-v6` external benchmark adapter and guarded run protocol (D78) | **current** |
 
 ## 10. Open questions
 

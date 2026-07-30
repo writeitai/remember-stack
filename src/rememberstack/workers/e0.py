@@ -238,6 +238,22 @@ class UploadIngestor:
         )
         suffix = PurePosixPath(upload.filename).suffix
         raw_uri = f"{doc_id}/{content_hash}/original{suffix}"
+        record = UploadRecord(
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            source_kind=source_kind,
+            source_ref=source_ref,
+            source_uri=source_ref,
+            title=upload.title or PurePosixPath(upload.filename).stem,
+            content_hash=content_hash,
+            mime=upload.mime,
+            byte_size=len(upload.content),
+            raw_uri=raw_uri,
+            versioning_mode=versioning_mode,
+            source_modified_at=source_modified_at,
+            source_version_ref=source_version_ref,
+            sync_cycle_id=sync_cycle_id,
+        )
         try:
             self._raw_store.write_bytes(
                 key=ObjectKey(raw_uri),
@@ -249,24 +265,7 @@ class UploadIngestor:
         except ObjectAlreadyExistsError:
             pass
         return self._catalog.record_upload(
-            record=UploadRecord(
-                deployment_id=deployment_id,
-                doc_id=doc_id,
-                source_kind=source_kind,
-                source_ref=source_ref,
-                source_uri=source_ref,
-                title=upload.title or PurePosixPath(upload.filename).stem,
-                content_hash=content_hash,
-                mime=upload.mime,
-                byte_size=len(upload.content),
-                raw_uri=raw_uri,
-                versioning_mode=versioning_mode,
-                source_modified_at=source_modified_at,
-                source_version_ref=source_version_ref,
-                sync_cycle_id=sync_cycle_id,
-            ),
-            convert_component_version=E0_CONVERT_VERSION,
-            lane=lane,
+            record=record, convert_component_version=E0_CONVERT_VERSION, lane=lane
         )
 
     def _guard_ingest(
