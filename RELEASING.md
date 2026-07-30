@@ -51,7 +51,7 @@ GHCR tag in `compose.yaml`. Update release-facing documentation in the same pull
 contract check rejects drift:
 
 ```bash
-uv run python scripts/check_release_contract.py --tag v0.1.0
+uv run python scripts/check_release_contract.py --tag v0.2.0
 ```
 
 After that pull request is merged and `main` is green, tag its exact merge commit:
@@ -59,13 +59,13 @@ After that pull request is merged and `main` is green, tag its exact merge commi
 ```bash
 git switch main
 git pull --ff-only
-git tag -a v0.1.0 -m "RememberStack 0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "RememberStack 0.2.0"
+git push origin v0.2.0
 ```
 
 The workflow validates the tag, runs the release test suite, builds the wheel and source
-distribution, and publishes `rememberstack==0.1.0` plus
-`ghcr.io/writeitai/remember-stack:0.1.0`. It creates the GitHub release only after both
+distribution, and publishes `rememberstack==0.2.0` plus
+`ghcr.io/writeitai/remember-stack:0.2.0`. It creates the GitHub release only after both
 registries accept their artifact.
 
 PyPI and GHCR do not support an atomic cross-registry transaction. Never reuse a published
@@ -87,9 +87,9 @@ the package back to this repository. Docker Hub is intentionally not a second pu
 Run these checks from a clean machine or temporary directory:
 
 ```bash
-uvx --from rememberstack==0.1.0 remember --version
-docker pull ghcr.io/writeitai/remember-stack:0.1.0
-gh release download v0.1.0 --repo writeitai/remember-stack \
+uvx --from rememberstack==0.2.0 remember --version
+docker pull ghcr.io/writeitai/remember-stack:0.2.0
+gh release download v0.2.0 --repo writeitai/remember-stack \
   --pattern compose.yaml --pattern default.env.example
 cp default.env.example .env
 docker compose --env-file .env up --no-build --pull always --detach --wait

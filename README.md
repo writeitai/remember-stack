@@ -9,7 +9,7 @@ auditable by humans. Scale is a requirement, not an aspiration: it is meant to s
 at a million documents.
 
 > **Pre-release software.** Phases 0–7 are implemented and tested. The public
-> [`v0.1.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.1.0) release is available
+> [`v0.2.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.2.0) release is available
 > from PyPI and GHCR; release automation, trusted publishing, tag protection, and bounded
 > contributor-agreement enforcement are in place. The fresh-deployment Docker Compose profile
 > is documented under

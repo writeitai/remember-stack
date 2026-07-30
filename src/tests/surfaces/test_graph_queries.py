@@ -370,19 +370,59 @@ class _FailDocCrossref:
 
 
 def test_a_transient_engine_fault_retries_on_a_fresh_connection(
-    graph: GraphQueries,
+    graph: GraphQueries, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The engine's intermittent INT128 overflow on a SHORTEST traversal
     must never surface as a crash: the read retries on a FRESH connection
-    and still returns the real citation chain (WP-4.5 defensive finding)."""
-    reader = cast("GraphSnapshotReader", graph._reader)  # type: ignore[attr-defined]
-    reader._connection = _FailDocCrossref(  # type: ignore[assignment]
-        real=reader.fresh_connection(), forever=False
-    )
+    and still returns the real citation chain (WP-4.5 defensive finding).
+
+    Capture a successful DOC_CROSSREF result first, then inject the overflow
+    on the first attempt only and replay the captured rows on retry. That
+    proves the retry branch without rolling the real engine's nondeterministic
+    INT128 coin twice under CI memory pressure (WP-4.1).
+    """
     docs = graph.docs  # type: ignore[attr-defined]
+    real_run_rows = graph_queries_module._run_rows
+    captured: dict[str, list[list[object]]] = {}
+
+    def _capture_rows(
+        connection: object, query: str, parameters: dict[str, object]
+    ) -> list[list[object]]:
+        """Record a successful DOC_CROSSREF row set for later replay."""
+        rows = real_run_rows(connection, query, parameters)  # type: ignore[arg-type]
+        if "DOC_CROSSREF" in query:
+            captured["doc_crossref"] = rows
+        return rows
+
+    monkeypatch.setattr(graph_queries_module, "_run_rows", _capture_rows)
+    baseline = graph.citation_path(
+        from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+    )
+    assert baseline.negative is None
+    assert "doc_crossref" in captured
+
+    attempts = {"doc_crossref": 0}
+
+    def _run_rows_with_injected_overflow(
+        connection: object, query: str, parameters: dict[str, object]
+    ) -> list[list[object]]:
+        """Fail once on DOC_CROSSREF, then replay the captured success."""
+        if "DOC_CROSSREF" in query:
+            attempts["doc_crossref"] += 1
+            if attempts["doc_crossref"] == 1:
+                raise RuntimeError(
+                    "Overflow exception: INT128 is out of range: cannot add in place"
+                )
+            return captured["doc_crossref"]
+        return real_run_rows(connection, query, parameters)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        graph_queries_module, "_run_rows", _run_rows_with_injected_overflow
+    )
     chain = graph.citation_path(
         from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
     )
+    assert attempts["doc_crossref"] == 2  # first fault + one retry
     assert chain.negative is None  # the fresh-connection retry cleared it
     assert chain.paths
     assert chain.paths[0].length == 2
