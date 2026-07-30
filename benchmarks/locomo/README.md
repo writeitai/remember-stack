@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v5 setup
+# RS-LoCoMo-Full-v6 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,15 +16,21 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v5 \
+  --protocol full-v6 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only: choose `full-v5` (the
-default) or `full-v5-strong` there, and every later stage reads that immutable
+eight-question smoke plan. `--protocol` is prepare-only: choose `full-v6` (the
+default) or `full-v6-strong` there, and every later stage reads that immutable
 choice from `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
+
+LoCoMo supplies session wall times without a timezone. V6 treats those values
+as UTC in this adapter only, records `source_timezone_basis=assumed_utc` in
+`documents.json`, discloses the assumption in each rendered document, and
+forwards the aware timestamp to ingestion. RememberStack's general SDK and API
+remain strict: arbitrary naive or non-UTC source timestamps are rejected.
 
 Build the image from the revision under test — Compose otherwise serves the
 published release image, and the harness refuses to run against an engine whose
@@ -70,7 +76,7 @@ outside the cap. Each item records `reader_attempts`, and the summary records
 failures are not retried.
 
 The strong protocol pins answer-agent reasoning effort to `none` on every answer
-call. The default `full-v5` protocol sends no per-call effort field for its
+call. The default `full-v6` protocol sends no per-call effort field for its
 non-reasoning `gpt-4o-mini` answer agent. Ambient OpenRouter effort-map settings
 therefore cannot change either prepared protocol's answer behavior.
 

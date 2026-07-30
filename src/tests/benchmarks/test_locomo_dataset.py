@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timezone
 import json
 from pathlib import Path
 from typing import cast
@@ -10,6 +12,7 @@ from benchmarks.locomo.dataset import DatasetValidationError
 from benchmarks.locomo.dataset import item_ids_hash
 from benchmarks.locomo.dataset import load_dataset
 from benchmarks.locomo.dataset import load_manifest
+from benchmarks.locomo.dataset import parse_session_timestamp
 import pytest
 
 
@@ -24,6 +27,10 @@ def test_nested_sessions_orphan_timestamps_and_integer_answers(tmp_path: Path) -
 
     sample = dataset.samples[0]
     assert tuple(session.session_id for session in sample.sessions) == ("D1",)
+    assert sample.sessions[0].source_modified_at == datetime(
+        2023, 5, 1, 13, 0, tzinfo=timezone.utc
+    )
+    assert sample.sessions[0].source_timezone_basis == "assumed_utc"
     assert sample.questions[0].answer == "2022"
     assert sample.questions[-1].answer is None
     turn = sample.sessions[0].turns[0]
@@ -58,6 +65,28 @@ def test_wrong_hash_fails_before_parsing(tmp_path: Path) -> None:
 
     with pytest.raises(DatasetValidationError, match="SHA-256"):
         load_dataset(path, required_sha256="0" * 64, require_pinned_counts=False)
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "expected_hour"),
+    (("12:00 am on 1 May, 2023", 0), ("12:00 pm on 1 May, 2023", 12)),
+)
+def test_unzoned_session_timestamp_is_parsed_as_utc(
+    timestamp: str, expected_hour: int
+) -> None:
+    parsed = parse_session_timestamp(timestamp=timestamp)
+
+    assert parsed == datetime(2023, 5, 1, expected_hour, tzinfo=timezone.utc)
+
+
+def test_invalid_session_timestamp_fails_during_dataset_load(tmp_path: Path) -> None:
+    sample = _sample()
+    conversation = cast("dict[str, object]", sample["conversation"])
+    conversation["session_1_date_time"] = "May 1-ish"
+    path = _write_dataset(tmp_path=tmp_path, samples=[sample])
+
+    with pytest.raises(DatasetValidationError, match="unsupported format"):
+        load_dataset(path, required_sha256=None, require_pinned_counts=False)
 
 
 @pytest.mark.parametrize(

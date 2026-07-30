@@ -26,10 +26,10 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v5"
-STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v5-strong"
-DEFAULT_PROTOCOL_KEY: Final = "full-v5"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v6"
+STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v6-strong"
+DEFAULT_PROTOCOL_KEY: Final = "full-v6"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07-utc-time"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -125,8 +125,8 @@ class LoCoMoProtocol:
     answer_agent_reasoning_effort: str | None
 
 
-_FULL_V5 = LoCoMoProtocol(
-    key="full-v5",
+_FULL_V6 = LoCoMoProtocol(
+    key="full-v6",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -143,8 +143,8 @@ _FULL_V5 = LoCoMoProtocol(
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
     answer_agent_reasoning_effort=None,
 )
-_FULL_V5_STRONG = LoCoMoProtocol(
-    key="full-v5-strong",
+_FULL_V6_STRONG = LoCoMoProtocol(
+    key="full-v6-strong",
     name=STRONG_PROTOCOL_NAME,
     answer_agent_model=STRONG_ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -163,7 +163,7 @@ _FULL_V5_STRONG = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V5.key: _FULL_V5, _FULL_V5_STRONG.key: _FULL_V5_STRONG}
+    {_FULL_V6.key: _FULL_V6, _FULL_V6_STRONG.key: _FULL_V6_STRONG}
 )
 
 
@@ -201,11 +201,16 @@ def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
         "",
         f"Participants: {sample.speaker_a} and {sample.speaker_b}",
         "",
-        f"Dataset timestamp: {session.timestamp} (timezone unspecified)",
+        f"Dataset timestamp: {session.timestamp} "
+        "(source timezone absent; adapter assumes UTC)",
     ]
     for turn in session.turns:
         lines.extend(
-            ("", f"[{turn.dia_id} | {session.timestamp}] {turn.speaker}: {turn.text}")
+            (
+                "",
+                f"[{turn.dia_id} | {session.timestamp} | UTC assumed] "
+                f"{turn.speaker}: {turn.text}",
+            )
         )
         if turn.blip_caption is not None:
             lines.append(

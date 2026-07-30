@@ -62,10 +62,11 @@ class DocumentCatalog:
         no new work is created (the idempotent enqueue still runs, healing a
         crash that committed rows without their work row), and the version's
         source cursor advances to the newly observed revision — revision
-        churn without byte changes must not refetch forever. Bytes matching
-        only an OLDER version (content reverted A→B→A) are a new observation
-        and become a new version: the lineage moves forward, never silently
-        back to a stale current pointer.
+        churn without byte changes must not refetch forever. Semantic snapshot
+        metadata, including ``source_modified_at``, remains immutable because it
+        already fed extraction. Bytes matching only an OLDER version (content
+        reverted A→B→A) are a new observation and become a new version: the
+        lineage moves forward, never silently back to a stale current pointer.
         """
         with self._engine.begin() as connection:
             doc_id = _lineage_locked(connection=connection, record=record)
@@ -108,7 +109,6 @@ class DocumentCatalog:
                     {
                         "version_id": version_id,
                         "source_version_ref": record.source_version_ref,
-                        "source_modified_at": record.source_modified_at,
                     },
                 )
             enqueue_on(
@@ -569,8 +569,7 @@ _SELECT_LATEST_VERSION = text(
 _ADVANCE_VERSION_CURSOR = text(
     """
     UPDATE document_versions
-    SET source_version_ref = :source_version_ref,
-        source_modified_at = :source_modified_at
+    SET source_version_ref = :source_version_ref
     WHERE version_id = :version_id
     """
 )

@@ -1,8 +1,12 @@
 """Fast D74 proof that ingest checks admission before persisting bytes."""
 
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from typing import cast
 from uuid import UUID
 
+from pydantic import ValidationError
 import pytest
 
 from rememberstack.model import DocumentUpload
@@ -27,6 +31,20 @@ class DenyingAdmission:
     ) -> None:
         """Raise the typed irreversible guard result."""
         raise ForgottenSourceError("fixture was forgotten")
+
+
+class AllowingAdmission:
+    """Accept every input so boundary validation can run."""
+
+    def guard_ingest(
+        self,
+        *,
+        deployment_id: UUID,
+        source_kind: str,
+        source_ref: str,
+        content_hash: str,
+    ) -> None:
+        """Permit the attempted observation."""
 
 
 class RecordingStore:
@@ -71,5 +89,42 @@ def test_guard_runs_before_upload_and_observed_raw_writes(observed: bool) -> Non
             )
         else:
             ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+
+    assert store.writes == 0
+
+
+@pytest.mark.parametrize(
+    "source_modified_at",
+    (
+        datetime(2023, 5, 1, 13),
+        datetime(2023, 5, 1, 13, tzinfo=timezone(timedelta(hours=2))),
+    ),
+)
+def test_observed_ingest_rejects_non_utc_time_before_raw_write(
+    source_modified_at: datetime,
+) -> None:
+    """Internal callers cannot bypass UTC validation or leave orphaned bytes."""
+    store = RecordingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, object()),
+        raw_store=store,
+        admission=AllowingAdmission(),
+    )
+
+    with pytest.raises(ValidationError, match="timezone-aware UTC"):
+        ingestor.ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="drive",
+            source_ref="file-1",
+            upload=DocumentUpload(
+                filename="invalid-time.md",
+                mime="text/markdown",
+                content=b"must not persist",
+            ),
+            versioning_mode="living",
+            source_modified_at=source_modified_at,
+            source_version_ref="v1",
+            sync_cycle_id=None,
+        )
 
     assert store.writes == 0

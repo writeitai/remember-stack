@@ -122,7 +122,7 @@ The following environment variables tune the driver without changing its argumen
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v5` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v6` | prepare-time protocol key |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
 | `LOCOMO_MAX_QUESTIONS` | `1540` | run-absolute answer item authorization |
 | `LOCOMO_MAX_AGENT_CALLS` | `13860` | run-absolute answer-agent call ceiling |

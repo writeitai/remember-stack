@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v5
+protocol                RS-LoCoMo-Full-v6
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -67,10 +67,11 @@ are not directly comparable.
 changed only the answer agent to `openai/gpt-5.6-luna`. It exists because three smoke
 passes on a healthy store (coarse evidence-session recall 0.5, with the gold
 evidence at rank 1) scored only 1–2/8 with `openai/gpt-4o-mini`, which looped
-past the tool-call limit or returned invalid responses. Scores from
-`RS-LoCoMo-Full-v5` and `RS-LoCoMo-Full-v5-strong` are never comparable. The
-weak-agent `RS-LoCoMo-Full-v5` protocol remains the default measurement of
-what a harness consumer experiences.
+past the tool-call limit or returned invalid responses. The v6 protocols retain
+that seat distinction. Scores from `RS-LoCoMo-Full-v6` and
+`RS-LoCoMo-Full-v6-strong` are never comparable. The weak-agent
+`RS-LoCoMo-Full-v6` protocol remains the default measurement of what a harness
+consumer experiences.
 
 **Reader retry and answer-effort pin (2026-07-29):** strong-agent smoke runs
 showed a separate harness failure. After tool use, `openai/gpt-5.6-luna`
@@ -93,7 +94,7 @@ raised the score from 1/8 to 3/8. Environment-only configuration was not
 reproducible because two runs with identical `run.json` files could behave
 differently. The strong protocol therefore pins `answer_agent_reasoning_effort`
 to `none` and sends it explicitly on every answer-agent call, including tool
-selection and final reading. The default `full-v5` protocol pins `None`, which
+selection and final reading. The default `full-v6` protocol pins `None`, which
 means no effort field is sent for its non-reasoning `gpt-4o-mini` answer agent.
 Engine worker seats still use the existing environment map; this override is
 only on benchmark answer requests.
@@ -102,6 +103,20 @@ Both stable protocol names and CLI keys remain unchanged, but both fingerprints
 rolled on 2026-07-29 because the retry budget and effort choice are now part of
 protocol identity. All earlier runs were smoke-tier diagnostics, so no
 published result is invalidated.
+
+**v5 → v6 (2026-07-30 — temporal ingestion contract):** the source dataset
+provides session wall times without any timezone. Earlier adapters kept the
+literal timestamp in document text but omitted structured `source_modified_at`.
+After E2 began requiring an absolute document-header timestamp for relative-date
+arithmetic, that combination produced `date unknown` bundles.
+
+V6 parses the pinned timestamp grammar during local preparation, assigns UTC as
+an explicit adapter convention, persists `source_timezone_basis=assumed_utc`,
+discloses the assumption in rendered text, and passes the aware timestamp through
+`MemoryClient.ingest()`. Invalid timestamps fail before remote work. This changes
+rendered documents, ingestion metadata, and derived claim time, so both weak and
+strong protocols receive v6 identities and new fingerprints. V5 results are not
+comparable.
 
 ### 2.1 Why v2+ uses a stronger judge
 
@@ -239,7 +254,7 @@ Each conversation runs in a clean isolated deployment. Each session is one immut
 document. Every turn is rendered:
 
 ```text
-[D1:3 | 1:56 pm on 8 May, 2023] Caroline: ...
+[D1:3 | 1:56 pm on 8 May, 2023 | UTC assumed] Caroline: ...
 ```
 
 Image URLs are not fetched. Dataset captions and image queries are included only with explicit
@@ -248,12 +263,35 @@ derived-data labels. Session summaries and event summaries are never ingested.
 ```text
 source_kind       locomo
 source_ref        <dataset-commit>/<sample-id>/<session-id>
+source_modified_at <parsed session wall time with +00:00>
+source_timezone_basis assumed_utc (run artifact and rendered disclosure)
 versioning_mode   snapshot
 source_version_ref <dataset-commit>
 ```
 
-The dataset has no timezone, so its literal timestamp stays in text and `source_modified_at` is
-omitted.
+The dataset has no timezone. The adapter preserves the literal timestamp, parses its fixed
+English month grammar without consulting process locale, and assigns UTC. This is an explicit
+comparability convention rather than a claim about the speakers' civil timezone. The prepared
+document manifest records `source_timezone_basis=assumed_utc`; the Markdown states that the
+source timezone is absent and the adapter assumes UTC. Ingest passes the aware UTC value as
+`source_modified_at`, giving E2's deterministic document header an absolute date and giving
+derived claims their assertion-event time.
+
+The public SDK does not gain a global fallback: ordinary naive datetimes remain invalid because
+silently treating a known local wall time as UTC would corrupt it. The HTTP API and durable
+`UTCDateTime` models enforce the same invariant, and E0 validates before writing raw bytes. A
+wholly absent timestamp stays unknown; it is never replaced by ingestion time. A LoCoMo
+timestamp that does not match the pinned grammar or is not a real calendar date fails local
+`prepare` before any deployment or provider call. Loading a prepared run recomputes the parsed
+timestamp, rendered bytes, and document manifest, so changing either the time or its assumption
+prevents resume.
+
+At the catalog boundary, an identical-byte observation may advance `source_version_ref` so
+connector polling converges, but it cannot mutate or clear the existing version's
+`source_modified_at`. The latter already participated in E2's header, extraction hash, and
+derived claims. This preserves D55 version immutability and prevents metadata/extraction drift.
+The change prevents future drift; it does not infer or repair timestamps for versions processed
+by older code. V6's mandatory clean isolated deployment is the benchmark recovery boundary.
 
 ## 4. Runtime composition
 
@@ -380,11 +418,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v5 \
+  --protocol full-v6 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Use `full-v5-strong` there to select the
+`--protocol` exists only on `prepare`. Use `full-v6-strong` there to select the
 strong answer agent; ingest, answer, judge, and summarize read the pinned choice
 from the prepared run and expose no protocol override.
 

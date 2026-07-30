@@ -40,6 +40,8 @@ def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> N
         ordinal=1,
         session_id="D1",
         timestamp="1:00 pm on 1 May, 2023",
+        source_modified_at=datetime(2023, 5, 1, 13, tzinfo=timezone.utc),
+        source_timezone_basis="assumed_utc",
         turns=(
             LoCoMoTurn(
                 speaker="Alpha",
@@ -70,9 +72,12 @@ def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> N
 
     rendered = render_session(sample=sample, session=session)
 
-    assert "[D1:1 | 1:00 pm on 1 May, 2023] Alpha: Look at this." in rendered
+    assert (
+        "[D1:1 | 1:00 pm on 1 May, 2023 | UTC assumed] Alpha: Look at this." in rendered
+    )
     assert "Dataset-provided derived image caption" in rendered
     assert "Dataset-provided derived image search query" in rendered
+    assert "source timezone absent; adapter assumes UTC" in rendered
     assert "https://example.test" not in rendered
     assert rendered.endswith("\n")
 
@@ -135,10 +140,10 @@ def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
     )
 
 
-def test_protocol_is_v5_and_answer_prompt_has_loop_guards() -> None:
-    """The default v5 identity and answer-loop discipline remain unchanged."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v5"
-    assert DEFAULT_PROTOCOL_KEY == "full-v5"
+def test_protocol_is_v6_and_answer_prompt_has_loop_guards() -> None:
+    """The default v6 identity and answer-loop discipline remain unchanged."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v6"
+    assert DEFAULT_PROTOCOL_KEY == "full-v6"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
@@ -148,14 +153,14 @@ def test_protocol_is_v5_and_answer_prompt_has_loop_guards() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v5", "full-v5-strong")
-    default = PROTOCOL_REGISTRY["full-v5"]
-    strong = PROTOCOL_REGISTRY["full-v5-strong"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v6", "full-v6-strong")
+    default = PROTOCOL_REGISTRY["full-v6"]
+    strong = PROTOCOL_REGISTRY["full-v6-strong"]
 
-    assert default.name == "RS-LoCoMo-Full-v5"
+    assert default.name == "RS-LoCoMo-Full-v6"
     assert default.answer_agent_model == "openai/gpt-4o-mini"
     assert default.answer_agent_reasoning_effort is None
-    assert strong.name == "RS-LoCoMo-Full-v5-strong"
+    assert strong.name == "RS-LoCoMo-Full-v6-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert default.answer_reader_retry_budget == 2
@@ -181,7 +186,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
 
 @pytest.mark.parametrize(
     ("extra_args", "expected"),
-    (((), "full-v5"), (("--protocol", "full-v5-strong"), "full-v5-strong")),
+    (((), "full-v6"), (("--protocol", "full-v6-strong"), "full-v6-strong")),
 )
 def test_prepare_cli_selects_protocol_only_at_prepare(
     extra_args: tuple[str, ...], expected: str, monkeypatch: pytest.MonkeyPatch
