@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "tier": "smoke",
+  "protocol": "RS-Mem2Act-v1",
+  "dataset_commit": "b00726940b5abbe9bd324bdd7a2cb272f5c62a29",
+  "dataset_subdir": "Mem2ActBench",
+  "item_ids": [
+    "qa_001",
+    "qa_002",
+    "qa_003",
+    "qa_004",
+    "qa_005",
+    "qa_006",
+    "qa_009",
+    "qa_021",
+    "qa_076",
+    "qa_259",
+    "qa_365",
+    "qa_382"
+  ],
+  "item_ids_sha256": "e504baf7198cf0fb78c327dbdacb51af904b7c18413bdb43cf0ef48471e6304a",
+  "item_count": 12,
+  "level_counts": {
+    "L2": 4,
+    "L1": 4,
+    "L3": 2,
+    "L4": 2
+  },
+  "resolved_only": true
+}

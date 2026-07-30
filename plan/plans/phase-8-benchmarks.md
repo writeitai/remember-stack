@@ -52,3 +52,14 @@ answer harness verifies exact stage/projection readiness and lets a bounded agen
 ordinary public recipe tools; the former claims-only J@30 path is not the headline. No real
 ingest, query, answer-agent, judge, or score run has occurred. WP-8.2 remains in progress until
 the owner reviews the setup and an eight-question smoke completes against an isolated deployment.
+
+## Track B — Mem2ActBench (WP-8.7b / D81)
+
+| WP | Goal | Status |
+|---|---|---|
+| WP-8.7b | **Mem2ActBench** empty vs RememberStack; deterministic tool-call scoring; 12/40/323 tiers | in progress — setup landed; real smoke pending |
+
+STATE-Bench (D80 analysis) is deferred for bring-up. Binding design:
+[`mem2act_benchmark_design.md`](../designs/mem2act_benchmark_design.md).
+Harness: `benchmarks/mem2act/`.
+

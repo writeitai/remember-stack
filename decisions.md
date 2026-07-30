@@ -2903,3 +2903,35 @@ prefix instruction (describe location only, never restate a summary's assertions
 recorded: carried prefixes keep their summary generation until content re-chunks or the
 prefixer version bumps — the no-fan-out corollary. Detail: `plan/designs/e0_files_design.md`
 §4.1 consumption bullet.
+
+## D81. Track B first suite is Mem2ActBench (memory → tool call)
+
+**Date:** 2026-07-30  
+**Status:** accepted (setup)  
+**Supersedes for Track B bring-up:** D80’s choice of STATE-Bench as the *first*
+Track B suite. D80 remains valid as analysis of STATE; STATE is deferred, not
+deleted.
+
+**Decision.** The first Track B product claim — *the same reader does better at
+memory-conditioned action with RememberStack than with no memory* — is measured
+on **Mem2ActBench** under protocol **`RS-Mem2Act-v1`**, pinned to
+`Cantaloupe-M/Mem2ActBench` commit `b00726940b5abbe9bd324bdd7a2cb272f5c62a29`.
+
+Gold labels are tool name + arguments. Scoring is **deterministic** (no LLM
+judge, no Azure GPT-5.4 simulator). Committed manifests cover only **session-
+resolved** items (**323 / 400** at this pin). Primary arms: **empty** vs
+**rememberstack**; optional **full_context** ceiling. Mem0/Graphiti baselines
+are optional later arms, not day-one requirements.
+
+**Context.** STATE-Bench’s official eval path locks GPT-5.4 sim/judge and has
+almost no third-party leaderboard rows. Owner budget and credential constraints
+made STATE a poor first bring-up. Mem2Act targets proactive memory use for tool
+grounding — closer to the harness-with-memory product story — with a released
+jsonl dataset.
+
+**Rejected for first Track B bring-up.** STATE-Bench (deferred); MemoryArena
+(preview multi-env); full paper baseline suite on day one.
+
+**Consequences.** Adapter under `benchmarks/mem2act/`. Dataset not vendored.
+Design: `plan/designs/mem2act_benchmark_design.md`. Analysis:
+`plan/analysis/mem2act_track_b_analysis.md`.
