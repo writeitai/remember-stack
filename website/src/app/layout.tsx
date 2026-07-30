@@ -1,13 +1,16 @@
 import type { Metadata } from "next";
-import { Hanken_Grotesk } from "next/font/google";
+import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/site/SiteHeader";
 
-// Open-font stand-in for writeit.ai's domain-locked proxima-nova. Self-hosted
-// by next/font so the site stays a self-contained module.
-const hanken = Hanken_Grotesk({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-hanken",
+  variable: "--font-inter",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
 });
 
 const siteUrl = "https://docs.remember.dev";
@@ -20,6 +23,9 @@ export const metadata: Metadata = {
   },
   description:
     "Open memory infrastructure for AI agents: auditable, navigable knowledge at scale.",
+  icons: {
+    icon: "/brand/mark.svg",
+  },
   openGraph: {
     title: "RememberStack — Documentation",
     description:
@@ -37,7 +43,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${hanken.variable} font-sans antialiased`}>
+      <body
+        className={`${inter.variable} ${spaceGrotesk.variable} font-sans antialiased`}
+      >
         <SiteHeader />
         <main>{children}</main>
       </body>
