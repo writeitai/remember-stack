@@ -69,7 +69,7 @@ silently. When writing any design or decision:
 ## The docs site ships with the code (D66)
 
 `website/` is the public documentation site (Next.js + MDX, statically exported to
-GitHub Pages at `remember.dev`). Two standing obligations when implementing:
+GitHub Pages at `docs.remember.dev`). Two standing obligations when implementing:
 
 - **Same-PR docs.** Any PR that changes user-facing behavior — CLI commands, API/MCP
   surface, configuration, mounts, connectors, deployment, the consumption skill — updates

@@ -1,7 +1,8 @@
 # RememberStack docs site
 
 The public documentation for [RememberStack](https://github.com/writeitai/remember-stack),
-published at **[remember.dev](https://remember.dev)**.
+published at **[docs.remember.dev](https://docs.remember.dev)**. The product and
+managed-cloud home remains [remember.dev](https://remember.dev).
 
 It is a self-contained static site: a Next.js App-Router app whose pages are authored
 as MDX, exported to static HTML, and served by GitHub Pages. The stack replicates the
@@ -102,13 +103,13 @@ domain on its own for an Actions-based deployment:
    and leave that record in DNS.
 2. **Repository Settings → Pages → Build and deployment → Source:** select
    **GitHub Actions**.
-3. **Repository Settings → Pages → Custom domain:** enter `remember.dev` and save (this is
+3. **Repository Settings → Pages → Custom domain:** enter `docs.remember.dev` and save (this is
    what actually binds the domain; the committed `CNAME` file just records the intent).
-4. **DNS** (in the `remember.dev` zone): point the apex at GitHub Pages with the
-   GitHub-documented `A` records (or an `ALIAS`/`ANAME` to `writeitai.github.io`) and
-   point `www` to `writeitai.github.io` with a `CNAME`. Do not add a wildcard record.
+4. **DNS** (in the `remember.dev` zone): point `docs` directly to
+   `writeitai.github.io` with a DNS-only `CNAME`. Do not include the repository
+   name in the target, proxy the record, or add a wildcard.
 5. Once DNS resolves, enable **Enforce HTTPS** in Settings → Pages.
 
 Until the custom domain is bound, the site would be served under
-`https://writeitai.github.io/rememberstack/`, where the root-relative `/_next/` and
+`https://writeitai.github.io/remember-stack/`, where the root-relative `/_next/` and
 `/pagefind/` URLs do not resolve — so complete the steps above before sharing the link.

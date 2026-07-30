@@ -2137,8 +2137,8 @@ D49 (envelope + boundary); D8/D9/D63 unchanged.
 **Decision.** The project ships a **public documentation site** for humans (developers
 evaluating, installing, operating the system) as a delivery artifact beside D62's three: a
 self-contained static Next.js + MDX app at **`website/`** in this repository, exported to
-plain HTML and served by **GitHub Pages at `remember.dev`** (verified custom domain plus
-apex DNS records in the `remember.dev` zone; deploy via
+plain HTML and served by **GitHub Pages at `docs.remember.dev`** (verified custom domain plus
+a DNS-only CNAME in the `remember.dev` zone; deploy via
 `.github/workflows/docs-deploy.yml` on pushes to main touching
 `website/**`; PRs build as a check). The stack **replicates the proven WriteIt docs module**
 (loopy-loop's documentation site, itself lifted from orchestra's — the pattern of Next.js's
@@ -2177,12 +2177,15 @@ Non-goals: versioned docs, docs SaaS/external search, server-rendered features;
 API-reference pages render from the recipe registry when retrieval ships (D50) rather than
 being hand-maintained.
 
-> **Amended 2026-07-21, superseded by D76 on 2026-07-23.** The temporary plan to put
-> OSS documentation at `docs.remember.dev` and reserve the apex for the hosted control
-> plane is withdrawn. RememberStack has one canonical public home at `remember.dev`.
-> The current GitHub Pages deployment serves the repo-owned static site there; a future
-> hosting change may add cloud-facing pages without creating a second product identity or
-> making the cloud an authority for OSS documentation. Design home:
+> **Reconciled 2026-07-30 with the managed-cloud D14/D22 domain allocation.**
+> The 2026-07-23 claim that this GitHub Pages site would own the apex is
+> superseded. RememberStack keeps one product identity across two scoped
+> surfaces: `remember.dev` is the product and managed-cloud home, while
+> `docs.remember.dev` is the canonical repository-owned OSS documentation
+> home. The subdomain is served directly by this repository's GitHub Pages
+> deployment; the cloud project is not an authority or proxy for OSS
+> documentation. Analysis:
+> `plan/analysis/docs_domain_ownership_reconciliation.md`. Design home:
 > `plan/designs/docs_site_design.md` §2.
 
 ---
@@ -2644,8 +2647,12 @@ service add complexity before either has earned it. Using `rememberstack` as the
 also rejected: the verb-shaped `remember` command is clearer and no compatibility alias is needed.
 
 **Consequences.** The release-gate rename in D62/WP-7.6 executed mechanically against these exact
-targets. `remember.dev` is the canonical URL in website metadata and deployment
-documentation; alternate website hosts redirect there. The repository rename is complete.
+targets. `remember.dev` is the canonical product and managed-cloud home;
+`docs.remember.dev` is the canonical OSS documentation URL in website metadata
+and deployment documentation. Alternate documentation hosts redirect to the
+docs subdomain. This is a hostname split within one RememberStack identity, not
+a second product brand; see D66 and
+`plan/analysis/docs_domain_ownership_reconciliation.md`. The repository rename is complete.
 Domain/DNS setup, PyPI Trusted Publisher, and public GHCR visibility are account-level release
 steps. The former legal-clearance and CLA gates are resolved by D77.
 
