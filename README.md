@@ -162,7 +162,7 @@
 | src/rememberstack/surfaces/cli.py                                                             |      252 |       49 |       42 |        8 |     79.3% |55-56, 60-61, 71-76, 103-108, 127-132, 137-139, 141-149, 159-161, 171-181, 199-200, 230-233, 240-241, 249-251, 266-268, 332-342 |
 | src/rememberstack/surfaces/consumption\_skill.py                                              |       42 |        2 |        8 |        1 |     94.0% |    35, 67 |
 | src/rememberstack/surfaces/graph\_queries.py                                                  |      202 |       14 |       52 |       10 |     90.6% |105-106, 223-224, 238, 242, 308, 312, 409-410, 429, 544-\>549, 566-\>568, 677, 684, 690 |
-| src/rememberstack/surfaces/http\_api.py                                                       |      142 |        8 |       22 |        3 |     92.1% |199, 299, 307, 314-326, 358-359 |
+| src/rememberstack/surfaces/http\_api.py                                                       |      142 |        7 |       22 |        2 |     93.3% |199, 299, 314-326, 358-359 |
 | src/rememberstack/surfaces/mcp.py                                                             |       15 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_engine.py                                                   |      286 |        9 |       60 |        8 |     95.1% |109-110, 161, 396, 456, 635, 710-\>712, 713, 973, 1007 |
 | src/rememberstack/surfaces/recipe\_executor.py                                                |       97 |       12 |       40 |        7 |     83.2% |72, 111, 113, 116, 131, 144-150, 185, 187 |
@@ -171,7 +171,7 @@
 | src/rememberstack/surfaces/sdk.py                                                             |      132 |       17 |       34 |        7 |     84.3% |71, 114, 140-146, 154, 162, 181, 234, 236, 270, 330-331, 332-\>334, 337-338 |
 | src/rememberstack/workers/\_\_init\_\_.py                                                     |       84 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/workers/base.py                                                             |      107 |        1 |       18 |        1 |     98.4% |       110 |
-| src/rememberstack/workers/e0.py                                                               |      422 |       23 |       72 |        9 |     93.1% |344-348, 741, 867-883, 943, 1027-\>1026, 1033, 1036, 1131, 1168-1169, 1210, 1275, 1357, 1392, 1453 |
+| src/rememberstack/workers/e0.py                                                               |      423 |       23 |       72 |        9 |     93.1% |343-347, 740, 866-882, 942, 1026-\>1025, 1032, 1035, 1130, 1167-1168, 1209, 1274, 1356, 1391, 1452 |
 | src/rememberstack/workers/e0\_summary.py                                                      |      359 |       34 |      112 |       21 |     87.0% |389, 446, 462, 480, 489, 511, 513-515, 528, 539, 561, 580, 584, 598, 609, 611-626, 638-641, 651, 661, 850, 861, 872, 889, 901-911 |
 | src/rememberstack/workers/e1.py                                                               |      132 |        2 |       14 |        2 |     97.3% |  249, 475 |
 | src/rememberstack/workers/e2.py                                                               |      278 |        9 |       98 |        7 |     95.2% |306-310, 602, 644, 648, 717-\>719, 818, 837, 1007 |
@@ -190,7 +190,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        3 |       18 |        3 |     90.9% |83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **14605** | **1147** | **3148** |  **562** | **89.4%** |           |
+| **TOTAL**                                                                                     | **14606** | **1146** | **3148** |  **561** | **89.5%** |           |
 
 
 ## Setup coverage badge
