@@ -12,7 +12,9 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_serializer
 from pydantic import model_validator
+from pydantic import SerializerFunctionWrapHandler
 
 from rememberstack.model import Envelope
 from rememberstack.model import PipelineReadinessReport
@@ -382,6 +384,19 @@ class RunSummary(FrozenModel):
     ingestion_cost_source: Literal[
         "deployment cost ledger; not available through benchmark SDK"
     ] = "deployment cost ledger; not available through benchmark SDK"
+    merged_run_count: int = Field(default=1, ge=1)
+    missing_sample_ids: list[NonEmpty] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def omit_single_run_merge_fields(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        """Keep the pre-sharding single-run JSON representation byte-identical."""
+        serialized: dict[str, object] = handler(self)
+        if self.merged_run_count == 1:
+            serialized.pop("merged_run_count", None)
+            serialized.pop("missing_sample_ids", None)
+        return serialized
 
 
 class PreflightProbe(StructuredResponseModel):

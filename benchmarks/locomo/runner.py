@@ -11,8 +11,10 @@ import json
 import logging
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Final
 from typing import TYPE_CHECKING
@@ -735,6 +737,121 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
     )
     _atomic_model(path=run_dir / _SUMMARY_FILE, value=summary)
     return summary
+
+
+def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
+    """Validate and score disjoint item records from multiple prepared runs."""
+    if not run_dirs:
+        raise BenchmarkRunError("summarize requires at least one run directory")
+    if len(run_dirs) == 1:
+        return summarize_run(run_dir=run_dirs[0])
+    contexts = tuple(_load_run(run_dir=run_dir) for run_dir in run_dirs)
+    _require_merge_identity(run_dirs=run_dirs, contexts=contexts)
+    recorded_samples = _require_disjoint_recorded_samples(
+        run_dirs=run_dirs, contexts=contexts
+    )
+    combined_state = RunState(
+        protocol_name=contexts[0].configuration.protocol_name,
+        protocol_fingerprint=contexts[0].configuration.protocol_fingerprint,
+        answers={
+            item_id: answer
+            for context in contexts
+            for item_id, answer in context.state.answers.items()
+        },
+        judges={
+            item_id: judge
+            for context in contexts
+            for item_id, judge in context.state.judges.items()
+        },
+        evaluator_cost_usd=sum(
+            (context.state.evaluator_cost_usd for context in contexts), start=Decimal(0)
+        ),
+    )
+    first_run = run_dirs[0]
+    with tempfile.TemporaryDirectory(
+        prefix=".locomo-merge-", dir=first_run.parent
+    ) as temporary:
+        combined_run = Path(temporary)
+        for filename in (_RUN_FILE, _MANIFEST_FILE, _DOCUMENTS_FILE):
+            shutil.copy2(first_run / filename, combined_run / filename)
+        shutil.copytree(
+            first_run / "documents",
+            combined_run / "documents",
+            copy_function=_link_or_copy,
+        )
+        _atomic_model(path=combined_run / _STATE_FILE, value=combined_state)
+        summary = summarize_run(run_dir=combined_run)
+    missing_sample_ids = [
+        sample_id
+        for sample_id in contexts[0].configuration.sample_ids
+        if sample_id not in recorded_samples
+    ]
+    merged = summary.model_copy(
+        update={
+            "merged_run_count": len(run_dirs),
+            "missing_sample_ids": missing_sample_ids,
+        }
+    )
+    _atomic_model(path=first_run / _SUMMARY_FILE, value=merged)
+    return merged
+
+
+def _require_merge_identity(
+    *, run_dirs: tuple[Path, ...], contexts: tuple[_RunContext, ...]
+) -> None:
+    """Require every protocol and manifest identity named by the merge contract."""
+    fields = (
+        "protocol_name",
+        "protocol_fingerprint",
+        "tier",
+        "dataset_sha256",
+        "manifest_sha256",
+        "item_ids_sha256",
+    )
+    reference = contexts[0].configuration
+    for run_dir, context in zip(run_dirs[1:], contexts[1:], strict=True):
+        for field in fields:
+            expected = getattr(reference, field)
+            actual = getattr(context.configuration, field)
+            if actual != expected:
+                raise BenchmarkRunError(
+                    f"cannot merge {run_dir}: {field} differs from {run_dirs[0]}"
+                )
+
+
+def _require_disjoint_recorded_samples(
+    *, run_dirs: tuple[Path, ...], contexts: tuple[_RunContext, ...]
+) -> set[str]:
+    """Reject a sample represented by answer or judge records in two runs."""
+    owners: dict[str, Path] = {}
+    all_recorded: set[str] = set()
+    for run_dir, context in zip(run_dirs, contexts, strict=True):
+        item_samples = {
+            question.item_id: question.sample_id for question in context.questions
+        }
+        recorded = {
+            item_samples[item_id]
+            for item_id in set(context.state.answers) | set(context.state.judges)
+        }
+        for sample_id in sorted(recorded):
+            prior = owners.get(sample_id)
+            if prior is not None:
+                raise BenchmarkRunError(
+                    f"cannot merge overlapping sample {sample_id!r}: "
+                    f"{prior} and {run_dir}"
+                )
+            owners[sample_id] = run_dir
+        all_recorded.update(recorded)
+    return all_recorded
+
+
+def _link_or_copy(source: str, destination: str) -> str:
+    """Hard-link immutable prepared documents, copying across filesystems."""
+    try:
+        os.link(source, destination)
+    except OSError:
+        shutil.copy2(source, destination)
+    return destination
 
 
 class _RunContext:

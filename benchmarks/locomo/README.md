@@ -78,4 +78,12 @@ P3 is built and freshness-checked as part of the ordinary deployment, but the re
 agent has no filesystem mount. This protocol therefore does not attribute answer quality to P3
 navigation. A future mount-enabled protocol needs a new fingerprint and name.
 
+## Sharded runs
+
+Publication samples can run concurrently on independent hosts while preserving the required
+per-sample deployment isolation. The harness accepts repeated `summarize --run` flags and
+recomputes one full-manifest score from disjoint item records. See the
+[`sharding/` operator guide](sharding/README.md) for balanced planning, the per-host driver,
+forensic dumps, collection, and merge validation.
+
 No real benchmark has been run as part of the setup implementation.
