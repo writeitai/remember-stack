@@ -23,13 +23,20 @@ uv run python -m benchmarks.rs_harness_longmemeval run_cc \
 
 ## rs arm (MCP + P3 + K1)
 
-**Not completed in this session.** Local `docker compose up --build` hit a concurrent build cancel while stamping many workers. Next steps:
+**Stack status:** Compose is up locally (API on host **:18000** → container :8000;
+`/healthz` → `{"status":"ok"}`). Full E/P1 worker set running.
 
-1. `docker compose up -d` (retry; image already partially built as `0.2.0`)
-2. Ingest smoke docs; drain; `projections` profile
-3. Compile K1 + publish mounts (`publish_surfaces.sh`)
-4. `run_cc --arm rs --limit 1 --execute`
-5. Compare answers + require non-zero MCP/mount use
+**Blocked for real ingest:** `REMEMBERSTACK_OPENROUTER_API_KEY` in local `.env` is still the
+placeholder `replace-before-real-use` (length 23). Pipeline/K will not produce real claims
+or K1 pages until a real key is set.
+
+**Next steps when key is real:**
+
+1. `export REMEMBERSTACK_API_URL=http://127.0.0.1:18000`
+2. Ingest smoke docs; drain; `docker compose --profile operations run --rm projections`
+3. Compile K1 + publish P3/K mounts (`publish_surfaces.sh`) — **k_page_count must be > 0**
+4. `run_cc --arm rs --limit 1 --execute` with MCP + mounts
+5. Score bare vs rs; require non-zero MCP/mount use on rs
 
 ## Surfaces required for valid `rs` runs
 
