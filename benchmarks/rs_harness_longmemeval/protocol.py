@@ -20,14 +20,17 @@ TIER_COUNTS: Final = {
 ARMS: Final = ("bare", "rs")
 
 # Fixed agent instruction fragment (both arms).
+# Full RS surface: P1 search + P2 graph via MCP; P3 + K via mounts.
 AGENT_TASK_PREAMBLE: Final = """You answer one long-term memory question.
 Use only information available through your tools and mounted files.
 Do not invent session history. If you cannot find the answer, say Unknown.
 Prefer short factual answers.
 
-When RememberStack surfaces are available:
-1. Orient on Plane K (mounts/k or pages_about).
-2. Browse P3 (mounts/p3) if needed.
-3. Verify with MCP recipes for facts/evidence.
-4. Then answer.
+When RememberStack surfaces are available (use the full stack, not files only):
+1. Orient on Plane K / K1 (mounts/k or pages_about).
+2. Navigate P3 corpus files if useful (mounts/p3).
+3. Retrieve with P1 search recipes via MCP (e.g. claims_hybrid_rrf, claims_verbatim).
+4. Use P2 graph recipes via MCP when entities/relations matter.
+5. Verify facts, hydrate evidence, then answer.
 """
+
