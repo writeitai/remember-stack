@@ -73,6 +73,14 @@ argument shapes, final answers, and verdicts, then flushes at stage end. It neve
 sends source chunks, documents, rendered prompts, tool response bodies, or gold
 answers.
 
+Full LoCoMo publication runs can be split across independent Compose hosts while
+retaining the benchmark's one-conversation-per-deployment guard. The harness
+accepts repeated `summarize --run` flags and recomputes the full-manifest score
+from disjoint item records. The repository's
+[sharding operator guide](https://github.com/writeitai/remember-stack/tree/main/benchmarks/locomo/sharding)
+covers balanced shard planning, scaled workers, six-hour drain waits, forensic
+database dumps, collection, and merge validation.
+
 Check the API and the deployment-seeded recipe registry:
 
 ```bash
