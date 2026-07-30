@@ -101,7 +101,7 @@ needs to restate it:
 | 5 | Retrieval complete | full primitives + recipe registry, envelope contract CI, MCP/CLI, batch scan, **consumption skill + S58** | retrieval | done (exit criteria met 2026-07-20; PRs #105–#111 — see the phase file) |
 | 6 | Plane K | planner/writer/driver, fact-sheet → prose bands, citations/staleness, authored + sidecars, triggers + subscriptions, K1 + K2 purpose scopes | k_layers | done (exit criteria met 2026-07-21; PRs #112–#117; former WP-6.7 removed by D73) |
 | 7 | Operational correctness + portability | backfill/reprocessing, fixed scale batteries, configurable budgets, failure inspection/drills, hard-delete, release, portable restore | orchestration, packaging, schema §12–13 | done (exit criteria met 2026-07-23; PRs #120, #122–#124, #126, #128, #131; public `v0.1.0` release proof) |
-| 8 | Competitive benchmarks | external benchmark harness, adapters, OSS baselines (Mem0/Graphiti), capability benchmark, published methodology + results | D22 (internal) + D78 + `phase-8` survey | in progress (WP-8.1 selection complete; WP-8.2 LoCoMo setup implemented, owner-reviewed smoke intentionally pending) |
+| 8 | Competitive benchmarks | external benchmark harness, adapters, OSS baselines (Mem0/Graphiti), capability benchmark, Track B STATE-Bench, published methodology + results | D22 (internal) + D78 + D80 + `phase-8` survey | in progress (WP-8.1 done; WP-8.2 LoCoMo in progress; WP-8.7 STATE-Bench Track B setup landed, owner smoke pending) |
 
 Sequencing calls already argued (see the phase files for the rest): **K after retrieval**
 (agentic writers consume retrieval tools — build against a finished surface); **lifecycle

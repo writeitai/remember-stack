@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "tier": "smoke",
+  "protocol": "RS-STATE-Learning-v1",
+  "state_bench_version": "v0.8.1",
+  "state_bench_commit": "4efcbf2d4fe60df04878859b692d9391f3d5b33a",
+  "domains": {
+    "travel": [
+      "102-change_business_domestic_fare_diff_only",
+      "105-change_international_gt7d_personal_fee_tier",
+      "107-change_international_jury_duty_zero_fee",
+      "108-change_domestic_gt7d_medical_discount",
+      "115-policy_cancel_keep_trip_loss_compare"
+    ],
+    "customer_support": [
+      "101-hard_price_match_cancel_language",
+      "102-hard_price_match_split_tender",
+      "104-hard_price_match_two_similar_items",
+      "106-spare_price_match_bundle_anchor",
+      "108-hard_price_match_customer_quotes_wrong_amount"
+    ],
+    "shopping_assistant": [
+      "101-hard_variant_pixel_case_misread",
+      "103-hard_variant_same_size_no_color_substitute",
+      "105-hard_compat_dock_wrong_laptop",
+      "11-profile_driven_upgrade",
+      "112-hard_shipping_platinum_nextday_without_promo"
+    ]
+  },
+  "task_counts": {
+    "travel": 5,
+    "customer_support": 5,
+    "shopping_assistant": 5
+  },
+  "item_ids_sha256": "b9260ba3cd579d5b39dad4f3523b3469b6496b09a82997da54e4c4f341736a79"
+}

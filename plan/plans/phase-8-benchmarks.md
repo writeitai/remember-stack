@@ -21,6 +21,7 @@ end to end.
 | WP-8.4 | Metrics + instrumentation: accuracy per suite, latency (P50/P95), token + $ cost per op (cost_ledger), ingestion throughput | schema §2; retrieval §10 | WP-8.2 | metrics pipeline | one reproducible metrics artifact per run | planned |
 | WP-8.5 | **Capability benchmark** (ours, from the S-battery): the differentiators competitors lack — bi-temporal as-of (S9/S10/S15), contradiction surfacing (S23), provenance hydration (S5), watched-source lifecycle (edit/retract/delete), forget (S55) | retrieval_scenarios.md | WP-8.2 | capability suite + narrative doc | each capability demonstrated + scripted | planned |
 | WP-8.6 | Methodology + results publication (honest: include losses; pin versions; publish configs) | all above | WP-8.3–8.5 | report | reviewed; reproducible by a third party | planned |
+| WP-8.7 | **STATE-Bench Agent Learning Track (Track B)** — fixed harness Δ vs empty memory; parallel domain×arm cells | D80; state_bench design | phase gates (// WP-8.2) | adapters + manifests + parallel kit | prepare+tests; owner smoke | in progress — setup landed; real smoke pending |
 
 ## WP-8.1 selection
 
@@ -52,3 +53,12 @@ answer harness verifies exact stage/projection readiness and lets a bounded agen
 ordinary public recipe tools; the former claims-only J@30 path is not the headline. No real
 ingest, query, answer-agent, judge, or score run has occurred. WP-8.2 remains in progress until
 the owner reviews the setup and an eight-question smoke completes against an isolated deployment.
+
+## Track B — STATE-Bench (WP-8.7)
+
+Binding design: [`state_bench_benchmark_design.md`](../designs/state_bench_benchmark_design.md).
+Analysis: [`state_bench_track_b_analysis.md`](../analysis/state_bench_track_b_analysis.md).
+Harness: `benchmarks/state_bench/` (protocol `RS-STATE-Learning-v1`). Parallelism: STATE
+`--num-workers` + domain×arm matrix ([`parallel/README.md`](../../benchmarks/state_bench/parallel/README.md)).
+Runs in parallel with Track A; does not wait on LoCoMo publication.
+
