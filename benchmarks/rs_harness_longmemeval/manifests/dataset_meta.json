@@ -1,0 +1,19 @@
+{
+  "dataset_path": "/private/tmp/longmemeval-cleaned/longmemeval_s_cleaned.json",
+  "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+  "item_count_total": 500,
+  "tiers": {
+    "smoke": {
+      "item_count": 12,
+      "item_ids_sha256": "7d714767b64763e050a1ef275e7947da0c3507e471b1ec679d41490add6baf3e"
+    },
+    "development": {
+      "item_count": 50,
+      "item_ids_sha256": "4f469efae057a2e2be401b5490e83070c1b477d837d7f73fd791c5a9af067db2"
+    },
+    "publication": {
+      "item_count": 500,
+      "item_ids_sha256": "cb86ceffd101201672cb678968d0742d970e08472acc01690018b999d2856ecb"
+    }
+  }
+}
