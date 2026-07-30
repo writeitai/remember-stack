@@ -15,7 +15,7 @@ repository at `website/`; its authoring conventions and target page map live in
 > a routed page of the site; a **static export** means the build emits plain HTML/CSS/JS
 > files servable by any file host — no server process.
 
-## 1. The stack — the proven WriteIt docs module, replicated
+## 1. The stack and RememberStack visual contract
 
 The site replicates the documentation module already built for **loopy-loop** (which itself
 lifted the pattern from the orchestra repo's `247agents.io` docs, modeled on how Next.js's
@@ -27,10 +27,21 @@ package rather than re-deriving them:
 
 - **Next.js (App Router) + `@next/mdx`** — every `website/src/app/docs/**/page.mdx` is a
   route; content is Markdown-first with components available when a page needs one.
-- **Tailwind v4 + `@tailwindcss/typography`**, themed to the WriteIt palette (sand
-  `#f7ebbd`, ink `#222433`, accessible green `#2f7563` with the vivid `#5ca493` as
-  decorative accent), **Hanken Grotesk** as the self-hostable substitute for the
-  domain-locked proxima-nova.
+- **Tailwind v4 + `@tailwindcss/typography`**, themed to the same RememberStack
+  visual system as `remember.dev`: ink `#101f4a`, secondary ink `#5b6684`,
+  coral `#ee5b44`, teal `#3e9b8e`, cream `#f5ebd0`, line `#e7eaf1`, soft line
+  `#f1f3f8`, and surface `#fafbfd`. **Inter** is the body face and **Space
+  Grotesk** the display face. The exact semantic mapping lives in
+  `website/src/app/globals.css`; body-sized text stays ink or secondary ink
+  while lower-contrast coral and teal are accents.
+- The public lockup uses the canonical color **network-graph mark** plus the
+  Space Grotesk `RememberStack` wordmark, coral rule, and
+  `docs.remember.dev` subline. The vector is kept locally at
+  `website/public/brand/mark.svg`; its pinned provenance is the managed-cloud
+  source at
+  `writeitai/ultimate-memory-cloud@d492d204e1ecae874234fc2879296679e73b8780`,
+  `fe/public/brand/mark.svg`. The legacy dual-ring mark and a `CLOUD` tag are
+  prohibited in OSS chrome.
 - **`remark-gfm` + `rehype-slug` + `rehype-pretty-code`** (Shiki) for tables, heading
   anchors, and code highlighting.
 - **Pagefind + `cmdk`** for ⌘K keyboard search: Pagefind indexes the *built* HTML as a
@@ -41,6 +52,13 @@ package rather than re-deriving them:
 - A **hand-maintained navigation array** (`src/lib/docs/navigation.ts`) is the single
   source of truth for sidebar order and prev/next pagination — deliberate, so page order is
   an editorial decision, not a filesystem accident.
+
+The brand assets and tokens are copied rather than loaded from the managed-cloud
+origin. That keeps the static artifact self-contained and makes a visual-identity
+change an explicit, reviewable repository change. The evidence, rejected
+runtime-link alternative, accessibility constraints, operational consequences,
+and recovery behavior are recorded in
+`plan/analysis/docs_visual_identity_alignment.md`.
 
 ## 2. Location and hosting
 
