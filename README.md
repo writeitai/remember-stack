@@ -173,8 +173,8 @@
 | src/rememberstack/workers/base.py                                                             |      107 |        1 |       18 |        1 |     98.4% |       110 |
 | src/rememberstack/workers/e0.py                                                               |      422 |       23 |       72 |        9 |     93.1% |344-348, 741, 867-883, 943, 1027-\>1026, 1033, 1036, 1131, 1168-1169, 1210, 1275, 1357, 1392, 1453 |
 | src/rememberstack/workers/e0\_summary.py                                                      |      359 |       34 |      112 |       21 |     87.0% |389, 446, 462, 480, 489, 511, 513-515, 528, 539, 561, 580, 584, 598, 609, 611-626, 638-641, 651, 661, 850, 861, 872, 889, 901-911 |
-| src/rememberstack/workers/e1.py                                                               |      132 |        2 |       14 |        2 |     97.3% |  248, 474 |
-| src/rememberstack/workers/e2.py                                                               |      278 |        9 |       98 |        7 |     95.2% |299-303, 595, 637, 641, 710-\>712, 811, 830, 1000 |
+| src/rememberstack/workers/e1.py                                                               |      132 |        2 |       14 |        2 |     97.3% |  249, 475 |
+| src/rememberstack/workers/e2.py                                                               |      278 |        9 |       98 |        7 |     95.2% |306-310, 602, 644, 648, 717-\>719, 818, 837, 1007 |
 | src/rememberstack/workers/e3.py                                                               |      133 |        6 |       36 |        5 |     93.5% |247-250, 357, 382, 406, 419 |
 | src/rememberstack/workers/forget.py                                                           |      130 |       17 |       26 |        2 |     85.3% |118-123, 179, 191-197, 289-297 |
 | src/rememberstack/workers/knowledge\_authored.py                                              |       77 |        5 |       16 |        3 |     91.4% |55, 109, 117, 128-129 |
