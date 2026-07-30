@@ -370,8 +370,7 @@ class _FailDocCrossref:
 
 
 def test_a_transient_engine_fault_retries_on_a_fresh_connection(
-    graph: GraphQueries,
-    monkeypatch: pytest.MonkeyPatch,
+    graph: GraphQueries, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The engine's intermittent INT128 overflow on a SHORTEST traversal
     must never surface as a crash: the read retries on a FRESH connection
@@ -387,9 +386,7 @@ def test_a_transient_engine_fault_retries_on_a_fresh_connection(
     captured: dict[str, list[list[object]]] = {}
 
     def _capture_rows(
-        connection: object,
-        query: str,
-        parameters: dict[str, object],
+        connection: object, query: str, parameters: dict[str, object]
     ) -> list[list[object]]:
         """Record a successful DOC_CROSSREF row set for later replay."""
         rows = real_run_rows(connection, query, parameters)  # type: ignore[arg-type]
@@ -407,9 +404,7 @@ def test_a_transient_engine_fault_retries_on_a_fresh_connection(
     attempts = {"doc_crossref": 0}
 
     def _run_rows_with_injected_overflow(
-        connection: object,
-        query: str,
-        parameters: dict[str, object],
+        connection: object, query: str, parameters: dict[str, object]
     ) -> list[list[object]]:
         """Fail once on DOC_CROSSREF, then replay the captured success."""
         if "DOC_CROSSREF" in query:
@@ -422,9 +417,7 @@ def test_a_transient_engine_fault_retries_on_a_fresh_connection(
         return real_run_rows(connection, query, parameters)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
-        graph_queries_module,
-        "_run_rows",
-        _run_rows_with_injected_overflow,
+        graph_queries_module, "_run_rows", _run_rows_with_injected_overflow
     )
     chain = graph.citation_path(
         from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
