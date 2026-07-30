@@ -19,7 +19,9 @@ from benchmarks.locomo.dataset import DATASET_COMMIT
 from benchmarks.locomo.dataset import DATASET_SHA256
 from benchmarks.locomo.dataset import item_ids_hash
 from benchmarks.locomo.model import AnswerAgentStep
+from benchmarks.locomo.model import AnswerRecord
 from benchmarks.locomo.model import JudgeOutput
+from benchmarks.locomo.model import JudgeRecord
 from benchmarks.locomo.model import LoCoMoDataset
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
@@ -42,6 +44,7 @@ from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import ProviderPreflightError
 from benchmarks.locomo.runner import summarize_run
+from benchmarks.locomo.runner import summarize_runs
 import httpx
 import pytest
 
@@ -763,6 +766,112 @@ def test_missing_records_remain_in_full_manifest_denominator(
     assert summary.failures == {"missing_answer": 1, "missing_judge": 1}
 
 
+def test_single_run_summary_json_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    serialized = summarize_run(run_dir=run_dir).model_dump_json()
+
+    assert serialized == (
+        '{"protocol_name":"RS-LoCoMo-Full-v5","protocol_fingerprint":'
+        '"fed22cd1e43ac423e000dda3284721eb5f80c4a92f5ae75d366c32944560fc98",'
+        '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
+        '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
+        '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
+        '"questions":0,"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},'
+        '{"category":3,"questions":0,"judge_correct":0,"judge_percent":0.0,'
+        '"official_f1":0.0},{"category":4,"questions":1,"judge_correct":0,'
+        '"judge_percent":0.0,"official_f1":0.0}],"session_diagnostic":'
+        '{"scorable_questions":1,"malformed_evidence_fields":0,'
+        '"mean_session_recall":0.0,"complete_session_success":0.0,'
+        '"warning":"session-grain diagnostic; not turn Recall@k"},'
+        '"failures":{"missing_answer":1,"missing_judge":1},'
+        '"answer_agent_calls":0,"total_reader_retries":0,"judge_calls":0,'
+        '"tokens_in":0,"tokens_out":0,"evaluator_cost_usd":"0",'
+        '"ingestion_cost_source":"deployment cost ledger; not available through '
+        'benchmark SDK"}'
+    )
+
+
+def test_merge_rejects_protocol_fingerprint_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=first)
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=second)
+    _write_terminal_records(run_dir=first, questions=(questions[0],))
+    _write_terminal_records(run_dir=second, questions=(questions[1],))
+
+    with pytest.raises(BenchmarkRunError, match="protocol_fingerprint differs"):
+        summarize_runs(run_dirs=(first, second))
+
+
+def test_merge_rejects_overlapping_recorded_samples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for run_dir in (first, second):
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+        _write_terminal_records(run_dir=run_dir, questions=(questions[0],))
+
+    with pytest.raises(BenchmarkRunError, match="overlapping sample 'conv-a'"):
+        summarize_runs(run_dirs=(first, second))
+
+
+def test_merge_recomputes_reference_single_run_from_combined_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    reference_dir = tmp_path / "reference"
+    for run_dir in (first, second, reference_dir):
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+    _write_terminal_records(run_dir=first, questions=(questions[0],))
+    _write_terminal_records(run_dir=second, questions=(questions[1],))
+    _write_terminal_records(run_dir=reference_dir, questions=questions)
+
+    merged = summarize_runs(run_dirs=(first, second))
+    reference = summarize_run(run_dir=reference_dir)
+
+    excluded = {"merged_run_count", "missing_sample_ids"}
+    assert merged.model_dump(exclude=excluded) == reference.model_dump(exclude=excluded)
+    assert merged.merged_run_count == 2
+    assert merged.missing_sample_ids == []
+
+
+def test_merge_lists_manifest_samples_without_any_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    first = tmp_path / "first"
+    empty = tmp_path / "empty"
+    for run_dir in (first, empty):
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+    _write_terminal_records(run_dir=first, questions=(questions[0],))
+
+    summary = summarize_runs(run_dirs=(first, empty))
+
+    assert summary.missing_sample_ids == ["conv-b"]
+    serialized = json.loads(summary.model_dump_json())
+    assert serialized["merged_run_count"] == 2
+    assert serialized["missing_sample_ids"] == ["conv-b"]
+
+
 def test_prepared_protocol_pins_and_fingerprints_are_distinct(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1080,6 +1189,123 @@ def _patch_prepared_inputs(*, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "load_manifest", lambda _tier: manifest)
     monkeypatch.setattr(runner, "_repository_revision", lambda: "a" * 40)
     monkeypatch.setattr(runner, "_repository_dirty", lambda: False)
+
+
+def _patch_two_sample_inputs(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> tuple[LoCoMoQuestion, LoCoMoQuestion]:
+    questions = (
+        LoCoMoQuestion(
+            item_id="conv-a/qa/0000",
+            sample_id="conv-a",
+            question="Where?",
+            answer="Prague",
+            evidence=("D1:1",),
+            category=1,
+        ),
+        LoCoMoQuestion(
+            item_id="conv-b/qa/0000",
+            sample_id="conv-b",
+            question="Who?",
+            answer="Beta",
+            evidence=("D1:1",),
+            category=4,
+        ),
+    )
+    samples = tuple(
+        LoCoMoSample(
+            sample_id=question.sample_id,
+            speaker_a="Alpha",
+            speaker_b="Beta",
+            sessions=(
+                LoCoMoSession(
+                    ordinal=1,
+                    session_id="D1",
+                    timestamp="1:00 pm on 1 May, 2023",
+                    turns=(
+                        LoCoMoTurn(
+                            speaker="Alpha",
+                            dia_id="D1:1",
+                            text=f"Evidence for {question.sample_id}.",
+                        ),
+                    ),
+                ),
+            ),
+            questions=(question,),
+        )
+        for question in questions
+    )
+    dataset = LoCoMoDataset(sha256=DATASET_SHA256, samples=samples)
+    item_ids = tuple(question.item_id for question in questions)
+    manifest = QuestionManifest(
+        tier="smoke",
+        dataset_commit=DATASET_COMMIT,
+        dataset_sha256=DATASET_SHA256,
+        item_ids=item_ids,
+        item_ids_sha256=item_ids_hash(item_ids=item_ids),
+    )
+    monkeypatch.setattr(runner, "load_dataset", lambda _path: dataset)
+    monkeypatch.setattr(runner, "load_manifest", lambda _tier: manifest)
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "a" * 40)
+    monkeypatch.setattr(runner, "_repository_dirty", lambda: False)
+    return questions
+
+
+def _write_terminal_records(
+    *, run_dir: Path, questions: tuple[LoCoMoQuestion, ...]
+) -> None:
+    answers: dict[str, AnswerRecord] = {}
+    judges: dict[str, JudgeRecord] = {}
+    cost = Decimal(0)
+    for question in questions:
+        prediction = question.answer if question.sample_id == "conv-a" else "wrong"
+        answer_usage = ProviderCallUsage(
+            model_name=ANSWER_AGENT_MODEL,
+            tokens_in=10 if question.sample_id == "conv-a" else 11,
+            tokens_out=2,
+            cost_usd=Decimal("0.01"),
+            latency_ms=1,
+        )
+        judge_usage = ProviderCallUsage(
+            model_name=JUDGE_MODEL,
+            tokens_in=5,
+            tokens_out=1,
+            cost_usd=Decimal("0.02"),
+            latency_ms=1,
+        )
+        answers[question.item_id] = AnswerRecord(
+            item_id=question.item_id,
+            sample_id=question.sample_id,
+            category=1 if question.category == 1 else 4,
+            question=question.question,
+            gold_answer=question.answer or "",
+            gold_evidence=question.evidence,
+            retrieval_succeeded=True,
+            retrieval_latency_ms=1,
+            reader_called=True,
+            agent_call_count=1,
+            reader_attempts=1,
+            reader_latency_ms=1,
+            generated_answer=prediction,
+            reader_usage=answer_usage,
+        )
+        judges[question.item_id] = JudgeRecord(
+            item_id=question.item_id,
+            label="CORRECT" if prediction == question.answer else "WRONG",
+            model_called=True,
+            usage=judge_usage,
+            latency_ms=1,
+        )
+        cost += answer_usage.cost_usd + judge_usage.cost_usd
+    configuration = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    state = RunState(
+        protocol_name=configuration["protocol_name"],
+        protocol_fingerprint=configuration["protocol_fingerprint"],
+        answers=answers,
+        judges=judges,
+        evaluator_cost_usd=cost,
+    )
+    (run_dir / "state.json").write_text(state.model_dump_json(), encoding="utf-8")
 
 
 def _synthetic_dataset() -> LoCoMoDataset:

@@ -215,6 +215,28 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     assert selected == [expected]
 
 
+def test_summarize_cli_accepts_multiple_run_flags(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    selected: list[tuple[Path, ...]] = []
+
+    class _Summary:
+        def model_dump_json(self) -> str:
+            return '{"merged_run_count":2}'
+
+    def fake_summarize_runs(*, run_dirs: tuple[Path, ...]) -> _Summary:
+        selected.append(run_dirs)
+        return _Summary()
+
+    monkeypatch.setattr(cli, "summarize_runs", fake_summarize_runs)
+
+    exit_code = cli.main(["summarize", "--run", "run-a", "--run", "run-b"])
+
+    assert exit_code == 0
+    assert selected == [(Path("run-a"), Path("run-b"))]
+    assert capsys.readouterr().out == '{"merged_run_count":2}\n'
+
+
 def test_judge_never_receives_tool_trace() -> None:
     prompt = render_judge_prompt(
         question="Where?", gold_answer="Prague", generated_answer="Prague"

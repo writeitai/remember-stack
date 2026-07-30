@@ -16,6 +16,7 @@ from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import summarize_run
+from benchmarks.locomo.runner import summarize_runs
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.surfaces.sdk import MemoryApiError
@@ -79,7 +80,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(record.model_dump_json())
             return 0
         if args.command == "summarize":
-            print(summarize_run(run_dir=args.run).model_dump_json())
+            summary = (
+                summarize_run(run_dir=args.run[0])
+                if len(args.run) == 1
+                else summarize_runs(run_dirs=tuple(args.run))
+            )
+            print(summary.model_dump_json())
             return 0
     except (BenchmarkRunError, MemoryApiError, OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -183,7 +189,7 @@ def _parser() -> argparse.ArgumentParser:
     summarize = commands.add_parser(
         "summarize", help="score the full manifest locally; missing means zero"
     )
-    summarize.add_argument("--run", type=Path, required=True)
+    summarize.add_argument("--run", type=Path, action="append", required=True)
     return parser
 
 
