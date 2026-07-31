@@ -140,9 +140,10 @@ with MemoryClient.from_settings() as memory:
     ready = memory.pipeline_readiness(version_ids=(landed.version_id,))
 ```
 
-The SDK also exposes typed `resolve`, `search_claims`, `hydrate_relation`, and
-connector-management methods. Network and non-success HTTP responses raise
-`MemoryApiError` with the status and deployment-provided detail.
+The SDK also exposes typed `resolve`, `search_claims`, `search_chunks`,
+`hydrate_relation`, and connector-management methods. Network and non-success
+HTTP responses raise `MemoryApiError` with the status and deployment-provided
+detail.
 
 ## Primitives
 
@@ -154,16 +155,27 @@ plans. Each returns the envelope.
 | `GET /resolve?name=&entity_type=&context_entity_ids=` | resolve a name to ranked current entities; repeat `context_entity_ids` up to eight times to rank ambiguous names by their current relation adjacency (never a silent guess) |
 | `GET /lookup/relations?subject_entity_id=&predicate=&object_entity_id=&valid_at=` | relations matching an (s, p, o) pattern — current, or as-of a world-time instant |
 | `GET /lookup/observations?entity_id=&property_query=&k=` | live observations on one entity, semantic over statements |
-| `GET /search/claims?query=&k=` | semantic claim search — **evidence** grain, never a current-fact answer |
+| `GET /search/claims?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked claim search — **evidence** grain, never a current-fact answer; `k` is 1–400 |
+| `GET /search/chunks?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked search over live source passages; returns `chunks[]` as separately typed **evidence**, never claims or facts; `k` is 1–400 |
 | `GET /hydrate/relation/{relation_id}` | the audit chain: a relation → its evidence claims → source documents |
 | `GET /transcript/relation/{relation_id}` | the decision history: why the system believes what it believes |
 
 Evidence rows returned by claim search and relation hydration include
-`claim_valid_from` and `claim_valid_until`. These are nullable ISO-8601
-timestamps bounding the source-asserted world interval (valid-time) during which
-the fact holds or happened, including bounds resolved from relative phrases
-against an in-document timestamp; they are evidence, not the fact layer's
-current-validity verdict.
+`asserted_at`, `claim_valid_from`, `claim_valid_until`,
+`claim_valid_precision`, and `claim_valid_kind`. These fields distinguish when
+the source spoke from the source-asserted world interval during which the fact
+holds or happened; they are evidence, not the fact layer's current-validity
+verdict. Chunk results disclose their generated `context_prefix` separately
+from verbatim `chunk_text` and carry the current document, version,
+representation, offsets, and source timestamps confirmed by the live spine.
+
+For ordinary question answering, prefer the public `question_context` recipe.
+It independently fuses semantic and BM25 claim nominations and source-chunk
+nominations, then confirms each fused list once. The result keeps atomic
+claims in `evidence[]` and verbatim source passages in `chunks[]`; neither
+payload is promoted to current-fact truth. `claims_hybrid_rrf` and
+`chunks_hybrid_rrf` expose either half when a caller needs only one evidence
+type.
 
 `resolve` always returns every exact-name candidate. Supplying focal entities only
 reorders those candidates: a candidate related to more of the supplied entities

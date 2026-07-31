@@ -7,7 +7,7 @@
 ## Recommendation
 
 The primary RememberStack LoCoMo result must exercise the ordinary OSS memory system, not a
-benchmark-specific claim-search shortcut. Use the named protocol **`RS-LoCoMo-Full-v6`**:
+benchmark-specific claim-search shortcut. Use the named protocol **`RS-LoCoMo-Full-v7`**:
 
 - exact pinned `locomo10.json` bytes from commit
   `3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376`;
@@ -54,7 +54,7 @@ suite.
 Plane K is disclosed separately. The OSS K implementation requires routing rules, a knowledge
 repository, and a reproducible planner/writer runtime. The stock Compose profile does not yet
 provide those inputs. `pages_about` remains an honest public tool and returns a typed
-`known_empty` when no K page exists, but `RS-LoCoMo-Full-v6` must not claim that K synthesis was
+`known_empty` when no K page exists, but `RS-LoCoMo-Full-v7` must not claim that K synthesis was
 exercised. Adding K later creates a separately fingerprinted protocol.
 
 P3 is likewise disclosed precisely: the stock deployment builds it and readiness proves the

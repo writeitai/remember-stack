@@ -35,11 +35,13 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core import KNOWN_OPS
 from rememberstack.core import lint_recipe
 from rememberstack.core import RecipeLintError
+from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import EvidenceResult
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import P1ChunkText
 from rememberstack.model import RankedItem
 from rememberstack.model import Recipe
 from rememberstack.model import RecipeAnswerIntent
@@ -53,7 +55,6 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import EXECUTABLE_OPS
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces import RecipeExecutor
-from rememberstack.surfaces.recipe_executor import _chain_answer
 from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -79,6 +80,30 @@ class _FakeSearchIndex:
     ) -> tuple[str, ...]:
         """Return the seeded claim nominations (deterministic, order-stable)."""
         return self._claim_ids
+
+    def search_claims_lexical(
+        self, *, deployment_id: str, query: str, k: int, current_only: bool
+    ) -> tuple[str, ...]:
+        """Return an independently ordered lexical nomination list."""
+        return tuple(reversed(self._claim_ids))
+
+    def search_chunks(
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+    ) -> tuple[str, ...]:
+        """No source rows are needed by this fixture."""
+        return ()
+
+    def search_chunks_lexical(
+        self, *, deployment_id: str, query: str, k: int
+    ) -> tuple[str, ...]:
+        """No source rows are needed by this fixture."""
+        return ()
+
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+    ) -> dict[str, P1ChunkText]:
+        """No source rows are needed by this fixture."""
+        return {}
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
@@ -425,6 +450,8 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
         "entity_timeline": {"entity_id": alice},
         "claims_verbatim": {"query": "alice acme", "k": 10},
         "claims_hybrid_rrf": {"query": "alice acme"},
+        "chunks_hybrid_rrf": {"query": "alice acme"},
+        "question_context": {"query": "alice acme"},
         "explain": {"relation_id": corpus.relation_id},
         "identity_as_of": {"entity_id": alice},
         "changed_since": {"since": _SINCE},
@@ -456,25 +483,51 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
             deployment_id=_DEPLOYMENT_ID, entity_id=alice
         ),
     }
-    # the fused recipe: two searches hand-fused then claim-hydrated, same chain
-    first = engine.search_claims(deployment_id=_DEPLOYMENT_ID, query="alice acme", k=10)
-    second = engine.search_claims(
-        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=10
+    # The fused recipes nominate cheaply, hand-fuse, then confirm exactly once.
+    first = engine.nominate_claims(
+        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="semantic"
+    )
+    second = engine.nominate_claims(
+        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="bm25"
     )
     fused = engine.fuse(
         rankings=[
-            [record.claim_id for record in first.evidence],
-            [record.claim_id for record in second.evidence],
+            [item.item_id for item in first.ranking],
+            [item.item_id for item in second.ranking],
         ],
         k=60,
+        limit=30,
     )
     direct["claims_hybrid_rrf"] = engine.hydrate_claims(
         deployment_id=_DEPLOYMENT_ID,
         claim_ids=[item.item_id for item in fused.ranking],
         ranking=fused.ranking,
     )
+    chunk_first = engine.nominate_chunks(
+        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="semantic"
+    )
+    chunk_second = engine.nominate_chunks(
+        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="bm25"
+    )
+    fused_chunks = engine.fuse(
+        rankings=[
+            [item.item_id for item in chunk_first.ranking],
+            [item.item_id for item in chunk_second.ranking],
+        ],
+        k=60,
+        limit=30,
+    )
+    direct["chunks_hybrid_rrf"] = engine.hydrate_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        chunk_ids=[item.item_id for item in fused_chunks.ranking],
+        ranking=fused_chunks.ranking,
+    )
+    direct["question_context"] = engine.combine_evidence(
+        inputs=(direct["claims_hybrid_rrf"], direct["chunks_hybrid_rrf"])
+    )
 
     canonical = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
+    assert set(direct) == set(canonical)
     for name, expected in direct.items():
         replayed = executor.execute(
             deployment_id=_DEPLOYMENT_ID,
@@ -581,18 +634,168 @@ def test_descriptor_required_order_survives_jsonb_key_reordering() -> None:
 def test_claims_hybrid_rrf_chain_ends_with_claim_hydration() -> None:
     """Hybrid RRF must hydrate ranked claim text, not stop at bare UUIDs.
 
-    Offline structural proof: the stock chain is search×2 → fuse → hydrate.
+    Offline structural proof: the stock chain is nominate×2 → fuse → hydrate.
     """
     recipe = next(r for r in CANONICAL_RECIPES if r.name == "claims_hybrid_rrf")
     assert [step.op for step in recipe.chain] == [
-        "search_claims",
-        "search_claims",
+        "nominate_claims",
+        "nominate_claims",
         "fuse",
         "hydrate_claims",
     ]
     assert recipe.chain[-1].inputs == (2,)
-    assert recipe.version == 3
+    assert recipe.chain[0].settings["channel"] == "semantic"
+    assert recipe.chain[1].settings["channel"] == "bm25"
+    assert recipe.chain[2].bind == {"limit": "k"}
+    assert recipe.version == 5
     lint_recipe(recipe)
+
+
+def test_chunks_hybrid_rrf_nominates_then_confirms_once() -> None:
+    """Source hybrid RRF fuses cheap IDs before one live-text confirmation."""
+    recipe = next(r for r in CANONICAL_RECIPES if r.name == "chunks_hybrid_rrf")
+    assert [step.op for step in recipe.chain] == [
+        "nominate_chunks",
+        "nominate_chunks",
+        "fuse",
+        "hydrate_chunks",
+    ]
+    assert recipe.chain[-1].inputs == (2,)
+    assert recipe.chain[0].settings["channel"] == "semantic"
+    assert recipe.chain[1].settings["channel"] == "bm25"
+    assert recipe.chain[2].bind == {"limit": "k"}
+    assert recipe.version == 2
+    lint_recipe(recipe)
+
+
+def test_question_context_keeps_claims_and_chunks_separately_typed() -> None:
+    """The high-recall recipe never cross-fuses claims with source chunks."""
+    recipe = next(r for r in CANONICAL_RECIPES if r.name == "question_context")
+    assert [step.op for step in recipe.chain] == [
+        "nominate_claims",
+        "nominate_claims",
+        "fuse",
+        "hydrate_claims",
+        "nominate_chunks",
+        "nominate_chunks",
+        "fuse",
+        "hydrate_chunks",
+        "combine_evidence",
+    ]
+    assert recipe.chain[-1].inputs == (3, 7)
+    candidate_parameter = recipe.parameters["candidate_k"]
+    result_parameter = recipe.parameters["k"]
+    assert isinstance(candidate_parameter, dict)
+    assert isinstance(result_parameter, dict)
+    candidate_default = candidate_parameter["default"]
+    result_default = result_parameter["default"]
+    assert isinstance(candidate_default, int)
+    assert isinstance(result_default, int)
+    assert candidate_default > result_default
+    assert recipe.version == 2
+    lint_recipe(recipe)
+
+
+def test_question_context_executes_to_both_evidence_payloads() -> None:
+    """The stock chain returns claim and source evidence in one envelope."""
+    claim_id = uuid4()
+    chunk_id = uuid4()
+    doc_id = uuid4()
+    version_id = uuid4()
+    representation_id = uuid4()
+
+    class _QuestionIndex(_FakeSearchIndex):
+        """Independent deterministic claim and source nominations."""
+
+        def search_chunks(
+            self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        ) -> tuple[str, ...]:
+            return (str(chunk_id),)
+
+        def search_chunks_lexical(
+            self, *, deployment_id: str, query: str, k: int
+        ) -> tuple[str, ...]:
+            return (str(chunk_id),)
+
+    engine = QueryEngine(
+        engine=MagicMock(),
+        search_index=_QuestionIndex(claim_ids=(claim_id,)),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+    evidence = EvidenceResult(
+        claim_id=claim_id,
+        doc_id=doc_id,
+        chunk_id=chunk_id,
+        claim_text="Alice joined Acme.",
+        source_span="Alice joined Acme.",
+        char_start=0,
+        char_end=18,
+        is_attributed=False,
+        is_current_testimony=True,
+    )
+    chunk = ChunkEvidenceResult(
+        chunk_id=chunk_id,
+        doc_id=doc_id,
+        version_id=version_id,
+        representation_id=representation_id,
+        chunk_text="Alice joined Acme.",
+        context_prefix="A staffing note.",
+        char_start=0,
+        char_end=18,
+        section_role="body",
+        source_kind="upload",
+    )
+    claim_confirmations = 0
+    chunk_confirmations = 0
+
+    def confirm_claims(**_kwargs: object) -> tuple[tuple[EvidenceResult, ...], int]:
+        """Count the one post-fusion claim confirmation."""
+        nonlocal claim_confirmations
+        claim_confirmations += 1
+        return (evidence,), 0
+
+    def confirm_chunks(
+        **_kwargs: object,
+    ) -> tuple[tuple[ChunkEvidenceResult, ...], int]:
+        """Count the one post-fusion chunk confirmation."""
+        nonlocal chunk_confirmations
+        chunk_confirmations += 1
+        return (chunk,), 0
+
+    engine._confirm_claims = confirm_claims  # type: ignore[method-assign]
+    engine._confirm_chunks = confirm_chunks  # type: ignore[method-assign]
+
+    recipe = next(r for r in CANONICAL_RECIPES if r.name == "question_context")
+    envelope = RecipeExecutor(query_engine=engine).execute(
+        deployment_id=_DEPLOYMENT_ID,
+        recipe=recipe,
+        arguments={"query": "Where did Alice join?", "k": 10, "candidate_k": 20},
+    )
+
+    assert envelope.evidence == (evidence,)
+    assert envelope.chunks == (chunk,)
+    assert envelope.grain is Grain.EVIDENCE
+    assert claim_confirmations == 1
+    assert chunk_confirmations == 1
+
+
+def test_nomination_rejects_unknown_channels_and_unbounded_k() -> None:
+    """Custom recipe settings cannot silently select BM25 or exhaust a read."""
+    engine = QueryEngine(
+        engine=MagicMock(),
+        search_index=_FakeSearchIndex(claim_ids=()),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+    with pytest.raises(ValueError, match="unknown retrieval channel"):
+        engine.nominate_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            query="alice",
+            channel="bm_25",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="between 1 and 400"):
+        engine.nominate_chunks(deployment_id=_DEPLOYMENT_ID, query="alice", k=401)
 
 
 def test_hydrate_claims_attaches_evidence_and_keeps_ranking() -> None:
@@ -645,6 +848,22 @@ def test_hydrate_claims_attaches_evidence_and_keeps_ranking() -> None:
         ) -> tuple[str, ...]:
             """Never called."""
             return ()
+
+        def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+            """Never called."""
+            return ()
+
+        def search_chunks(self, **_: object) -> tuple[str, ...]:
+            """Never called."""
+            return ()
+
+        def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+            """Never called."""
+            return ()
+
+        def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+            """Never called."""
+            return {}
 
         def search_facts(
             self,
@@ -709,26 +928,22 @@ def test_hybrid_envelope_carries_hydrated_evidence(corpus: _Corpus) -> None:
     assert all(item.score > 0 for item in envelope.ranking)
 
 
-def test_chain_answer_reports_upstream_hydration_drops() -> None:
-    """The recipe's answer carries the WHOLE chain's drop count.
-
-    The search passes feeding fuse → hydrate drop stale nominations in
-    envelopes the executor discards; before the fix the hybrid answer reported
-    dropped_by_hydration=0 while drops happened upstream (Codex review
-    finding on the v4 branch).
-    """
+def test_combine_evidence_reports_each_input_hydration_drop_once() -> None:
+    """The combined answer sums its two contributing confirmations once."""
     freshness = Freshness(pg_live_ts=datetime(2026, 7, 27, tzinfo=UTC))
-    chain = [
-        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
-        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
-        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=0),
-        Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=1),
-    ]
-    answer = _chain_answer(envelopes=chain)
-    assert answer.dropped_by_hydration == 3
-    # A single-step chain is returned untouched.
-    single = _chain_answer(envelopes=[chain[0]])
-    assert single.dropped_by_hydration == 1
+    engine = QueryEngine(
+        engine=MagicMock(),
+        search_index=_FakeSearchIndex(claim_ids=()),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+    answer = engine.combine_evidence(
+        inputs=(
+            Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=2),
+            Envelope(grain=Grain.EVIDENCE, freshness=freshness, dropped_by_hydration=3),
+        )
+    )
+    assert answer.dropped_by_hydration == 5
 
 
 def test_hydrate_chain_with_two_inputs_is_lint_rejected() -> None:

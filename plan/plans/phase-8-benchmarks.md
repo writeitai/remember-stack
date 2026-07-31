@@ -38,7 +38,7 @@ than expanding WP-8.2. The reusable prompt for independent external research is
 
 ## WP-8.2 LoCoMo setup
 
-The first adapter is the reviewed `RS-LoCoMo-Full-v6` protocol (v1 with a stronger judge,
+The first adapter is the reviewed `RS-LoCoMo-Full-v7` protocol (v1 with a stronger judge,
 strict-representable `arguments_json`, recipe ergonomics and answer-loop guards, recoverable
 identity history, and an explicit assumed-UTC LoCoMo ingestion contract; D78 and amendments):
 

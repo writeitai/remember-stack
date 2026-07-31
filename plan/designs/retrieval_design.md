@@ -6,7 +6,9 @@ multi-store system honest. Binding design for decisions **D48–D51**, building 
 Lance), D9 (parallel channels + RRF, zero LLM on the query path), D10/D44 (as-of mechanics),
 D16 (scope views), D41 (`claims_as_of` and its bar), D43 (observation retrieval), D22 (the
 retrieval eval). Driven by the scenario battery `plan/analysis/retrieval_scenarios.md`
-(S1–S63) — every design element below cites the scenarios that forced it. Numbers are starting
+(S1–S63) — every design element below cites the scenarios that forced it — and the
+implementation analysis
+[`retrieval_default_path.md`](../analysis/retrieval_default_path.md). Numbers are starting
 points to measure, not committed constants (CLAUDE.md).
 
 > **Reading this cold (CLAUDE.md Rule 1).** The memory has three planes: **E** (evidence —
@@ -123,6 +125,34 @@ never trigger anything** — all K/E triggering originates from writes).
 | `aggregate` | enumerated forms: count / group-by-predicate / group-by-object / timeline(entity) / delta-top-entities(since T) / typed-absence(type, predicate) | see §9 — enumerated, not general | S12, S26–S28, S30, S40 |
 | `scan` | filter → stream | the batch surface (§9): full exports for compilers, auditors, external analytics — same zero-LLM reads, streaming contract, separate resource pool from interactive | S53 |
 
+**Shipped P1 default-path clarification (2026-07-30).** The `search` rows above are independent
+nomination channels, not two names for one vector lookup. For claims and chunks, `semantic`
+embeds the query and searches the Lance vector column; `bm25` runs native full-text search over
+the same P1 table's text column. The first ordinary P1 write bootstraps each
+table's explicit FTS index; the first lexical read repairs an upgraded store
+that predates that index. Ordinary writes incrementally optimize every index
+after 20 mutations or 100,000 unindexed rows, while the explicit maintenance
+operation rebuilds after bulk loads. Chunk hydration likewise bootstraps a
+`chunk_id` B-tree before its ID lookup. These bounds keep BM25 and live-source
+hydration from degrading into corpus scans without requiring the backfill-only
+finalizer. The shipped tokenizer is language-neutral
+(punctuation/whitespace tokens, case + ASCII folding, no English stemming or stop-word removal);
+language-specific morphology requires a measured per-language policy rather than a silent
+English default.
+
+A chunk nomination is still subject to D48. Postgres confirms that the chunk belongs to the
+lineage's current ready version and its current ready representation; P1 then supplies the text
+body it owns. The query engine verifies the P1 text's generated context prefix against the
+prefix stored in Postgres, returns that prefix separately from the source body, preserves source
+offsets and document/version/representation handles, and counts every failed confirmation as a
+hydration drop. The result is evidence grain but has its own typed `chunks` payload: a chunk is
+source text, never an atomic claim and never an adjudicated fact.
+
+`combine_evidence` is the side-effect-free composition operator for separately typed evidence
+sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs
+or pretending the two shapes share one relevance scale. Like `fuse`, it adds no retrieval
+capability; an agent can run and combine the same primitive results itself.
+
 **Amendment (2026-07-27, issue #156).** `transcript` (and the `identity_as_of`
 recipe that is one fixed chain over it) is **recent-first bounded** by a
 measurable default (`DEFAULT_TRANSCRIPT_LIMIT`, starting point 40 rows), with
@@ -164,8 +194,8 @@ Two honest limits on `believed_at`, stated rather than discovered (S43, S61):
 
 A **recipe** is a named, versioned composition of primitives with fixed fusion/rerank
 settings: `relation_hybrid_rrf`, `relation_near_entity`, `claims_verbatim`, `claims_as_of`,
-`entity_timeline`, `identity_as_of`, `explain`, `brief`, `changed_since`, `contradictions`,
-`pages_about`. Recipes are **registry rows, not code** — the same move as predicates (D5),
+`question_context`, `entity_timeline`, `identity_as_of`, `explain`, `brief`, `changed_since`,
+`contradictions`, `pages_about`. Recipes are **registry rows, not code** — the same move as predicates (D5),
 ontology (D15), and K routing rules (D45). A recipe row carries, concretely: `name`,
 `description`, typed `parameters`, the **primitive chain** (an ordered composition of §3
 operations with fixed settings — channel sets, RRF constants, rerank weights), two declared
@@ -190,6 +220,16 @@ MCP-rendering metadata. (Full DDL joins the control-plane tables in
 
 Recipes never add capability — anything a recipe does, an agent can compose from §3. That is
 a testable property (the eval harness replays each recipe as its primitive chain and diffs).
+
+The ordinary high-recall evidence entry is **`question_context`**. Its frozen chain independently
+fuses cheap semantic + lexical claim-ID nominations, independently fuses cheap semantic +
+lexical chunk-ID nominations, hydrates each fused list exactly once through D48, then
+`combine_evidence` returns the two payloads under one evidence envelope. This order avoids
+hydrating candidate-depth rows or counting one stale candidate more than once. Candidate depth
+is larger than returned depth; both bounds are declared in the recipe schema and measured rather
+than hidden. `claims_hybrid_rrf` remains the narrower atomic-assertion path and must likewise use
+one semantic plus one lexical nomination — duplicate semantic passes are a contract defect, not
+a weak hybrid.
 
 ## 5. The response envelope — the contract is the answer's self-account (D49)
 
@@ -220,6 +260,13 @@ answer itself** — because the caller is an agent that must *reason about* the 
   negative:     null | {kind, explanation, workaround}  // §below
 }
 ```
+
+An evidence-grain envelope may carry both `evidence[]` (atomic claims) and `chunks[]` (confirmed
+source-text fallback). They are distinct fields because they have different semantics and
+provenance shapes even though both are testimony. Every chunk record discloses its generated
+context prefix separately from its source body and carries the immutable source coordinate
+needed to audit it. A consumer may compact their rendering, but the raw envelope never erases
+the distinction.
 
 (Single-grain answers are the common case: one entry in `parts[]`, top-level
 `grain` = that part's grain — flat to consume. `composite` appears only for compound recipes
@@ -291,6 +338,9 @@ The fact/evidence split (`concepts.md`; requirements §Retrieval) becomes a **ty
 discipline** rather than documentation:
 
 - Every primitive and recipe **declares its grain**; every envelope **carries it**.
+- Source chunks are **evidence grain**, returned through a distinct typed payload. They say what
+  the current source text contains; they are not atomic claims and never answer current-fact
+  questions without extraction/adjudication.
 - "Current-fact" answers may be assembled **only** from validity-filtered
   relations/observations. Claims answer *what sources asserted* — a claim's asserted-validity
   interval (D41) is testimony, never verdict, and the registry linter bars any composition
@@ -455,6 +505,11 @@ canary is green); recipe-vs-primitive-chain
 equivalence (§4); and S58 as the
 skill's acceptance test. Rerank weights (graph distance, evidence count) are tuned on the
 harness, never in production.
+
+The D22 retrieval measurements separately report semantic claims, lexical claims, hybrid
+claims, semantic chunks, lexical chunks, and `question_context`. Exact source/dialog recall and
+complete-evidence recall are recorded before any reader or judge result, so a planner or answer
+failure cannot be mislabeled a retrieval miss.
 
 ## 12. Non-goals (scope boundaries, not deferrals)
 

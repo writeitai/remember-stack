@@ -26,15 +26,15 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v6"
-STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v6-strong"
-DEFAULT_PROTOCOL_KEY: Final = "full-v6"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07-utc-time"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v7"
+STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v7-strong"
+DEFAULT_PROTOCOL_KEY: Final = "full-v7"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07-hybrid-context"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
-    "34d2069ae37fabf033d2b1f0fae2ed9e7c1ad5c3f6e1fd14b2971344cd89c3a6"
+    "c0df1636fb1479b64dbacb39ab6cc2cadf53a89ff5e145d44cf84290ab47db11"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -59,10 +59,12 @@ ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinar
 RememberStack deployment. You may call only the public recipe tools listed
 below. Work as a normal memory agent:
 
-1. Orient: resolve names and inspect compiled/corpus or graph orientation when
+1. Recall: use question_context first for ordinary questions; it combines
+   semantic and exact-text retrieval over claims and live source passages.
+2. Orient: resolve names and inspect compiled/corpus or graph orientation when
    useful.
-2. Verify: query current fact tools for what holds now.
-3. Audit: use evidence/hydration tools when wording, time, attribution, or
+3. Verify: query current fact tools for what holds now.
+4. Audit: use evidence/hydration tools when wording, time, attribution, or
    conflicts matter.
 
 Respect every response envelope's grain, negative, freshness, truncation, and
@@ -74,8 +76,8 @@ outside knowledge. If the deployment does not contain the answer, finish with
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
-it. Before answering "Unknown", you must have tried claims_verbatim or
-claims_hybrid_rrf at least once.
+it. Before answering "Unknown", you must have tried question_context at least
+once.
 
 Return one structured step: either action="tool" with one listed tool_name and
 arguments_json (the tool arguments as one JSON object encoded as a string, with
@@ -125,8 +127,8 @@ class LoCoMoProtocol:
     answer_agent_reasoning_effort: str | None
 
 
-_FULL_V6 = LoCoMoProtocol(
-    key="full-v6",
+_FULL_V7 = LoCoMoProtocol(
+    key="full-v7",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -143,8 +145,8 @@ _FULL_V6 = LoCoMoProtocol(
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
     answer_agent_reasoning_effort=None,
 )
-_FULL_V6_STRONG = LoCoMoProtocol(
-    key="full-v6-strong",
+_FULL_V7_STRONG = LoCoMoProtocol(
+    key="full-v7-strong",
     name=STRONG_PROTOCOL_NAME,
     answer_agent_model=STRONG_ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -163,7 +165,7 @@ _FULL_V6_STRONG = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V6.key: _FULL_V6, _FULL_V6_STRONG.key: _FULL_V6_STRONG}
+    {_FULL_V7.key: _FULL_V7, _FULL_V7_STRONG.key: _FULL_V7_STRONG}
 )
 
 
@@ -239,7 +241,7 @@ def render_answer_agent_prompt(
         separators=(",", ":"),
     )
     trace_payload = json.dumps(
-        [record.model_dump(mode="json") for record in trace],
+        [_reader_trace_record(record=record) for record in trace],
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -247,6 +249,39 @@ def render_answer_agent_prompt(
     return ANSWER_AGENT_PROMPT_TEMPLATE.format(
         tools=tool_payload, trace=trace_payload or "[]", question=question
     )
+
+
+def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
+    """Project an audit-complete tool record into a compact reader view.
+
+    Durable benchmark records retain the raw envelope. The answer agent does
+    not need rank-score bookkeeping or empty containers repeated on every
+    turn, so omitting those reduces prompt volume without blanket-dropping
+    meaningful default values such as a zero hydration-drop count or an
+    unknown temporal precision.
+    """
+    response = record.response.model_dump(
+        mode="json", exclude_none=True, exclude={"ranking"}
+    )
+    return {
+        "name": record.name,
+        "arguments": record.arguments,
+        "response": _without_empty_containers(value=response),
+    }
+
+
+def _without_empty_containers(*, value: object) -> object:
+    """Recursively remove only empty mappings/lists from a JSON-ready value."""
+    if isinstance(value, dict):
+        compact: dict[str, object] = {}
+        for key, item in value.items():
+            rendered = _without_empty_containers(value=item)
+            if rendered not in ({}, []):
+                compact[str(key)] = rendered
+        return compact
+    if isinstance(value, list):
+        return [_without_empty_containers(value=item) for item in value]
+    return value
 
 
 def render_judge_prompt(

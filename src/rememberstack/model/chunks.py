@@ -159,6 +159,20 @@ class P1ChunkRow(BaseModel):
     vector: Annotated[tuple[float, ...], Field(min_length=1)]
 
 
+class P1ChunkText(BaseModel):
+    """The text-bearing part of one nominated P1 chunk row.
+
+    The query engine confirms the UUID and source coordinate against Postgres
+    before this projection text can enter an evidence envelope (D48).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chunk_id: UUID
+    section_role: str
+    indexed_text: _NonEmpty
+
+
 class ChunkSourceNotFoundError(Exception):
     """The chunk stage referenced a representation the spine does not know."""
 

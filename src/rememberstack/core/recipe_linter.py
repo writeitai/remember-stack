@@ -59,9 +59,16 @@ _OPS: dict[str, _OpSpec] = {
     "lookup_observations": _OpSpec(Grain.FACT, validity_filtered=True),
     "aggregate": _OpSpec(Grain.FACT, validity_filtered=False),
     "search_claims": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
+    "search_chunks": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
+    "nominate_claims": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
+    "nominate_chunks": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
     "hydrate_claims": _OpSpec(
         Grain.EVIDENCE, validity_filtered=False, min_inputs=1, max_inputs=1
     ),
+    "hydrate_chunks": _OpSpec(
+        Grain.EVIDENCE, validity_filtered=False, min_inputs=1, max_inputs=1
+    ),
+    "combine_evidence": _OpSpec(Grain.EVIDENCE, validity_filtered=False, min_inputs=1),
     "hydrate_relation": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
     "transcript": _OpSpec(Grain.COMPOSITE, validity_filtered=False),
     "delta": _OpSpec(Grain.COMPOSITE, validity_filtered=False),

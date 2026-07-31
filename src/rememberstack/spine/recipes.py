@@ -236,29 +236,145 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     ),
     Recipe(
         name="claims_hybrid_rrf",
-        description="Verbatim claims for a query: semantic search passes fused"
-        " by reciprocal-rank fusion (S46), then hydrated to claim text."
-        " Evidence grain with ranking scores kept. Prefer when a single"
-        " claims_verbatim search returned too little.",
+        description="Verbatim claims for a query: independent semantic and"
+        " BM25 nominations fused by reciprocal-rank fusion (S46), then"
+        " hydrated to claim text. Evidence grain with ranking scores kept.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
                 "type": "integer",
                 "required": False,
-                "default": 10,
+                "default": 30,
                 "minimum": 1,
-                "maximum": 30,
+                "maximum": 100,
+            },
+            "candidate_k": {
+                "type": "integer",
+                "required": False,
+                "default": 100,
+                "minimum": 1,
+                "maximum": 400,
             },
         },
         chain=(
-            RecipeStep(op="search_claims", bind={"query": "query", "k": "k"}),
-            RecipeStep(op="search_claims", bind={"query": "query", "k": "k"}),
-            RecipeStep(op="fuse", settings={"k": 60}, inputs=(0, 1)),
+            RecipeStep(
+                op="nominate_claims",
+                settings={"channel": "semantic"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="nominate_claims",
+                settings={"channel": "bm25"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(0, 1)
+            ),
             RecipeStep(op="hydrate_claims", inputs=(2,)),
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=3,
+        version=5,
+    ),
+    Recipe(
+        name="chunks_hybrid_rrf",
+        description="Live source passages for a query: independent semantic"
+        " and BM25 nominations fused by RRF, then D48-confirmed against the"
+        " current ready source coordinate. Evidence grain; chunks are not"
+        " claims or facts.",
+        parameters={
+            "query": {"type": "string", "required": True},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 30,
+                "minimum": 1,
+                "maximum": 100,
+            },
+            "candidate_k": {
+                "type": "integer",
+                "required": False,
+                "default": 100,
+                "minimum": 1,
+                "maximum": 400,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="nominate_chunks",
+                settings={"channel": "semantic"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="nominate_chunks",
+                settings={"channel": "bm25"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(0, 1)
+            ),
+            RecipeStep(op="hydrate_chunks", inputs=(2,)),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+        version=2,
+    ),
+    Recipe(
+        name="question_context",
+        description="High-recall question context: hybrid claim retrieval plus"
+        " hybrid live-source retrieval. Returns atomic claims and source"
+        " chunks as separately typed evidence; neither is current-fact truth.",
+        parameters={
+            "query": {"type": "string", "required": True},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 50,
+                "minimum": 1,
+                "maximum": 100,
+            },
+            "candidate_k": {
+                "type": "integer",
+                "required": False,
+                "default": 200,
+                "minimum": 1,
+                "maximum": 400,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="nominate_claims",
+                settings={"channel": "semantic"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="nominate_claims",
+                settings={"channel": "bm25"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(0, 1)
+            ),
+            RecipeStep(op="hydrate_claims", inputs=(2,)),
+            RecipeStep(
+                op="nominate_chunks",
+                settings={"channel": "semantic"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="nominate_chunks",
+                settings={"channel": "bm25"},
+                bind={"query": "query", "k": "candidate_k"},
+            ),
+            RecipeStep(
+                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(4, 5)
+            ),
+            RecipeStep(op="hydrate_chunks", inputs=(6,)),
+            RecipeStep(op="combine_evidence", inputs=(3, 7)),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+        version=2,
     ),
     Recipe(
         name="explain",

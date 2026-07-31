@@ -45,6 +45,7 @@ from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import IdentityRegime
 from rememberstack.model import NegativeKind
+from rememberstack.model import P1ChunkText
 from rememberstack.model import Validity
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
@@ -70,6 +71,22 @@ class _NullSearchIndex:
     ) -> tuple[str, ...]:
         """Never called."""
         return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        """Never called."""
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        """Never called."""
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        """Never called."""
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        """Never called."""
+        return {}
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None

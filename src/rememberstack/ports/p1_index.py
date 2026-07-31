@@ -4,6 +4,7 @@ from typing import Protocol
 from typing import runtime_checkable
 
 from rememberstack.model import P1ChunkRow
+from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
@@ -59,6 +60,30 @@ class P1SearchPort(Protocol):
         current_only: bool,
     ) -> tuple[str, ...]:
         """Ranked claim-id nominations from the claims channel."""
+        ...
+
+    def search_claims_lexical(
+        self, *, deployment_id: str, query: str, k: int, current_only: bool
+    ) -> tuple[str, ...]:
+        """Ranked claim-id nominations from the lexical claims channel."""
+        ...
+
+    def search_chunks(
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+    ) -> tuple[str, ...]:
+        """Ranked chunk-id nominations from the semantic source channel."""
+        ...
+
+    def search_chunks_lexical(
+        self, *, deployment_id: str, query: str, k: int
+    ) -> tuple[str, ...]:
+        """Ranked chunk-id nominations from the lexical source channel."""
+        ...
+
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+    ) -> dict[str, P1ChunkText]:
+        """Projection text for confirmed chunk ids; absent ids are omitted."""
         ...
 
     def search_facts(

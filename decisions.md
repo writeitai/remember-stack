@@ -207,6 +207,18 @@ free from D2.
 strategies instead of assembling plumbing. Center-node reranking requires focal-entity
 resolution first — the registry is on the hot path.
 
+**Implemented default-path clarification (2026-07-30).** A channel named hybrid must contain
+independent nominations: the shipped claims hybrid is semantic + native lexical/BM25 over the
+same P1 text, never two copies of one vector search. P1 chunk text gains the same two searchable
+channels as a source-text fallback. The ordinary `question_context` recipe returns confirmed
+claims and current-source chunks as separately typed evidence payloads; it does not mix their
+UUIDs into an untyped ranking or promote source text to fact grain. Hybrid recipes fuse
+projection-only IDs before confirming each final list once. Ordinary writes optimize indexed
+tails after 20 mutations or 100,000 unindexed rows; first reads repair missing FTS and chunk-ID
+indexes on upgraded stores. Design and rationale:
+[`plan/designs/retrieval_design.md` §§3–5](plan/designs/retrieval_design.md) and
+[`plan/analysis/retrieval_default_path.md`](plan/analysis/retrieval_default_path.md).
+
 ---
 
 ## D10. As-of traversal via projected graphs
@@ -1292,6 +1304,13 @@ the one cross-cloud hop is the batched by-ID hydration that enforces the invaria
 envelope, D49) instead of consumer folklore. Projections stay dumb and rebuildable (D6/D7
 untouched). The nominate-then-drop artifact is surfaced honestly. Hydration depth is progressive
 (record → evidence → sources → bytes), so the confirmation hop doubles as the provenance walk.
+
+**Clarified 2026-07-30 (chunk search).** A P1 chunk nomination is not returned directly.
+Postgres first confirms that the chunk belongs to the lineage's current ready
+version/representation; P1 then supplies the text body it owns, and the engine verifies and
+separates the Postgres-recorded generated prefix from source text. A missing row, stale source
+coordinate, or prefix mismatch is a hydration drop. This preserves D48 even though large chunk
+bodies deliberately do not live in Postgres.
 
 ## D49. The response envelope: grain type-discipline, inline contradictions, typed negatives, freshness stamps
 
@@ -2776,6 +2795,18 @@ may proceed to its first tagged artifact proof after CLA activation.
 > writing raw bytes. Missing source time stays unknown. Rendered bytes,
 > ingestion metadata, and derived claim times change, so v5 and v6 scores are
 > not comparable. See the companion design §§2 and 3.
+>
+> **Also amended 2026-07-30 (v7 — independent hybrid evidence retrieval):**
+> semantic and BM25 claim nominations are now genuinely independent, and live
+> source chunks provide a second hybrid evidence path when extraction omitted
+> an answer. The public `question_context` recipe composes both paths while
+> preserving claims and chunks as distinct types. Chunk bodies are returned
+> only after D48 confirmation of the current ready version/representation. The
+> answer agent uses `question_context` first; its repeated prompt sees a compact
+> response projection that retains freshness and every evidence row, while
+> durable records retain the raw envelopes. The tool
+> catalog, prompt, adapter identity, and protocol fingerprints change, so v6
+> and v7 results are not comparable. See the companion design §§2, 3, and 7.
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;

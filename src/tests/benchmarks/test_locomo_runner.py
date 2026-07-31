@@ -290,8 +290,8 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
         "invalid_reader_completions",
     ),
     (
-        ("full-v6", "openai/gpt-4o-mini", None, 0),
-        ("full-v6-strong", "openai/gpt-5.6-luna", "none", 2),
+        ("full-v7", "openai/gpt-4o-mini", None, 0),
+        ("full-v7-strong", "openai/gpt-5.6-luna", "none", 2),
     ),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
@@ -776,8 +776,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v6","protocol_fingerprint":'
-        '"4b10f683eaa758ac79ef3481ce844efa7fe07e1a22535b41d09789f3bc1d82fc",'
+        '{"protocol_name":"RS-LoCoMo-Full-v7","protocol_fingerprint":'
+        '"02c9ef2dde16bc3b4e2ce0c273fc5eaf5d61f3ba96598263014f90221437035a",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -886,22 +886,22 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
         dataset_path=tmp_path / "synthetic.json",
         tier="smoke",
         output=strong_dir,
-        protocol="full-v6-strong",
+        protocol="full-v7-strong",
     )
 
-    assert weak.protocol_name == "RS-LoCoMo-Full-v6"
+    assert weak.protocol_name == "RS-LoCoMo-Full-v7"
     assert weak.answer_agent_model == "openai/gpt-4o-mini"
     assert weak.answer_agent_reasoning_effort is None
     assert weak.answer_reader_retry_budget == 2
     assert weak.protocol_fingerprint == (
-        "4b10f683eaa758ac79ef3481ce844efa7fe07e1a22535b41d09789f3bc1d82fc"
+        "02c9ef2dde16bc3b4e2ce0c273fc5eaf5d61f3ba96598263014f90221437035a"
     )
-    assert strong.protocol_name == "RS-LoCoMo-Full-v6-strong"
+    assert strong.protocol_name == "RS-LoCoMo-Full-v7-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert strong.answer_reader_retry_budget == 2
     assert strong.protocol_fingerprint == (
-        "81a7fcc798a7042e0198d87bd39763258b829122fe7c316bcb2effff4bed8512"
+        "70d765a8bd0c597f91b3c75171546e0aa7e954be22a09d41974b41cacbe1ae77"
     )
     assert strong.protocol_fingerprint != weak.protocol_fingerprint
 
