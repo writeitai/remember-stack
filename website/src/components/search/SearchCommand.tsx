@@ -88,10 +88,10 @@ export function SearchCommand() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4"
         aria-label="Search documentation"
       >
-        <Search className="h-4 w-4" />
+        <Search className="h-4 w-4 text-coral" />
         <span className="hidden sm:inline">Search docs</span>
         <kbd className="ml-1 hidden rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
           {shortcut}
@@ -148,10 +148,10 @@ export function SearchCommand() {
               key={result.url}
               value={result.url}
               onSelect={() => onSelect(result.url)}
-              className="flex cursor-pointer flex-col gap-1 rounded-md px-3 py-2 text-sm data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+              className="flex cursor-pointer flex-col gap-1 rounded-md px-3 py-2 text-sm data-[selected=true]:bg-brand-soft data-[selected=true]:text-accent-foreground"
             >
               <span className="flex items-center gap-2 font-medium">
-                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <FileText className="h-3.5 w-3.5 shrink-0 text-teal" />
                 {result.title}
               </span>
               <span

@@ -25,72 +25,108 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-brand: var(--brand);
-  --color-gold: var(--gold);
-  --color-gold-foreground: var(--gold-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-coral: var(--coral);
+  --color-coral-soft: var(--coral-soft);
+  --color-teal: var(--teal);
+  --color-teal-soft: var(--teal-soft);
+  --color-cream: var(--cream);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-surface: var(--surface);
+  --color-navy-900: var(--navy-900);
+  --color-navy-800: var(--navy-800);
+  --color-navy-700: var(--navy-700);
+  --color-navy-line: var(--navy-line);
+  --color-on-navy: var(--on-navy);
+  --color-on-navy-2: var(--on-navy-2);
+  --color-on-navy-3: var(--on-navy-3);
+  --color-teal-lit: var(--teal-lit);
+  --color-coral-lit: var(--coral-lit);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display:
+    var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
 }
 
 /*
- * Brand palette lifted from writeit.ai (writeit/fe/styles/globals.scss):
- *   sand #f7ebbd · ink #222433 · green #5ca493 · gold #ebaa1a · red #f34832
- * Mapped onto shadcn-style tokens so the docs read as part of the WriteIt family.
+ * RememberStack production palette. Source and pinned provenance:
+ * plan/analysis/docs_visual_identity_alignment.md.
  */
 :root {
-  --background: #f7ebbd; /* sand */
-  --foreground: #222433; /* ink */
-  --card: #fdf8e6;
-  --card-foreground: #222433;
-  --popover: #fdf8e6;
-  --popover-foreground: #222433;
-  /* Text-bearing green, darkened from the brand green to meet WCAG AA on sand
-     (4.57:1) and with white (5.46:1). Used for links and primary buttons. */
-  --primary: #2f7563;
-  --primary-foreground: #ffffff;
-  --secondary: #efe1a8;
-  --secondary-foreground: #222433;
-  --muted: #efe1a8;
-  --muted-foreground: #59583f;
-  --accent: #ecdf9c;
-  --accent-foreground: #222433;
-  --destructive: #d63a25; /* red, darkened for AA with white text */
+  --ink: #101f4a;
+  --ink-2: #5b6684;
+  --ink-3: #8e97ae;
+  --coral: #ee5b44;
+  --coral-soft: #fdeeeb;
+  --teal: #3e9b8e;
+  --teal-soft: #ecf6f4;
+  --cream: #f5ebd0;
+  --line: #e7eaf1;
+  --line-soft: #f1f3f8;
+  --surface: #fafbfd;
+  --navy-900: #0a1230;
+  --navy-800: #101c42;
+  --navy-700: #18244f;
+  --navy-line: #25335f;
+  --on-navy: #ffffff;
+  --on-navy-2: #9faaca;
+  --on-navy-3: #66739c;
+  --teal-lit: #5cc8b6;
+  --coral-lit: #ff7a62;
+
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: #ffffff;
+  --card-foreground: var(--ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--on-navy);
+  --secondary: var(--line-soft);
+  --secondary-foreground: var(--ink);
+  --muted: var(--line-soft);
+  --muted-foreground: var(--ink-2);
+  --accent: var(--coral-soft);
+  --accent-foreground: var(--ink);
+  --destructive: #b83a2f;
   --destructive-foreground: #ffffff;
-  --border: #e0d29a;
-  --input: #e0d29a;
-  --ring: #5ca493;
-  /* Vivid writeit brand green — decorative only (logo/focus accents), never text. */
-  --brand: #5ca493;
-  --gold: #ebaa1a; /* gold */
-  --gold-foreground: #222433;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--coral);
+  --brand: var(--coral);
+  --brand-soft: var(--coral-soft);
   --radius: 0.5rem;
 }
 
 /* Dormant dark palette — wired up when a theme toggle is added later. */
 .dark {
-  --background: #1b1c24;
-  --foreground: #f3ecd2;
-  --card: #24252f;
-  --card-foreground: #f3ecd2;
-  --popover: #24252f;
-  --popover-foreground: #f3ecd2;
-  --primary: #6cb7a4;
-  --primary-foreground: #14231f;
-  --secondary: #2a2b36;
-  --secondary-foreground: #f3ecd2;
-  --muted: #2a2b36;
-  --muted-foreground: #a8a58c;
-  --accent: #2f3340;
-  --accent-foreground: #f3ecd2;
-  --destructive: #f3654f;
-  --destructive-foreground: #14231f;
-  --border: #34353f;
-  --input: #34353f;
-  --ring: #6cb7a4;
-  --brand: #6cb7a4;
-  --gold: #ebaa1a;
-  --gold-foreground: #14231f;
+  --background: var(--navy-900);
+  --foreground: var(--on-navy);
+  --card: var(--navy-800);
+  --card-foreground: var(--on-navy);
+  --popover: var(--navy-800);
+  --popover-foreground: var(--on-navy);
+  --primary: var(--on-navy);
+  --primary-foreground: var(--ink);
+  --secondary: var(--navy-700);
+  --secondary-foreground: var(--on-navy);
+  --muted: var(--navy-700);
+  --muted-foreground: var(--on-navy-2);
+  --accent: var(--navy-700);
+  --accent-foreground: var(--on-navy);
+  --destructive: var(--coral-lit);
+  --destructive-foreground: var(--navy-900);
+  --border: var(--navy-line);
+  --input: var(--navy-line);
+  --ring: var(--coral-lit);
+  --brand: var(--coral-lit);
+  --brand-soft: var(--navy-700);
 }
 
 @utility container {
@@ -113,31 +149,60 @@
     background-color: var(--background);
     color: var(--foreground);
   }
+  ::selection {
+    background-color: var(--coral-soft);
+    color: var(--ink);
+  }
+  :focus-visible {
+    outline-color: var(--ring);
+  }
 }
 
-/* On-brand typography for the rendered MDX. */
+/* RememberStack typography and readable brand accents for rendered MDX. */
 .prose {
   --tw-prose-body: var(--foreground);
   --tw-prose-headings: var(--foreground);
   --tw-prose-lead: var(--muted-foreground);
-  --tw-prose-links: var(--primary);
+  --tw-prose-links: var(--foreground);
   --tw-prose-bold: var(--foreground);
   --tw-prose-counters: var(--muted-foreground);
-  --tw-prose-bullets: var(--primary);
+  --tw-prose-bullets: var(--coral);
   --tw-prose-hr: var(--border);
   --tw-prose-quotes: var(--foreground);
-  --tw-prose-quote-borders: var(--primary);
+  --tw-prose-quote-borders: var(--teal);
   --tw-prose-captions: var(--muted-foreground);
   --tw-prose-code: var(--foreground);
-  --tw-prose-pre-code: #222433;
-  --tw-prose-pre-bg: #fbf4d6;
+  --tw-prose-pre-code: var(--on-navy);
+  --tw-prose-pre-bg: var(--navy-900);
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border);
 }
 
+.prose :where(h1, h2, h3, h4) {
+  font-family:
+    var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.025em;
+}
+
+.prose :where(a) {
+  text-decoration-color: var(--coral);
+  text-decoration-thickness: 1.5px;
+}
+
+.prose :where(a):hover {
+  text-decoration-color: var(--teal);
+}
+
+/* Keep wide reference tables usable without widening the mobile page. */
+.prose :where(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Inline code (not fenced blocks). */
 .prose :where(code):not(pre code) {
-  background-color: var(--secondary);
+  background-color: var(--coral-soft);
   padding: 0.15em 0.4em;
   border-radius: var(--radius-sm);
   font-weight: 500;
@@ -150,10 +215,11 @@
 
 /* Fenced code blocks (rehype-pretty-code, keepBackground: false). */
 .prose pre {
-  border: 1px solid var(--border);
+  border: 1px solid var(--navy-line);
   border-radius: var(--radius-lg);
   padding: 1rem 1.25rem;
   overflow-x: auto;
+  box-shadow: 0 16px 40px rgba(10, 18, 48, 0.09);
 }
 .prose pre code {
   background-color: transparent;

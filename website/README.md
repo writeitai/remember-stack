@@ -14,12 +14,33 @@ decisions behind it are recorded in
 
 - **Next.js** (App Router) with **`@next/mdx`** — each `src/app/docs/**/page.mdx` file
   is a route.
-- **Tailwind v4** + **`@tailwindcss/typography`** for prose, themed to the WriteIt
-  brand palette in `src/app/globals.css`.
+- **Tailwind v4** + **`@tailwindcss/typography`** for prose, themed to the
+  RememberStack palette in `src/app/globals.css`.
+- **Inter** for body text and **Space Grotesk** for display text, emitted with
+  the static build through `next/font`.
+- The canonical RememberStack network-graph mark is stored at
+  `public/brand/mark.svg`; `src/components/site/BrandLockup.tsx` composes the
+  public docs lockup.
 - **`rehype-pretty-code`** (Shiki) code highlighting, **`rehype-slug`** heading
   anchors, **`remark-gfm`**.
 - **Pagefind** static search surfaced through a **`cmdk`** ⌘K command palette.
 - `output: 'export'` → fully static; no server.
+
+## Brand source
+
+The production identity is copied from
+`writeitai/ultimate-memory-cloud@d492d204e1ecae874234fc2879296679e73b8780`:
+`fe/src/app/globals.css` owns the source color tokens,
+`fe/src/app/layout.tsx` owns the Inter/Space Grotesk pairing, and
+`fe/public/brand/mark.svg` is the canonical graph mark. The OSS site keeps those
+small presentation assets locally so its GitHub Pages artifact has no runtime
+dependency on the managed-cloud origin.
+
+When that source contract changes, update the local tokens and vector together,
+refresh the pinned provenance above and in
+`plan/designs/docs_site_design.md`, then verify desktop and mobile layouts.
+Do not replace the graph with the legacy dual-ring mark or add a `CLOUD` tag to
+OSS chrome.
 
 ## Develop
 

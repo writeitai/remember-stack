@@ -57,7 +57,9 @@ export function DocsTableOfContents() {
 
   return (
     <nav aria-label="On this page">
-      <p className="mb-3 text-sm font-medium text-foreground">On this page</p>
+      <p className="font-display mb-3 text-sm font-semibold text-foreground">
+        On this page
+      </p>
       <ul className="space-y-1.5">
         {headings.map((heading) => (
           <li key={heading.id}>
@@ -67,7 +69,7 @@ export function DocsTableOfContents() {
                 "block text-sm transition-colors",
                 heading.level === 3 && "pl-3",
                 activeId === heading.id
-                  ? "font-medium text-foreground"
+                  ? "font-medium text-foreground decoration-coral underline decoration-2 underline-offset-4"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >

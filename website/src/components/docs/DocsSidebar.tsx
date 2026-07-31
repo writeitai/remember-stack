@@ -21,8 +21,8 @@ function NavLink({ item }: { item: NavItem }) {
       className={cn(
         "block rounded-md px-3 py-1.5 text-sm transition-colors",
         active
-          ? "bg-accent font-medium text-accent-foreground"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          ? "bg-brand-soft font-medium text-foreground shadow-[inset_3px_0_0_var(--brand)]"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
       )}
     >
       {item.title}
@@ -33,7 +33,7 @@ function NavLink({ item }: { item: NavItem }) {
 function NavSection({ item }: { item: NavItem }) {
   return (
     <div>
-      <p className="px-3 py-1.5 text-sm font-semibold text-foreground">
+      <p className="font-display px-3 py-1.5 text-sm font-semibold text-foreground">
         {item.title}
       </p>
       {item.children && (

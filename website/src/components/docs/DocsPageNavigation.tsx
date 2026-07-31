@@ -18,9 +18,9 @@ export function DocsPageNavigation() {
       {prev ? (
         <Link
           href={prev.href}
-          className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          className="group flex items-center gap-1 rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4"
         >
-          <ChevronLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+          <ChevronLeft className="h-4 w-4 text-coral transition-transform group-hover:-translate-x-0.5" />
           {prev.title}
         </Link>
       ) : (
@@ -29,10 +29,10 @@ export function DocsPageNavigation() {
       {next ? (
         <Link
           href={next.href}
-          className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          className="group flex items-center gap-1 rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4"
         >
           {next.title}
-          <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          <ChevronRight className="h-4 w-4 text-teal transition-transform group-hover:translate-x-0.5" />
         </Link>
       ) : (
         <div />
