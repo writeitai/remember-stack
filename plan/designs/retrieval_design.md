@@ -133,9 +133,10 @@ table's explicit FTS index; the first lexical read repairs an upgraded store
 that predates that index. Ordinary writes incrementally optimize every index
 after 20 mutations or 100,000 unindexed rows, while the explicit maintenance
 operation rebuilds after bulk loads. Chunk hydration likewise bootstraps a
-`chunk_id` B-tree before its ID lookup. These bounds keep BM25 and live-source
-hydration from degrading into corpus scans without requiring the backfill-only
-finalizer. The shipped tokenizer is language-neutral
+`chunk_id` B-tree before its ID lookup; claim/chunk reads also bootstrap the
+deployment filter indexes and the claim-current bitmap they prefilter on.
+These bounds keep BM25 and live-source hydration from degrading into corpus
+scans without requiring the backfill-only finalizer. The shipped tokenizer is language-neutral
 (punctuation/whitespace tokens, case + ASCII folding, no English stemming or stop-word removal);
 language-specific morphology requires a measured per-language policy rather than a silent
 English default.

@@ -820,6 +820,34 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
                 },
             )
 
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunks SET context_prefix = NULL"
+                " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
+        )
+    try:
+        incomplete = rig.client.get(
+            "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
+        ).json()
+        assert incomplete["chunks"] == []
+        assert incomplete["dropped_by_hydration"] == 1
+    finally:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE chunks SET context_prefix = :context_prefix"
+                    " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                ),
+                {
+                    "deployment_id": _DEPLOYMENT_ID,
+                    "chunk_id": chunk["chunk_id"],
+                    "context_prefix": chunk["context_prefix"],
+                },
+            )
+
     # P1 still nominates the immutable row, but the live-spine pointer no
     # longer confirms it. D48 drops it instead of serving stale source text.
     with rig.engine.connect() as connection:

@@ -78,6 +78,7 @@ class LanceChunkIndex:
         ]
         self._upsert(table=_CHUNK_TABLE, key="chunk_id", payload=payload)
         self._ensure_text_index(table_name=_CHUNK_TABLE)
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
         self._maintain_indexed_tail(table_name=_CHUNK_TABLE)
 
@@ -120,6 +121,10 @@ class LanceChunkIndex:
             ],
         )
         self._ensure_text_index(table_name=_CLAIM_TABLE)
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
         self._maintain_indexed_tail(table_name=_CLAIM_TABLE)
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
@@ -156,6 +161,10 @@ class LanceChunkIndex:
         deployment_id = str(UUID(deployment_id))  # refuse filter injection
         if not self._has_table(table_name=_CLAIM_TABLE):
             return ()
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -180,6 +189,10 @@ class LanceChunkIndex:
         if not self._has_table(table_name=_CLAIM_TABLE):
             return ()
         self._ensure_text_index(table_name=_CLAIM_TABLE)
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
         self._maintain_indexed_tail(table_name=_CLAIM_TABLE, record_mutation=False)
         where = f"deployment_id = '{deployment_id}'"
         if current_only:
@@ -200,6 +213,7 @@ class LanceChunkIndex:
         deployment_id = str(UUID(deployment_id))
         if not self._has_table(table_name=_CHUNK_TABLE):
             return ()
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -220,6 +234,7 @@ class LanceChunkIndex:
         if not self._has_table(table_name=_CHUNK_TABLE):
             return ()
         self._ensure_text_index(table_name=_CHUNK_TABLE)
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         self._maintain_indexed_tail(table_name=_CHUNK_TABLE, record_mutation=False)
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
@@ -294,6 +309,7 @@ class LanceChunkIndex:
             chunks.create_index("chunk_id", config=BTree())
             chunks.create_index("text", config=_TEXT_INDEX)
             self._text_indexes_ready.add(_CHUNK_TABLE)
+            self._scalar_indexes_ready.add((_CHUNK_TABLE, "deployment_id"))
             self._scalar_indexes_ready.add((_CHUNK_TABLE, "chunk_id"))
             self._mutations_since_optimize[_CHUNK_TABLE] = 0
             self._build_vector_index(table=chunks)
@@ -303,6 +319,8 @@ class LanceChunkIndex:
             claims.create_index("is_current_testimony", config=Bitmap())
             claims.create_index("text", config=_TEXT_INDEX)
             self._text_indexes_ready.add(_CLAIM_TABLE)
+            self._scalar_indexes_ready.add((_CLAIM_TABLE, "deployment_id"))
+            self._scalar_indexes_ready.add((_CLAIM_TABLE, "is_current_testimony"))
             self._mutations_since_optimize[_CLAIM_TABLE] = 0
             self._build_vector_index(table=claims)
         if _FACT_TABLE in available:
@@ -336,6 +354,20 @@ class LanceChunkIndex:
         )
         if not has_index:
             table.create_index(column, config=BTree())
+        self._scalar_indexes_ready.add(key)
+
+    def _ensure_bitmap_index(self, *, table_name: str, column: str) -> None:
+        """Bootstrap one low-cardinality filter index on ordinary paths."""
+        key = (table_name, column)
+        if key in self._scalar_indexes_ready:
+            return
+        table = self._connection.open_table(table_name)
+        has_index = any(
+            index.index_type == "Bitmap" and index.columns == [column]
+            for index in table.list_indices()
+        )
+        if not has_index:
+            table.create_index(column, config=Bitmap())
         self._scalar_indexes_ready.add(key)
 
     def _maintain_indexed_tail(

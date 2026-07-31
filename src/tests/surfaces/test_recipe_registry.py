@@ -46,6 +46,7 @@ from rememberstack.model import RankedItem
 from rememberstack.model import Recipe
 from rememberstack.model import RecipeAnswerIntent
 from rememberstack.model import RecipeStep
+from rememberstack.model import Truncation
 from rememberstack.spine import CANONICAL_RECIPES
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
@@ -483,47 +484,71 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
             deployment_id=_DEPLOYMENT_ID, entity_id=alice
         ),
     }
+
     # The fused recipes nominate cheaply, hand-fuse, then confirm exactly once.
-    first = engine.nominate_claims(
-        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="semantic"
-    )
-    second = engine.nominate_claims(
-        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="bm25"
-    )
-    fused = engine.fuse(
-        rankings=[
-            [item.item_id for item in first.ranking],
-            [item.item_id for item in second.ranking],
-        ],
-        k=60,
-        limit=30,
-    )
-    direct["claims_hybrid_rrf"] = engine.hydrate_claims(
-        deployment_id=_DEPLOYMENT_ID,
-        claim_ids=[item.item_id for item in fused.ranking],
-        ranking=fused.ranking,
-    )
-    chunk_first = engine.nominate_chunks(
-        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="semantic"
-    )
-    chunk_second = engine.nominate_chunks(
-        deployment_id=_DEPLOYMENT_ID, query="alice acme", k=100, channel="bm25"
-    )
-    fused_chunks = engine.fuse(
-        rankings=[
-            [item.item_id for item in chunk_first.ranking],
-            [item.item_id for item in chunk_second.ranking],
-        ],
-        k=60,
-        limit=30,
-    )
-    direct["chunks_hybrid_rrf"] = engine.hydrate_chunks(
-        deployment_id=_DEPLOYMENT_ID,
-        chunk_ids=[item.item_id for item in fused_chunks.ranking],
-        ranking=fused_chunks.ranking,
-    )
+    def claim_hybrid(*, k: int, candidate_k: int) -> Envelope:
+        """Hand-compose one claim hybrid with explicit public defaults."""
+        first = engine.nominate_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            query="alice acme",
+            k=candidate_k,
+            channel="semantic",
+        )
+        second = engine.nominate_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            query="alice acme",
+            k=candidate_k,
+            channel="bm25",
+        )
+        fused = engine.fuse(
+            rankings=[
+                [item.item_id for item in first.ranking],
+                [item.item_id for item in second.ranking],
+            ],
+            k=60,
+            limit=k,
+        )
+        return engine.hydrate_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            claim_ids=[item.item_id for item in fused.ranking],
+            ranking=fused.ranking,
+        )
+
+    def chunk_hybrid(*, k: int, candidate_k: int) -> Envelope:
+        """Hand-compose one source hybrid with explicit public defaults."""
+        first = engine.nominate_chunks(
+            deployment_id=_DEPLOYMENT_ID,
+            query="alice acme",
+            k=candidate_k,
+            channel="semantic",
+        )
+        second = engine.nominate_chunks(
+            deployment_id=_DEPLOYMENT_ID,
+            query="alice acme",
+            k=candidate_k,
+            channel="bm25",
+        )
+        fused = engine.fuse(
+            rankings=[
+                [item.item_id for item in first.ranking],
+                [item.item_id for item in second.ranking],
+            ],
+            k=60,
+            limit=k,
+        )
+        return engine.hydrate_chunks(
+            deployment_id=_DEPLOYMENT_ID,
+            chunk_ids=[item.item_id for item in fused.ranking],
+            ranking=fused.ranking,
+        )
+
+    direct["claims_hybrid_rrf"] = claim_hybrid(k=30, candidate_k=100)
+    direct["chunks_hybrid_rrf"] = chunk_hybrid(k=30, candidate_k=100)
     direct["question_context"] = engine.combine_evidence(
-        inputs=(direct["claims_hybrid_rrf"], direct["chunks_hybrid_rrf"])
+        inputs=(
+            claim_hybrid(k=50, candidate_k=200),
+            chunk_hybrid(k=50, candidate_k=200),
+        )
     )
 
     canonical = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
@@ -944,6 +969,30 @@ def test_combine_evidence_reports_each_input_hydration_drop_once() -> None:
         )
     )
     assert answer.dropped_by_hydration == 5
+
+
+def test_combine_evidence_rejects_wrong_grains_and_dual_continuations() -> None:
+    """Composition cannot silently discard a grain or continuation token."""
+    freshness = Freshness(pg_live_ts=datetime(2026, 7, 27, tzinfo=UTC))
+    engine = QueryEngine(
+        engine=MagicMock(),
+        search_index=_FakeSearchIndex(claim_ids=()),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+    with pytest.raises(ValueError, match="only evidence-grain"):
+        engine.combine_evidence(
+            inputs=(Envelope(grain=Grain.FACT, freshness=freshness),)
+        )
+    truncated = Envelope(
+        grain=Grain.EVIDENCE,
+        freshness=freshness,
+        truncation=Truncation(
+            truncated=True, returned=1, estimated_total=2, continuation="next"
+        ),
+    )
+    with pytest.raises(ValueError, match="multiple continuation"):
+        engine.combine_evidence(inputs=(truncated, truncated))
 
 
 def test_hydrate_chain_with_two_inputs_is_lint_rejected() -> None:

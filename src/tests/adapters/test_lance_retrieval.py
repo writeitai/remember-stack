@@ -15,7 +15,8 @@ def test_claim_lexical_nomination_is_independent_from_dense_search(tmp_path) -> 
     deployment_id = uuid4()
     dense_id = uuid4()
     lexical_id = uuid4()
-    index = LanceChunkIndex(root=tmp_path / "lance")
+    root = tmp_path / "lance"
+    index = LanceChunkIndex(root=root)
     index.upsert_claims(
         rows=(
             P1ClaimRow(
@@ -50,6 +51,13 @@ def test_claim_lexical_nomination_is_independent_from_dense_search(tmp_path) -> 
 
     assert dense == (str(dense_id),)
     assert lexical == (str(lexical_id),)
+    indices = {
+        (item.index_type, tuple(item.columns))
+        for item in lancedb.connect(str(root)).open_table("claims").list_indices()
+    }
+    assert ("FTS", ("text",)) in indices
+    assert ("BTree", ("deployment_id",)) in indices
+    assert ("Bitmap", ("is_current_testimony",)) in indices
 
 
 def test_chunk_fts_is_bootstrapped_and_covers_appended_tail(tmp_path) -> None:
@@ -128,6 +136,7 @@ def test_upgraded_store_bootstraps_fts_and_chunk_id_index_on_read(tmp_path) -> N
     }
     assert ("FTS", ("text",)) in indices
     assert ("BTree", ("chunk_id",)) in indices
+    assert ("BTree", ("deployment_id",)) in indices
 
 
 def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:

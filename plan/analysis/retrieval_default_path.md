@@ -43,7 +43,9 @@ index, ordinary writes run incremental index optimization after 20 mutations
 or 100,000 unindexed rows; a read after process restart also enforces the
 durable tail-row bound. The bulk-load maintenance operation remains the
 explicit rebuild barrier. Chunk-body hydration bootstraps a B-tree over
-`chunk_id` before its ID read. The tokenizer is deliberately language-neutral:
+`chunk_id` before its ID read. Ordinary and upgraded-store reads also
+bootstrap the deployment filter B-trees and claim-current bitmap needed by
+prefiltered retrieval. The tokenizer is deliberately language-neutral:
 punctuation/whitespace tokenization, case folding, and ASCII folding, without
 English stemming or English stop-word removal. Language-specific stemming can
 improve one language while silently damaging another; it needs a measured
@@ -131,8 +133,8 @@ remains the cheaper semantic-only option.
 - FTS must be available after the first ordinary P1 write, on the first read
   of an upgraded unindexed store, and after explicit maintenance;
 - ordinary mutation traffic must fold indexed tails after at most 20 writes
-  or 100,000 unindexed rows, and chunk ID hydration must use a scalar index;
-  and
+  or 100,000 unindexed rows, while deployment/current filters and chunk ID
+  hydration use scalar indexes; and
 - the LoCoMo protocol identity must change because the public tool catalog and
   retrieval behavior changed.
 
