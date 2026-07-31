@@ -3,6 +3,7 @@
 from datetime import timedelta
 import math
 from pathlib import Path
+import random
 import time
 from typing import cast
 from typing import Final
@@ -40,8 +41,8 @@ _INDEX_OPTIMIZE_MUTATIONS: Final = 20
 _INDEX_OPTIMIZE_TAIL_ROWS: Final = 100_000
 """Never leave more than this many rows outside an existing index."""
 
-_MAINTENANCE_RETRIES: Final = 6
-"""Bounded retries for Lance maintenance commit conflicts."""
+_LANCE_COMMIT_RETRIES: Final = 8
+"""Bounded retries for concurrent Lance write and maintenance commits."""
 
 _TEXT_INDEX = FTS(
     with_position=True,
@@ -368,7 +369,7 @@ class LanceChunkIndex:
         config: BTree | Bitmap | FTS,
     ) -> None:
         """Create one missing index despite concurrent maintenance commits."""
-        for attempt in range(_MAINTENANCE_RETRIES):
+        for attempt in range(_LANCE_COMMIT_RETRIES):
             table = self._connection.open_table(table_name)
             if any(
                 index.index_type == index_type and index.columns == [column]
@@ -381,10 +382,10 @@ class LanceChunkIndex:
             except RuntimeError as exc:
                 if (
                     "Retryable commit conflict" not in str(exc)
-                    or attempt == _MAINTENANCE_RETRIES - 1
+                    or attempt == _LANCE_COMMIT_RETRIES - 1
                 ):
                     raise
-                time.sleep(0.05 * (2**attempt))
+                self._pause_before_retry(attempt=attempt)
 
     def _maintain_indexed_tail(self, *, table_name: str) -> None:
         """Incrementally fold appended rows into indexes before tails grow large.
@@ -417,17 +418,22 @@ class LanceChunkIndex:
 
     def _optimize_with_retry(self, *, table_name: str) -> None:
         """Optimize one table with bounded retry on concurrent rewrites."""
-        for attempt in range(_MAINTENANCE_RETRIES):
+        for attempt in range(_LANCE_COMMIT_RETRIES):
             try:
                 self._connection.open_table(table_name).optimize()
                 return
             except RuntimeError as exc:
                 if (
                     "Retryable commit conflict" not in str(exc)
-                    or attempt == _MAINTENANCE_RETRIES - 1
+                    or attempt == _LANCE_COMMIT_RETRIES - 1
                 ):
                     raise
-                time.sleep(0.05 * (2**attempt))
+                self._pause_before_retry(attempt=attempt)
+
+    @staticmethod
+    def _pause_before_retry(*, attempt: int) -> None:
+        """Back off with jitter so concurrent writers do not retry in lockstep."""
+        time.sleep(min(0.05 * (2**attempt), 1.0) + random.uniform(0.0, 0.05))
 
     def _has_table(self, *, table_name: str) -> bool:
         """Whether the connected Lance dataset currently contains a table."""
@@ -539,19 +545,35 @@ class LanceChunkIndex:
     def _upsert(
         self, *, table: str, key: str, payload: list[dict[str, object]]
     ) -> None:
-        """Create-or-merge one table's rows by its key column."""
+        """Create-or-merge rows despite concurrent Lance dataset commits."""
         if not payload:
             return
-        if not self._has_table(table_name=table):
-            self._connection.create_table(table, data=payload)
-            return
-        (
-            self._connection.open_table(table)
-            .merge_insert(key)
-            .when_matched_update_all()
-            .when_not_matched_insert_all()
-            .execute(payload)
-        )
+        for attempt in range(_LANCE_COMMIT_RETRIES):
+            if not self._has_table(table_name=table):
+                try:
+                    self._connection.create_table(table, data=payload)
+                    return
+                except ValueError:
+                    # Another first writer may have created the table after the
+                    # existence check. Only recover when it now really exists.
+                    if not self._has_table(table_name=table):
+                        raise
+            try:
+                (
+                    self._connection.open_table(table)
+                    .merge_insert(key)
+                    .when_matched_update_all()
+                    .when_not_matched_insert_all()
+                    .execute(payload)
+                )
+                return
+            except RuntimeError as exc:
+                if (
+                    "Retryable commit conflict" not in str(exc)
+                    or attempt == _LANCE_COMMIT_RETRIES - 1
+                ):
+                    raise
+                self._pause_before_retry(attempt=attempt)
 
     def _purge_table_rows(
         self, *, table: str, key: str, deployment_id: UUID, ids: tuple[UUID, ...]

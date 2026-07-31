@@ -45,9 +45,9 @@ the next ordinary write or explicit bulk-load maintenance enforces the bound.
 Chunk-body hydration bootstraps a B-tree over `chunk_id` before its ID read.
 Ordinary and upgraded-store reads also bootstrap missing deployment filter
 B-trees and the claim-current bitmap needed by prefiltered retrieval. Those
-one-time index-creation writes and write-path optimization use bounded retries
-for Lance commit conflicts on the shared API/worker volume. The tokenizer is
-deliberately language-neutral:
+one-time index-creation writes, ordinary idempotent upserts, and write-path
+optimization use bounded retries with jitter for Lance commit conflicts on the
+shared API/worker volume. The tokenizer is deliberately language-neutral:
 punctuation/whitespace tokenization, case folding, and ASCII folding, without
 English stemming or English stop-word removal. Language-specific stemming can
 improve one language while silently damaging another; it needs a measured
@@ -166,9 +166,9 @@ implementation:
   containers; and
 - the first bounded-maintenance implementation could compact synchronously on
   reads and raised retryable Lance commit conflicts under API/worker
-  concurrency; compaction now stays on write/maintenance paths and both
-  index creation and optimization retry only the conflicts Lance labels
-  retryable.
+  concurrency; compaction now stays on write/maintenance paths and index
+  creation, idempotent upsert, and optimization retry only the conflicts Lance
+  labels retryable, with jitter to prevent writers retrying in lockstep.
 
 Non-blocking measurement work remains: tune the `question_context` evidence
 budget against real LoCoMo context lengths, separate claim/chunk recall

@@ -215,8 +215,9 @@ claims and current-source chunks as separately typed evidence payloads; it does 
 UUIDs into an untyped ranking or promote source text to fact grain. Hybrid recipes fuse
 projection-only IDs before confirming each final list once. Ordinary writes optimize indexed
 tails after 20 mutations or 100,000 unindexed rows; first reads repair missing FTS and chunk-ID
-indexes on upgraded stores. Reads never compact; index creation and write-path optimization use
-bounded retries for Lance commit conflicts on the shared API/worker volume. Design and rationale:
+indexes on upgraded stores. Reads never compact; index creation, idempotent upserts, and
+write-path optimization use bounded retries with jitter for Lance commit conflicts on the shared
+API/worker volume. Design and rationale:
 [`plan/designs/retrieval_design.md` §§3–5](plan/designs/retrieval_design.md) and
 [`plan/analysis/retrieval_default_path.md`](plan/analysis/retrieval_default_path.md).
 

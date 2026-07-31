@@ -136,8 +136,9 @@ operation rebuilds after bulk loads. Reads search any residual indexed tail but
 never compact synchronously. Chunk hydration likewise bootstraps a
 `chunk_id` B-tree before its ID lookup; claim/chunk reads also bootstrap the
 deployment filter indexes and the claim-current bitmap they prefilter on.
-One-time index creation and write-path optimization use bounded retries for
-Lance commit conflicts across the shared API/worker volume. These bounds keep
+One-time index creation, ordinary idempotent upserts, and write-path
+optimization use bounded retries with jitter for Lance commit conflicts across
+the shared API/worker volume. These bounds keep
 BM25 and live-source hydration from degrading into corpus scans without
 requiring the backfill-only finalizer. The shipped tokenizer is language-neutral
 (punctuation/whitespace tokens, case + ASCII folding, no English stemming or stop-word removal);

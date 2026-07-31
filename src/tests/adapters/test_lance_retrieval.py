@@ -142,10 +142,10 @@ def test_upgraded_store_bootstraps_fts_and_chunk_id_index_on_read(tmp_path) -> N
     assert ("BTree", ("deployment_id",)) in indices
 
 
-def test_index_create_and_optimize_retry_commit_conflicts(
+def test_writes_and_maintenance_retry_commit_conflicts(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Shared-volume maintenance retries the conflicts Lance labels retryable."""
+    """Shared-volume writes and maintenance retry Lance-labelled conflicts."""
     root = tmp_path / "lance"
     deployment_id = uuid4()
     connection = lancedb.connect(str(root))
@@ -167,11 +167,14 @@ def test_index_create_and_optimize_retry_commit_conflicts(
         ],
     )
     table_type = type(connection.open_table("chunks"))
+    merge_type = type(connection.open_table("chunks").merge_insert("chunk_id"))
     index = LanceChunkIndex(root=root)
     create_index = table_type.create_index
     optimize = table_type.optimize
+    merge_execute = merge_type.execute
     create_attempts = 0
     optimize_attempts = 0
+    merge_attempts = 0
 
     def flaky_create_index(table: Any, *args: Any, **kwargs: Any) -> None:
         """Fail one create transaction exactly as concurrent Lance writers do."""
@@ -189,8 +192,17 @@ def test_index_create_and_optimize_retry_commit_conflicts(
             raise RuntimeError("Retryable commit conflict for test rewrite")
         optimize(table, *args, **kwargs)
 
+    def flaky_merge(builder: Any, *args: Any, **kwargs: Any) -> None:
+        """Fail one merge transaction, then allow the idempotent retry."""
+        nonlocal merge_attempts
+        merge_attempts += 1
+        if merge_attempts == 1:
+            raise RuntimeError("Retryable commit conflict for test merge")
+        merge_execute(builder, *args, **kwargs)
+
     monkeypatch.setattr(table_type, "create_index", flaky_create_index)
     monkeypatch.setattr(table_type, "optimize", flaky_optimize)
+    monkeypatch.setattr(merge_type, "execute", flaky_merge)
     monkeypatch.setattr(lance_adapter, "_INDEX_OPTIMIZE_MUTATIONS", 2)
 
     assert index.search_chunks_lexical(
@@ -217,6 +229,7 @@ def test_index_create_and_optimize_retry_commit_conflicts(
 
     assert create_attempts >= 2
     assert optimize_attempts == 2
+    assert merge_attempts == 3
 
 
 def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:
