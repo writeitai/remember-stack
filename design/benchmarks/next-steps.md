@@ -28,6 +28,17 @@ and every extraction change forces re-ingestion of every store.
 
 ## Tier 2 — harness correctness/ergonomics
 
+**Shipped 2026-07-31 in `RS-LoCoMo-Full-v8` — answer-stage correctness.**
+The conv-47 v7 re-score was 91/150. The six-word answer cap produced 7 outright
+`answer_invalid_response` failures, while 19 judged misses had gold answers
+longer than six words; v8 now permits the shortest complete entity/value phrase
+up to twenty words. Separately, 23/150 questions (about 15%) ended as
+`answer_reader` with `reader_attempts: 0`, no tool calls, and a first-step
+“completion content is not JSON” failure against prompts averaging about 22,800
+input tokens. V8 extends the existing shared two-retry allowance to that first
+step, charging every attempt to the normal call and cost budgets while leaving
+plain provider outages terminal.
+
 5. **Derive the protocol fingerprint from identity fields only** (drop
    `repository_revision` from the hash, keep it recorded). Evidence: the
    sharded run could not be officially merged with the sequential half

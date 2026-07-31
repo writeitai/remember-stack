@@ -26,10 +26,10 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v7"
-STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v7-strong"
-DEFAULT_PROTOCOL_KEY: Final = "full-v7"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07-hybrid-context"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v8"
+STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v8-strong"
+DEFAULT_PROTOCOL_KEY: Final = "full-v8"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07-hybrid-context-v8answers"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -72,7 +72,8 @@ dropped_by_hydration fields. Evidence says what a source asserted; it is not
 automatically current fact. Use timestamps to resolve relative dates. Do not
 confuse people mentioned in a memory with the conversation speakers. Never use
 outside knowledge. If the deployment does not contain the answer, finish with
-"Unknown". A final answer must be concise and at most six words.
+"Unknown". The final answer must be the shortest phrase that fully names the
+requested entities/values, at most twenty words, no explanations or reasoning.
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
@@ -127,8 +128,8 @@ class LoCoMoProtocol:
     answer_agent_reasoning_effort: str | None
 
 
-_FULL_V7 = LoCoMoProtocol(
-    key="full-v7",
+_FULL_V8 = LoCoMoProtocol(
+    key="full-v8",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -145,8 +146,8 @@ _FULL_V7 = LoCoMoProtocol(
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
     answer_agent_reasoning_effort=None,
 )
-_FULL_V7_STRONG = LoCoMoProtocol(
-    key="full-v7-strong",
+_FULL_V8_STRONG = LoCoMoProtocol(
+    key="full-v8-strong",
     name=STRONG_PROTOCOL_NAME,
     answer_agent_model=STRONG_ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -165,7 +166,7 @@ _FULL_V7_STRONG = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V7.key: _FULL_V7, _FULL_V7_STRONG.key: _FULL_V7_STRONG}
+    {_FULL_V8.key: _FULL_V8, _FULL_V8_STRONG.key: _FULL_V8_STRONG}
 )
 
 

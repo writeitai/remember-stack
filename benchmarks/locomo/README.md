@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v7 setup
+# RS-LoCoMo-Full-v8 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,13 +16,13 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v7 \
+  --protocol full-v8 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only: choose `full-v7` (the
-default) or `full-v7-strong` there, and every later stage reads that immutable
+eight-question smoke plan. `--protocol` is prepare-only: choose `full-v8` (the
+default) or `full-v8-strong` there, and every later stage reads that immutable
 choice from `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
@@ -39,6 +39,11 @@ repeated answer-agent prompt removes rank-score bookkeeping and empty
 containers so retrieved evidence does not get crowded out by audit metadata.
 Freshness, hydration-drop counts, and meaningful default-valued fields remain
 visible.
+
+V8 requires the shortest phrase that fully names the requested entities or
+values, permits up to twenty words, and forbids explanations or reasoning. Its
+two-retry malformed-completion allowance is shared across the answer loop,
+including a completion returned before the first tool call.
 
 Build the image from the revision under test — Compose otherwise serves the
 published release image, and the harness refuses to run against an engine whose
@@ -76,15 +81,17 @@ call can cross it, is recorded, and stops the run. Use the provider account cap 
 monetary boundary. If that leaves later questions unanswered, they remain visible as zero-scored
 missing records; resuming them requires an explicitly higher threshold.
 
-After at least one recipe result, an answer-agent completion that is not a valid
-JSON answer step is retried at most twice. Those attempts consume the same
-nine-call per-question and run-absolute call budgets; they are not extra calls
-outside the cap. Each item records `reader_attempts`, and the summary records
-`total_reader_retries`. Tool-selection failures before retrieval and judge
-failures are not retried.
+An answer-agent completion that is not a valid JSON step is retried at most
+twice, whether it occurs before the first tool call or while reading retrieved
+evidence. The two-retry allowance is shared across both positions. Every
+attempt consumes the same nine-call per-question and run-absolute call budgets;
+these are not extra calls outside the cap. Each item records reader-position
+attempts in `reader_attempts` and pre-tool additional calls in
+`first_step_retries`; the summary sums both signals separately. Plain provider
+outages and judge failures are not retried.
 
 The strong protocol pins answer-agent reasoning effort to `none` on every answer
-call. The default `full-v7` protocol sends no per-call effort field for its
+call. The default `full-v8` protocol sends no per-call effort field for its
 non-reasoning `gpt-4o-mini` answer agent. Ambient OpenRouter effort-map settings
 therefore cannot change either prepared protocol's answer behavior.
 

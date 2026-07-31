@@ -431,7 +431,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v7 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v8 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -732,6 +732,9 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
             max(record.reader_attempts - 1, 0)
             for record in context.state.answers.values()
         ),
+        total_first_step_retries=sum(
+            record.first_step_retries for record in context.state.answers.values()
+        ),
         judge_calls=sum(
             record.model_called for record in context.state.judges.values()
         ),
@@ -967,7 +970,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v7")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v8")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -977,7 +980,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v7")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v8")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1308,6 +1311,8 @@ def _answer_one(
     tool_latency_ms = 0
     agent_call_count = 0
     reader_attempts = 0
+    first_step_retries = 0
+    invalid_completion_attempts = 0
     prior_calls = sum(record.agent_call_count for record in state.answers.values())
     for _ in range(max_agent_calls_per_question):
         if prior_calls + agent_call_count >= max_agent_calls:
@@ -1351,6 +1356,7 @@ def _answer_one(
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + int(bool(trace)),
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1372,6 +1378,7 @@ def _answer_one(
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1385,6 +1392,7 @@ def _answer_one(
             if error.usage is not None:
                 usages.append(error.usage)
                 state.evaluator_cost_usd += error.usage.cost_usd
+            invalid_completion_attempts += 1
             if trace:
                 reader_attempts += 1
             if agent_observation is not None:
@@ -1394,13 +1402,14 @@ def _answer_one(
                     outcome="provider_error",
                 )
             can_retry = (
-                bool(trace)
-                and reader_attempts <= answer_reader_retry_budget
+                invalid_completion_attempts <= answer_reader_retry_budget
                 and agent_call_count < max_agent_calls_per_question
                 and prior_calls + agent_call_count < max_agent_calls
                 and state.evaluator_cost_usd < max_evaluator_cost_usd
             )
             if can_retry:
+                if not trace:
+                    first_step_retries += 1
                 continue
             return _failed_answer(
                 question=question,
@@ -1410,6 +1419,7 @@ def _answer_one(
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1436,6 +1446,7 @@ def _answer_one(
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + int(bool(trace)),
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1472,6 +1483,7 @@ def _answer_one(
                 reader_attempts=(
                     reader_attempts + int(step.action == "answer" and bool(trace))
                 ),
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1495,12 +1507,13 @@ def _answer_one(
                     retrieval_succeeded=False,
                     agent_call_count=agent_call_count,
                     reader_attempts=reader_attempts,
+                    first_step_retries=first_step_retries,
                     reader_latency_ms=agent_latency_ms,
                     tool_calls=tuple(trace),
                     usages=tuple(usages),
                 )
             answer = step.answer or ""
-            if len(answer.split()) > 6:
+            if len(answer.split()) > 20:
                 if agent_observation is not None:
                     agent_observation.finish(
                         usage=response.usage,
@@ -1510,11 +1523,12 @@ def _answer_one(
                 return _failed_answer(
                     question=question,
                     kind="invalid_response",
-                    message="answer agent exceeded the six-word answer limit",
+                    message="answer agent exceeded the twenty-word answer limit",
                     retrieval_latency_ms=tool_latency_ms,
                     retrieval_succeeded=True,
                     agent_call_count=agent_call_count,
                     reader_attempts=reader_attempts + 1,
+                    first_step_retries=first_step_retries,
                     reader_latency_ms=agent_latency_ms,
                     claims=_claims_from_trace(
                         trace=tuple(trace), doc_sessions=doc_sessions
@@ -1547,6 +1561,7 @@ def _answer_one(
                 reader_called=True,
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + 1,
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms,
                 generated_answer=answer,
                 reader_usage=_aggregate_usage(usages=tuple(usages)),
@@ -1560,6 +1575,7 @@ def _answer_one(
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1576,6 +1592,7 @@ def _answer_one(
                 retrieval_succeeded=True,
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1611,6 +1628,7 @@ def _answer_one(
                 retrieval_succeeded=False,
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1639,6 +1657,7 @@ def _answer_one(
         retrieval_succeeded=bool(trace),
         agent_call_count=agent_call_count,
         reader_attempts=reader_attempts,
+        first_step_retries=first_step_retries,
         reader_latency_ms=agent_latency_ms,
         claims=_claims_from_trace(trace=tuple(trace), doc_sessions=doc_sessions),
         tool_calls=tuple(trace),
@@ -1809,6 +1828,7 @@ def _failed_answer(
     retrieval_succeeded: bool,
     agent_call_count: int,
     reader_attempts: int = 0,
+    first_step_retries: int = 0,
     reader_latency_ms: int | None = None,
     claims: tuple[RetrievedClaim, ...] = (),
     tool_calls: tuple[ToolCallRecord, ...] = (),
@@ -1832,6 +1852,7 @@ def _failed_answer(
         reader_called=agent_call_count > 0,
         agent_call_count=agent_call_count,
         reader_attempts=reader_attempts,
+        first_step_retries=first_step_retries,
         reader_latency_ms=reader_latency_ms,
         reader_usage=_aggregate_usage(usages=usages) if usages else None,
         failure=_failure(kind=kind, message=message),
