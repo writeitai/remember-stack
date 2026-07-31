@@ -16,6 +16,7 @@ from datetime import datetime
 from datetime import UTC
 from itertools import batched
 from typing import Final
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -30,6 +31,7 @@ from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.model import AggregateBucket
 from rememberstack.model import AggregateReport
 from rememberstack.model import ChangeRecord
+from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import CoMember
 from rememberstack.model import Contradiction
 from rememberstack.model import EmbeddingRequest
@@ -340,19 +342,21 @@ class QueryEngine:
         )
 
     def search_claims(
-        self, *, deployment_id: UUID, query: str, k: int = 10
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
     ) -> Envelope:
-        """Semantic claim search — EVIDENCE grain, never a current-fact answer.
+        """Claim search — EVIDENCE grain, never a current-fact answer.
 
         The claims channel nominates (current-testimony-only by default);
         hydration re-reads each claim from the spine and drops what no longer
         confirms, counting the drops (D48 nominate-then-drop honesty).
         """
-        nominated = self._search_index.search_claims(
-            deployment_id=str(deployment_id),
-            vector=self._embed(query=query),
-            k=k,
-            current_only=True,
+        nominated = self._nominate_claim_ids(
+            deployment_id=deployment_id, query=query, k=k, channel=channel
         )
         evidence, dropped = self._confirm_claims(
             deployment_id=deployment_id,
@@ -370,6 +374,112 @@ class QueryEngine:
                 explanation="no current-testimony claims match the query",
                 workaround="broaden the query or inspect the source artifacts",
             ),
+        )
+
+    def nominate_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
+        """Rank claim IDs without returning unconfirmed claim content.
+
+        This is the cheap, projection-only half of D48 for recipe composition:
+        parallel channels can fuse their candidate orderings before one
+        `hydrate_claims` confirmation. Candidate UUIDs and ranks are not facts.
+        """
+        nominated = self._nominate_claim_ids(
+            deployment_id=deployment_id, query=query, k=k, channel=channel
+        )
+        return _nomination_envelope(
+            ids=nominated, empty_explanation="no claims were nominated"
+        )
+
+    def search_chunks(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
+        """Search live source chunks without pretending they are claims."""
+        nominated = self._nominate_chunk_ids(
+            deployment_id=deployment_id, query=query, k=k, channel=channel
+        )
+        chunks, dropped = self._confirm_chunks(
+            deployment_id=deployment_id,
+            chunk_ids=tuple(UUID(item) for item in nominated),
+        )
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            chunks=chunks,
+            freshness=_freshness(),
+            dropped_by_hydration=dropped,
+            negative=None
+            if chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation="no live source chunks match the query",
+                workaround="broaden the query or inspect the source artifacts",
+            ),
+        )
+
+    def nominate_chunks(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
+        """Rank source-chunk IDs without returning unconfirmed source text."""
+        nominated = self._nominate_chunk_ids(
+            deployment_id=deployment_id, query=query, k=k, channel=channel
+        )
+        return _nomination_envelope(
+            ids=nominated, empty_explanation="no source chunks were nominated"
+        )
+
+    def _nominate_claim_ids(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int,
+        channel: Literal["semantic", "bm25"],
+    ) -> tuple[str, ...]:
+        """Run exactly one validated P1 claim-nomination channel."""
+        _validate_nomination_request(k=k, channel=channel)
+        if channel == "semantic":
+            return self._search_index.search_claims(
+                deployment_id=str(deployment_id),
+                vector=self._embed(query=query),
+                k=k,
+                current_only=True,
+            )
+        return self._search_index.search_claims_lexical(
+            deployment_id=str(deployment_id), query=query, k=k, current_only=True
+        )
+
+    def _nominate_chunk_ids(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int,
+        channel: Literal["semantic", "bm25"],
+    ) -> tuple[str, ...]:
+        """Run exactly one validated P1 source-chunk nomination channel."""
+        _validate_nomination_request(k=k, channel=channel)
+        if channel == "semantic":
+            return self._search_index.search_chunks(
+                deployment_id=str(deployment_id), vector=self._embed(query=query), k=k
+            )
+        return self._search_index.search_chunks_lexical(
+            deployment_id=str(deployment_id), query=query, k=k
         )
 
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
@@ -509,7 +619,11 @@ class QueryEngine:
         )
 
     def fuse(
-        self, *, rankings: Sequence[Sequence[UUID]], k: int = DEFAULT_RRF_K
+        self,
+        *,
+        rankings: Sequence[Sequence[UUID]],
+        k: int = DEFAULT_RRF_K,
+        limit: int | None = None,
     ) -> Envelope:
         """RRF-merge parallel channel rankings into one order (D9/S46).
 
@@ -521,6 +635,10 @@ class QueryEngine:
         ids when the caller needs claim text, not only scores.
         """
         fused = reciprocal_rank_fusion(rankings=rankings, k=k)
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("fuse limit must be at least 1")
+            fused = fused[:limit]
         return Envelope(
             grain=Grain.EVIDENCE,
             ranking=fused,
@@ -566,6 +684,93 @@ class QueryEngine:
             else Negative(
                 kind=NegativeKind.KNOWN_EMPTY,
                 explanation="no nominated claims confirmed at hydration",
+                workaround="broaden the query or inspect the source artifacts",
+            ),
+        )
+
+    def hydrate_chunks(
+        self,
+        *,
+        deployment_id: UUID,
+        chunk_ids: Sequence[UUID],
+        ranking: Sequence[RankedItem] = (),
+    ) -> Envelope:
+        """Confirm chunk ids into live source evidence, preserving scores."""
+        ordered_ids = tuple(chunk_ids)
+        chunks, dropped = self._confirm_chunks(
+            deployment_id=deployment_id, chunk_ids=ordered_ids
+        )
+        confirmed = {record.chunk_id for record in chunks}
+        kept_ranking = tuple(item for item in ranking if item.item_id in confirmed)
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            chunks=chunks,
+            ranking=kept_ranking,
+            freshness=_freshness(),
+            dropped_by_hydration=dropped,
+            negative=None
+            if chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation="no nominated chunks confirmed at hydration",
+                workaround="broaden the query or inspect the source artifacts",
+            ),
+        )
+
+    def combine_evidence(self, *, inputs: Sequence[Envelope]) -> Envelope:
+        """Combine typed claims and chunks without cross-fusing their UUIDs."""
+        for envelope in inputs:
+            if envelope.grain is not Grain.EVIDENCE or any(
+                (
+                    envelope.parts,
+                    envelope.entities,
+                    envelope.facts,
+                    envelope.sources,
+                    envelope.transcript,
+                    envelope.nodes,
+                    envelope.paths,
+                    envelope.edges,
+                    envelope.changes,
+                    envelope.aggregate is not None,
+                    envelope.pages,
+                )
+            ):
+                raise ValueError(
+                    "combine_evidence accepts only evidence-grain claim/chunk envelopes"
+                )
+        truncations = tuple(
+            envelope.truncation
+            for envelope in inputs
+            if envelope.truncation is not None
+        )
+        if len(truncations) > 1:
+            raise ValueError(
+                "combine_evidence cannot merge multiple continuation tokens"
+            )
+        evidence_by_id = {
+            record.claim_id: record
+            for envelope in inputs
+            for record in envelope.evidence
+        }
+        chunks_by_id = {
+            record.chunk_id: record for envelope in inputs for record in envelope.chunks
+        }
+        evidence = tuple(evidence_by_id.values())
+        chunks = tuple(chunks_by_id.values())
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            evidence=evidence,
+            chunks=chunks,
+            freshness=_freshness(),
+            truncation=truncations[0] if truncations else None,
+            dropped_by_hydration=sum(
+                envelope.dropped_by_hydration for envelope in inputs
+            ),
+            negative=None
+            if evidence or chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation="no claim or source evidence confirmed",
                 workaround="broaden the query or inspect the source artifacts",
             ),
         )
@@ -994,6 +1199,63 @@ class QueryEngine:
         )
         return results, len(claim_ids) - len(results)
 
+    def _confirm_chunks(
+        self, *, deployment_id: UUID, chunk_ids: tuple[UUID, ...]
+    ) -> tuple[tuple[ChunkEvidenceResult, ...], int]:
+        """D48-confirm source coordinates, then hydrate their P1 bodies."""
+        if not chunk_ids:
+            return (), 0
+        rows: list[RowMapping] = []
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            for batch in batched(chunk_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
+                rows.extend(
+                    connection.execute(
+                        _CONFIRM_CHUNKS,
+                        {"deployment_id": deployment_id, "chunk_ids": list(batch)},
+                    )
+                    .mappings()
+                    .all()
+                )
+        confirmed = {row["chunk_id"]: row for row in rows}
+        texts = self._search_index.chunk_texts(
+            deployment_id=str(deployment_id),
+            chunk_ids=tuple(str(item) for item in confirmed),
+        )
+        results: list[ChunkEvidenceResult] = []
+        for chunk_id in chunk_ids:
+            row = confirmed.get(chunk_id)
+            projected = texts.get(str(chunk_id))
+            if row is None or projected is None:
+                continue
+            context_prefix = row["context_prefix"]
+            if context_prefix is None:
+                continue
+            marker = f"{context_prefix}\n\n"
+            if not projected.indexed_text.startswith(marker):
+                continue
+            if projected.section_role != row["section_role"]:
+                continue
+            results.append(
+                ChunkEvidenceResult(
+                    chunk_id=chunk_id,
+                    doc_id=row["doc_id"],
+                    version_id=row["version_id"],
+                    representation_id=row["representation_id"],
+                    chunk_text=projected.indexed_text[len(marker) :],
+                    context_prefix=context_prefix,
+                    char_start=row["char_start"],
+                    char_end=row["char_end"],
+                    section_role=row["section_role"],
+                    document_title=row["document_title"],
+                    source_kind=row["source_kind"],
+                    source_modified_at=row["source_modified_at"],
+                    published_at=row["published_at"],
+                )
+            )
+        return tuple(results), len(chunk_ids) - len(results)
+
     def _confirm_observations(
         self,
         *,
@@ -1037,6 +1299,40 @@ class QueryEngine:
             request=EmbeddingRequest(model=self._embedding_model, texts=(query,))
         )
         return response.vectors[0]
+
+
+def _validate_nomination_request(*, k: int, channel: str) -> None:
+    """Reject unbounded or misspelled projection-search requests."""
+    if not 1 <= k <= 400:
+        raise ValueError("nomination k must be between 1 and 400")
+    if channel not in {"semantic", "bm25"}:
+        raise ValueError(
+            f"unknown retrieval channel {channel!r}; use 'semantic' or 'bm25'"
+        )
+
+
+def _nomination_envelope(*, ids: Sequence[str], empty_explanation: str) -> Envelope:
+    """Represent ordered projection IDs without claiming they are hydrated."""
+    ranking = tuple(
+        RankedItem(
+            item_id=UUID(item),
+            score=1.0 / position,
+            signals={"source_rank": float(position)},
+        )
+        for position, item in enumerate(ids, start=1)
+    )
+    return Envelope(
+        grain=Grain.EVIDENCE,
+        ranking=ranking,
+        freshness=_freshness(),
+        negative=None
+        if ranking
+        else Negative(
+            kind=NegativeKind.KNOWN_EMPTY,
+            explanation=empty_explanation,
+            workaround="broaden the query or inspect the source artifacts",
+        ),
+    )
 
 
 def _freshness() -> Freshness:
@@ -1214,13 +1510,48 @@ _CONFIRM_OBSERVATIONS = text(
 
 _CONFIRM_CLAIMS = text(
     """
-    SELECT claim_id, doc_id, chunk_id, claim_text, source_span,
-           char_start, char_end, is_attributed, is_current_testimony,
-           claim_valid_from, claim_valid_until
-    FROM claims
-    WHERE deployment_id = :deployment_id
-      AND claim_id = ANY(:claim_ids)
-      AND is_current_testimony
+    SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
+           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
+           c.asserted_at, c.claim_valid_from, c.claim_valid_until,
+           c.claim_valid_precision::text, c.claim_valid_kind::text,
+           d.title AS document_title, d.source_kind
+    FROM claims c
+    -- Imported/legacy claims may lack a document catalog row. Keep those
+    -- evidence records, but fail closed when an existing lineage is tombstoned.
+    LEFT JOIN documents d
+      ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    WHERE c.deployment_id = :deployment_id
+      AND c.claim_id = ANY(:claim_ids)
+      AND c.is_current_testimony
+      AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+    """
+)
+
+_CONFIRM_CHUNKS = text(
+    """
+    SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
+           ch.char_start, ch.char_end, ch.context_prefix,
+           s.role::text AS section_role,
+           d.title AS document_title, d.source_kind,
+           v.source_modified_at, v.published_at
+    FROM chunks ch
+    JOIN documents d
+      ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
+    JOIN document_versions v
+      ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
+    JOIN document_representations r
+      ON r.deployment_id = ch.deployment_id
+     AND r.representation_id = ch.representation_id
+    JOIN document_sections s
+      ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
+    WHERE ch.deployment_id = :deployment_id
+      AND ch.chunk_id = ANY(:chunk_ids)
+      AND d.deleted_at IS NULL
+      AND d.current_version_id = ch.version_id
+      AND v.current_representation_id = ch.representation_id
+      AND v.status = 'ready'
+      AND v.deleted_at IS NULL
+      AND r.status = 'ready'
     """
 )
 
@@ -1239,9 +1570,13 @@ _HYDRATE_EVIDENCE_CLAIMS = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
            c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
-           c.claim_valid_from, c.claim_valid_until
+           c.asserted_at, c.claim_valid_from, c.claim_valid_until,
+           c.claim_valid_precision::text, c.claim_valid_kind::text,
+           d.title AS document_title, d.source_kind
     FROM relation_evidence e
     JOIN claims c ON c.claim_id = e.claim_id
+    LEFT JOIN documents d
+      ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
     WHERE e.relation_id = :relation_id AND e.stance = 'supports'
     ORDER BY c.ingested_at, c.claim_id
     """

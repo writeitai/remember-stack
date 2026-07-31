@@ -54,6 +54,7 @@ from rememberstack.model import Envelope
 from rememberstack.model import FactResult
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import P1ChunkText
 from rememberstack.model import RankedItem
 from rememberstack.model import RetrievalSpikeMeasurement
 from rememberstack.model import RetrievalSpikeReport
@@ -96,6 +97,22 @@ class _NullSearchIndex:
     def search_claims(self, **_: object) -> tuple[str, ...]:
         """Return no claim nominations."""
         return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        """Return no lexical claim nominations."""
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        """Return no semantic chunk nominations."""
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        """Return no lexical chunk nominations."""
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        """Return no projected chunk text."""
+        return {}
 
     def search_facts(self, **_: object) -> tuple[str, ...]:
         """Return no fact nominations."""
@@ -300,6 +317,9 @@ def _lance_batches(*, rows: int, table: str) -> Iterator[pa.RecordBatch]:
             ),
         }
         if table == "claims":
+            payload["text"] = pa.array(
+                [f"synthetic claim {index}" for index in indexes], type=pa.string()
+            )
             payload["is_current_testimony"] = pa.array(
                 [index % 7 != 0 for index in indexes], type=pa.bool_()
             )

@@ -60,21 +60,7 @@ class RecipeExecutor:
             )
             envelopes.append(envelope)
             rankings.append(_ranking_of(envelope))
-        final = envelopes[-1]
-        # D48 denominator honesty: intermediate steps (e.g. the search passes
-        # feeding fuse → hydrate) drop stale nominations in envelopes that are
-        # discarded here. The recipe's answer must report the whole chain's
-        # drops, not only the final step's.
-        upstream_drops = sum(
-            envelope.dropped_by_hydration for envelope in envelopes[:-1]
-        )
-        if upstream_drops:
-            final = final.model_copy(
-                update={
-                    "dropped_by_hydration": final.dropped_by_hydration + upstream_drops
-                }
-            )
-        return final
+        return envelopes[-1]
 
     def _run_step(
         self,
@@ -106,6 +92,17 @@ class RecipeExecutor:
                 step=step,
                 envelopes=envelopes,
                 rankings=rankings,
+            )
+        if step.op == "hydrate_chunks":
+            return self._hydrate_chunks_step(
+                deployment_id=deployment_id,
+                step=step,
+                envelopes=envelopes,
+                rankings=rankings,
+            )
+        if step.op == "combine_evidence":
+            return self._engine.combine_evidence(
+                inputs=[envelopes[index] for index in step.inputs]
             )
         if step.op == "graph_neighborhood":
             return self._graph_step(op=step.op, kwargs=kwargs)
@@ -139,6 +136,28 @@ class RecipeExecutor:
             deployment_id=deployment_id, claim_ids=claim_ids, ranking=source.ranking
         )
 
+    def _hydrate_chunks_step(
+        self,
+        *,
+        deployment_id: UUID,
+        step: RecipeStep,
+        envelopes: list[Envelope],
+        rankings: list[list[UUID]],
+    ) -> Envelope:
+        """Hydrate chunk ids from a prior ranking step, keeping its scores."""
+        if len(step.inputs) != 1:
+            raise RecipeExecutionError(
+                "hydrate_chunks consumes exactly one prior step's ranking;"
+                f" got inputs {step.inputs!r}"
+            )
+        source_index = step.inputs[0]
+        source = envelopes[source_index]
+        return self._engine.hydrate_chunks(
+            deployment_id=deployment_id,
+            chunk_ids=rankings[source_index],
+            ranking=source.ranking,
+        )
+
     def _graph_step(self, *, op: str, kwargs: dict[str, Any]) -> Envelope:
         """Run a P2 operation only when the deployment composed P2 queries."""
         if self._graph is None:
@@ -148,23 +167,6 @@ class RecipeExecutor:
         if op == "graph_neighborhood":
             return self._graph.neighborhood(**kwargs)
         return self._graph.path(**kwargs)
-
-
-def _chain_answer(*, envelopes: list[Envelope]) -> Envelope:
-    """The final step's envelope, carrying the WHOLE chain's hydration drops.
-
-    D48 denominator honesty: intermediate steps (e.g. the search passes feeding
-    fuse → hydrate) drop stale nominations in envelopes that are discarded when
-    only the last step is returned. The recipe's answer must report every drop
-    in the chain, not only the final step's.
-    """
-    final = envelopes[-1]
-    upstream_drops = sum(envelope.dropped_by_hydration for envelope in envelopes[:-1])
-    if not upstream_drops:
-        return final
-    return final.model_copy(
-        update={"dropped_by_hydration": final.dropped_by_hydration + upstream_drops}
-    )
 
 
 def _ranking_of(envelope: Envelope) -> list[UUID]:
@@ -179,6 +181,8 @@ def _ranking_of(envelope: Envelope) -> list[UUID]:
         return [item.item_id for item in envelope.ranking]
     if envelope.evidence:
         return [record.claim_id for record in envelope.evidence]
+    if envelope.chunks:
+        return [record.chunk_id for record in envelope.chunks]
     if envelope.facts:
         return [fact.fact_id for fact in envelope.facts]
     if envelope.entities:
@@ -227,6 +231,27 @@ def _search_claims(
     return engine.search_claims(deployment_id=deployment_id, **kwargs)
 
 
+def _nominate_claims(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The projection-only `nominate_claims` op."""
+    return engine.nominate_claims(deployment_id=deployment_id, **kwargs)
+
+
+def _search_chunks(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The `search_chunks` op."""
+    return engine.search_chunks(deployment_id=deployment_id, **kwargs)
+
+
+def _nominate_chunks(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The projection-only `nominate_chunks` op."""
+    return engine.nominate_chunks(deployment_id=deployment_id, **kwargs)
+
+
 def _hydrate_relation(
     engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
 ) -> Envelope:
@@ -261,6 +286,9 @@ _SINGLE_OP_HANDLERS = {
     "lookup_observations": _lookup_observations,
     "aggregate": _aggregate,
     "search_claims": _search_claims,
+    "nominate_claims": _nominate_claims,
+    "search_chunks": _search_chunks,
+    "nominate_chunks": _nominate_chunks,
     "hydrate_relation": _hydrate_relation,
     "transcript": _transcript,
     "delta": _delta,
@@ -270,6 +298,8 @@ _SINGLE_OP_HANDLERS = {
 EXECUTABLE_OPS = frozenset(_SINGLE_OP_HANDLERS) | {
     "fuse",
     "hydrate_claims",
+    "hydrate_chunks",
+    "combine_evidence",
     "graph_neighborhood",
     "graph_path",
 }

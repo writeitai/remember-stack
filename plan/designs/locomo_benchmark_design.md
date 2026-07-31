@@ -21,7 +21,7 @@ WP-8.2 remains in progress until an owner-authorized eight-question smoke finish
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v6
+protocol                RS-LoCoMo-Full-v7
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -67,10 +67,10 @@ are not directly comparable.
 changed only the answer agent to `openai/gpt-5.6-luna`. It exists because three smoke
 passes on a healthy store (coarse evidence-session recall 0.5, with the gold
 evidence at rank 1) scored only 1–2/8 with `openai/gpt-4o-mini`, which looped
-past the tool-call limit or returned invalid responses. The v6 protocols retain
-that seat distinction. Scores from `RS-LoCoMo-Full-v6` and
-`RS-LoCoMo-Full-v6-strong` are never comparable. The weak-agent
-`RS-LoCoMo-Full-v6` protocol remains the default measurement of what a harness
+past the tool-call limit or returned invalid responses. The v7 protocols retain
+that seat distinction. Scores from `RS-LoCoMo-Full-v7` and
+`RS-LoCoMo-Full-v7-strong` are never comparable. The weak-agent
+`RS-LoCoMo-Full-v7` protocol remains the default measurement of what a harness
 consumer experiences.
 
 **Reader retry and answer-effort pin (2026-07-29):** strong-agent smoke runs
@@ -94,7 +94,7 @@ raised the score from 1/8 to 3/8. Environment-only configuration was not
 reproducible because two runs with identical `run.json` files could behave
 differently. The strong protocol therefore pins `answer_agent_reasoning_effort`
 to `none` and sends it explicitly on every answer-agent call, including tool
-selection and final reading. The default `full-v6` protocol pins `None`, which
+selection and final reading. The default `full-v7` protocol pins `None`, which
 means no effort field is sent for its non-reasoning `gpt-4o-mini` answer agent.
 Engine worker seats still use the existing environment map; this override is
 only on benchmark answer requests.
@@ -117,6 +117,21 @@ discloses the assumption in rendered text, and passes the aware timestamp throug
 rendered documents, ingestion metadata, and derived claim time, so both weak and
 strong protocols receive v6 identities and new fingerprints. V5 results are not
 comparable.
+
+**v6 → v7 (2026-07-30 — independent retrieval channels):** the ordinary OSS
+query path gains independent semantic and BM25 nomination over claims, plus
+semantic and BM25 search over source chunks. Every chunk is confirmed against
+the current ready Postgres version and representation before its P1 text enters
+an evidence envelope. `question_context` fuses projection-only nominations
+first, confirms each fused list exactly once, and returns claims and chunks as
+separately typed evidence.
+
+The answer prompt now selects `question_context` first for ordinary recall and
+requires it before `Unknown`. Durable tool records retain complete raw
+envelopes, while the repeated reader prompt omits rank-score bookkeeping and
+empty containers; it does not cap or discard retrieved evidence or
+freshness. The tool catalog, prompt, reader rendering, adapter version, and protocol
+fingerprints changed, so v6 and v7 results are not comparable.
 
 ### 2.1 Why v2+ uses a stronger judge
 
@@ -401,11 +416,18 @@ The agent is instructed to orient, verify current facts, and audit evidence whil
 grain, validity, freshness, truncation, typed negatives, and hydration drops. It receives no gold
 answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v4): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v7): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
-rather than retrying it; before answering "Unknown", try `claims_verbatim` or
-`claims_hybrid_rrf` at least once. These are prompt discipline, not harness
+rather than retrying it; use `question_context` first for ordinary recall and
+try it before answering "Unknown". These are prompt discipline, not harness
 enforcement — the harness still only bounds call counts.
+
+The answer agent sees a compact projection of each trace response: all facts,
+claims, chunks, sources, timestamps, freshness, negatives, truncation, and
+hydration-drop counts remain, while rank-score bookkeeping and empty containers
+are omitted. Default-valued temporal and validity fields are retained rather
+than being silently classified as noise. The complete unmodified envelope
+remains in the durable `ToolCallRecord`.
 
 Evidence claims found anywhere in the trace are de-duplicated in first-seen order for the coarse
 session diagnostic. This diagnostic remains separate from the primary score.
@@ -418,11 +440,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v6 \
+  --protocol full-v7 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Use `full-v6-strong` there to select the
+`--protocol` exists only on `prepare`. Use `full-v7-strong` there to select the
 strong answer agent; ingest, answer, judge, and summarize read the pinned choice
 from the prepared run and expose no protocol override.
 

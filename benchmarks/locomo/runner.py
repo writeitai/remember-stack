@@ -431,7 +431,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v6 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v7 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -638,6 +638,9 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
     """Aggregate the full manifest; absent or failed records score zero."""
     context = _load_run(run_dir=run_dir)
     questions = context.questions
+    doc_sessions = {
+        record.doc_id: record.session_id for record in context.state.ingests.values()
+    }
     judge_values: list[int] = []
     f1_values: list[float] = []
     category_judge: dict[int, list[int]] = {category: [] for category in range(1, 5)}
@@ -671,11 +674,7 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
         diagnostic = session_diagnostic(
             gold_evidence=question.evidence,
             retrieved_sessions=(
-                {
-                    claim.session_id
-                    for claim in answer.claims
-                    if claim.session_id is not None
-                }
+                _retrieved_sessions(answer=answer, doc_sessions=doc_sessions)
                 if answer is not None and answer.retrieval_succeeded
                 else set()
             ),
@@ -968,7 +967,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v6")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v7")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -978,7 +977,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v6")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v7")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1870,6 +1869,26 @@ def _claims_from_trace(
                 )
             )
     return tuple(claims)
+
+
+def _retrieved_sessions(
+    *, answer: AnswerRecord, doc_sessions: dict[UUID, str]
+) -> set[str]:
+    """Collect diagnostic sessions from claim and chunk evidence alike."""
+    sessions = {
+        claim.session_id for claim in answer.claims if claim.session_id is not None
+    }
+    for call in answer.tool_calls:
+        chunks = [
+            *call.response.chunks,
+            *(item for part in call.response.parts for item in part.chunks),
+        ]
+        sessions.update(
+            session
+            for chunk in chunks
+            if (session := doc_sessions.get(chunk.doc_id)) is not None
+        )
+    return sessions
 
 
 def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUsage:

@@ -5,6 +5,7 @@ from datetime import timezone
 import hashlib
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from benchmarks.locomo import cli
 from benchmarks.locomo.model import AnswerAgentStep
@@ -26,9 +27,11 @@ from benchmarks.locomo.protocol import session_diagnostic
 from pydantic import ValidationError
 import pytest
 
+from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
 from rememberstack.spine import CANONICAL_RECIPES
 from rememberstack.spine import GRAPH_RECIPES
@@ -112,11 +115,53 @@ def test_answer_agent_prompt_contains_only_public_tools_trace_and_question() -> 
     assert "Literal {question}" in prompt
     assert "What about {tools}?" in prompt
     assert "gold answer" not in prompt.lower()
+    assert '"freshness"' in prompt
+    assert '"ranking"' not in prompt
 
 
 def test_empty_answer_agent_trace_is_explicit_json_array() -> None:
     prompt = render_answer_agent_prompt(question="Unknown?", tools=(), trace=())
     assert "TOOL TRACE SO FAR:\n[]" in prompt
+
+
+def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
+    """Prompt compaction cannot discard a retrieved source passage."""
+    chunk_id = uuid4()
+    call = ToolCallRecord(
+        name="question_context",
+        arguments={"query": "launch code"},
+        latency_ms=1,
+        response=Envelope(
+            grain=Grain.EVIDENCE,
+            chunks=(
+                ChunkEvidenceResult(
+                    chunk_id=chunk_id,
+                    doc_id=uuid4(),
+                    version_id=uuid4(),
+                    representation_id=uuid4(),
+                    chunk_text="The launch code is ORBIT-17.",
+                    context_prefix="A launch note.",
+                    char_start=0,
+                    char_end=28,
+                    section_role="body",
+                    source_kind="locomo",
+                ),
+            ),
+            ranking=(RankedItem(item_id=chunk_id, score=0.25),),
+            freshness=Freshness(pg_live_ts=datetime(2026, 7, 30, tzinfo=timezone.utc)),
+        ),
+    )
+
+    prompt = render_answer_agent_prompt(
+        question="What is the launch code?", tools=(), trace=(call,)
+    )
+
+    assert "The launch code is ORBIT-17." in prompt
+    assert "A launch note." in prompt
+    assert '"ranking"' not in prompt
+    assert '"freshness"' in prompt
+    assert '"dropped_by_hydration":0' in prompt
+    assert call.response.ranking  # durable raw record is unchanged
 
 
 def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
@@ -140,27 +185,27 @@ def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
     )
 
 
-def test_protocol_is_v6_and_answer_prompt_has_loop_guards() -> None:
-    """The default v6 identity and answer-loop discipline remain unchanged."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v6"
-    assert DEFAULT_PROTOCOL_KEY == "full-v6"
+def test_protocol_is_v7_and_answer_prompt_has_loop_guards() -> None:
+    """The default v7 identity and answer-loop discipline remain unchanged."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v7"
+    assert DEFAULT_PROTOCOL_KEY == "full-v7"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
-    assert "claims_verbatim or" in prompt
-    assert "claims_hybrid_rrf at least once" in prompt
+    assert "use question_context first" in prompt
+    assert "tried question_context at least" in prompt
     assert 'answering "Unknown"' in prompt
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v6", "full-v6-strong")
-    default = PROTOCOL_REGISTRY["full-v6"]
-    strong = PROTOCOL_REGISTRY["full-v6-strong"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v7", "full-v7-strong")
+    default = PROTOCOL_REGISTRY["full-v7"]
+    strong = PROTOCOL_REGISTRY["full-v7-strong"]
 
-    assert default.name == "RS-LoCoMo-Full-v6"
+    assert default.name == "RS-LoCoMo-Full-v7"
     assert default.answer_agent_model == "openai/gpt-4o-mini"
     assert default.answer_agent_reasoning_effort is None
-    assert strong.name == "RS-LoCoMo-Full-v6-strong"
+    assert strong.name == "RS-LoCoMo-Full-v7-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert default.answer_reader_retry_budget == 2
@@ -186,7 +231,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
 
 @pytest.mark.parametrize(
     ("extra_args", "expected"),
-    (((), "full-v6"), (("--protocol", "full-v6-strong"), "full-v6-strong")),
+    (((), "full-v7"), (("--protocol", "full-v7-strong"), "full-v7-strong")),
 )
 def test_prepare_cli_selects_protocol_only_at_prepare(
     extra_args: tuple[str, ...], expected: str, monkeypatch: pytest.MonkeyPatch

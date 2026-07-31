@@ -149,12 +149,40 @@ class MemoryClient:
             endpoint="GET /resolve",
         )
 
-    def search_claims(self, *, query: str, k: int = 10) -> Envelope:
+    def search_claims(
+        self,
+        *,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
         """Search source claims; the returned envelope remains evidence grain."""
         return _validated(
             Envelope,
-            self._json("GET", "/search/claims", params={"query": query, "k": k}),
+            self._json(
+                "GET",
+                "/search/claims",
+                params={"query": query, "k": k, "channel": channel},
+            ),
             endpoint="GET /search/claims",
+        )
+
+    def search_chunks(
+        self,
+        *,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
+        """Search live source passages as separately typed evidence."""
+        return _validated(
+            Envelope,
+            self._json(
+                "GET",
+                "/search/chunks",
+                params={"query": query, "k": k, "channel": channel},
+            ),
+            endpoint="GET /search/chunks",
         )
 
     def hydrate_relation(self, *, relation_id: UUID) -> Envelope:

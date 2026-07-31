@@ -35,6 +35,7 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Grain
+from rememberstack.model import P1ChunkText
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import Recipe
 from rememberstack.model import RecipeAnswerIntent
@@ -79,6 +80,22 @@ class _NullSearchIndex:
     ) -> tuple[str, ...]:
         """Never called."""
         return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        """Never called."""
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        """Never called."""
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        """Never called."""
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        """Never called."""
+        return {}
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None

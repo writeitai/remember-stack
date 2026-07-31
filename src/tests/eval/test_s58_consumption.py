@@ -22,6 +22,7 @@ from rememberstack.eval import seed_s58_canaries
 from rememberstack.eval import seed_skeleton_canaries
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EvalSuite
+from rememberstack.model import P1ChunkText
 from rememberstack.model import PublishedMounts
 from rememberstack.model import S58Answer
 from rememberstack.spine import CANONICAL_RECIPES
@@ -51,6 +52,22 @@ class _NullSearchIndex:
     ) -> tuple[str, ...]:
         """Return no claim nominations."""
         return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        """Return no lexical claim nominations."""
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        """Return no semantic chunk nominations."""
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        """Return no lexical chunk nominations."""
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        """Return no projected chunk text."""
+        return {}
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None

@@ -34,6 +34,7 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ObservationAssertion
 from rememberstack.model import OperationalScaleMeasurement
 from rememberstack.model import OperationalScaleReport
+from rememberstack.model import P1ChunkText
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.catalog_contract import CatalogInventory
 from rememberstack.spine.catalog_contract import EXPECTED_HASH_PARENTS
@@ -78,6 +79,18 @@ class _NullSearchIndex:
 
     def search_claims(self, **_: object) -> tuple[str, ...]:
         return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        return {}
 
     def search_facts(self, **_: object) -> tuple[str, ...]:
         return ()

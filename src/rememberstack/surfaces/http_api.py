@@ -213,9 +213,26 @@ def build_api(
         )
 
     @app.get("/search/claims", response_model=Envelope)
-    def search_claims(query: str, k: int = 10) -> Envelope:
-        """Semantic claim search — evidence grain, never current-fact truth."""
-        return engine.search_claims(deployment_id=deployment_id, query=query, k=k)
+    def search_claims(
+        query: str,
+        k: Annotated[int, Query(ge=1, le=400)] = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
+        """Claim search — evidence grain, never current-fact truth."""
+        return engine.search_claims(
+            deployment_id=deployment_id, query=query, k=k, channel=channel
+        )
+
+    @app.get("/search/chunks", response_model=Envelope)
+    def search_chunks(
+        query: str,
+        k: Annotated[int, Query(ge=1, le=400)] = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+    ) -> Envelope:
+        """Search live source chunks as separately typed evidence."""
+        return engine.search_chunks(
+            deployment_id=deployment_id, query=query, k=k, channel=channel
+        )
 
     @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
     def hydrate_relation(relation_id: UUID) -> Envelope:

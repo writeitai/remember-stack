@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import P1ChunkText
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import SupersessionAdjudicator
@@ -35,6 +36,22 @@ class _NullSearch:
     def search_claims(self, **_: object) -> tuple[str, ...]:
         """No nominations."""
         return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        """No lexical claim nominations."""
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        """No semantic chunk nominations."""
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        """No lexical chunk nominations."""
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        """No projected chunk text."""
+        return {}
 
     def search_facts(self, **_: object) -> tuple[str, ...]:
         """No nominations."""

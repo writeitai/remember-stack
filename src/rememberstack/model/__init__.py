@@ -20,6 +20,7 @@ from rememberstack.model.chunks import ChunkSourceNotFoundError
 from rememberstack.model.chunks import ContextPrefix
 from rememberstack.model.chunks import EmbeddingUpdate
 from rememberstack.model.chunks import P1ChunkRow
+from rememberstack.model.chunks import P1ChunkText
 from rememberstack.model.chunks import P1ClaimRow
 from rememberstack.model.chunks import P1FactRow
 from rememberstack.model.chunks import PackedChunk
@@ -90,6 +91,7 @@ from rememberstack.model.documents import UploadRecord
 from rememberstack.model.envelope import AggregateBucket
 from rememberstack.model.envelope import AggregateReport
 from rememberstack.model.envelope import ChangeRecord
+from rememberstack.model.envelope import ChunkEvidenceResult
 from rememberstack.model.envelope import CoMember
 from rememberstack.model.envelope import Contradiction
 from rememberstack.model.envelope import EntityCandidate
@@ -398,6 +400,7 @@ __all__ = (
     "Truncation",
     "EvalSuite",
     "EvidenceResult",
+    "ChunkEvidenceResult",
     "FactForLabeling",
     "FactLabelResponse",
     "FactResult",
@@ -442,6 +445,7 @@ __all__ = (
     "OperationalReport",
     "OtherPredicateGrammarError",
     "P1ChunkRow",
+    "P1ChunkText",
     "P1ClaimRow",
     "P1EntityRow",
     "P1FactRow",

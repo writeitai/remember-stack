@@ -209,8 +209,33 @@ class EvidenceResult(BaseModel):
     char_end: int
     is_attributed: bool
     is_current_testimony: bool
+    asserted_at: UTCDateTime | None = None
     claim_valid_from: UTCDateTime | None = None
     claim_valid_until: UTCDateTime | None = None
+    claim_valid_precision: str = "unknown"
+    claim_valid_kind: str | None = None
+    document_title: str | None = None
+    source_kind: str | None = None
+
+
+class ChunkEvidenceResult(BaseModel):
+    """One live source chunk, distinct from an extracted claim or fact."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chunk_id: UUID
+    doc_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    chunk_text: str
+    context_prefix: str | None = None
+    char_start: int
+    char_end: int
+    section_role: str
+    document_title: str | None = None
+    source_kind: str
+    source_modified_at: UTCDateTime | None = None
+    published_at: UTCDateTime | None = None
 
 
 class SourceRecord(BaseModel):
@@ -408,6 +433,7 @@ class EnvelopePart(BaseModel):
     label: str | None = None  # e.g. "said" vs "believed"
     facts: tuple[FactResult, ...] = ()
     evidence: tuple[EvidenceResult, ...] = ()
+    chunks: tuple[ChunkEvidenceResult, ...] = ()
     sources: tuple[SourceRecord, ...] = ()
     nodes: tuple[GraphNode, ...] = ()
     aggregate: AggregateReport | None = None
@@ -425,7 +451,7 @@ class EnvelopePart(BaseModel):
             raise ValueError("a composite part is not single-grain (S47)")
         owned = {
             Grain.FACT: {"facts", "nodes", "aggregate"},
-            Grain.EVIDENCE: {"evidence"},
+            Grain.EVIDENCE: {"evidence", "chunks"},
             Grain.COMPILED: {"pages"},
         }[self.grain]
         populated = {
@@ -433,6 +459,7 @@ class EnvelopePart(BaseModel):
             for name, value in (
                 ("facts", self.facts),
                 ("evidence", self.evidence),
+                ("chunks", self.chunks),
                 ("nodes", self.nodes),
                 ("aggregate", self.aggregate),
                 ("pages", self.pages),
@@ -467,6 +494,7 @@ class Envelope(BaseModel):
     entities: tuple[EntityCandidate, ...] = ()
     facts: tuple[FactResult, ...] = ()
     evidence: tuple[EvidenceResult, ...] = ()
+    chunks: tuple[ChunkEvidenceResult, ...] = ()
     sources: tuple[SourceRecord, ...] = ()
     transcript: tuple["TranscriptEntry", ...] = ()  # S8: the audit surface
     nodes: tuple[GraphNode, ...] = ()  # S18: neighborhood members
@@ -497,6 +525,7 @@ class Envelope(BaseModel):
                 self.entities,
                 self.facts,
                 self.evidence,
+                self.chunks,
                 self.sources,
                 self.transcript,
                 self.nodes,

@@ -694,7 +694,8 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
                 " SET claim_valid_from = '2024-01-01+00',"
                 " claim_valid_until = '2024-12-31+00',"
                 " claim_valid_precision = 'year',"
-                " claim_valid_kind = 'event_time'"
+                " claim_valid_kind = 'event_time',"
+                " asserted_at = '2025-02-03T00:00:00+00'"
                 " WHERE claim_text = 'Alice Novak joined Acme in 2024.'"
             )
         )
@@ -730,6 +731,11 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
     stamped = by_text["Alice Novak joined Acme in 2024."]
     assert stamped["claim_valid_from"] == "2024-01-01T00:00:00Z"
     assert stamped["claim_valid_until"] == "2024-12-31T00:00:00Z"
+    assert stamped["claim_valid_precision"] == "year"
+    assert stamped["claim_valid_kind"] == "event_time"
+    assert stamped["asserted_at"] == "2025-02-03T00:00:00Z"
+    assert stamped["document_title"] == "staffing"
+    assert stamped["source_kind"] == "upload"
     unstamped = by_text["Alice Novak works for Acme."]
     assert unstamped["claim_valid_from"] is None
     assert unstamped["claim_valid_until"] is None
@@ -757,6 +763,133 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
         "broaden the query or inspect the source artifacts"
     )
     assert "current_only" not in empty["negative"]["workaround"]
+
+
+def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) -> None:
+    """Exact text and raw source fallback are reachable without an LLM planner."""
+    claims = rig.client.get(
+        "/search/claims", params={"query": "joined", "k": 10, "channel": "bm25"}
+    )
+    assert claims.status_code == 200
+    assert any("joined Acme" in row["claim_text"] for row in claims.json()["evidence"])
+
+    chunks = rig.client.get(
+        "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
+    )
+    assert chunks.status_code == 200
+    body = chunks.json()
+    assert body["grain"] == "evidence"
+    assert body["evidence"] == []
+    assert len(body["chunks"]) == 1
+    chunk = body["chunks"][0]
+    assert chunk["context_prefix"] == "Sits in the staffing note."
+    assert "Alice Novak works for Acme as an engineer." in chunk["chunk_text"]
+    assert "Sits in the staffing note." not in chunk["chunk_text"]
+    assert chunk["document_title"] == "staffing"
+    assert chunk["source_kind"] == "upload"
+    assert chunk["version_id"]
+    assert chunk["representation_id"]
+
+    # A half-written or skewed projection is not silently returned as source
+    # text. Prefix disagreement is a failed D48 hydration and is reversible.
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunks SET context_prefix = 'mismatched prefix'"
+                " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
+        )
+    try:
+        skewed = rig.client.get(
+            "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
+        ).json()
+        assert skewed["chunks"] == []
+        assert skewed["dropped_by_hydration"] == 1
+    finally:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE chunks SET context_prefix = :context_prefix"
+                    " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                ),
+                {
+                    "deployment_id": _DEPLOYMENT_ID,
+                    "chunk_id": chunk["chunk_id"],
+                    "context_prefix": chunk["context_prefix"],
+                },
+            )
+
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunks SET context_prefix = NULL"
+                " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
+        )
+    try:
+        incomplete = rig.client.get(
+            "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
+        ).json()
+        assert incomplete["chunks"] == []
+        assert incomplete["dropped_by_hydration"] == 1
+    finally:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE chunks SET context_prefix = :context_prefix"
+                    " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                ),
+                {
+                    "deployment_id": _DEPLOYMENT_ID,
+                    "chunk_id": chunk["chunk_id"],
+                    "context_prefix": chunk["context_prefix"],
+                },
+            )
+
+    # P1 still nominates the immutable row, but the live-spine pointer no
+    # longer confirms it. D48 drops it instead of serving stale source text.
+    with rig.engine.connect() as connection:
+        original_pointers = tuple(
+            connection.execute(
+                text(
+                    "SELECT doc_id, current_version_id FROM documents"
+                    " WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
+            .mappings()
+            .all()
+        )
+    try:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE documents SET current_version_id = NULL"
+                    " WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
+        stale = rig.client.get(
+            "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
+        ).json()
+        assert stale["chunks"] == []
+        assert stale["dropped_by_hydration"] == 1
+    finally:
+        with rig.engine.begin() as connection:
+            for pointer in original_pointers:
+                connection.execute(
+                    text(
+                        "UPDATE documents SET current_version_id = :version_id"
+                        " WHERE deployment_id = :deployment_id AND doc_id = :doc_id"
+                    ),
+                    {
+                        "deployment_id": _DEPLOYMENT_ID,
+                        "doc_id": pointer["doc_id"],
+                        "version_id": pointer["current_version_id"],
+                    },
+                )
 
 
 def test_expired_valid_window_is_not_a_current_fact(rig: _ApiRig) -> None:
