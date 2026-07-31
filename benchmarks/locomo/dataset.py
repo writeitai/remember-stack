@@ -139,9 +139,9 @@ def load_manifest(tier: str) -> QuestionManifest:
             f"manifest file {tier!r} declares tier {manifest.tier!r}"
         )
     if manifest.dataset_commit != DATASET_COMMIT:
-        raise DatasetValidationError("manifest dataset commit is not RS-LoCoMo-Full-v7")
+        raise DatasetValidationError("manifest dataset commit is not RS-LoCoMo-Full-v8")
     if manifest.dataset_sha256 != DATASET_SHA256:
-        raise DatasetValidationError("manifest dataset hash is not RS-LoCoMo-Full-v7")
+        raise DatasetValidationError("manifest dataset hash is not RS-LoCoMo-Full-v8")
     actual = item_ids_hash(item_ids=manifest.item_ids)
     if actual != manifest.item_ids_sha256:
         raise DatasetValidationError(

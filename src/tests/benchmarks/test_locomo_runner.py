@@ -89,6 +89,7 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert answer.retrieval_succeeded is True
     assert answer.generated_answer == "Prague"
     assert answer.agent_call_count == 2
+    assert answer.first_step_retries == 0
     assert [call.name for call in answer.tool_calls] == ["claims_verbatim"]
     assert len(provider.generated_prompts) == 2
 
@@ -172,9 +173,39 @@ def test_reader_retry_stops_when_run_agent_call_budget_is_exhausted() -> None:
     assert provider.answer_calls == 3
 
 
-def test_invalid_tool_selection_completion_is_not_retried() -> None:
+def test_first_step_invalid_completion_retries_then_succeeds_within_budgets() -> None:
     client, raw_client = _memory_client()
-    provider = _CostProvider(cost=Decimal(0), invalid_tool_selection=True)
+    provider = _CostProvider(cost=Decimal("0.10"), invalid_first_step_completions=1)
+    state = _run_state()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=3,
+            max_evaluator_cost_usd=Decimal("1"),
+            max_agent_calls_per_question=3,
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is None
+    assert answer.generated_answer == "Prague"
+    assert answer.reader_attempts == 1
+    assert answer.first_step_retries == 1
+    assert answer.agent_call_count == 3
+    assert provider.answer_calls == 3
+    assert state.evaluator_cost_usd == Decimal("0.30")
+    assert answer.reader_usage is not None
+    assert answer.reader_usage.tokens_in == 30
+
+
+def test_first_step_invalid_completion_fails_after_shared_retry_budget() -> None:
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal(0), invalid_first_step_completions=3)
     try:
         answer = _answer_one(
             question=_question(),
@@ -191,7 +222,35 @@ def test_invalid_tool_selection_completion_is_not_retried() -> None:
 
     assert answer.failure is not None
     assert answer.failure.kind == "reader"
+    assert answer.failure.message == (
+        "AnswerAgentStep: completion content is not JSON (synthetic)"
+    )
     assert answer.reader_attempts == 0
+    assert answer.first_step_retries == 2
+    assert answer.agent_call_count == 3
+    assert provider.answer_calls == 3
+
+
+def test_first_step_provider_outage_is_not_retried() -> None:
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal(0), first_step_provider_outage=True)
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.kind == "reader"
+    assert answer.first_step_retries == 0
     assert answer.agent_call_count == 1
     assert provider.answer_calls == 1
 
@@ -223,6 +282,47 @@ def test_answer_without_consulting_memory_is_rejected() -> None:
     assert answer.failure is not None
     assert answer.failure.kind == "invalid_response"
     assert answer.agent_call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("word_count", "expected_failure"), ((20, None), (21, "invalid_response"))
+)
+def test_answer_word_limit_accepts_twenty_and_rejects_twenty_one(
+    word_count: int, expected_failure: str | None
+) -> None:
+    answer_text = " ".join(f"word-{index}" for index in range(1, word_count + 1))
+
+    def tool_then_sized_answer(prompt: str, type_name: str) -> dict[str, object]:
+        step = _tool_then_answer(prompt, type_name)
+        if step["action"] == "answer":
+            step["answer"] = answer_text
+        return step
+
+    client, raw_client = _memory_client()
+    provider = FakeModelProvider(generate_router=tool_then_sized_answer)
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    if expected_failure is None:
+        assert answer.failure is None
+        assert answer.generated_answer == answer_text
+    else:
+        assert answer.failure is not None
+        assert answer.failure.kind == expected_failure
+        assert answer.failure.message == (
+            "answer agent exceeded the twenty-word answer limit"
+        )
 
 
 def test_agent_and_judge_share_one_run_absolute_cost_threshold() -> None:
@@ -287,17 +387,19 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
         "protocol",
         "answer_agent_model",
         "reasoning_effort",
+        "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
     (
-        ("full-v7", "openai/gpt-4o-mini", None, 0),
-        ("full-v7-strong", "openai/gpt-5.6-luna", "none", 2),
+        ("full-v8", "openai/gpt-4o-mini", None, 1, 0),
+        ("full-v8-strong", "openai/gpt-5.6-luna", "none", 0, 2),
     ),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
     answer_agent_model: str,
     reasoning_effort: str | None,
+    invalid_first_step_completions: int,
     invalid_reader_completions: int,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -316,7 +418,9 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     client = MemoryClient(client=raw_client)
     preflight_provider = _PreflightProvider()
     provider = _CostProvider(
-        cost=Decimal(0), invalid_reader_completions=invalid_reader_completions
+        cost=Decimal(0),
+        invalid_first_step_completions=invalid_first_step_completions,
+        invalid_reader_completions=invalid_reader_completions,
     )
     try:
         ingests = ingest_sample(
@@ -371,7 +475,9 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     assert first_answers == second_answers
     assert first_judges == second_judges
     assert preflight_provider.models == [answer_agent_model]
-    expected_answer_calls = 2 + invalid_reader_completions
+    expected_answer_calls = (
+        2 + invalid_first_step_completions + invalid_reader_completions
+    )
     assert provider.models == [
         *([answer_agent_model] * expected_answer_calls),
         JUDGE_MODEL,
@@ -396,6 +502,7 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     assert summary.official_f1 == 1
     assert summary.answer_agent_calls == expected_answer_calls
     assert summary.total_reader_retries == invalid_reader_completions
+    assert summary.total_first_step_retries == invalid_first_step_completions
 
 
 class _FakeLangfuseObservation:
@@ -776,8 +883,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v7","protocol_fingerprint":'
-        '"02c9ef2dde16bc3b4e2ce0c273fc5eaf5d61f3ba96598263014f90221437035a",'
+        '{"protocol_name":"RS-LoCoMo-Full-v8","protocol_fingerprint":'
+        '"dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -789,7 +896,8 @@ def test_single_run_summary_json_is_unchanged(
         '"mean_session_recall":0.0,"complete_session_success":0.0,'
         '"warning":"session-grain diagnostic; not turn Recall@k"},'
         '"failures":{"missing_answer":1,"missing_judge":1},'
-        '"answer_agent_calls":0,"total_reader_retries":0,"judge_calls":0,'
+        '"answer_agent_calls":0,"total_reader_retries":0,'
+        '"total_first_step_retries":0,"judge_calls":0,'
         '"tokens_in":0,"tokens_out":0,"evaluator_cost_usd":"0",'
         '"ingestion_cost_source":"deployment cost ledger; not available through '
         'benchmark SDK"}'
@@ -886,21 +994,27 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
         dataset_path=tmp_path / "synthetic.json",
         tier="smoke",
         output=strong_dir,
-        protocol="full-v7-strong",
+        protocol="full-v8-strong",
     )
 
-    assert weak.protocol_name == "RS-LoCoMo-Full-v7"
+    assert weak.protocol_name == "RS-LoCoMo-Full-v8"
     assert weak.answer_agent_model == "openai/gpt-4o-mini"
     assert weak.answer_agent_reasoning_effort is None
     assert weak.answer_reader_retry_budget == 2
     assert weak.protocol_fingerprint == (
+        "dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac"
+    )
+    assert weak.protocol_fingerprint != (
         "02c9ef2dde16bc3b4e2ce0c273fc5eaf5d61f3ba96598263014f90221437035a"
     )
-    assert strong.protocol_name == "RS-LoCoMo-Full-v7-strong"
+    assert strong.protocol_name == "RS-LoCoMo-Full-v8-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert strong.answer_reader_retry_budget == 2
     assert strong.protocol_fingerprint == (
+        "ccf6b7b28397f4311a08403aa1c4639f209e90532d9430f54f12003fd017fe8b"
+    )
+    assert strong.protocol_fingerprint != (
         "70d765a8bd0c597f91b3c75171546e0aa7e954be22a09d41974b41cacbe1ae77"
     )
     assert strong.protocol_fingerprint != weak.protocol_fingerprint
@@ -1106,14 +1220,18 @@ class _CostProvider:
         *,
         cost: Decimal,
         invalid_reader_completions: int = 0,
-        invalid_tool_selection: bool = False,
+        invalid_first_step_completions: int = 0,
+        first_step_provider_outage: bool = False,
     ) -> None:
         self.cost = cost
         self.invalid_reader_completions = invalid_reader_completions
-        self.invalid_tool_selection = invalid_tool_selection
+        self.invalid_first_step_completions = invalid_first_step_completions
+        self.first_step_provider_outage = first_step_provider_outage
         self.models: list[str] = []
         self.requests: list[ModelRequest] = []
         self.answer_calls = 0
+        self.first_step_invalid_calls = 0
+        self.reader_invalid_calls = 0
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
@@ -1122,9 +1240,24 @@ class _CostProvider:
         self.requests.append(request)
         if response_type is AnswerAgentStep:
             self.answer_calls += 1
-            if (self.invalid_tool_selection and self.answer_calls == 1) or (
-                1 < self.answer_calls <= self.invalid_reader_completions + 1
-            ):
+            empty_trace = "TOOL TRACE SO FAR:\n[]" in request.prompt
+            if self.first_step_provider_outage and self.answer_calls == 1:
+                raise OpenRouterProviderError(
+                    "OpenRouter /chat/completions returned 503 (synthetic)"
+                )
+            invalid_first_step = (
+                empty_trace
+                and self.first_step_invalid_calls < self.invalid_first_step_completions
+            )
+            invalid_reader = (
+                not empty_trace
+                and self.reader_invalid_calls < self.invalid_reader_completions
+            )
+            if invalid_first_step or invalid_reader:
+                if invalid_first_step:
+                    self.first_step_invalid_calls += 1
+                else:
+                    self.reader_invalid_calls += 1
                 raise OpenRouterInvalidResponseError(
                     "AnswerAgentStep: completion content is not JSON (synthetic)",
                     usage=ProviderCallUsage(
@@ -1142,7 +1275,7 @@ class _CostProvider:
                     "arguments_json": '{"query": "Where?"}',
                     "answer": None,
                 }
-                if self.answer_calls == 1
+                if empty_trace
                 else {
                     "action": "answer",
                     "tool_name": None,

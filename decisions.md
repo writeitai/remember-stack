@@ -2809,6 +2809,21 @@ may proceed to its first tagged artifact proof after CLA activation.
 > durable records retain the raw envelopes. The tool
 > catalog, prompt, adapter identity, and protocol fingerprints change, so v6
 > and v7 results are not comparable. See the companion design §§2, 3, and 7.
+>
+> **Also amended 2026-07-31 (v8 — answer-stage correctness):** the conv-47 v7
+> re-score was 91/150. Its six-word answer cap caused 7 terminal invalid-answer
+> failures and made 19 longer gold answers structurally impossible to reproduce
+> completely. V8 requires the shortest complete entity/value phrase, permits
+> twenty words, and forbids explanations or reasoning. The same run also lost
+> 23/150 questions to malformed structured completions on the first agent call,
+> before any tool result. The existing two-retry allowance now applies there as
+> well as at the reader position and is shared across the answer loop; every
+> attempt consumes the ordinary per-question, run-wide, and cost budgets. Plain
+> provider outages remain non-retried. Reader-position attempts and additional
+> first-step calls are reported separately. The prompt, adapter identity,
+> runner behavior, and fingerprints change, while the tool catalog remains
+> unchanged, so v7 and v8 results are not comparable. See the companion design
+> §§2 and 7.
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;
