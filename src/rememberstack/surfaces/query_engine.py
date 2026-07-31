@@ -1516,6 +1516,8 @@ _CONFIRM_CLAIMS = text(
            c.claim_valid_precision::text, c.claim_valid_kind::text,
            d.title AS document_title, d.source_kind
     FROM claims c
+    -- Imported/legacy claims may lack a document catalog row. Keep those
+    -- evidence records, but fail closed when an existing lineage is tombstoned.
     LEFT JOIN documents d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
     WHERE c.deployment_id = :deployment_id
@@ -1529,7 +1531,7 @@ _CONFIRM_CHUNKS = text(
     """
     SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
            ch.char_start, ch.char_end, ch.context_prefix,
-           coalesce(s.role::text, 'body') AS section_role,
+           s.role::text AS section_role,
            d.title AS document_title, d.source_kind,
            v.source_modified_at, v.published_at
     FROM chunks ch
@@ -1540,7 +1542,7 @@ _CONFIRM_CHUNKS = text(
     JOIN document_representations r
       ON r.deployment_id = ch.deployment_id
      AND r.representation_id = ch.representation_id
-    LEFT JOIN document_sections s
+    JOIN document_sections s
       ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)

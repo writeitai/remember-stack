@@ -3,6 +3,7 @@
 from datetime import timedelta
 import math
 from pathlib import Path
+import time
 from typing import cast
 from typing import Final
 from uuid import UUID
@@ -38,6 +39,9 @@ _INDEX_OPTIMIZE_MUTATIONS: Final = 20
 
 _INDEX_OPTIMIZE_TAIL_ROWS: Final = 100_000
 """Never leave more than this many rows outside an existing index."""
+
+_MAINTENANCE_RETRIES: Final = 6
+"""Bounded retries for Lance maintenance commit conflicts."""
 
 _TEXT_INDEX = FTS(
     with_position=True,
@@ -193,7 +197,6 @@ class LanceChunkIndex:
         self._ensure_bitmap_index(
             table_name=_CLAIM_TABLE, column="is_current_testimony"
         )
-        self._maintain_indexed_tail(table_name=_CLAIM_TABLE, record_mutation=False)
         where = f"deployment_id = '{deployment_id}'"
         if current_only:
             where += " AND is_current_testimony"
@@ -235,7 +238,6 @@ class LanceChunkIndex:
             return ()
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
-        self._maintain_indexed_tail(table_name=_CHUNK_TABLE, record_mutation=False)
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
             .search(query, query_type="fts", fts_columns="text")
@@ -253,7 +255,6 @@ class LanceChunkIndex:
         if not chunk_ids or not self._has_table(table_name=_CHUNK_TABLE):
             return {}
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
-        self._maintain_indexed_tail(table_name=_CHUNK_TABLE, record_mutation=False)
         ids = ", ".join(f"'{UUID(item)}'" for item in chunk_ids)
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
@@ -333,13 +334,9 @@ class LanceChunkIndex:
         """Bootstrap one FTS index, including on first read after an upgrade."""
         if table_name in self._text_indexes_ready:
             return
-        table = self._connection.open_table(table_name)
-        has_index = any(
-            index.index_type == "FTS" and index.columns == ["text"]
-            for index in table.list_indices()
+        self._create_index_with_retry(
+            table_name=table_name, column="text", index_type="FTS", config=_TEXT_INDEX
         )
-        if not has_index:
-            table.create_index("text", config=_TEXT_INDEX)
         self._text_indexes_ready.add(table_name)
 
     def _ensure_scalar_index(self, *, table_name: str, column: str) -> None:
@@ -347,13 +344,9 @@ class LanceChunkIndex:
         key = (table_name, column)
         if key in self._scalar_indexes_ready:
             return
-        table = self._connection.open_table(table_name)
-        has_index = any(
-            index.index_type == "BTree" and index.columns == [column]
-            for index in table.list_indices()
+        self._create_index_with_retry(
+            table_name=table_name, column=column, index_type="BTree", config=BTree()
         )
-        if not has_index:
-            table.create_index(column, config=BTree())
         self._scalar_indexes_ready.add(key)
 
     def _ensure_bitmap_index(self, *, table_name: str, column: str) -> None:
@@ -361,30 +354,50 @@ class LanceChunkIndex:
         key = (table_name, column)
         if key in self._scalar_indexes_ready:
             return
-        table = self._connection.open_table(table_name)
-        has_index = any(
-            index.index_type == "Bitmap" and index.columns == [column]
-            for index in table.list_indices()
+        self._create_index_with_retry(
+            table_name=table_name, column=column, index_type="Bitmap", config=Bitmap()
         )
-        if not has_index:
-            table.create_index(column, config=Bitmap())
         self._scalar_indexes_ready.add(key)
 
-    def _maintain_indexed_tail(
-        self, *, table_name: str, record_mutation: bool = True
+    def _create_index_with_retry(
+        self,
+        *,
+        table_name: str,
+        column: str,
+        index_type: str,
+        config: BTree | Bitmap | FTS,
     ) -> None:
+        """Create one missing index despite concurrent maintenance commits."""
+        for attempt in range(_MAINTENANCE_RETRIES):
+            table = self._connection.open_table(table_name)
+            if any(
+                index.index_type == index_type and index.columns == [column]
+                for index in table.list_indices()
+            ):
+                return
+            try:
+                table.create_index(column, config=config)
+                return
+            except RuntimeError as exc:
+                if (
+                    "Retryable commit conflict" not in str(exc)
+                    or attempt == _MAINTENANCE_RETRIES - 1
+                ):
+                    raise
+                time.sleep(0.05 * (2**attempt))
+
+    def _maintain_indexed_tail(self, *, table_name: str) -> None:
         """Incrementally fold appended rows into indexes before tails grow large.
 
         Lance searches unindexed tails for correctness. Its maintenance
         guidance recommends optimization after roughly 20 mutations or
         100,000 changed rows; enforcing both bounds prevents the ordinary
         lexical and chunk-hydration paths from degrading into corpus scans.
-        A first read after process restart also checks the durable tail count.
+        Maintenance stays on the write path; interactive reads never compact.
         """
         mutations = self._mutations_since_optimize.get(table_name, 0)
-        if record_mutation:
-            mutations += 1
-            self._mutations_since_optimize[table_name] = mutations
+        mutations += 1
+        self._mutations_since_optimize[table_name] = mutations
         table = self._connection.open_table(table_name)
         unindexed_rows = max(
             (
@@ -399,8 +412,22 @@ class LanceChunkIndex:
             and unindexed_rows < _INDEX_OPTIMIZE_TAIL_ROWS
         ):
             return
-        table.optimize()
+        self._optimize_with_retry(table_name=table_name)
         self._mutations_since_optimize[table_name] = 0
+
+    def _optimize_with_retry(self, *, table_name: str) -> None:
+        """Optimize one table with bounded retry on concurrent rewrites."""
+        for attempt in range(_MAINTENANCE_RETRIES):
+            try:
+                self._connection.open_table(table_name).optimize()
+                return
+            except RuntimeError as exc:
+                if (
+                    "Retryable commit conflict" not in str(exc)
+                    or attempt == _MAINTENANCE_RETRIES - 1
+                ):
+                    raise
+                time.sleep(0.05 * (2**attempt))
 
     def _has_table(self, *, table_name: str) -> bool:
         """Whether the connected Lance dataset currently contains a table."""

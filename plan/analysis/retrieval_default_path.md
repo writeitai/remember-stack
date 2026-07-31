@@ -40,12 +40,14 @@ the existing `text` column. The first P1 write bootstraps each table's explicit
 FTS index, and the first lexical read does the same for an upgraded store that
 predates this feature. Because Lance searches appended rows outside the built
 index, ordinary writes run incremental index optimization after 20 mutations
-or 100,000 unindexed rows; a read after process restart also enforces the
-durable tail-row bound. The bulk-load maintenance operation remains the
-explicit rebuild barrier. Chunk-body hydration bootstraps a B-tree over
-`chunk_id` before its ID read. Ordinary and upgraded-store reads also
-bootstrap the deployment filter B-trees and claim-current bitmap needed by
-prefiltered retrieval. The tokenizer is deliberately language-neutral:
+or 100,000 unindexed rows. Reads search the residual tail but never compact;
+the next ordinary write or explicit bulk-load maintenance enforces the bound.
+Chunk-body hydration bootstraps a B-tree over `chunk_id` before its ID read.
+Ordinary and upgraded-store reads also bootstrap missing deployment filter
+B-trees and the claim-current bitmap needed by prefiltered retrieval. Those
+one-time index-creation writes and write-path optimization use bounded retries
+for Lance commit conflicts on the shared API/worker volume. The tokenizer is
+deliberately language-neutral:
 punctuation/whitespace tokenization, case folding, and ASCII folding, without
 English stemming or English stop-word removal. Language-specific stemming can
 improve one language while silently damaging another; it needs a measured
@@ -161,7 +163,12 @@ implementation:
   defended; both now have explicit bounds/allow-lists; and
 - blanket reader `exclude_defaults` could hide meaningful audit fields; the
   compact projection now removes only ranking bookkeeping, nulls, and empty
-  containers.
+  containers; and
+- the first bounded-maintenance implementation could compact synchronously on
+  reads and raised retryable Lance commit conflicts under API/worker
+  concurrency; compaction now stays on write/maintenance paths and both
+  index creation and optimization retry only the conflicts Lance labels
+  retryable.
 
 Non-blocking measurement work remains: tune the `question_context` evidence
 budget against real LoCoMo context lengths, separate claim/chunk recall

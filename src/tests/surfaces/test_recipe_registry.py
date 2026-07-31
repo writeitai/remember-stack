@@ -993,6 +993,19 @@ def test_combine_evidence_rejects_wrong_grains_and_dual_continuations() -> None:
     )
     with pytest.raises(ValueError, match="multiple continuation"):
         engine.combine_evidence(inputs=(truncated, truncated))
+    duplicate_recipe = Recipe(
+        name="duplicate_evidence_input",
+        description="must not count one upstream envelope twice",
+        parameters={"query": {"type": "string", "required": True}},
+        chain=(
+            RecipeStep(op="search_claims", bind={"query": "query"}),
+            RecipeStep(op="combine_evidence", inputs=(0, 0)),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+    )
+    with pytest.raises(RecipeLintError, match="repeats an input"):
+        lint_recipe(duplicate_recipe)
 
 
 def test_hydrate_chain_with_two_inputs_is_lint_rejected() -> None:
@@ -1011,3 +1024,22 @@ def test_hydrate_chain_with_two_inputs_is_lint_rejected() -> None:
     )
     with pytest.raises(RecipeLintError, match="at most 1"):
         lint_recipe(recipe=recipe)
+
+
+def test_droppable_search_cannot_feed_fuse_without_count_propagation() -> None:
+    """Projection-only nomination is mandatory before a hybrid fuse."""
+    recipe = Recipe(
+        name="double_count_prone_hybrid",
+        description="confirmed search results must not feed a ranking-only fuse",
+        parameters={"query": {"type": "string", "required": True}},
+        chain=(
+            RecipeStep(op="search_claims", bind={"query": "query"}),
+            RecipeStep(op="nominate_claims", bind={"query": "query"}),
+            RecipeStep(op="fuse", inputs=(0, 1)),
+            RecipeStep(op="hydrate_claims", inputs=(2,)),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+    )
+    with pytest.raises(RecipeLintError, match="does not flow directly"):
+        lint_recipe(recipe)

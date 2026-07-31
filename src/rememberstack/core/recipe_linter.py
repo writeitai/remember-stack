@@ -81,6 +81,11 @@ _OPS: dict[str, _OpSpec] = {
 KNOWN_OPS = frozenset(_OPS)
 """The primitive ops a recipe chain may name — exactly the executor's set."""
 
+_DROPPABLE_OPS = frozenset(
+    {"search_claims", "search_chunks", "hydrate_claims", "hydrate_chunks"}
+)
+"""Ops whose D48 drop count must reach the terminal answer."""
+
 
 def lint_recipe(recipe: Recipe) -> None:
     """Validate a recipe against the D50/D41 grain rules, or raise.
@@ -121,12 +126,36 @@ def _check_ops_and_inputs(recipe: Recipe) -> None:
                 f"recipe {recipe.name!r} step {index} ({step.op}) needs at"
                 f" least {spec.min_inputs} input(s)"
             )
+        if len(set(step.inputs)) != len(step.inputs):
+            raise RecipeLintError(
+                f"recipe {recipe.name!r} step {index} ({step.op}) repeats an"
+                " input; one upstream envelope cannot be counted twice"
+            )
         for referenced in step.inputs:
             if not 0 <= referenced < index:
                 raise RecipeLintError(
                     f"recipe {recipe.name!r} step {index} references step"
                     f" {referenced}, which is not an earlier step"
                 )
+    for index, step in enumerate(recipe.chain[:-1]):
+        if step.op not in _DROPPABLE_OPS:
+            continue
+        consumers = tuple(
+            (later_index, later)
+            for later_index, later in enumerate(
+                recipe.chain[index + 1 :], start=index + 1
+            )
+            if index in later.inputs
+        )
+        if not consumers or any(
+            consumer_index != len(recipe.chain) - 1 or consumer.op != "combine_evidence"
+            for consumer_index, consumer in consumers
+        ):
+            raise RecipeLintError(
+                f"recipe {recipe.name!r} step {index} ({step.op}) can drop"
+                " nominations but its count does not flow directly into the"
+                " terminal combine_evidence answer"
+            )
 
 
 def _check_intent(recipe: Recipe) -> None:

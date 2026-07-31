@@ -1,11 +1,14 @@
 """P1 acceptance for independent lexical and semantic evidence channels."""
 
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
 import lancedb
+import pytest
 
 from rememberstack.adapters.selfhost import LanceChunkIndex
+import rememberstack.adapters.selfhost.lance as lance_adapter
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
 
@@ -137,6 +140,83 @@ def test_upgraded_store_bootstraps_fts_and_chunk_id_index_on_read(tmp_path) -> N
     assert ("FTS", ("text",)) in indices
     assert ("BTree", ("chunk_id",)) in indices
     assert ("BTree", ("deployment_id",)) in indices
+
+
+def test_index_create_and_optimize_retry_commit_conflicts(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Shared-volume maintenance retries the conflicts Lance labels retryable."""
+    root = tmp_path / "lance"
+    deployment_id = uuid4()
+    connection = lancedb.connect(str(root))
+    initial = _chunk(
+        chunk_id=uuid4(), deployment_id=deployment_id, text="Initial context.\n\nZero."
+    )
+    connection.create_table(
+        "chunks",
+        data=[
+            {
+                "chunk_id": str(initial.chunk_id),
+                "deployment_id": str(initial.deployment_id),
+                "doc_id": str(initial.doc_id),
+                "version_id": str(initial.version_id),
+                "section_role": initial.section_role,
+                "text": initial.text,
+                "vector": list(initial.vector),
+            }
+        ],
+    )
+    table_type = type(connection.open_table("chunks"))
+    index = LanceChunkIndex(root=root)
+    create_index = table_type.create_index
+    optimize = table_type.optimize
+    create_attempts = 0
+    optimize_attempts = 0
+
+    def flaky_create_index(table: Any, *args: Any, **kwargs: Any) -> None:
+        """Fail one create transaction exactly as concurrent Lance writers do."""
+        nonlocal create_attempts
+        create_attempts += 1
+        if create_attempts == 1:
+            raise RuntimeError("Retryable commit conflict for test create")
+        create_index(table, *args, **kwargs)
+
+    def flaky_optimize(table: Any, *args: Any, **kwargs: Any) -> None:
+        """Fail one rewrite transaction, then allow the bounded retry."""
+        nonlocal optimize_attempts
+        optimize_attempts += 1
+        if optimize_attempts == 1:
+            raise RuntimeError("Retryable commit conflict for test rewrite")
+        optimize(table, *args, **kwargs)
+
+    monkeypatch.setattr(table_type, "create_index", flaky_create_index)
+    monkeypatch.setattr(table_type, "optimize", flaky_optimize)
+    monkeypatch.setattr(lance_adapter, "_INDEX_OPTIMIZE_MUTATIONS", 2)
+
+    assert index.search_chunks_lexical(
+        deployment_id=str(deployment_id), query="Zero", k=10
+    ) == (str(initial.chunk_id),)
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=deployment_id,
+                text="First context.\n\nOne.",
+            ),
+        )
+    )
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=deployment_id,
+                text="Second context.\n\nTwo.",
+            ),
+        )
+    )
+
+    assert create_attempts >= 2
+    assert optimize_attempts == 2
 
 
 def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:

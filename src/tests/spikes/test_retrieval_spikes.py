@@ -317,6 +317,9 @@ def _lance_batches(*, rows: int, table: str) -> Iterator[pa.RecordBatch]:
             ),
         }
         if table == "claims":
+            payload["text"] = pa.array(
+                [f"synthetic claim {index}" for index in indexes], type=pa.string()
+            )
             payload["is_current_testimony"] = pa.array(
                 [index % 7 != 0 for index in indexes], type=pa.bool_()
             )
