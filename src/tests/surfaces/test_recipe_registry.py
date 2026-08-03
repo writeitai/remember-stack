@@ -95,19 +95,36 @@ class _FakeSearchIndex:
         return tuple(reversed(self._claim_ids))
 
     def search_chunks(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> tuple[str, ...]:
         """No source rows are needed by this fixture."""
         return ()
 
     def search_chunks_lexical(
-        self, *, deployment_id: str, query: str, k: int
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> tuple[str, ...]:
         """No source rows are needed by this fixture."""
         return ()
 
     def chunk_texts(
-        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> dict[str, P1ChunkText]:
         """No source rows are needed by this fixture."""
         return {}
@@ -950,12 +967,24 @@ def test_question_context_executes_to_both_evidence_payloads() -> None:
         """Independent deterministic claim and source nominations."""
 
         def search_chunks(
-            self, *, deployment_id: str, vector: tuple[float, ...], k: int
+            self,
+            *,
+            deployment_id: str,
+            vector: tuple[float, ...],
+            k: int,
+            policy_generation: str | None = None,
+            embedder_generation: str | None = None,
         ) -> tuple[str, ...]:
             return (str(chunk_id),)
 
         def search_chunks_lexical(
-            self, *, deployment_id: str, query: str, k: int
+            self,
+            *,
+            deployment_id: str,
+            query: str,
+            k: int,
+            policy_generation: str | None = None,
+            embedder_generation: str | None = None,
         ) -> tuple[str, ...]:
             return (str(chunk_id),)
 

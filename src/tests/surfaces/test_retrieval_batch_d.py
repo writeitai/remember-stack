@@ -78,7 +78,12 @@ class _QuestionIndex:
         return (self.chunk_id,)
 
     def chunk_texts(
-        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> dict[str, P1ChunkText]:
         return {self.chunk_id: self.chunk_text} if self.chunk_id in chunk_ids else {}
 

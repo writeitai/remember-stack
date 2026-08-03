@@ -82,28 +82,29 @@ def test_dual_generation_rows_coexist(tmp_path) -> None:
     deployment_id = uuid4()
     chunk_id = uuid4()
     index = LanceChunkIndex(root=tmp_path / "lance")
-    base = dict(
-        chunk_id=chunk_id,
-        deployment_id=deployment_id,
-        doc_id=uuid4(),
-        version_id=uuid4(),
-        section_role="body",
-        text="shared body",
-        vector=(1.0, 0.0),
-        embedding_text_hash="hash-a",
-        source_kind="upload",
-        source_shape="document",
-    )
+    doc_id = uuid4()
+    version_id = uuid4()
     index.upsert_chunks(
         rows=(
             P1ChunkRow(
-                **base, policy_generation="policy-v1", embedder_generation="emb-a"
+                chunk_id=chunk_id,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                version_id=version_id,
+                section_role="body",
+                text="shared body",
+                vector=(1.0, 0.0),
+                policy_generation="policy-v1",
+                embedder_generation="emb-a",
+                embedding_text_hash="hash-a",
+                source_kind="upload",
+                source_shape="document",
             ),
             P1ChunkRow(
                 chunk_id=chunk_id,
                 deployment_id=deployment_id,
-                doc_id=base["doc_id"],
-                version_id=base["version_id"],
+                doc_id=doc_id,
+                version_id=version_id,
                 section_role="body",
                 text="shared body",
                 vector=(0.0, 1.0),
