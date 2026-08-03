@@ -11,15 +11,17 @@ isolation), D23 (scale), D25 (ungated volume).
 Numbers here are starting points to measure, not committed constants (CLAUDE.md).
 
 > **Reading this cold.** Plane E is a per-document chain of workers (E0
-> ingest→convert→structure→crossref; E1 chunk/prefix/embed; E2 extract/ground; E3
-> resolve/normalize/adjudicate/label), each delivered through the D61 queue port when the
-> previous stage completes; the reference adapter uses Cloud Tasks/Cloud Run and the self-host
-> adapter uses Postgres wake-ups. Planes K and P are debounced/scheduled aggregate workers.
-> `processing_state` in Postgres is the idempotency + status + dead-letter ledger (one row per
-> target/stage/version — schema §2) and, under D67, the authority for route, due time, retry, and
-> parking state; `cost_ledger` meters every model call with lane attribution. A **lane** is a
-> parallel plane-E queue set for the same stages with its own rate limits and budgets. Scheduled
-> K/P jobs are explicitly unlaned.
+> ingest→convert→structure→crossref; E1 chunk → **prepare embedding input** → **batch embed**
+> (D80); E2 extract/ground; E3 resolve/normalize/adjudicate/label), each delivered through the
+> D61 queue port when the previous stage completes; the reference adapter uses Cloud Tasks/Cloud
+> Run and the self-host adapter uses Postgres wake-ups. Planes K and P are debounced/scheduled
+> aggregate workers. `processing_state` in Postgres is the idempotency + status + dead-letter
+> ledger (one row per target/stage/version — schema §2) and, under D67, the authority for route,
+> due time, retry, and parking state; `cost_ledger` meters every model call with lane
+> attribution. A **lane** is a parallel plane-E queue set for the same stages with its own rate
+> limits and budgets. Scheduled K/P jobs are explicitly unlaned. **D80:** default path has **no**
+> per-chunk location LLM; durable embed units are capability-bounded batches with a
+> representation readiness barrier — see `e1_embedding_input_policy.md` §6.
 
 ## 1. No workflow engine — the chain is the orchestrator (scope boundary)
 
@@ -143,6 +145,36 @@ splitting. `cost_ledger.lane` is copied from
 `(deployment_id, stage, lane, occurred_at)`; K/P calls can be metered on their unlaned route with
 `lane IS NULL`, but they do not silently join either plane-E lane. A delivery envelope or Cloud
 Tasks header cannot choose the attribution.
+
+### embed_chunk durability (D80 — minimum contract)
+
+E1 passage embed is **not** one document-level “all strings then one provider call.” Normative
+input policy: `e1_embedding_input_policy.md` §6. Operational rules for implementers:
+
+1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
+   version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
+   stage). Pure prepare (location facts + render) may run in that job before provider calls;
+   it does not require separate ledger rows.
+2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
+   active `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
+   (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
+   generation.
+3. **`call_key`.** Each provider embed call uses  
+   `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
+   are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
+4. **Poison split.** On a batch provider failure that is not a total outage, split the batch
+   (halve until size 1) and retry; a single-chunk poison is typed fail/skip for that chunk,
+   not a document dead-letter of already-finished siblings.
+5. **Cross-store order.** For each successful batch: (a) upsert P1 rows keyed by
+   `(chunk_id, policy_generation, embedder_generation)` with stored `embedding_text_hash`,
+   (b) stamp PG. **Crash between (a) and (b):** on retry, if P1 already has that triple and
+   hash equals prepared hash, **do not** re-call the provider — only complete the PG stamp.
+   A P1 row for the wrong generation must not be accepted.
+6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
+   stamp under the **active** `(policy_generation, embedder_generation)` pointer (or a closed
+   typed skip: at minimum `empty_body`). Mixed generations are not “ready” for that pointer.
+
+K/P and other stages are unchanged by this subsection.
 
 The model-provider port returns every successful generation or embedding together with required
 provider accounting (resolved model name, input/output tokens, USD cost, and latency). A worker

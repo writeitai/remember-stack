@@ -146,12 +146,24 @@ language-specific morphology requires a measured per-language policy rather than
 English default.
 
 A chunk nomination is still subject to D48. Postgres confirms that the chunk belongs to the
-lineage's current ready version and its current ready representation; P1 then supplies the text
-body it owns. The query engine verifies the P1 text's generated context prefix against the
-prefix stored in Postgres, returns that prefix separately from the source body, preserves source
-offsets and document/version/representation handles, and counts every failed confirmation as a
-hydration drop. The result is evidence grain but has its own typed `chunks` payload: a chunk is
-source text, never an atomic claim and never an adjudicated fact.
+lineage's current ready version and its current ready representation under the active
+`(policy_generation, embedder_generation)` pointer; P1 then supplies the **body text** it owns
+(D80: P1 text column is normalized body only — not header+body). The query engine verifies
+`embedding_text_hash` against the PG stamp, returns optional `location_header` **separately**
+from the source body when present, preserves source offsets and document/version/representation
+handles, and counts every failed confirmation as a hydration drop. The result is evidence grain
+but has its own typed `chunks` payload: a chunk is source text, never an atomic claim and never
+an adjudicated fact.
+
+**Amendment (D80):** passage vectors are built under the embedding-input policy
+(`e1_embedding_input_policy.md`). P1 filter scalars expand beyond `section_role` to include
+`source_shape` and generation id; message-level refs (`channel_ref`, …) only when recipes declare
+operators. Scalars without filter support do not satisfy the contract. Search must be
+generation-safe across re-embed cutovers.
+
+**Claim-channel filters (D80 decision):** claim P1 rows **do not** carry message scalars in v1.
+Recipes that need channel/author/time on claim hits **join** claim → origin chunk (or document
+location facts). Do not invent per-claim scalar inheritance in the first implementation.
 
 `combine_evidence` is the side-effect-free composition operator for separately typed evidence
 sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs

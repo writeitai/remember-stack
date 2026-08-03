@@ -141,7 +141,8 @@ CREATE TYPE deployment_status      AS ENUM ('active','suspended','archived');
 -- Every non-deterministic producer that stamps a *_version resolving to pipeline_component_versions
 -- has a value here (so a version string can always resolve to a catalog row, D1/D12):
 CREATE TYPE pipeline_component     AS ENUM (
-  'ingester','converter','blockizer','structurer','crossreferencer','chunker','context_prefixer',
+  'ingester','converter','blockizer','structurer','crossreferencer','chunker','context_prefixer',  -- context_prefixer: legacy LLM location; D80 uses embedding_input_policy + embedder generations
+  'embedding_input_policy',
   'extractor','grounder','resolver','normalizer','adjudicator','embedder','fact_labeler',
   'profile_summarizer','community_detector','snapshot_builder','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
@@ -1283,16 +1284,25 @@ CREATE TABLE chunks (
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  context_prefix  text,                        -- generated "where this sits" sentence (E1); replayed on rebuild — derived metadata, not body
-  prefixer_version text,                       -- LOGICAL FK → pipeline_component_versions (context_prefixer)
+  -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
+  -- stored here (D37); P1 holds text+vector for the active passage generation.
+  location_facts_json jsonb,                   -- typed location-facts snapshot (schema version inside JSON); null until prepare
+  location_header text,                        -- optional bounded deterministic header only (not body); null in body_only mode
+  embedding_text_hash text,                    -- hash of canonical embedding text under the policy
+  embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
+  context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
+  prefixer_version text,                       -- LEGACY context_prefixer component version
   chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
-  embedding_ref   text,                        -- opaque Lance row key for this chunk's vector (vectors live in P1, not PG — D8)
-  embedding_version text,                       -- LOGICAL FK → pipeline_component_versions (embedder); scopes re-embedding batches
+  embedding_ref   text,                        -- opaque Lance row key for this chunk's vector under active generation (vectors in P1 — D8)
+  embedding_version text,                      -- LEGACY single embedder stamp; prefer passage generation records (D80 dual-generation)
+  policy_generation text,                      -- embedding_input_policy_version (active pair half)
+  -- embedder half lives in embedding_version / pipeline_component_versions; P1 key is
+  -- (chunk_id, policy_generation, embedder_generation) per e1_embedding_input_policy.md §4.5
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Text+embedding live in Lance (P1); PG stores offsets, section link, the replayable context prefix, version stamps, and the D56 reuse keys: an unchanged extraction_input_hash within a lineage REUSES the prior claims (re-attached to this version''s chunk row) instead of re-calling E2; per-version chunk rows double as the occurrence record (which versions carried a claim). Monthly-partitioned, logical FKs (D23).';
+  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Text+embedding live in Lance (P1); PG stores offsets, section link, D80 location-facts/header/hash/policy stamps (not full embedding body — D37), version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

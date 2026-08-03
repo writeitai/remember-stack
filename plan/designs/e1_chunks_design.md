@@ -257,25 +257,35 @@ and that changes the conclusion:**
   still extracted (D25 untouched) and reachable by explicit filter; it just stops a paper's
   bibliography from polluting passage search.
 
-**The embedding-model branch point (resolved — D63).** This design is written to branch
-cleanly rather than block:
+**The embedding-model product path (D63 + D80).** The embedder is per-deployment provider-port
+configuration (D61). The **shipped product path is conventional only** (`texts → vectors`) so
+models stay **interchangeable** under version-scoped re-embed migration. The default model
+remains **`qwen/qwen3-embedding-8b`** via OpenRouter (self-hosted weights as the second
+adapter). Stored dimension remains a measured Matryoshka knob (D63).
 
-- **Conventional embedding model** → the E1 **context prefix** stage exists as designed (a
-  per-chunk LLM call writing "where this sits"; prompt-cached; stored and *carried forward*
-  for reused chunks — never regenerated, §7).
-- **Contextual embedding model** (voyage-context-class / late chunking — the model embeds
-  each chunk *with document context*) → **the prefix stage is deleted**, removing a per-chunk
-  LLM call at corpus scale and re-weighting the dilution math in chunks' favor.
+**How conventional embeddings get document location (D80 — normative detail in
+`e1_embedding_input_policy.md`).** E1 does **not** run a per-chunk LLM “where this sits”
+completion on the default path. Instead:
 
-Everything else in this design (blocks, sections, packing, reuse, claims-as-needle-index) is
-invariant across the branch. **Both operating modes are fully designed here.** The branch is
-resolved by **D63**: the embedder is per-deployment port configuration (D61), and the shipped
-default — `qwen/qwen3-embedding-8b` via the OpenRouter adapter, self-hosted weights as the
-second adapter — is a **conventional** model, so the **conventional + prefix mode binds** for
-the default configuration. The contextual mode stays bound as the alternate configuration:
-switching is a port-config change plus a version-scoped re-embed migration, never design work.
-The default's stored dimension is a measured knob (Matryoshka truncation from 4096; validate
-recall on the D22 golden set — D63).
+1. **Location facts** (typed, deterministic from spine + connectors) are resolved per chunk.
+2. A **versioned embedding-input policy** (pure function) selects `body_only` or
+   `location_header` and builds **embedding text** (optional bounded deterministic header +
+   body).
+3. Headers are **conditional** — collision reduction for multi-context docs; omitted when they
+   would dominate short **message_atom** bodies (location still available as facts + P1
+   scalars).
+4. **D79 summaries** are orientation-only: not default embedding text; not grounding sources.
+5. **Vector reuse** keys on `embedding_text_hash + policy_version + embedder_generation`
+   (content-hash-only vector copy is insufficient when location participates in the string).
+6. **Execution:** prepare stamps per chunk; embed in bounded durable batches; representation
+   readiness barrier — not one document-level all-or-nothing location+embed transaction.
+
+**Contextual embedding models** (document-native / late-chunking APIs) are a **documented
+product non-goal** under D80 (interchangeability). Historical design text that treated them as
+a fully designed alternate remains non-operative for product work.
+
+Everything else in this design (blocks, sections, packing, claims-as-needle-index) is
+invariant.
 
 ## 6. Extraction batching — decoupling cost from granularity (D58)
 
@@ -304,13 +314,11 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   it moved — offsets never participate.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
-- **A3 — LLM-derived context is carried forward, never regenerated, for unchanged regions.**
-  Reused chunks keep their stored E1 prefix; unchanged regions keep the prior version's
-  structure/summaries. Two reasons: LLM calls are the cost being avoided, and LLM output is
-  non-deterministic — regenerating it would both pay again and produce different bytes,
-  making any key containing it permanently unmatchable. This is D7's replay-not-recall
-  discipline applied to versioning.
-  Consequently the **reuse key contains only stable components**:
+- **A3 — Derived context is carried forward under replay discipline, not regenerated when
+  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
+  when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
+  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
   facts + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, source kind,
@@ -323,6 +331,13 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   of reused claims, so section roles cannot drift under them silently; and a **deliberate
   structurer bump** (which may reclassify sections — a `body` → `references` role change
   alters what Selection keeps) is a re-extraction boundary by key construction.
+- **Passage embedding reuse (D80 refinement).** Passage identity is the composite
+  `(embedding_input_policy_version, embedding_text_hash, embedder_generation)`. Provider
+  re-embed is required when the hash or embedder generation changes; a policy-only bump that
+  yields the same hash may **attest** the prior vector into a new generation record without a
+  provider call (never leave policy version and vector identity disagreeing on one row).
+  Content-hash-only vector copy is **incorrect** when embedding text includes location.
+  See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.
 
@@ -331,8 +346,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 
 - `chunks`: `version_id`, `block_start`/`block_end` ordinals, `chunk_content_hash` (= hash of
-  the block-hash sequence), `extraction_input_hash` (§7), `section_id`, offsets, the stored
-  context prefix (replayable state), version stamps.
+  the block-hash sequence), `extraction_input_hash` (§7), `section_id`, offsets; **D80**
+  location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
+  `embedding_input_policy_version`, embedder generation / `embedding_ref` stamps (not a full
+  body duplicate of embedding text — D37). Detail: `e1_embedding_input_policy.md` §7.
 - `document_sections`: `block_start`/`block_end` ordinals (the grid representation, §3);
   char spans derived.
 - `document_representations` (D65): `blocks_uri` + `blockizer_version` live on the immutable
@@ -349,9 +366,10 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 | D25 (no gate) | **untouched**: everything is extracted; the role filter is retrieval-side (§5) |
 | D32 (grounding) | **strengthened**: one immutable coordinate system (document.md) with block-grain back-pointers; provenance tiers named honestly |
 | D54–D56 (lifecycle) | **completed**: the reuse mechanics deferred by lifecycle §6 are bound here (A1–A3); the D56 key is corrected to stable components only |
-| D8/D9/D48–D50 (retrieval) | **composes**: claims = needle channel, chunks = passage channel, role scalar filter in P1 defaults |
+| D8/D9/D48–D50 (retrieval) | **composes**: claims = needle channel, chunks = passage channel, role scalar filter in P1 defaults; D80 adds `source_shape` and generation-aware scalars |
+| D63/D80 (embed path) | **D80 binds** conventional interchangeable embedders + embedding-input policy; contextual non-goal |
 | requirements (semchunk) | **honored**: semchunk survives as the packer over blocks |
-| D7/D12/D33 | **followed**: blockizer/chunker versioned; prefix is replayed state; all derivations deterministic or ledgered |
+| D7/D12/D33 | **followed**: blockizer/chunker versioned; embedding-text hashes are replayed state; all derivations deterministic or ledgered |
 
 ## 10. Spikes (measure before locking)
 
@@ -371,17 +389,20 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 7a. **Oversized-block constants** — the token threshold above which an atomic block becomes
    its own oversized chunk, and the deterministic sentence-splitter (library + version, pinned
    like the blockizer) for the pathological-giant-paragraph fallback.
-8. **Stored embedding dimension + prefix quality (D63)** — the model is decided
-   (`qwen3-embedding-8b`, conventional + prefix binds); what remains to measure on the golden
-   set: the Matryoshka-truncated stored dimension (recall vs P1 size/cost) and the context
-   prefix's retrieval contribution. *(Was: the model branch point — resolved by D63.)*
+8. **Stored embedding dimension + embedding-input policy quality (D63/D80)** — model default
+   remains `qwen3-embedding-8b` (conventional). Measure on the golden set: Matryoshka-truncated
+   stored dimension (recall vs P1 size/cost); body_only vs compact/full location header
+   contribution; message-atom filtered vs unfiltered retrieval. See
+   `e1_embedding_input_policy.md` §10.
 
 ## References
 
-Decisions: **D57–D58** (this design), D7, D8, D12, D25, D32, D33, D37, D38, D39, D51,
-D54–D56. Discussion record: `plan/analysis/evidence_lifecycle/stress_test_amendments.md`
-(objection A → A1–A3). Adjacent designs: `e0_files_design.md` (conversion, artifacts),
-`evidence_lifecycle_design.md` (the reuse contract, currency, counting),
+Decisions: **D57–D58** (this design), **D80** (embedding input policy), D7, D8, D12, D25, D32,
+D33, D37, D38, D39, D51, D54–D56, D63. Discussion record:
+`plan/analysis/evidence_lifecycle/stress_test_amendments.md` (objection A → A1–A3);
+`plan/analysis/e1_context_prefix_efficiency/` (D80 analysis + reviews). Adjacent designs:
+`e1_embedding_input_policy.md` (normative embedding input), `e0_files_design.md` (conversion,
+artifacts), `evidence_lifecycle_design.md` (the reuse contract, currency, counting),
 `e2_e3_claims_relations_design.md` (bundles, grounding), `retrieval_design.md` (channels),
 `postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1), §Imposed constraints
 (semchunk).

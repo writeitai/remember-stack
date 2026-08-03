@@ -2041,6 +2041,13 @@ prefix quality", measured on the golden set. P1 index/parameter choices unblock 
 bounded). Questions #3 closes; review finding F8 closes. The embedder port gains its two named
 adapters (OpenRouter-hosted; self-hosted weights).
 
+**Amendment (D80, 2026-08-03).** The product path remains **conventional** embedders with the
+same default model and dimension knob. How location enters the embedding string is **no longer**
+“per-chunk LLM context-prefix stage exists.” **D80** binds a **versioned deterministic
+embedding-input policy** (conditional location headers, typed location facts, durable batch
+embed). **Contextual embedders are a product non-goal** (interchangeability). See
+`plan/designs/e1_embedding_input_policy.md` and D80.
+
 ## D64. Core predicates grow to 16 — `uses` and `reports_to` promoted from the watchlist
 
 **Decision.** The D18 seed core gains two predicates, taking the core from 14 to **16**:
@@ -2922,11 +2929,13 @@ under a hard token ceiling, parent calls reading their own direct blocks plus ch
 with balanced fan-in — parallel, cached per section on content + child-summary + model + prompt
 + version hashes; (4) the **placement hint rides the root reduction call** (null on the degraded
 path, P3 falls back to its type default); (5) **summaries are consumed as orientation only**:
-they feed the E1 context-prefix input and the E2 bundle's D31 "section path + summary" element
-(target + ancestors), but they are **never a grounding source** — no `summary` added-context
+they feed the E2 bundle's D31 "section path + summary" element (target + ancestors) as
+**orientation**, but they are **never a grounding source** — no `summary` added-context
 kind exists, additions must still come from source-derived elements — and they are **excluded
 from extraction-correctness inputs** (`extraction_input_hash`), so re-summarization never
-invalidates or re-extracts unchanged chunks. The §4 output contract (every document gets
+invalidates or re-extracts unchanged chunks. **Amendment (D80):** summaries are **not** default
+E1 **embedding text** inputs (the default embedding-input policy is deterministic location
+facts + body; see `e1_embedding_input_policy.md`). The §4 output contract (every document gets
 `document_sections` rows on the block grid, non-null roles, sidecar + PG index, placement hint)
 is unchanged. Design detail: `plan/designs/e0_files_design.md` §4.1.
 
@@ -3009,3 +3018,66 @@ prefix instruction (describe location only, never restate a summary's assertions
 recorded: carried prefixes keep their summary generation until content re-chunks or the
 prefixer version bumps — the no-fan-out corollary. Detail: `plan/designs/e0_files_design.md`
 §4.1 consumption bullet.
+
+**Supersession note (D80, 2026-08-03).** The default product path **no longer** feeds summaries
+into E1 embedding text or treats free-form location headers as the grounding channel for
+location. Typed source/connector location elements ground under D80; summaries remain
+orientation-only (this decision’s clause 5). Historical Wave-3 text above records the prior
+second-order channel; it is not the D80 default.
+
+## D80. Conventional embedding input is a versioned deterministic policy — conditional location headers, typed location facts, no default location LLM (amends D63 path; refines D56 vector reuse)
+
+**Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
+embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
+re-embed migration. **Contextual embedding models** (APIs that embed a span using undeclared
+document context) are a **documented product non-goal**; they are not required to implement or
+operate RememberStack.
+
+How a chunk becomes embedding text is owned by a **versioned embedding-input policy**
+(`plan/designs/e1_embedding_input_policy.md`), not by a per-chunk LLM “where this sits”
+completion:
+
+1. **Location facts** — typed coordinates (document title, `source_kind`, **`source_shape`**,
+   section title path, role, connector message metadata when present, field provenance).
+2. **Pure policy** — total function selecting `body_only` or `location_header` and rendering
+   optional **bounded deterministic header** + body → **embedding text**.
+3. **Conditional headers** — present when they disambiguate multi-context passages; **absent**
+   for many short **message_atom** bodies so headers do not dominate vectors. Location remains
+   available as spine facts and **P1 filter scalars** (with real recipe filter support).
+4. **No default LLM** on the location/render path. D79 **summaries** stay orientation-only:
+   not default embedding text; not grounding sources.
+5. **E2 grounding:** free-form rendered headers are **not** grounding-union members; **typed
+   source/connector/deterministic location elements** are, so decontextualized claims may still
+   ground location tokens under `body_only`.
+6. **Vector reuse** for passage embeddings requires matching
+   `embedding_text_hash + embedding_input_policy_version + embedder_generation` — content-hash-
+   only vector carry-forward is insufficient when location participates in the embedded string.
+   Extraction identity keys remain free of LLM output (D56).
+7. **Execution:** prepare (facts + render) stamps per chunk; **embed** in capability-bounded
+   batches with durable progress and a representation readiness barrier — not one document-
+   level all-or-nothing location+embed transaction.
+8. **Connector metadata** for message corpora (channel/thread/author/time) is a typed ingest
+   contract (D61 family); policy must not invent those fields.
+
+**Context.** Analysis and dual review of the monolithic LLM context-prefix stage
+(`plan/analysis/e1_context_prefix_efficiency/`, Fable + Codex reviews) showed geometric failure
+on large first ingests, weak marginal value of per-chunk location LLM calls, overloaded
+`context_prefix` consumers, and the need for short-message behavior (Slack). Owner direction:
+no hotfixes; conventional interchangeable embedders; full-scope contracts.
+
+**Amends.** D63 consequences: the “context-prefix stage exists as per-chunk LLM” product path
+is **replaced** by the embedding-input policy; contextual alternate is **non-goal** (not erased
+from history). D79 consumption: summaries do **not** feed default embedding text (supersedes
+the summary→prefix input channel for the default policy). D56: vector reuse rule refined as
+above; block extraction reuse unchanged.
+
+**Consequences.** New binding design `e1_embedding_input_policy.md`; e1 §5 points here; E2
+grounding and retrieval scalar/filter surfaces gain explicit contracts; workers inventory
+drops default per-chunk location LLM; P1 gains `source_shape` and generation-aware scalars;
+implementation is a multi-PR program (schema, policy module, embed graph, connectors), not a
+single handler patch.
+
+**Rejected.** Contextual embedders as product requirement; always-on location headers; default
+per-chunk location LLM; hotfix-only durability inside the old monolith; ungoverned connector
+JSON as Lance filters; free-form header as sole E2 location grounding channel without typed
+replacement.
