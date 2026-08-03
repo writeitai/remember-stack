@@ -114,7 +114,9 @@ class LanceChunkIndex:
             return {}
         ids = ", ".join(f"'{UUID(item)}'" for item in chunk_ids)
         where = f"deployment_id = '{deployment_id}' AND chunk_id IN ({ids})"
-        columns = {field.name for field in self._connection.open_table(_CHUNK_TABLE).schema}
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
         if policy_generation is not None and "policy_generation" in columns:
             where += f" AND policy_generation = '{_escape_literal(policy_generation)}'"
         elif policy_generation is not None and "policy_generation" not in columns:
@@ -150,7 +152,9 @@ class LanceChunkIndex:
         deployment_id = str(UUID(deployment_id))
         if not chunk_ids or not self._has_table(table_name=_CHUNK_TABLE):
             return {}
-        columns = {field.name for field in self._connection.open_table(_CHUNK_TABLE).schema}
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
         if "policy_generation" not in columns or "embedder_generation" not in columns:
             return {}
         ids = ", ".join(f"'{UUID(item)}'" for item in chunk_ids)
@@ -688,11 +692,7 @@ class LanceChunkIndex:
         return self._connection.open_table(table).count_rows()
 
     def _upsert(
-        self,
-        *,
-        table: str,
-        key: str | list[str],
-        payload: list[dict[str, object]],
+        self, *, table: str, key: str | list[str], payload: list[dict[str, object]]
     ) -> None:
         """Create-or-merge rows despite concurrent Lance dataset commits."""
         if not payload:
@@ -782,7 +782,5 @@ def _chunk_search_where(
     if policy_generation is not None and "policy_generation" in columns:
         where += f" AND policy_generation = '{_escape_literal(policy_generation)}'"
     if embedder_generation is not None and "embedder_generation" in columns:
-        where += (
-            f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
-        )
+        where += f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
     return where

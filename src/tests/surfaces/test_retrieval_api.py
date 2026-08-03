@@ -826,10 +826,7 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
                     "   WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
                     " )"
                 ),
-                {
-                    "deployment_id": _DEPLOYMENT_ID,
-                    "chunk_id": chunk["chunk_id"],
-                },
+                {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
             )
 
     # Missing P1 projection text is a failed hydration (delete is simulated by

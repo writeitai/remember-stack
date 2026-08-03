@@ -103,8 +103,8 @@ def test_section_orientation_contains_target_and_ancestor_summaries() -> None:
     assert target in orientation
     assert chapter in orientation
     assert root in orientation
-    assert orientation.index(target) < orientation.index(chapter) < orientation.index(
-        root
+    assert (
+        orientation.index(target) < orientation.index(chapter) < orientation.index(root)
     )
     assert "A sibling must never leak." not in orientation
 
@@ -161,16 +161,16 @@ def test_summaries_do_not_enter_extraction_input_hash() -> None:
         source=_source(
             sections=(
                 _section(section_id=1, path="0", summary=None),
-                _section(
-                    section_id=_TARGET_SECTION.int, path="0.2.1", summary=None
-                ),
+                _section(section_id=_TARGET_SECTION.int, path="0.2.1", summary=None),
             )
         ),
         packed=packed,
         index=0,
         chunker_version="test-chunker",
     )
-    assert with_summaries.extraction_input_hash == without_summaries.extraction_input_hash
+    assert (
+        with_summaries.extraction_input_hash == without_summaries.extraction_input_hash
+    )
 
 
 def test_extraction_bundle_keeps_orientation_separate_from_location() -> None:
@@ -178,9 +178,7 @@ def test_extraction_bundle_keeps_orientation_separate_from_location() -> None:
     document_md = "Target passage."
     chunks = (_chunk(),)
     source = _source(sections=_orientation_sections())
-    text = _bundle_text(
-        source=source, chunks=chunks, index=0, document_md=document_md
-    )
+    text = _bundle_text(source=source, chunks=chunks, index=0, document_md=document_md)
     # Summaries may still appear as orientation in the extractor prompt when
     # the E2 path includes them — but free-form context_prefix must not.
     assert "Existing source-derived prefix." not in text

@@ -207,9 +207,7 @@ def render_embedding_input(*, facts: LocationFacts, body: str) -> EmbeddingInput
         full = _render_full_header(facts=facts)
         compact = _render_compact_header(facts=facts)
         body_len = policy_length(normalized)
-        if body_len <= T_SHORT or (
-            full and policy_length(full) >= ALPHA * body_len
-        ):
+        if body_len <= T_SHORT or (full and policy_length(full) >= ALPHA * body_len):
             header = compact or full or None
         else:
             header = full or compact or None
@@ -236,7 +234,9 @@ def render_embedding_input(*, facts: LocationFacts, body: str) -> EmbeddingInput
     )
 
 
-def location_facts_json(*, facts: LocationFacts, elements: tuple[LocationElement, ...]) -> str:
+def location_facts_json(
+    *, facts: LocationFacts, elements: tuple[LocationElement, ...]
+) -> str:
     """Serialize location facts + elements for PG stamp."""
     payload = {
         "schema": "location_facts.v1",
@@ -275,7 +275,11 @@ def _decide_mode(*, facts: LocationFacts, body: str) -> EmbedHeaderMode:
 
 
 def _has_useful_coordinates(*, facts: LocationFacts) -> bool:
-    if facts.title and facts.title.strip() and facts.title.strip().lower() != "untitled":
+    if (
+        facts.title
+        and facts.title.strip()
+        and facts.title.strip().lower() != "untitled"
+    ):
         return True
     if facts.section_title and facts.section_title.strip():
         return True

@@ -28,9 +28,7 @@ def upgrade() -> None:
         "policy_generation text",
     ):
         name = column_sql.split()[0]
-        op.execute(
-            f"ALTER TABLE chunks ADD COLUMN IF NOT EXISTS {column_sql}"
-        )
+        op.execute(f"ALTER TABLE chunks ADD COLUMN IF NOT EXISTS {column_sql}")
         del name
     op.execute(
         """

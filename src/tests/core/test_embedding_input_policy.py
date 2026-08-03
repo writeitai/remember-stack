@@ -39,7 +39,9 @@ def test_multi_chunk_document_gets_location_header() -> None:
     assert rendered.embedding_text.startswith(rendered.location_header)
     assert rendered.body in rendered.embedding_text
     assert rendered.policy_generation == EMBEDDING_INPUT_POLICY_VERSION
-    assert any(element.kind.value == "document_title" for element in rendered.location_elements)
+    assert any(
+        element.kind.value == "document_title" for element in rendered.location_elements
+    )
 
 
 def test_short_message_atom_without_coords_is_body_only() -> None:
@@ -100,6 +102,7 @@ def test_header_drops_whole_fields_not_mid_slice() -> None:
     assert "Document:" in header or "Channel:" in header
     # No partial field endings from code-point slicing.
     assert not header.endswith((": ", "for th", "2026-"))
+
 
 def test_empty_body_skips() -> None:
     """Empty bodies do not embed."""

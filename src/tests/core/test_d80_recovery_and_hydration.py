@@ -97,9 +97,7 @@ def test_dual_generation_rows_coexist(tmp_path) -> None:
     index.upsert_chunks(
         rows=(
             P1ChunkRow(
-                **base,
-                policy_generation="policy-v1",
-                embedder_generation="emb-a",
+                **base, policy_generation="policy-v1", embedder_generation="emb-a"
             ),
             P1ChunkRow(
                 chunk_id=chunk_id,
@@ -211,9 +209,7 @@ def test_legacy_hydration_strips_embedded_prefix() -> None:
     indexed = f"{header}\n\n{body}"
     assert _strip_legacy_prefix(indexed_text=indexed, location_header=header) == body
     # D80 body-only rows are left untouched.
-    assert (
-        _strip_legacy_prefix(indexed_text=body, location_header=header) == body
-    )
+    assert _strip_legacy_prefix(indexed_text=body, location_header=header) == body
 
 
 def test_provider_outage_classifier_distinguishes_poison() -> None:

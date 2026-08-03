@@ -80,6 +80,7 @@ class E1Settings(BaseSettings):
     # Retired: kept so old env files do not fail validation; unused on D80 path.
     prefix_model: str = Field(default="openai/gpt-5.6-luna")
 
+
 class ChunkHandler:
     """The chunk stage: block grid → section-bounded, anchor-stabilized runs."""
 
@@ -193,9 +194,7 @@ class EmbedChunksHandler:
         prepared: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
         for chunk in chunks:
             body = document_md[chunk.char_start : chunk.char_end]
-            facts = _location_facts(
-                source=source, chunk=chunk, chunk_count=len(chunks)
-            )
+            facts = _location_facts(source=source, chunk=chunk, chunk_count=len(chunks))
             rendered = render_embedding_input(facts=facts, body=body)
             prepared.append((chunk, rendered))
 
@@ -447,9 +446,7 @@ class EmbedChunksHandler:
                     source_shape=source.source_shape,
                 )
             )
-            facts = _location_facts(
-                source=source, chunk=chunk, chunk_count=chunk_count
-            )
+            facts = _location_facts(source=source, chunk=chunk, chunk_count=chunk_count)
             facts_json = location_facts_json(
                 facts=facts, elements=rendered.location_elements
             )
@@ -486,9 +483,7 @@ class EmbedChunksHandler:
         updates: list[EmbeddingUpdate] = []
         for chunk, rendered in batch:
             code = skip_code or rendered.skip_reason or "skip"
-            facts = _location_facts(
-                source=source, chunk=chunk, chunk_count=chunk_count
-            )
+            facts = _location_facts(source=source, chunk=chunk, chunk_count=chunk_count)
             facts_json = location_facts_json(
                 facts=facts, elements=rendered.location_elements
             )
