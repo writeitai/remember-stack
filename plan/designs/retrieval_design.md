@@ -146,13 +146,14 @@ language-specific morphology requires a measured per-language policy rather than
 English default.
 
 A chunk nomination is still subject to D48. Postgres confirms that the chunk belongs to the
-lineage's current ready version and its current ready representation; P1 then supplies the text
-body it owns. The query engine verifies passage embedding generation (policy version +
-`embedding_text_hash` + embedder generation) against spine stamps, returns optional location
-header separately from the source body when present, preserves source offsets and
-document/version/representation handles, and counts every failed confirmation as a hydration
-drop. The result is evidence grain but has its own typed `chunks` payload: a chunk is
-source text, never an atomic claim and never an adjudicated fact.
+lineage's current ready version and its current ready representation under the active
+`(policy_generation, embedder_generation)` pointer; P1 then supplies the **body text** it owns
+(D80: P1 text column is normalized body only — not header+body). The query engine verifies
+`embedding_text_hash` against the PG stamp, returns optional `location_header` **separately**
+from the source body when present, preserves source offsets and document/version/representation
+handles, and counts every failed confirmation as a hydration drop. The result is evidence grain
+but has its own typed `chunks` payload: a chunk is source text, never an atomic claim and never
+an adjudicated fact.
 
 **Amendment (D80):** passage vectors are built under the embedding-input policy
 (`e1_embedding_input_policy.md`). P1 filter scalars expand beyond `section_role` to include

@@ -240,21 +240,28 @@ unordered rule.
 
 ### 4.5 Migration triggers and vector reuse (single rule)
 
-**Passage representation generation** is the composite identity:
+**Three grains — do not collapse them:**
 
-```text
-passage_generation = (
-  embedding_input_policy_version,
-  embedding_text_hash,
-  embedder_generation
-)
-```
+| Name | Grain | Contents |
+|---|---|---|
+| **embedder_generation** | deployment / model config | model id, dimension, metric, provider params |
+| **policy_generation** | deployment policy artifact | `embedding_input_policy_version` only |
+| **chunk embedding identity** | per chunk | `(chunk_id, policy_generation, embedding_text_hash, embedder_generation)` |
 
-A prior vector may be **attested into** a new passage generation **without a
-provider call** only when `embedding_text_hash` and `embedder_generation` both
-match and the implementation records the new policy version on a **new**
-generation record (zero-call copy with provenance). It must **not** overwrite a
-single row so that policy version and vector identity disagree.
+**Active cutover pointer** (deployment or query scope) is
+`(policy_generation, embedder_generation)` — **not** a per-chunk hash. A corpus is
+“on” a policy+embedder pair; each chunk under that pair must have a matching
+row (or typed skip).
+
+**P1 row key (v1):** `(chunk_id, policy_generation, embedder_generation)`.  
+Store `embedding_text_hash` on the row for verify/attestation; do **not** put the
+hash in the active pointer. Recovery “exact match” means: P1 row exists for that
+triple **and** its stored hash equals the prepared hash for the chunk.
+
+A prior vector may be **attested** into a new `policy_generation` **without a
+provider call** only when `embedding_text_hash` and `embedder_generation` match
+and a **new** P1/PG generation row is written (zero-call copy with provenance).
+Never leave policy version and vector identity disagreeing on one overwritten row.
 
 | Change | Action |
 |---|---|
@@ -290,7 +297,7 @@ recipe can filter on does **not** satisfy the retrieval contract.
 - `source_kind` (connector)  
 - `source_shape`  
 - `section_role` (existing D58 pattern)  
-- active **embedder generation** id (for generation-safe search)
+- **policy_generation** and **embedder_generation** (filter/search only the active pair)
 
 ### 5.3 Source-specific Lance dimensions (only with recipe support)
 
@@ -354,19 +361,24 @@ is a **non-goal**, not a “later” hedge in binding text.
 
 Postgres holds **keys and stamps**, not a second full body:
 
-- location-facts snapshot (typed; may be TOAST-bounded JSON with schema version)  
-- optional **bounded header** string (not full body duplicate)  
-- `embedding_text_hash`, `embedding_input_policy_version`  
-- embedder generation / `embedding_ref` pointers  
+- location-facts snapshot + **LocationElement[]** (or equivalent) for E2  
+- optional **bounded header** string (`location_header`; not body)  
+- `embedding_text_hash`, `embedding_input_policy_version` / policy_generation  
+- embedder generation / `embedding_ref`  
 - offsets into `document.md` for the body (existing)
 
-**Full embedding text** for serving lives with the vector estate (P1) as today
-for passage text+vector; do not require PG to store `header+body` for every chunk
-at corpus scale.
+**P1 text column (bound decision — no implementer choice):** store the
+**normalized body only** (same bytes as `document.md` slice after normalize).  
+Do **not** put `location_header` into the P1 text/BM25 column. Vectors are still
+computed over **embedding text** (header+body when mode says so); the header is
+retained on the PG stamp and returned **separately** on hydration when present.
+That keeps short-message BM25 from being dominated by headers and matches
+“header returned separately from source body” in retrieval design.
 
-**Generation-safe migration:** re-embed builds a new P1 generation; cutover is
-atomic at query generation, not silent in-place overwrite of the only row without
-a generation key (amends naive upsert-by-chunk_id as the sole migration story).
+**Generation-safe migration:** P1 rows keyed by
+`(chunk_id, policy_generation, embedder_generation)`; active pointer is
+`(policy_generation, embedder_generation)`. Cutover flips the pointer; no sole
+in-place upsert-by-`chunk_id` as the migration story.
 
 ---
 

@@ -1295,7 +1295,9 @@ CREATE TABLE chunks (
   chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
   embedding_ref   text,                        -- opaque Lance row key for this chunk's vector under active generation (vectors in P1 — D8)
   embedding_version text,                      -- LEGACY single embedder stamp; prefer passage generation records (D80 dual-generation)
-  passage_generation_id text,                  -- active composite generation id (policy + text hash + embedder) when dual-generation table not used
+  policy_generation text,                      -- embedding_input_policy_version (active pair half)
+  -- embedder half lives in embedding_version / pipeline_component_versions; P1 key is
+  -- (chunk_id, policy_generation, embedder_generation) per e1_embedding_input_policy.md §4.5
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
