@@ -1,7 +1,8 @@
 # Agent retrieval surface — binding design
 
-*2026-08-02, revision 2 (addresses the Grok-4.5 and Codex REQUEST-CHANGES
-reviews of revision 1; both review transcripts are linked from the PR).
+*2026-08-02, revision 3 (two full dual-review rounds: Grok-4.5 and Codex
+both reviewed revisions 1 and 2; every blocking finding is bound below;
+all four review transcripts are linked from the PR).
 Binding once accepted. Extends `retrieval_design.md` (which owns
 nomination/fusion/hydration internals) with the complete agent-facing tool
 surface. Rationale and evidence: `plan/analysis/
@@ -46,12 +47,14 @@ call budget minimal-effort agents actually spend.*
    "what currently holds…" (D41 routing discipline); each description
    states *when* to reach for the tool. Descriptions never mention any
    benchmark.
-7. **Honest negatives, bounds, and continuations.** Every list-returning
-   tool: bounded k (JSON-schema bounds per §3), typed `negative` on empty
-   (including a disambiguation negative for unresolved/ambiguous entity
-   parameters), `truncation` populated whenever a bound elided results,
-   `dropped_by_hydration` counted, worst-case envelope size stated in the
-   recipe's design note.
+7. **Honest negatives and bounds.** Every list-returning tool: bounded
+   k (JSON-schema bounds per §3), typed negatives per principle 9 and
+   D49's fixed taxonomy, `truncation` populated whenever a bound elided
+   results, `dropped_by_hydration` counted, and a worst-case envelope
+   size stated in each Batch's implementation note (rule of thumb bound:
+   k x evidence_per_fact x max claim length; hard total evidence budget
+   60 records per envelope). Full continuation tokens are a recorded
+   deferral (§6) — `truncation` is the v1 contract.
 8. **Benchmark honesty.** No dataset-specific logic in the surface. The
    benchmark consumes the same catalog as every other agent.
 9. **Entity-parameter resolution policy (uniform).** Tools taking
@@ -59,8 +62,11 @@ call budget minimal-effort agents actually spend.*
    ladder implements exact-normalized alias matching only (T0); this
    design inherits that limit and records the T1–T3 upgrade as a separate
    design (§6). If resolution is ambiguous (multiple candidates above
-   floor) the tool returns the ranked candidates and a disambiguation
-   negative instead of guessing; if resolution fails, a typed negative.
+   floor) the tool returns the ranked candidates in `ranking` plus a
+   `NegativeKind.BOUNDARY` negative whose explanation names the
+   candidates (D49's taxonomy is fixed — `unknown_entity` / `known_empty`
+   / `boundary` — and this design amends nothing); resolution failure
+   returns `unknown_entity`.
    Deterministic: same store, same string → same outcome.
 
 ## 2. Naming alignment with the existing corpus
@@ -110,13 +116,16 @@ person or thing."
 **`claims_as_of`** — `from: timestamp (required)`, `to: timestamp
 (required, ≥ from)`, `query: string (optional)`, `k: integer [1..50]
 default 20`. Evidence grain; claims whose validity interval intersects
-[from, to]. Interval semantics: `valid_kind='open'` intervals
-participate (null `valid_until` = still open, not unknown); only claims
-with `claim_valid_precision='unknown'` (no stamp) are excluded, and the
-envelope surfaces `excluded_unstamped` as an exact count so agents know
-what the window could not see. Storage decision (binding): a partial
-Postgres index on `(deployment_id, claim_valid_from, claim_valid_until)
-WHERE claim_valid_kind IS NOT NULL` — stamped claims are a minority
+[from, to]. Interval semantics keyed on **`claim_valid_precision`** (the correct
+column — revision 2 said `valid_kind`, which reviewers flagged): claims
+with `claim_valid_precision = 'unknown'` are excluded and counted in an
+exact `excluded_unstamped` figure; every other precision participates,
+with a null `claim_valid_until` treated as a still-open interval, not as
+unknown. Storage decision (binding): a partial Postgres index on
+`(deployment_id, claim_valid_from, claim_valid_until)
+WHERE claim_valid_precision <> 'unknown'` — this deliberately amends the
+D41-era default of "no claim-validity index" (decisions.md entry when
+Batch B lands) — stamped claims are a minority
 (~33% measured), the partial index is small, and PG-side interval
 filtering followed by bounded semantic ranking avoids the recall ceiling
 of global-semantic-then-filter. P1 valid-time scalars remain a recorded
@@ -140,9 +149,20 @@ semantic nomination over the P1 facts channel (`search_facts`,
 observations + relations — exposed at last) → Postgres confirmation
 (current, non-deleted, supersession status included) → per-fact evidence
 hydration per principle 5 (supporting + contradicting, capped,
-source-diverse, exact totals). Output: **composite envelope** — one part
-carrying `facts[]` (current-fact grain, support flags per D54), one part
-carrying the backing `evidence[]` (evidence grain). Lexical nomination
+source-diverse, exact totals). Output shape (bound to the real envelope
+model — `EnvelopePart` is single-grain and carries no paths/edges, so
+parts are NOT used): a **flat envelope**, `output_grain = CURRENT` (the
+grain `relation_current` uses), `facts[]` and backing `evidence[]` in
+their existing top-level fields, plus an explicit association list
+`fact_evidence[]` of `(fact_id, claim_id, stance)` records with
+per-stance `returned`/`total` counts per fact, so nothing about which
+claim backs which fact is implied by ordering. `evidence_per_fact`
+minimum is **1** (zero would violate principle 5). `answer_intent =
+CURRENT_FACT` (the intent `relation_current` declares). D50 descriptor:
+single-step chain invoking the new compound op `current_context`
+(recipes require a non-empty chain; a compound op is a one-step chain),
+version 1. The recipe linter's grain tables gain the compound-op →
+grain registrations (recorded rule change, Batch C). Lexical nomination
 over fact text ships only if fact text is already indexed in P1;
 otherwise semantic-only first, lexical recorded in §6. Description:
 "what currently holds about the things the question mentions — with the
@@ -155,18 +175,26 @@ testimony behind it."
 15`, `hops: integer [1..2] default 2`. Also a **compound engine
 operation** (revision 1 sketched it as a recipe chain; both reviews
 correctly found that incompatible with executor dataflow and
-`combine_evidence` type guards). Inside the operation: resolve both
-entities per principle 9 → `graph_path` (two entities) or bounded
-`graph_neighborhood` (one) → hydrate each surviving edge's evidence per
-principle 5 (both stances, capped) → run the question-context retrieval →
-assemble a **composite envelope**: part 1 = claims+chunks context,
-part 2 = `paths`/`edges` with their backing evidence and D54 support
-flags. Edge policy (revised per D54): edges with withdrawn or no current
-supporting evidence are **kept and flagged**, never silently dropped;
-the tool description instructs that edges are structure — quotable
-answers come from the evidence parts. Bounded fan-out: top-N edges by
+`combine_evidence` type guards). Adds `evidence_per_fact: integer [1..5] default 3` (same policy as
+`current_context`; revision 2 invoked the policy without the
+parameter). Inside the operation: resolve both entities per principle 9
+→ `graph_path` (two entities) or bounded `graph_neighborhood` (one) →
+hydrate each edge's evidence per principle 5 (both stances, capped) →
+run the question-context retrieval → assemble a **flat envelope**
+(`EnvelopePart` cannot carry paths/edges, so parts are not used):
+`output_grain = EVIDENCE`, top-level `evidence[]` + `chunks[]` (the
+question context union, deduplicated by id) plus top-level `paths[]` /
+`edges[]`, with the same explicit `fact_evidence[]` association records
+for edge backing. `GraphEdge` gains the D54 support marker (model
+addition, Batch D). Edge policy per D54: edges whose support was
+**withdrawn** are kept and flagged; the D54 flag distinguishes them —
+there is no blanket keep of structurally unsupported artifacts beyond
+what D54 requires. The description instructs that edges are structure —
+quotable answers come from `evidence[]`. Bounded fan-out: top-N edges by
 existing ranking, N fixed by `k`. Typed negative when no path exists.
-Entity-free v2 stays deferred (§6).
+`answer_intent = ASSERTION_HISTORY`; D50 descriptor: one-step chain on
+compound op `multi_hop_context`, version 1; linter grain registration as
+in §3.2. Entity-free v2 stays deferred (§6).
 
 ### 3.4 Recall mechanics inside existing hybrids (Batch E)
 
@@ -179,10 +207,15 @@ Entity-free v2 stays deferred (§6).
   re-nomination round exists (revision 1's wording implied one; it
   returns identical pools and is withdrawn).
 - **Near-duplicate grouping (deterministic v1).** Before the final cut,
-  candidates are grouped by exact normalized-text equality (normalizer
-  version pinned in the recipe version string); the highest-ranked
-  member represents the group and carries `corroboration_count` plus the
-  grouped claim ids, so source diversity is preserved, not erased.
+  candidates are grouped by exact normalized-text equality with the
+  normalizer pinned **in this design**: NFKC → casefold → collapse
+  whitespace runs to single spaces → strip leading/trailing punctuation.
+  (Recipe `version` stays an integer; the normalizer is versioned by
+  bumping the recipe version if it ever changes.) The highest-ranked
+  member represents the group and carries `corroboration_count` counting
+  **distinct source lineages only** (same-document repetition is not
+  independent corroboration, per D54's spirit) plus the grouped claim
+  ids — which are PG-confirmed like every returned claim id.
   Embedding-similarity grouping is deferred (§6) — it is
   non-deterministic across index states.
 - Both mechanics change recipe behavior → recipe version bumps → tool
@@ -233,6 +266,10 @@ Entity-free v2 stays deferred (§6).
 | Negative-testimony polarity ("X does not…") | relations lack polarity; boundary recorded — such content is reachable only as claims/observations today | polarity modeling design |
 | Absence/exhaustive queries ("did X ever…") | `typed_absence`/`scan` primitives exist engine-side; agent surface needs its own cost design | dedicated design |
 | Session/transcript fetch | privacy grain + size budget design needed | dedicated design |
+| Mention-record transcript tool | mentions stay internal joins in this wave | first consumer needing mention provenance itself |
+| Fact as-of (point-in-time facts) | supersession history exists; surface needs its own design | first as-of question class in production traces |
+| Object-side relation lookup ("who mentors X") | needs reverse-index decision | measured demand in traces |
+| Document-by-id fetch | chunk/pages paths cover current need | first consumer needing raw document metadata |
 | Pagination/continuation beyond truncation, envelope size budgets | truncation contract covers v1 bounds; full continuation tokens need executor support | first agent consumer hitting bounds in practice |
 | Lexical facts nomination; embedding-similarity dedup; entity-free multi-hop v2; `brief`/`contradictions` recipes | see sections above | per-item notes above |
 
