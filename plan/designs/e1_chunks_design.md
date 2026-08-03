@@ -331,10 +331,13 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   of reused claims, so section roles cannot drift under them silently; and a **deliberate
   structurer bump** (which may reclassify sections — a `body` → `references` role change
   alters what Selection keeps) is a re-extraction boundary by key construction.
-- **Passage embedding reuse (D80 refinement).** Vectors are reused only when
-  `embedding_text_hash`, `embedding_input_policy_version`, and `embedder_generation` all
-  match. Content-hash-only vector copy is **incorrect** when embedding text includes location
-  (same body in a new section/channel must re-embed). See `e1_embedding_input_policy.md` §4.5.
+- **Passage embedding reuse (D80 refinement).** Passage identity is the composite
+  `(embedding_input_policy_version, embedding_text_hash, embedder_generation)`. Provider
+  re-embed is required when the hash or embedder generation changes; a policy-only bump that
+  yields the same hash may **attest** the prior vector into a new generation record without a
+  provider call (never leave policy version and vector identity disagreeing on one row).
+  Content-hash-only vector copy is **incorrect** when embedding text includes location.
+  See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.
 

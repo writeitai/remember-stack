@@ -153,30 +153,45 @@ scalars** (§5) may be projected for query-time filters.
 
 ### 4.3 Decision procedure (total function)
 
-The policy is a **total pure function** of `(location_facts, body, document_stats)`.
-Precedence is **ordered first match** (not ambiguous “all that match”):
+The policy is a **total pure function** of a frozen input snapshot:
 
-1. If body is empty after normalize → **do not embed**; typed skip/fail.  
-2. If `source_shape = message_atom` **and** useful message scalars are projected
-   for filters **and** body length ≤ `T_short` → default **`body_only`**
-   (**provisional default**; acceptance requires eval on filtered *and* unfiltered
-   retrieval for elliptical messages — see §10). If eval fails, prefer
-   **`location_header`** with **compact** header (channel/author/time only).  
-3. If no useful coordinates (no title, no section titles, no message refs, no
-   discriminative source_shape) → **`body_only`**.  
+```text
+(location_facts, body, document_stats, policy_constants)
+```
+
+`document_stats` (e.g. `chunk_count`) is snapshotted at prepare time and is part of
+the re-render trigger set. The function does **not** read live recipe filter
+capability or other undeclared runtime state (that would break purity and
+interchangeability).
+
+Precedence is **ordered first match**:
+
+1. If body is empty after normalize → **typed skip** (no embed); readiness records
+   the skip code.  
+2. If `source_shape = message_atom` and body length ≤ `T_short`:  
+   - if compact message coordinates exist (channel/author/time refs) →  
+     **`location_header` with compact header** when unfiltered elliptical-message
+     eval has not yet passed; after that eval accepts **body_only+scalars**, a
+     **new policy version** may select `body_only` here.  
+   - else → **`body_only`**.  
+   Until the §10 message-atom eval ships, the **bound provisional default** for
+   short message atoms **with** coordinates is **compact header** (not body_only),
+   so elliptical lines like “yes, ship it” keep location in the vector string.  
+3. If no useful coordinates → **`body_only`**.  
 4. If multi-chunk document (`chunk_count ≥ 2`) with real section title path or
-   transcript/thread/channel_export shape → **`location_header`** (full or compact
-   per body length).  
+   transcript/thread/channel_export shape → **`location_header`** (full, or compact
+   when body length ≤ `T_short` **or** rendered full header length ≥ α·body length).  
 5. If single-chunk long-form `document` with a real title and body length >
    `T_short` → **`location_header`** with title (+ role if present).  
 6. Else → **`body_only`**.
 
-**Compact header** (for short bodies under multi-context docs): fixed small field
-set (e.g. channel_ref, author_ref, timestamp) under `H_max`; never multi-line essays.
+**Compact header:** fixed small field set (channel_ref, author_ref, timestamp or
+title+role) under `H_max`; never multi-line essays. The α dominance guard is
+applied **inside** step 4–5 when choosing full vs compact, not as a separate
+unordered rule.
 
 **Starting hypotheses (not frozen until measured and versioned):**
-`T_short ≈ 48` policy-counter units, `H_max ≈ 48`, α≈1.0 as a dominance guard
-(if header length ≥ α·body length, force compact or body_only).
+`T_short ≈ 48` policy-counter units, `H_max ≈ 48`, α≈1.0.
 
 ### 4.4 Header content rules
 
@@ -191,32 +206,43 @@ set (e.g. channel_ref, author_ref, timestamp) under `H_max`; never multi-line es
   **version-scoped** metadata (or a re-render trigger on title change); do not
   silently re-read a live mutable title without a migration event.
 
-### 4.5 Migration triggers
+### 4.5 Migration triggers and vector reuse (single rule)
+
+**Passage representation generation** is the composite identity:
+
+```text
+passage_generation = (
+  embedding_input_policy_version,
+  embedding_text_hash,
+  embedder_generation
+)
+```
+
+A prior vector may be **attested into** a new passage generation **without a
+provider call** only when `embedding_text_hash` and `embedder_generation` both
+match and the implementation records the new policy version on a **new**
+generation record (zero-call copy with provenance). It must **not** overwrite a
+single row so that policy version and vector identity disagree.
 
 | Change | Action |
 |---|---|
-| Body bytes change | Re-render; embed iff `embedding_text_hash` changes |
-| Location field that affects header/mode changes | Re-render; embed iff hash changes |
-| Policy version changes | Re-render in-scope chunks; embed iff hash changes under same embedder generation |
-| Scalar-only metadata (filter fields not in embedding text) | Update P1 scalars / PG; **no** re-embed |
-| Embedder generation changes | Re-embed + generation-safe P1 cutover (§8) |
+| Body bytes change | Re-render; new hash ⇒ provider embed under active generations |
+| Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
+| Policy version changes | Re-render all in-scope chunks; if hash unchanged and embedder generation unchanged, **zero-call vector attestation** into the new `passage_generation`; else provider embed |
+| Scalar-only metadata (not in embedding text) | Update P1 scalar projection / PG; **no** re-embed |
+| Embedder generation changes | Provider re-embed + generation-safe P1 cutover (§7) |
 | Summary-only regeneration | No render/embed |
-
-**Vector reuse (amends naive D56 content-only vector copy for location-aware
-inputs):** a prior vector may be reused only when
-
-```text
-embedding_text_hash matches
-AND embedding_input_policy_version matches
-AND embedder_generation matches
-```
+| `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
 Content-hash-only vector carry-forward is **insufficient** when embedding text
-includes location: the same body in a new channel/section must not keep the old
-vector. Block-level **extraction** reuse (D56 A1–A3 for claims) remains content-
-addressed without LLM output in identity keys; **embedding** reuse is keyed as
-above. Stored rendered headers (if any) are replayed bytes under A3 discipline
-when the hash matches — they are not regenerated by an LLM.
+includes location. Block-level **extraction** reuse (D56 A1–A3) remains
+content-addressed without LLM output in identity keys.
+
+**Dual-generation cutover:** during re-embed, PG and P1 hold **versioned per-chunk
+embedding records** (or an equivalent generation manifest). Query targets an
+**active passage_generation pointer** at deployment/query scope. Cutover flips
+the pointer only when required records exist; old generation remains until
+retirement. Do not use sole in-place upsert-by-`chunk_id` as the migration story.
 
 ---
 

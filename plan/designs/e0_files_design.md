@@ -213,8 +213,10 @@ a path/role to read.
   ```
 
 **Summaries: kept** (not dropped). They are per-*section* (cheap, not per-chunk), and they earn their
-keep as **context, never as facts**: they feed E1 context prefixes, agent navigation, and
-"why-was-this-selected" explainability. They are versioned with the structurer. Crucially, the
+keep as **context, never as facts**: they feed agent navigation, E2 orientation (bundle), and
+"why-was-this-selected" explainability. **D80:** they do **not** feed default E1 embedding text
+(the embedding-input policy is deterministic location facts + body; see
+`e1_embedding_input_policy.md`). They are versioned with the structurer. Crucially, the
 *global* high-level picture of the corpus is the **K plane's** job (compiled knowledge over
 relations/evidence), **not** these per-document summaries — so the high-level picture never depends
 on summary quality, but the summaries usefully enrich local navigation.
@@ -401,28 +403,24 @@ unchanged):
   exactly what placement needs — the title, source kind, and the child one-liners. On the
   degraded path (no summaries), placement is null and the P3 projection falls back to its
   type-based default, as it already must for failed structuring.
-- **Consumption: orientation only, never load-bearing.** Summaries feed the E1
-  context-prefix input (the prefix prompt gains the target + ancestor one-liners, size-capped)
-  and enter the **E2 bundle** as the D31 "section path + summary" element — target summary
-  plus ancestor one-liners, so a chunk in subchapter 8.2 sees the book's and chapter 8's
-  lines. Two hard rules keep this sound:
+- **Consumption: orientation only, never load-bearing.** Summaries enter the **E2 bundle** as
+  the D31 "section path + summary" element — target summary plus ancestor one-liners, so a
+  chunk in subchapter 8.2 sees the book's and chapter 8's lines — for **orientation only**.
+  **D80 supersession:** summaries do **not** enter default E1 **embedding text** (no summary→
+  embedding-header channel on the product path). Two hard rules keep this sound:
   1. **A summary is never a grounding source.** Summaries are abstractive LLM text; if
      `added_context` could cite them, an invented phrase in a summary could be laundered into
-     a claim through the membership-only D32 layer-2 check. The allowed `added_context`
-     source kinds stay exactly `header|neighbour|prefix` (+ `hint` where designed) — **no
-     `summary` kind exists**. The model may *read* summaries to choose an interpretation; any
-     text it *adds* must still come from source-derived elements. (This re-states §4's
-     "context, never as facts" as an enforced contract, and hardens the same rule already
-     implicit for the prefix.)
+     a claim through the membership-only D32 layer-2 check. Allowed grounding kinds follow
+     D80: typed source/connector/deterministic location elements + body/neighbours — **no
+     `summary` kind**, and free-form location headers are not grounding members. The model may
+     *read* summaries to choose an interpretation; any text it *adds* must still come from
+     source-derived elements.
   2. **Summaries are excluded from extraction-correctness inputs.** They do not enter
      `extraction_input_hash` (the same exclusion D56 already applies to LLM-derived context),
      so a re-summarization — including an ancestor summary changing because a sibling leaf
      was edited — never silently invalidates or re-extracts unchanged chunks. Better
      summaries improve *future* extractions; they never fan out into document-wide
-     reprocessing. Corollary (2026-07-29, Wave-3 review): the same no-fan-out rule means
-     better summaries reach the **prefix** only through re-chunked content or a
-     prefixer-version bump — a carried prefix keeps the summary generation it was written
-     under indefinitely, by design.
+     reprocessing.
 
   **Accepted second-order channel (2026-07-29, Wave-3 review).** Because summaries feed the
   E1 prefix input and the stored prefix is itself a quotable `added_context` element, a
