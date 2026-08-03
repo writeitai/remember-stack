@@ -33,7 +33,8 @@ call budget minimal-effort agents actually spend.*
    nominate-then-confirm; projections never leak unconfirmed text.
 5. **Derived facts ship with their evidence — both stances.** Tools
    *introduced by this design* that return observations/relations include
-   their evidence claims: up to `evidence_per_fact` (default 3, max 5)
+   their evidence claims: up to `evidence_per_fact` (bounds [1..5],
+   default 3 — uniform wherever the parameter appears)
    supporting claims chosen source-diverse by existing ranking, plus up to
    the same cap of `stance='contradicts'` claims when they exist, with the
    exact totals stated so the agent knows what was elided. Evidence
@@ -65,7 +66,8 @@ call budget minimal-effort agents actually spend.*
    ladder implements exact-normalized alias matching only (T0); this
    design inherits that limit and records the T1–T3 upgrade as a separate
    design (§6). If resolution is ambiguous (multiple candidates above
-   floor) the tool returns the ranked candidates in `ranking` plus a
+   floor) the tool returns the ranked candidates in `entities`
+   (`EntityCandidate` records — the field built for them) plus a
    `NegativeKind.BOUNDARY` negative whose explanation names the
    candidates (D49's taxonomy is fixed — `unknown_entity` / `known_empty`
    / `boundary` — and this design amends nothing); resolution failure
@@ -145,7 +147,7 @@ the source passage surrounding a hit."
 ### 3.2 Current-state context (Batch C)
 
 **`current_context`** — `query: string (required)`, `k: integer [1..30]
-default 15`, `evidence_per_fact: integer [0..5] default 3`. Implemented
+default 15`, `evidence_per_fact: integer [1..5] default 3`. Implemented
 as a **compound engine operation** (like the S5 hydrate chain — one
 `query_engine` method, one recipe step; the chain linter is not bent):
 semantic nomination over the P1 facts channel (`search_facts`,
@@ -154,14 +156,17 @@ observations + relations — exposed at last) → Postgres confirmation
 hydration per principle 5 (supporting + contradicting, capped,
 source-diverse, exact totals). Output shape (bound to the real envelope
 model — `EnvelopePart` is single-grain and carries no paths/edges, so
-parts are NOT used): a **flat envelope**, `output_grain = CURRENT` (the
+parts are NOT used): a **flat envelope**, `output_grain = Grain.FACT` (the
 grain `relation_current` uses), `facts[]` and backing `evidence[]` in
 their existing top-level fields, plus an explicit association list
-`fact_evidence[]` of `(fact_id, claim_id, stance)` records with
+`fact_evidence[]` of `(fact_id, claim_id, stance)` records — a new
+optional Envelope model field (model addition, Batch C, parallel to the
+GraphEdge D54 marker; optional-with-default keeps compatibility) — with
 per-stance `returned`/`total` counts per fact, so nothing about which
 claim backs which fact is implied by ordering. `evidence_per_fact`
 minimum is **1** (zero would violate principle 5). `answer_intent =
-CURRENT_FACT` (the intent `relation_current` declares). D50 descriptor:
+RecipeAnswerIntent.CURRENT_FACTS` (the intent `relation_current`
+declares). D50 descriptor:
 single-step chain invoking the new compound op `current_context`
 (recipes require a non-empty chain; a compound op is a one-step chain),
 version 1. The recipe linter's grain tables gain the compound-op →
@@ -185,7 +190,7 @@ parameter). Inside the operation: resolve both entities per principle 9
 hydrate each edge's evidence per principle 5 (both stances, capped) →
 run the question-context retrieval → assemble a **flat envelope**
 (`EnvelopePart` cannot carry paths/edges, so parts are not used):
-`output_grain = EVIDENCE`, top-level `evidence[]` + `chunks[]` (the
+`output_grain = Grain.EVIDENCE`, top-level `evidence[]` + `chunks[]` (the
 question context union, deduplicated by id) plus top-level `paths[]` /
 `edges[]`, with the same explicit `fact_evidence[]` association records
 for edge backing. `GraphEdge` gains the D54 support marker (model
@@ -195,7 +200,7 @@ there is no blanket keep of structurally unsupported artifacts beyond
 what D54 requires. The description instructs that edges are structure —
 quotable answers come from `evidence[]`. Bounded fan-out: top-N edges by
 existing ranking, N fixed by `k`. Typed negative when no path exists.
-`answer_intent = ASSERTION_HISTORY`; D50 descriptor: one-step chain on
+`answer_intent = RecipeAnswerIntent.ASSERTION_HISTORY`; D50 descriptor: one-step chain on
 compound op `multi_hop_context`, version 1; linter grain registration as
 in §3.2. Entity-free v2 stays deferred (§6).
 
