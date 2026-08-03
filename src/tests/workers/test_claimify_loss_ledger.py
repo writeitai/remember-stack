@@ -55,7 +55,8 @@ _KEEP_LAUNCH = "Project Atlas launched in 2024 in three markets."
 _KEEP_STANCE = "The team considers it a runaway success."
 _DROP_ADVICE = "You should try it yourself."
 _KEEP_CAROLINE = "Caroline: I went to the launch."
-_SEARCHED_SOURCE_ELEMENTS = ["target_chunk", "document_header", "context_prefix"]
+# D80: free-form context_prefix is not a grounding union member.
+_SEARCHED_SOURCE_ELEMENTS = ["target_chunk", "document_header"]
 
 
 def _source() -> ChunkSource:
@@ -335,8 +336,14 @@ def test_target_chunk_addition_with_wrong_header_label_is_accepted() -> None:
     assert result.added_context[0].source_kind == "header"
 
 
-def test_prefix_addition_with_wrong_neighbour_label_is_accepted() -> None:
-    """Attribution is telemetry; union membership is the acceptance gate."""
+def test_freeform_prefix_addition_is_rejected_under_d80() -> None:
+    """D80: free-form context_prefix is not a grounding union member.
+
+    A token that exists only in the legacy prefix blob (and not body/header
+    or typed LocationElements) must fail membership even with a wrong tag.
+    """
+    from rememberstack.workers.e2 import GroundingRejection
+
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Melanie considers Project Atlas a runaway success.",
@@ -347,9 +354,8 @@ def test_prefix_addition_with_wrong_neighbour_label_is_accepted() -> None:
         )
     )
 
-    assert isinstance(result, ClaimRecord)
-    assert result.added_context[0].text == "Melanie"
-    assert result.added_context[0].source_kind == "neighbour"
+    assert isinstance(result, GroundingRejection)
+    assert "melanie" in result.failed_tokens
 
 
 def test_accept_path_still_returns_claim_record() -> None:

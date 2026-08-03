@@ -58,7 +58,7 @@ def test_input_requires_explicit_identity_and_rejects_empty_version() -> None:
         RegisterComponentVersionInput.model_validate({**_INPUT_VALUES, "version": ""})
 
 
-def test_pipeline_component_is_the_exact_closed_twenty_three_member_enum() -> None:
+def test_pipeline_component_is_the_exact_closed_twenty_four_member_enum() -> None:
     """Accept every schema enum member and reject an undeclared component."""
     expected = (
         "ingester",
@@ -68,6 +68,7 @@ def test_pipeline_component_is_the_exact_closed_twenty_three_member_enum() -> No
         "crossreferencer",
         "chunker",
         "context_prefixer",
+        "embedding_input_policy",
         "extractor",
         "grounder",
         "resolver",
