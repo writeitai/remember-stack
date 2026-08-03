@@ -36,7 +36,7 @@ properties:
 
 ## Coverage matrix (spine × access path), as of `0ef5454`
 
-| Spine | Free-text semantic | Exact text (BM25) | By entity | By time | By structure/adjacency | Notes |
+| Spine | Free-text semantic | Hybrid lexical (BM25+RRF) | By entity | By time | By structure/adjacency | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | Claims (testimony + valid-time) | ✓ `claims_verbatim` | ✓ `claims_hybrid_rrf` | **✗** | **✗** | **✗** (no neighbor/session read) | valid-time stamps exist since #158/#179 but are un-queryable |
 | Source chunks (passages) | ✓ `chunks_hybrid_rrf` | ✓ | **✗** | ✗ | **✗** (no prev/next, no whole-doc) | gold answers measurably sit adjacent to hits (conv-26 qa/0083 class) |
@@ -49,6 +49,9 @@ properties:
 | Change feed | — | — | ✓ `changed_since` | ✓ | — | |
 | Compiled pages (K) | — | — | ✓ `pages_about` | — | ✓ | |
 | Sessions/transcripts | ✗ | ✗ | ✗ | ✗ | **✗** (no session fetch) | transcript exists for identity only |
+| Media segments (D65) | **✗** | ✗ | ✗ | ✗ | ✗ | binding retrieval design requires the spine; no recipe exposes it |
+| Document citations (DOC_CROSSREF) | — | — | — | — | **✗** | `citation_path` primitive exists engine-side, absent from catalog |
+| Mention records themselves | — | — | **✗** | ✗ | — | mentions used as internal joins only; no mention-transcript tool |
 
 Reading the matrix: **the structured spines the system was built for —
 entities, time, mentions, facts — are precisely the columns with the most
@@ -86,9 +89,23 @@ entities, time, mentions, facts — are precisely the columns with the most
    drops (declared k under-delivered); dedup is exact-id only, so
    near-duplicate claims burn candidate slots (five copies of one fact
    observed occupying half a k=10 window).
-7. **Absence questions** ("did X ever…") have no exhaustive-scan
-   affordance; honest agents cannot distinguish "No" from "Unknown".
-   Deliberately deferred — needs its own design (cost model is different).
+7. **Absence questions** ("did X ever…"): `typed_absence` and `scan`
+   primitives exist engine-side but no agent-facing recipe exposes them —
+   the earlier claim "no affordance exists" was too broad (Codex review).
+   Honest agents still cannot distinguish "No" from "Unknown" through the
+   catalog. Deferred with its own cost design.
+8. **Entity resolution is T0-only** (exact normalized alias match) while
+   the binding retrieval design promises a T0–T3 ladder — every
+   `entity: str` tool inherits this recall limit until the ladder design
+   lands (recorded deferral in the design).
+9. **Negative testimony has no retrieval path**: relations carry no
+   polarity; "X does not work at Acme" survives only as claims — a
+   recorded boundary, not a silent gap.
+10. **Additional misses recorded by review**: fact as-of queries,
+    object-side relation lookup, contradictions-stance retrieval,
+    document-by-id fetch, pagination/envelope size budgets, K pages by
+    non-entity keys, semantic entity discovery. All now carried in the
+    design's deferral table or its catalog.
 
 ## Non-goals confirmed by this analysis
 
