@@ -74,6 +74,21 @@ The stock self-host adds `resolve_entity` so recipe-only agents can obtain UUIDs
 plus `graph_neighborhood` and `graph_path` because that profile composes P2.
 Profiles without P2 do not seed the graph recipes.
 
+The stock evidence catalog also includes bounded entity, time, and source-context
+recipes:
+
+| Recipe | Arguments | What it returns |
+| --- | --- | --- |
+| `documents_about` | `entity`, optional `k` (1–50, default 20) | live source documents carrying a resolved mention, ordered by mention count and recency |
+| `claims_about` | `entity`, optional `query`, optional `k` (1–50, default 20) | D48-confirmed testimony from chunks that mention the resolved entity; a query reranks only that bounded entity set |
+| `claims_as_of` | `from`, `to`, optional `query`, optional `k` (1–50, default 20) | stamped testimony whose source-valid interval intersects the inclusive window; unknown precision is excluded and counted |
+| `chunk_neighbors` | `chunk_id`, optional `radius` (1–2, default 1) | the current source chunk and its document-order neighbors, with document edges disclosed as truncation |
+
+The entity-string recipes never silently choose among exact-name candidates:
+ambiguity returns candidates in `entities[]` plus a `boundary` negative, and a
+failed resolution returns `unknown_entity`. These tools remain evidence grain —
+they answer what sources contained or asserted, not what is currently true.
+
 ## Client writes
 
 These endpoints exist only when the deployment composes the corresponding
@@ -168,6 +183,9 @@ holds or happened; they are evidence, not the fact layer's current-validity
 verdict. Chunk results disclose their generated `context_prefix` separately
 from verbatim `chunk_text` and carry the current document, version,
 representation, offsets, and source timestamps confirmed by the live spine.
+`claims_as_of` additionally returns the exact `excluded_unstamped` count.
+`documents_about` source records may include `mention_count`,
+`first_mentioned_at`, and `last_mentioned_at`.
 
 For ordinary question answering, prefer the public `question_context` recipe.
 It independently fuses semantic and BM25 claim nominations and source-chunk

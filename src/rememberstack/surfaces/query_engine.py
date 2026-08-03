@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
 from itertools import batched
+import math
 from typing import Final
 from typing import Literal
 from uuid import UUID
@@ -52,6 +53,7 @@ from rememberstack.model import TranscriptEntry
 from rememberstack.model import Truncation
 from rememberstack.model import Validity
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.entity_registry import normalized_lemma
 
@@ -82,6 +84,15 @@ RESOLVE_CONTEXT_LIMIT: Final = 8
 
 INTERACTIVE_HYDRATION_BATCH_SIZE: Final = 256
 """Maximum ids in one WP-5.6-measured Postgres confirmation hop."""
+
+BOUNDED_SEMANTIC_CANDIDATES: Final = 400
+"""Maximum Postgres-filtered claim ids read from P1 for a semantic rerank.
+
+This is candidate work, not the returned evidence budget: every new Batch B
+recipe returns at most 50 evidence records. Four hundred matches the existing
+interactive nomination ceiling and keeps hub-entity/time-window vector reads
+bounded without ever nominating globally and filtering afterward.
+"""
 
 _RERANK_SIGNALS = {"graph_distance": True, "evidence_count": False}
 """The inspectable rerank signals and whether each sorts ascending: nearer
@@ -138,6 +149,9 @@ class QueryEngine:
         """
         self._engine = engine
         self._search_index = search_index
+        self._claim_vector_index = (
+            search_index if isinstance(search_index, ClaimVectorLookupPort) else None
+        )
         self._model_provider = model_provider
         self._embedding_model = embedding_model
         self._batch_engine = batch_engine or engine
@@ -219,6 +233,228 @@ class QueryEngine:
                 kind=NegativeKind.UNKNOWN_ENTITY,
                 explanation=f"nothing resolves for {name!r}",
                 workaround="check spelling, try search over claims or chunks",
+            ),
+        )
+
+    def documents_about(
+        self, *, deployment_id: UUID, entity: str, k: int = 20
+    ) -> Envelope:
+        """List live ingested documents carrying a resolved mention of an entity."""
+        _validate_batch_b_k(k=k)
+        entity_id, resolution = self._resolve_recipe_entity(
+            deployment_id=deployment_id, entity=entity, grain=Grain.EVIDENCE
+        )
+        if resolution is not None:
+            return resolution
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _DOCUMENTS_ABOUT,
+                    {
+                        "deployment_id": deployment_id,
+                        "entity_id": entity_id,
+                        "limit": k,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        total = int(rows[0]["total_count"]) if rows else 0
+        sources = tuple(
+            SourceRecord(
+                doc_id=row["doc_id"],
+                title=row["title"],
+                source_kind=row["source_kind"],
+                markdown_uri=row["markdown_uri"],
+                mention_count=row["mention_count"],
+                first_mentioned_at=row["first_mentioned_at"],
+                last_mentioned_at=row["last_mentioned_at"],
+            )
+            for row in rows
+        )
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            entities=(),
+            sources=sources,
+            freshness=_freshness(),
+            truncation=_bounded_truncation(returned=len(sources), total=total, k=k),
+            negative=None
+            if sources
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=(
+                    f"no ingested document has a resolved mention of {entity!r}"
+                ),
+                workaround="use text search to find unresolved textual mentions",
+            ),
+        )
+
+    def claims_about(
+        self, *, deployment_id: UUID, entity: str, query: str | None = None, k: int = 20
+    ) -> Envelope:
+        """Return current testimony from chunks mentioning one resolved entity."""
+        _validate_batch_b_k(k=k)
+        entity_id, resolution = self._resolve_recipe_entity(
+            deployment_id=deployment_id, entity=entity, grain=Grain.EVIDENCE
+        )
+        if resolution is not None:
+            return resolution
+        candidate_limit = BOUNDED_SEMANTIC_CANDIDATES if query is not None else k
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _CLAIMS_ABOUT_CANDIDATES,
+                    {
+                        "deployment_id": deployment_id,
+                        "entity_id": entity_id,
+                        "candidate_limit": candidate_limit,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        candidate_ids = tuple(row["claim_id"] for row in rows)
+        total = int(rows[0]["total_count"]) if rows else 0
+        ordered_ids, ranking = self._rank_bounded_claims(
+            deployment_id=deployment_id, claim_ids=candidate_ids, query=query, k=k
+        )
+        evidence, dropped = self._confirm_claims(
+            deployment_id=deployment_id, claim_ids=ordered_ids
+        )
+        confirmed = {record.claim_id for record in evidence}
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            evidence=evidence,
+            ranking=tuple(item for item in ranking if item.item_id in confirmed),
+            freshness=_freshness(),
+            truncation=_bounded_truncation(returned=len(evidence), total=total, k=k),
+            dropped_by_hydration=dropped,
+            negative=None
+            if evidence
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=f"no current source testimony mentions {entity!r}",
+                workaround="broaden the query or inspect the mentioning documents",
+            ),
+        )
+
+    def claims_as_of(
+        self,
+        *,
+        deployment_id: UUID,
+        from_: datetime,
+        to: datetime,
+        query: str | None = None,
+        k: int = 20,
+    ) -> Envelope:
+        """Return historical testimony whose source-valid interval intersects a window."""
+        _validate_batch_b_k(k=k)
+        if to < from_:
+            raise ValueError(
+                "claims_as_of 'to' must be greater than or equal to 'from'"
+            )
+        candidate_limit = BOUNDED_SEMANTIC_CANDIDATES if query is not None else k
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            rows = (
+                connection.execute(
+                    _CLAIMS_AS_OF_CANDIDATES,
+                    {
+                        "deployment_id": deployment_id,
+                        "from": from_,
+                        "to": to,
+                        "candidate_limit": candidate_limit,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+            excluded_unstamped = int(
+                connection.execute(
+                    _UNSTAMPED_CLAIM_COUNT, {"deployment_id": deployment_id}
+                ).scalar_one()
+            )
+        candidate_ids = tuple(row["claim_id"] for row in rows)
+        total = int(rows[0]["total_count"]) if rows else 0
+        ordered_ids, ranking = self._rank_bounded_claims(
+            deployment_id=deployment_id, claim_ids=candidate_ids, query=query, k=k
+        )
+        evidence, dropped = self._confirm_claims(
+            deployment_id=deployment_id, claim_ids=ordered_ids, current_only=False
+        )
+        confirmed = {record.claim_id for record in evidence}
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            evidence=evidence,
+            ranking=tuple(item for item in ranking if item.item_id in confirmed),
+            freshness=_freshness(),
+            truncation=_bounded_truncation(returned=len(evidence), total=total, k=k),
+            dropped_by_hydration=dropped,
+            excluded_unstamped=excluded_unstamped,
+            negative=None
+            if evidence
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation="no source-valid claim intersects the requested time window",
+                workaround="widen the window or search unstamped testimony by text",
+            ),
+        )
+
+    def chunk_neighbors(
+        self, *, deployment_id: UUID, chunk_id: UUID, radius: int = 1
+    ) -> Envelope:
+        """Read a current source chunk and its section-order neighbors."""
+        if not 1 <= radius <= 2:
+            raise ValueError("chunk neighbor radius must be between 1 and 2")
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _CHUNK_NEIGHBORS,
+                    {
+                        "deployment_id": deployment_id,
+                        "chunk_id": chunk_id,
+                        "radius": radius,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        candidate_ids = tuple(row["chunk_id"] for row in rows)
+        if not candidate_ids:
+            return Envelope(
+                grain=Grain.EVIDENCE,
+                freshness=_freshness(),
+                negative=Negative(
+                    kind=NegativeKind.UNKNOWN_ENTITY,
+                    explanation=(
+                        f"chunk_id {chunk_id} does not identify a current source chunk"
+                    ),
+                    workaround="search live source chunks again and use a returned chunk_id",
+                ),
+            )
+        chunks, dropped = self._confirm_chunks(
+            deployment_id=deployment_id, chunk_ids=candidate_ids
+        )
+        requested = radius * 2 + 1
+        edge_truncated = len(candidate_ids) < requested
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            chunks=chunks,
+            freshness=_freshness(),
+            truncation=Truncation(
+                truncated=edge_truncated,
+                returned=len(chunks),
+                estimated_total=requested,
+                total_is_exact=True,
+            ),
+            dropped_by_hydration=dropped,
+            negative=None
+            if chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation="the neighboring source coordinates did not confirm",
+                workaround="search live source chunks again",
             ),
         )
 
@@ -1074,6 +1310,82 @@ class QueryEngine:
         finally:
             connection.close()
 
+    def _resolve_recipe_entity(
+        self, *, deployment_id: UUID, entity: str, grain: Grain
+    ) -> tuple[UUID | None, Envelope | None]:
+        """Apply principle 9 to one string entity parameter.
+
+        The T0 ladder may return no candidate, exactly one, or an ambiguity.
+        Recipes never silently take the first ambiguity: candidates remain in
+        ``entities[]`` and the negative names the boundary.
+        """
+        resolved = self.resolve(deployment_id=deployment_id, name=entity)
+        if not resolved.entities:
+            return None, Envelope(
+                grain=grain, freshness=_freshness(), negative=resolved.negative
+            )
+        if len(resolved.entities) > 1:
+            names = ", ".join(
+                f"{candidate.canonical_name} ({candidate.entity_id})"
+                for candidate in resolved.entities
+            )
+            return None, Envelope(
+                grain=grain,
+                entities=resolved.entities,
+                freshness=_freshness(),
+                negative=Negative(
+                    kind=NegativeKind.BOUNDARY,
+                    explanation=(
+                        f"{entity!r} is ambiguous between these candidates: {names}"
+                    ),
+                    workaround="retry with an unambiguous alias or resolve an entity UUID first",
+                ),
+            )
+        return next(iter(resolved.entities)).entity_id, None
+
+    def _rank_bounded_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        claim_ids: tuple[UUID, ...],
+        query: str | None,
+        k: int,
+    ) -> tuple[tuple[UUID, ...], tuple[RankedItem, ...]]:
+        """Optionally semantic-rank only a Postgres-bounded claim-id set."""
+        if query is None:
+            return claim_ids[:k], ()
+        if self._claim_vector_index is None:
+            raise RuntimeError(
+                "bounded semantic claim reranking requires ClaimVectorLookupPort"
+            )
+        query_vector = self._embed(query=query)
+        vectors = self._claim_vector_index.claim_vectors(
+            deployment_id=str(deployment_id),
+            claim_ids=tuple(str(claim_id) for claim_id in claim_ids),
+        )
+        scored = tuple(
+            (
+                claim_id,
+                _cosine_similarity(
+                    query_vector,
+                    vectors.get(str(claim_id), tuple(0.0 for _ in query_vector)),
+                ),
+            )
+            for claim_id in claim_ids
+        )
+        ordered = tuple(sorted(scored, key=lambda pair: (-pair[1], pair[0].bytes))[:k])
+        return (
+            tuple(claim_id for claim_id, _score in ordered),
+            tuple(
+                RankedItem(
+                    item_id=claim_id,
+                    score=score,
+                    signals={"semantic_similarity": score},
+                )
+                for claim_id, score in ordered
+            ),
+        )
+
     def _rerank_boundary(self, *, explanation: str, workaround: str) -> Envelope:
         """A rerank request the engine cannot honor, as a typed boundary."""
         return Envelope(
@@ -1171,7 +1483,12 @@ class QueryEngine:
         return fact.model_copy(update=update) if update else fact
 
     def _confirm_claims(
-        self, *, deployment_id: UUID, claim_ids: tuple[UUID, ...]
+        self,
+        *,
+        deployment_id: UUID,
+        claim_ids: tuple[UUID, ...],
+        current_only: bool = True,
+        include_deleted: bool = False,
     ) -> tuple[tuple[EvidenceResult, ...], int]:
         """The D48 confirmation hop for claim nominations, order-preserving."""
         if not claim_ids:
@@ -1186,7 +1503,12 @@ class QueryEngine:
                 rows.extend(
                     connection.execute(
                         _CONFIRM_CLAIMS,
-                        {"deployment_id": deployment_id, "claim_ids": list(batch)},
+                        {
+                            "deployment_id": deployment_id,
+                            "claim_ids": list(batch),
+                            "current_only": current_only,
+                            "include_deleted": include_deleted,
+                        },
                     )
                     .mappings()
                     .all()
@@ -1311,6 +1633,35 @@ def _validate_nomination_request(*, k: int, channel: str) -> None:
         )
 
 
+def _validate_batch_b_k(*, k: int) -> None:
+    """Enforce the four new recipes' shared public result bound."""
+    if not 1 <= k <= 50:
+        raise ValueError("recipe k must be between 1 and 50")
+
+
+def _bounded_truncation(*, returned: int, total: int, k: int) -> Truncation:
+    """Disclose an exact list total and whether its public k cap elided rows."""
+    return Truncation(
+        truncated=total > k,
+        returned=returned,
+        estimated_total=total,
+        total_is_exact=True,
+    )
+
+
+def _cosine_similarity(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    """Cosine similarity for one bounded query/candidate vector pair."""
+    if len(a) != len(b):
+        raise ValueError("claim vector dimension differs from the query embedding")
+    a_norm = math.sqrt(sum(value * value for value in a))
+    b_norm = math.sqrt(sum(value * value for value in b))
+    if a_norm == 0 or b_norm == 0:
+        return 0.0
+    return sum(left * right for left, right in zip(a, b, strict=True)) / (
+        a_norm * b_norm
+    )
+
+
 def _nomination_envelope(*, ids: Sequence[str], empty_explanation: str) -> Envelope:
     """Represent ordered projection IDs without claiming they are hydrated."""
     ranking = tuple(
@@ -1402,6 +1753,130 @@ def _co_member(row: dict[str, object]) -> CoMember:
         ),
     )
 
+
+_DOCUMENTS_ABOUT = text(
+    """
+    WITH mentioned AS (
+        SELECT d.doc_id, d.title, d.source_kind, r.markdown_uri,
+               count(DISTINCT m.mention_id) AS mention_count,
+               min(m.created_at) AS first_mentioned_at,
+               max(m.created_at) AS last_mentioned_at
+        FROM resolution_decisions rd
+        JOIN mentions m
+          ON m.deployment_id = rd.deployment_id
+         AND m.mention_id = rd.mention_id
+        JOIN documents d
+          ON d.deployment_id = m.deployment_id
+         AND d.doc_id = m.doc_id
+        LEFT JOIN document_versions v
+          ON v.deployment_id = d.deployment_id
+         AND v.version_id = d.current_version_id
+        LEFT JOIN document_representations r
+          ON r.deployment_id = v.deployment_id
+         AND r.representation_id = v.current_representation_id
+        WHERE rd.deployment_id = :deployment_id
+          AND rd.entity_id = :entity_id
+          AND rd.superseded_by IS NULL
+          AND d.deleted_at IS NULL
+        GROUP BY d.doc_id, d.title, d.source_kind, r.markdown_uri
+    )
+    SELECT mentioned.*, count(*) OVER () AS total_count
+    FROM mentioned
+    ORDER BY mention_count DESC, last_mentioned_at DESC, doc_id
+    LIMIT :limit
+    """
+)
+
+_CLAIMS_ABOUT_CANDIDATES = text(
+    """
+    WITH matched AS (
+        SELECT c.claim_id, max(c.asserted_at) AS asserted_at,
+               max(c.ingested_at) AS ingested_at
+        FROM resolution_decisions rd
+        JOIN mentions m
+          ON m.deployment_id = rd.deployment_id
+         AND m.mention_id = rd.mention_id
+        JOIN chunk_claims cc
+          ON cc.deployment_id = m.deployment_id
+         AND cc.chunk_id = m.chunk_id
+        JOIN claims c
+          ON c.deployment_id = cc.deployment_id
+         AND c.claim_id = cc.claim_id
+        LEFT JOIN documents d
+          ON d.deployment_id = c.deployment_id
+         AND d.doc_id = c.doc_id
+        WHERE rd.deployment_id = :deployment_id
+          AND rd.entity_id = :entity_id
+          AND rd.superseded_by IS NULL
+          AND c.is_current_testimony
+          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+        GROUP BY c.claim_id
+    )
+    SELECT claim_id, count(*) OVER () AS total_count
+    FROM matched
+    ORDER BY asserted_at DESC NULLS LAST, ingested_at DESC, claim_id
+    LIMIT :candidate_limit
+    """
+)
+
+_CLAIMS_AS_OF_CANDIDATES = text(
+    """
+    SELECT c.claim_id, count(*) OVER () AS total_count
+    FROM claims c
+    LEFT JOIN documents d
+      ON d.deployment_id = c.deployment_id
+     AND d.doc_id = c.doc_id
+    WHERE c.deployment_id = :deployment_id
+      AND c.claim_valid_precision <> 'unknown'
+      AND c.claim_valid_from <= :to
+      AND (c.claim_valid_until IS NULL OR c.claim_valid_until >= :from)
+      AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+    ORDER BY c.claim_valid_from DESC, c.claim_id
+    LIMIT :candidate_limit
+    """
+)
+
+_UNSTAMPED_CLAIM_COUNT = text(
+    """
+    SELECT count(*)
+    FROM claims
+    WHERE deployment_id = :deployment_id
+      AND claim_valid_precision = 'unknown'
+    """
+)
+
+_CHUNK_NEIGHBORS = text(
+    """
+    WITH focal AS (
+        SELECT ch.doc_id, ch.version_id, ch.representation_id, ch.ordinal
+        FROM chunks ch
+        JOIN documents d
+          ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
+        JOIN document_versions v
+          ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
+        JOIN document_representations r
+          ON r.deployment_id = ch.deployment_id
+         AND r.representation_id = ch.representation_id
+        WHERE ch.deployment_id = :deployment_id
+          AND ch.chunk_id = :chunk_id
+          AND d.deleted_at IS NULL
+          AND d.current_version_id = ch.version_id
+          AND v.current_representation_id = ch.representation_id
+          AND v.status = 'ready'
+          AND v.deleted_at IS NULL
+          AND r.status = 'ready'
+    )
+    SELECT ch.chunk_id, ch.ordinal
+    FROM focal
+    JOIN chunks ch
+      ON ch.deployment_id = :deployment_id
+     AND ch.doc_id = focal.doc_id
+     AND ch.version_id = focal.version_id
+     AND ch.representation_id = focal.representation_id
+     AND ch.ordinal BETWEEN focal.ordinal - :radius AND focal.ordinal + :radius
+    ORDER BY ch.ordinal, ch.chunk_id
+    """
+)
 
 _RESOLVE_T0 = text(
     """
@@ -1522,8 +1997,12 @@ _CONFIRM_CLAIMS = text(
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
-      AND c.is_current_testimony
-      AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+      AND (NOT CAST(:current_only AS boolean) OR c.is_current_testimony)
+      AND (
+        CAST(:include_deleted AS boolean)
+        OR d.doc_id IS NULL
+        OR d.deleted_at IS NULL
+      )
     """
 )
 

@@ -48,6 +48,17 @@ class FactIndexPort(Protocol):
 
 
 @runtime_checkable
+class ClaimVectorLookupPort(Protocol):
+    """Read vectors for a bounded, authoritative claim-id candidate set."""
+
+    def claim_vectors(
+        self, *, deployment_id: str, claim_ids: tuple[str, ...]
+    ) -> dict[str, tuple[float, ...]]:
+        """Stored vectors for a bounded, Postgres-selected claim-id set."""
+        ...
+
+
+@runtime_checkable
 class P1SearchPort(Protocol):
     """Nominate candidates from the P1 indexes (D48: propose, never dispose)."""
 

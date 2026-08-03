@@ -39,6 +39,13 @@ input tokens. V8 extends the existing shared two-retry allowance to that first
 step, charging every attempt to the normal call and cost budgets while leaving
 plain provider outages terminal.
 
+**Shipped 2026-08-03 in `RS-LoCoMo-Full-v9` — Batch B retrieval and optional
+answer cap.** The ordinary catalog now exposes entity-anchored document and
+claim retrieval, stamped claim-window retrieval, and current chunk neighbors.
+The answer cap is a persisted/fingerprinted protocol field and is off for both
+stock v9 entries; the qualitative shortest-complete-answer instruction remains.
+V9 results are not comparable to v8 or earlier.
+
 5. **Derive the protocol fingerprint from identity fields only** (drop
    `repository_revision` from the hash, keep it recorded). Evidence: the
    sharded run could not be officially merged with the sequential half

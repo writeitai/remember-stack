@@ -51,15 +51,20 @@ def test_claim_lexical_nomination_is_independent_from_dense_search(tmp_path) -> 
     lexical = index.search_claims_lexical(
         deployment_id=str(deployment_id), query="ZXQ-991", k=1, current_only=True
     )
+    vectors = index.claim_vectors(
+        deployment_id=str(deployment_id), claim_ids=(str(lexical_id), str(dense_id))
+    )
 
     assert dense == (str(dense_id),)
     assert lexical == (str(lexical_id),)
+    assert vectors == {str(lexical_id): (0.0, 1.0), str(dense_id): (1.0, 0.0)}
     indices = {
         (item.index_type, tuple(item.columns))
         for item in lancedb.connect(str(root)).open_table("claims").list_indices()
     }
     assert ("FTS", ("text",)) in indices
     assert ("BTree", ("deployment_id",)) in indices
+    assert ("BTree", ("claim_id",)) in indices
     assert ("Bitmap", ("is_current_testimony",)) in indices
 
 

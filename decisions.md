@@ -1002,6 +1002,17 @@ surface `claim_valid_from` and `claim_valid_until`, so an answer agent can use t
 The same rule applies when the relative expression is inside a preserved direct quotation or
 attributed claim.
 
+**Amendment (2026-08-03, retrieval surface Batch B).** The D41-era no-default-index stance is
+superseded for PostgreSQL claim-window retrieval. The default schema now carries the partial index
+`(deployment_id, claim_valid_from, claim_valid_until) WHERE claim_valid_precision <> 'unknown'`.
+The public `claims_as_of(from, to)` recipe filters stamped evidence in PostgreSQL before any optional
+bounded semantic rerank, excludes `unknown` precision exactly, and reports the exact number excluded.
+This is the storage decision bound by
+[`agent_retrieval_surface_design.md` §3.1](plan/designs/agent_retrieval_surface_design.md#31-entity-and-time-spines-batch-b):
+stamped claims are the minority, and the partial index avoids making global vector nomination a
+recall ceiling. P1 validity scalars remain an alternative only if measured PostgreSQL p95 exceeds the
+design's 250 ms adoption trigger.
+
 ---
 
 ## D42. E0 records document origin at ingestion (external vs. system-generated)
@@ -2824,6 +2835,17 @@ may proceed to its first tagged artifact proof after CLA activation.
 > runner behavior, and fingerprints change, while the tool catalog remains
 > unchanged, so v7 and v8 results are not comparable. See the companion design
 > §§2 and 7.
+>
+> **Also amended 2026-08-03 (v9 — Batch B retrieval and flag-gated answer cap):**
+> four ordinary public recipes add entity-anchored documents and testimony,
+> source-validity-window testimony, and current chunk neighbors. Their descriptors
+> roll the catalog and protocol identities to **`RS-LoCoMo-Full-v9`** and
+> **`RS-LoCoMo-Full-v9-strong`**. The answer-length limit is now the fingerprinted,
+> persisted `answer_word_cap` protocol field; both registry entries set it to `None`,
+> so v9 renders no word-count instruction and applies no word-count guard by default.
+> The qualitative shortest-complete-phrase/no-explanation rule remains unconditional.
+> V9 scores are not comparable to v8 or earlier. See
+> [`agent_retrieval_surface_design.md` §4](plan/designs/agent_retrieval_surface_design.md#4-benchmark-protocol-impact-v9).
 
 **Decision.** The first competitive benchmark is **`RS-LoCoMo-Full-v1`** over the exact pinned
 LoCoMo ten-conversation file and categories 1–4. Each conversation is an isolated deployment;

@@ -46,6 +46,7 @@ from rememberstack.model import Grain
 from rememberstack.model import IdentityRegime
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
+from rememberstack.model import SourceRecord
 from rememberstack.model import Validity
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
@@ -497,3 +498,18 @@ def test_the_negative_taxonomy_is_frozen_at_three_kinds() -> None:
         "known_empty",
         "boundary",
     }
+
+
+def test_source_mention_metadata_is_optional_for_stored_envelopes() -> None:
+    """Batch B extends source handles without breaking old envelope payloads."""
+    legacy = SourceRecord(
+        doc_id=uuid4(), title="Legacy", source_kind="upload", markdown_uri=None
+    )
+    assert legacy.mention_count is None
+    assert legacy.first_mentioned_at is None
+    assert legacy.last_mentioned_at is None
+
+    envelope = Envelope(
+        grain=Grain.EVIDENCE, sources=(legacy,), freshness=Freshness(pg_live_ts=_NOW)
+    )
+    assert envelope.excluded_unstamped == 0

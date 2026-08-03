@@ -285,10 +285,11 @@ def test_answer_without_consulting_memory_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
-    ("word_count", "expected_failure"), ((20, None), (21, "invalid_response"))
+    ("word_count", "answer_word_cap", "expected_failure"),
+    ((30, None, None), (20, 20, None), (21, 20, "invalid_response")),
 )
-def test_answer_word_limit_accepts_twenty_and_rejects_twenty_one(
-    word_count: int, expected_failure: str | None
+def test_answer_word_cap_is_optional_and_guarded_when_set(
+    word_count: int, answer_word_cap: int | None, expected_failure: str | None
 ) -> None:
     answer_text = " ".join(f"word-{index}" for index in range(1, word_count + 1))
 
@@ -310,6 +311,7 @@ def test_answer_word_limit_accepts_twenty_and_rejects_twenty_one(
             state=_run_state(),
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
+            answer_word_cap=answer_word_cap,
         )
     finally:
         raw_client.close()
@@ -321,7 +323,7 @@ def test_answer_word_limit_accepts_twenty_and_rejects_twenty_one(
         assert answer.failure is not None
         assert answer.failure.kind == expected_failure
         assert answer.failure.message == (
-            "answer agent exceeded the twenty-word answer limit"
+            f"answer agent exceeded the {answer_word_cap}-word answer limit"
         )
 
 
@@ -391,8 +393,8 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
         "invalid_reader_completions",
     ),
     (
-        ("full-v8", "openai/gpt-4o-mini", None, 1, 0),
-        ("full-v8-strong", "openai/gpt-5.6-luna", "none", 0, 2),
+        ("full-v9", "openai/gpt-4o-mini", None, 1, 0),
+        ("full-v9-strong", "openai/gpt-5.6-luna", "none", 0, 2),
     ),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
@@ -883,8 +885,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v8","protocol_fingerprint":'
-        '"dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac",'
+        '{"protocol_name":"RS-LoCoMo-Full-v9","protocol_fingerprint":'
+        '"907160041595f71b880e9482d55236821dfcbc2accb6166c91c1508220295b1a",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -994,28 +996,28 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
         dataset_path=tmp_path / "synthetic.json",
         tier="smoke",
         output=strong_dir,
-        protocol="full-v8-strong",
+        protocol="full-v9-strong",
     )
 
-    assert weak.protocol_name == "RS-LoCoMo-Full-v8"
+    assert weak.protocol_name == "RS-LoCoMo-Full-v9"
     assert weak.answer_agent_model == "openai/gpt-4o-mini"
     assert weak.answer_agent_reasoning_effort is None
     assert weak.answer_reader_retry_budget == 2
     assert weak.protocol_fingerprint == (
-        "dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac"
+        "907160041595f71b880e9482d55236821dfcbc2accb6166c91c1508220295b1a"
     )
     assert weak.protocol_fingerprint != (
-        "02c9ef2dde16bc3b4e2ce0c273fc5eaf5d61f3ba96598263014f90221437035a"
+        "dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac"
     )
-    assert strong.protocol_name == "RS-LoCoMo-Full-v8-strong"
+    assert strong.protocol_name == "RS-LoCoMo-Full-v9-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert strong.answer_reader_retry_budget == 2
     assert strong.protocol_fingerprint == (
-        "ccf6b7b28397f4311a08403aa1c4639f209e90532d9430f54f12003fd017fe8b"
+        "26479f70aca3d093172d187af0e6c0f42adba16c775d61442680585f8c7d74e3"
     )
     assert strong.protocol_fingerprint != (
-        "70d765a8bd0c597f91b3c75171546e0aa7e954be22a09d41974b41cacbe1ae77"
+        "ccf6b7b28397f4311a08403aa1c4639f209e90532d9430f54f12003fd017fe8b"
     )
     assert strong.protocol_fingerprint != weak.protocol_fingerprint
 
@@ -1042,6 +1044,7 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
     for field, changed_value in (
         ("answer_reader_retry_budget", 1),
         ("answer_agent_reasoning_effort", "none"),
+        ("answer_word_cap", 20),
     ):
         changed = {**identity, field: changed_value}
         assert runner._canonical_hash(changed) != weak.protocol_fingerprint

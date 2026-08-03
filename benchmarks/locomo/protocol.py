@@ -26,15 +26,15 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v8"
-STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v8-strong"
-DEFAULT_PROTOCOL_KEY: Final = "full-v8"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.07-hybrid-context-v8answers"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v9"
+STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v9-strong"
+DEFAULT_PROTOCOL_KEY: Final = "full-v9"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-retrieval-surface-v9"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
-    "c0df1636fb1479b64dbacb39ab6cc2cadf53a89ff5e145d44cf84290ab47db11"
+    "7e2b3976a6082348b6142f7fd867b07a6f9c886e340064aa7200caea6efbd1ac"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -73,7 +73,7 @@ automatically current fact. Use timestamps to resolve relative dates. Do not
 confuse people mentioned in a memory with the conversation speakers. Never use
 outside knowledge. If the deployment does not contain the answer, finish with
 "Unknown". The final answer must be the shortest phrase that fully names the
-requested entities/values, at most twenty words, no explanations or reasoning.
+requested entities/values, no explanations or reasoning.{answer_word_cap_instruction}
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
@@ -126,10 +126,11 @@ class LoCoMoProtocol:
     judge_repetitions: int
     answer_reader_retry_budget: int
     answer_agent_reasoning_effort: str | None
+    answer_word_cap: int | None = None
 
 
-_FULL_V8 = LoCoMoProtocol(
-    key="full-v8",
+_FULL_V9 = LoCoMoProtocol(
+    key="full-v9",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -145,9 +146,10 @@ _FULL_V8 = LoCoMoProtocol(
     judge_repetitions=1,
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
     answer_agent_reasoning_effort=None,
+    answer_word_cap=None,
 )
-_FULL_V8_STRONG = LoCoMoProtocol(
-    key="full-v8-strong",
+_FULL_V9_STRONG = LoCoMoProtocol(
+    key="full-v9-strong",
     name=STRONG_PROTOCOL_NAME,
     answer_agent_model=STRONG_ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -163,10 +165,11 @@ _FULL_V8_STRONG = LoCoMoProtocol(
     judge_repetitions=1,
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
     answer_agent_reasoning_effort=STRONG_ANSWER_AGENT_REASONING_EFFORT,
+    answer_word_cap=None,
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V8.key: _FULL_V8, _FULL_V8_STRONG.key: _FULL_V8_STRONG}
+    {_FULL_V9.key: _FULL_V9, _FULL_V9_STRONG.key: _FULL_V9_STRONG}
 )
 
 
@@ -233,6 +236,7 @@ def render_answer_agent_prompt(
     question: str,
     tools: tuple[ToolDescriptor, ...],
     trace: tuple[ToolCallRecord, ...],
+    answer_word_cap: int | None = None,
 ) -> str:
     """Render the frozen public tool catalog and trace, never gold annotations."""
     tool_payload = json.dumps(
@@ -248,7 +252,14 @@ def render_answer_agent_prompt(
         separators=(",", ":"),
     )
     return ANSWER_AGENT_PROMPT_TEMPLATE.format(
-        tools=tool_payload, trace=trace_payload or "[]", question=question
+        tools=tool_payload,
+        trace=trace_payload or "[]",
+        question=question,
+        answer_word_cap_instruction=(
+            f" The final answer must contain at most {answer_word_cap} words."
+            if answer_word_cap is not None
+            else ""
+        ),
     )
 
 

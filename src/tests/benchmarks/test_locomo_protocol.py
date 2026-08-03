@@ -185,18 +185,22 @@ def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
     )
 
 
-def test_protocol_is_v8_and_answer_prompt_has_loop_guards() -> None:
-    """The default v8 identity and answer-loop discipline remain unchanged."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v8"
-    assert DEFAULT_PROTOCOL_KEY == "full-v8"
+def test_protocol_is_v9_and_answer_prompt_has_loop_guards() -> None:
+    """The default v9 identity and answer-loop discipline are locked."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v9"
+    assert DEFAULT_PROTOCOL_KEY == "full-v9"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
         "The final answer must be the shortest phrase that fully names the requested "
-        "entities/values, at most twenty words, no explanations or reasoning."
-        in normalized_prompt
+        "entities/values, no explanations or reasoning." in normalized_prompt
     )
-    assert "six words" not in normalized_prompt
+    rendered = render_answer_agent_prompt(question="What?", tools=(), trace=())
+    assert "The final answer must contain at most" not in rendered
+    capped = render_answer_agent_prompt(
+        question="What?", tools=(), trace=(), answer_word_cap=20
+    )
+    assert "The final answer must contain at most 20 words." in capped
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
     assert "use question_context first" in prompt
@@ -205,18 +209,20 @@ def test_protocol_is_v8_and_answer_prompt_has_loop_guards() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v8", "full-v8-strong")
-    default = PROTOCOL_REGISTRY["full-v8"]
-    strong = PROTOCOL_REGISTRY["full-v8-strong"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v9", "full-v9-strong")
+    default = PROTOCOL_REGISTRY["full-v9"]
+    strong = PROTOCOL_REGISTRY["full-v9-strong"]
 
-    assert default.name == "RS-LoCoMo-Full-v8"
+    assert default.name == "RS-LoCoMo-Full-v9"
     assert default.answer_agent_model == "openai/gpt-4o-mini"
     assert default.answer_agent_reasoning_effort is None
-    assert strong.name == "RS-LoCoMo-Full-v8-strong"
+    assert strong.name == "RS-LoCoMo-Full-v9-strong"
     assert strong.answer_agent_model == "openai/gpt-5.6-luna"
     assert strong.answer_agent_reasoning_effort == "none"
     assert default.answer_reader_retry_budget == 2
     assert strong.answer_reader_retry_budget == 2
+    assert default.answer_word_cap is None
+    assert strong.answer_word_cap is None
     identical_fields = (
         "judge_model",
         "answer_prompt_template",
@@ -238,7 +244,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
 
 @pytest.mark.parametrize(
     ("extra_args", "expected"),
-    (((), "full-v8"), (("--protocol", "full-v8-strong"), "full-v8-strong")),
+    (((), "full-v9"), (("--protocol", "full-v9-strong"), "full-v9-strong")),
 )
 def test_prepare_cli_selects_protocol_only_at_prepare(
     extra_args: tuple[str, ...], expected: str, monkeypatch: pytest.MonkeyPatch
