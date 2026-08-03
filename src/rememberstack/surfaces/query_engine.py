@@ -557,10 +557,12 @@ class QueryEngine:
             (row["fact_id"], str(row["stance"])) for row in selected
         )
         associations = tuple(
-            FactEvidence(
-                fact_id=row["fact_id"],
-                claim_id=row["claim_id"],
-                stance=str(row["stance"]),
+            FactEvidence.model_validate(
+                {
+                    "fact_id": row["fact_id"],
+                    "claim_id": row["claim_id"],
+                    "stance": str(row["stance"]),
+                }
             )
             for row in selected
         )
