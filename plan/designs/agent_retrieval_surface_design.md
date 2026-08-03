@@ -24,8 +24,11 @@ call budget minimal-effort agents actually spend.*
    the agent's plan and not by bending the recipe-chain linter.
 3. **Typed grains never blur.** Evidence (claims), source passages
    (chunks), current facts (relations/observations), documents, and graph
-   structure travel in their own envelope fields; multi-grain answers use
-   the composite-envelope `parts[]` contract (D49) rather than flattening.
+   structure travel in their own typed top-level envelope fields; where
+   one answer carries several of them (§3.2, §3.3) the explicit
+   `fact_evidence[]` association records — never ordering, never
+   flattening — say what backs what. (`EnvelopePart` is single-grain and
+   is not used by the tools in this design.)
 4. **D48 everywhere.** All content-bearing output passes
    nominate-then-confirm; projections never leak unconfirmed text.
 5. **Derived facts ship with their evidence — both stances.** Tools
