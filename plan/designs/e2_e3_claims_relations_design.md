@@ -337,7 +337,7 @@ internals (entity resolution, predicate registry, the supersession cascade) are 
 
 | Stage | What happens |
 |---|---|
-| **E1** | chunk + a context prefix ("…from the Results section of the Project Atlas 2025 memo…") |
+| **E1** | chunk + typed location elements (document title, section title *Results*, …) — not free-form prefix prose (D80) |
 | **E2 Selection** | keep "launched last year in three markets"; **keep** "The team considers it a runaway success" as the team's attributed stance (D59 — a bare, holderless version would drop → ledger) |
 | **E2 Decontextualize** | "It"→Project Atlas (neighbour), while "last year" stays source-faithful in claim text → *"Project Atlas launched last year in three markets"* |
 | **E2 Decompose** | `"Project Atlas launched last year."` (against the 2025 header, emits `valid_kind=event_time`, 2024 `valid_from_iso`/`valid_until_iso` bounds, `valid_precision=year` — D41; amendment 2026-07-29 / #158) + `"Project Atlas launched in three markets."` |
@@ -360,7 +360,8 @@ asserted vs. adjudicated time). Foundations: D2, D3, D4, D5, D7, D12, D17–D19,
    window-membership floor catches fabricated additions.
 4. **Bundle cost per source-class** — the short-source tail breaks prompt-caching; decide a cheaper
    bundle (section path only, no neighbours) for chat/tool/git inputs.
-5. **The E1 context prefix** — pin its length (or specify the E2 fallback when it is absent).
+5. **Typed location elements (D80)** — measure decontextualization quality with structured
+   location only (no free-form header); pin compact header length on the embed path separately.
 6. **Structured asserted-validity (D41)** — measure precision/recall of the extracted `claim_valid_*`
    interval on a golden slice; add a per-fact canary (D35) for window false-extraction; resolve
    fiscal-calendar expansion ("FY2023" ≠ calendar 2023 for off-calendar fiscal years — `precision`
