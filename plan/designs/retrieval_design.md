@@ -160,6 +160,10 @@ source text, never an atomic claim and never an adjudicated fact.
 operators. Scalars without filter support do not satisfy the contract. Search must be
 generation-safe across re-embed cutovers.
 
+**Claim-channel filters (D80 decision):** claim P1 rows **do not** carry message scalars in v1.
+Recipes that need channel/author/time on claim hits **join** claim → origin chunk (or document
+location facts). Do not invent per-claim scalar inheritance in the first implementation.
+
 `combine_evidence` is the side-effect-free composition operator for separately typed evidence
 sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs
 or pretending the two shapes share one relevance scale. Like `fuse`, it adds no retrieval

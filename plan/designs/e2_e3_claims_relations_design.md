@@ -48,18 +48,22 @@ verbatim-quoting with **provenance + entailment** grounding (D32).
 ### 3.1 What the extraction call sees (the context bundle)
 
 The extractor never sees a bare chunk. For each target chunk it receives a small, ordered bundle
-(D31):
+(D31), **as amended by D80**:
 
 | Element | Why it earns its tokens |
 |---|---|
 | **Document header** — title, date, source, language | resolves "this report", "the company", and absolute time for "last year" |
-| **PageIndex section path + summary** | tells the model it is inside *Results* vs *References*; makes intro/conclusion and list-item-without-preamble decidable |
-| **The chunk's E1 context prefix** | the compact "where this sits" sentence E1 already wrote |
-| **±1 (then ±2) neighbour chunks**, same section | the antecedents for pronouns / partial names — fetched for free from the chunk's section-parent + offsets, **same scope only** |
+| **PageIndex section path + summary** | orientation only — *Results* vs *References*; summaries are **not** grounding sources (D79/D80) |
+| **Typed location elements** (D80) | closed `LocationElement` list from E1 prepare (titles, channel/author/time when present); **not** a free-form E1 embedding header |
+| **±1 (then ±2) neighbour chunks**, same section | antecedents for pronouns / partial names — section-parent + offsets, **same scope only** |
 | **Known entity hints** | canonical names already on the chunk, as *hints* (permission to resolve, not to invent) |
 
-Cost is controlled by sharing one cached per-document prefix across that document's chunks. (Open
-question: very short sources — chat turns, tool output — don't reach the prompt-cache minimum; see §7.)
+**Not in the bundle:** free-form `location_header` / legacy `context_prefix` prose (D80). Location
+for decontextualization comes from **typed location elements** + header fields + body/neighbours.
+
+Cost is controlled by sharing one cached per-document header/orientation block across that
+document's chunks where prompt caching applies. (Open question: very short sources — chat turns,
+tool output — don't reach the prompt-cache minimum; see §7.)
 
 ### 3.2 The three jobs, in one call's reasoning
 
@@ -110,7 +114,8 @@ Grounding therefore stores **two things per claim** and accepts via **layered ch
 - `claim_text` — the standalone assertion (what retrieval, E3, and reasoning use).
 - `source_span` + character offsets — the verbatim slice the claim derives from (provenance / audit).
 - `added_context[]` — each substring the model *added* during decontextualization, tagged with which
-  bundle element it came from (neighbour / header / prefix).
+  bundle element it came from (`neighbour` / `header` / **`location` with `element_id`** — not a
+  free-form prefix blob; D80).
 
 **Amendment (2026-07-27, issue #146):** the fused Claimify call also emits optional D41
 source-asserted valid-time as *nullable typed scalars only* (no free-form objects — strict-schema
@@ -135,26 +140,22 @@ to text in `added_context`. The evidence-row builder used by `claims_verbatim`, 
 `claim_valid_until`. Precision is inferable from the bounds for these cases (equal ends = day;
 calendar-year span = year); surfacing the enums is a possible follow-up, not part of #158.
 
-**Amendment (2026-07-29, union grounding):** layer-2 membership is checked against the **union of
-source-derived bundle elements**: the TARGET CHUNK slice, deterministic document header, both
-available same-section neighbours, and the stored context prefix. The model-emitted
-`added_context.source_kind` remains recorded on claims and decision rows as a best-effort provenance
-pointer, but it is advisory: a wrong tag cannot reject text that exists verbatim elsewhere in that
-union. This corrects the GLM-5.2 smoke failure recorded in the #161 loss ledger: 371 of 411 grounding
-rejections were `added_context_unverified` mislabel deaths; sampled claims were correct
-decontextualizations, while names present verbatim in TARGET CHUNK turn lines were tagged `header`
-(258) or `prefix` (99). Only 27 claims from 19 documents survived the old element-local gate.
-**Section summaries and every other LLM-orientation text remain excluded from the union**, so the
-fact-injection defense is unchanged and D79 consumption rules are unchanged.
+**Amendment (2026-07-29, union grounding — historical):** layer-2 membership was checked against
+the TARGET CHUNK slice, deterministic document header, same-section neighbours, and the stored
+context prefix. The model-emitted `added_context.source_kind` is advisory. That fix addressed
+GLM-5.2 mislabel deaths in the #161 loss ledger. **Section summaries remained excluded.**
 
-**Amendment (D80, 2026-08-03):** free-form rendered location **headers** (legacy
-`context_prefix` prose) are **removed** from the grounding union. They are replaced by **typed
-allowlisted location elements** drawn from location facts with provenance
-`source | connector | deterministic_derived` (e.g. document title, section titles from source
-headings, channel/author/time when the connector metadata contract supplies them). Synthetic
-ordinals, policy mode labels, and `model_derived` orientation stay out. This keeps
-decontextualized location tokens groundable under `body_only` embedding mode. Normative:
-`e1_embedding_input_policy.md` §3.3.
+**Normative union (D80, 2026-08-03 — replaces free-form prefix in the union):** membership is
+against the **union of**:
+
+1. TARGET CHUNK body slice  
+2. Deterministic document header (source-derived fields)  
+3. Same-section neighbour chunk bodies  
+4. **Typed `LocationElement` texts** (`e1_embedding_input_policy.md` §3.3)
+
+**Out of union:** free-form location headers / legacy `context_prefix` prose; section summaries;
+model_derived orientation; policy labels; pure ordinals. Wrong `added_context` tags cannot reject
+text that exists elsewhere in the union (token-tolerant rule below unchanged).
 
 **Amendment (2026-07-29, token-tolerant union grounding):** the membership unit is now a token,
 not the whole added connective phrase. E2 tokenizes Unicode words and punctuation, splitting a

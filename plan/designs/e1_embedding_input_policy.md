@@ -85,41 +85,73 @@ version inside the policy artifact), including at least:
 **not** location-fact fields for embedding input and **not** grounding sources
 (D79). They may appear in agent bundles as orientation only.
 
-### 3.2 Connector metadata contract (prerequisite for message corpora)
+### 3.2 Connector metadata contract (minimum — implementable)
 
-Message-shaped location (Slack channel, user, thread, message time) is **not**
-inferred from markdown alone. It requires a typed extension of the watched-source
-/ ingest contract (D61 family):
+Message-shaped location is **not** inferred from markdown alone. Connectors that
+claim message support must emit the following **minimum** typed payload on the
+document version (and, for multi-message docs, on **source-map spans** that cover
+blocks/messages). Field catalogs beyond this (Slack-specific extras) are connector
+PRs; they must not be required to start D80.
 
-- Connectors emit **structured metadata** alongside `SourceItem` / document
-  lineage (stable refs, not only display names).
-- E0/E1 map that metadata into location facts on the chunk occurrence.
-- Hard-forget (D74) purges metadata with the lineage.
+**On every message-capable ingest:**
 
-Until a connector implements the contract, policy **must not pretend** those
-fields exist: `source_shape` may still be set (e.g. `transcript` for a pasted
-export), and headers use only available facts.
+| Field | Grain | Meaning |
+|---|---|---|
+| `source_shape` | document/version | `message_atom \| thread \| channel_export \| …` |
+| `channel_ref` | document and/or span | stable opaque id in the deployment namespace |
+| `thread_ref` | optional | stable opaque id; null if not threaded |
+| `author_ref` | span (preferred) or document if single-author atom | stable opaque id |
+| `message_ts` / `time_range` | span or document | UTC instant or inclusive range |
+| `display_*` | optional | human labels for P3/UI only — **not** P1 filter keys |
 
-**Who chooses shape** (one Slack message = one document vs channel export):
-**connector + deployment ingest policy**, recorded as `source_shape` on the
-document/version — not guessed inside the embed renderer.
+**Rules (keep small):**
 
-### 3.3 Provenance and grounding (E2)
+1. **Stable refs vs display names** — Lance/P1 filters use refs; names resolve via PG/P3.  
+2. **Multi-message chunks** — a chunk covering several messages carries a **set** (or
+   ordered list) of span metadata; do **not** collapse to a single author/time. Headers
+   and groundable text use a deterministic compact form (e.g. first–last time range,
+   author set size, primary channel_ref).  
+3. **E0/E1 mapping** — prepare copies available refs into location facts; missing fields
+   stay absent (policy must not invent them).  
+4. **D74** — purge refs, display maps, and P1 scalars with the lineage.  
+5. **Shape choice** (one message = one doc vs export) is **connector + deployment policy**,
+   recorded as `source_shape`, not guessed in the embed renderer.
 
-E2 decontextualization needs **source-derived** location tokens in the
-**grounding union** when claims assert location (“Alice said X in #eng”).
+Until a connector implements this, headers/filters use only structure-derived facts
+(title, section path, role, `source_kind`).
 
-**Bound rule (amends naive “drop prefix from grounding”):**
+### 3.3 E2 location elements (wire contract)
 
-| Element | In E2 grounding union? |
+E2 always receives a **typed location-element collection**, independent of whether
+embedding mode was `body_only` or `location_header`. Free-form embedding headers are
+**not** bundle members and **not** in the grounding union.
+
+**Closed element record** (one row per groundable atom):
+
+```text
+LocationElement {
+  element_id: stable string within the chunk prepare  # e.g. hash(kind|ref|text)
+  kind: enum  # document_title | section_title | channel | thread | author | timestamp | source_kind | other_source
+  text: non-empty string   # canonical groundable surface form
+  provenance: source | connector | deterministic_derived
+  locator: optional structured pointer  # source_ref / channel_ref / span id
+}
+```
+
+**Allowlist for `kind` in v1:** the enum above. No `summary`, no `policy_mode`, no
+synthetic ordinals, no free-form “prefix” kind.
+
+**Grounding union membership:**
+
+| In union | Out of union |
 |---|---|
-| Free-form rendered location **header** string | **No** (not as a blob) |
-| Typed allowlisted location elements with `provenance ∈ {source, connector, deterministic_derived}` and stable text (title, channel name/ref display form defined by contract, author, timestamps, section titles from source headings) | **Yes** |
-| `model_derived` orientation, section **summaries**, synthetic policy mode labels, pure ordinals | **No** |
+| TARGET CHUNK body slice | Free-form `location_header` / legacy `context_prefix` blob |
+| Deterministic document header fields that are source-derived | Section **summaries** (orientation only) |
+| Same-section neighbour chunk bodies | `model_derived` orientation |
+| **LocationElement** rows with allowed provenance | Policy mode labels, pure ordinals |
 
-Removing free-form `context_prefix` from the union without this typed replacement
-is **incorrect**. Implementation: structured elements in the union (parallel to
-`document_header`), not re-admission of LLM prose.
+`added_context[]` tags point at `element_id` / `kind` (advisory attribution may remain);
+membership is still **token-in-union** (existing D32 token rule).
 
 ---
 
@@ -272,12 +304,13 @@ Full typed location snapshot, provenance, display names, exact timestamps,
 id↔name maps. P3/mounts present friendly paths; never sole authority; D74 purges
 with lineage.
 
-### 5.5 Claims channel
+### 5.5 Claims channel (decision — no open choice)
 
-Claims remain the needle index (D58). Whether claim rows inherit a subset of
-message scalars is a retrieval join choice: document either **inherit on claim
-rows** for hot filters or **join chunk→doc** in recipes — pick one in retrieval
-design when implementing; do not leave it implicit.
+Claims remain the needle index (D58). **v1: claim P1 rows do not inherit message
+scalars.** Recipes that filter by channel/author/time on claims must **join**
+claim → origin chunk (and its projected scalars) or document location facts.
+Revisit inheritance only if measurement shows join cost is unacceptable — that
+is a later retrieval amendment, not an implementer choice.
 
 ---
 
@@ -297,14 +330,12 @@ pack chunks
 
 - **Pure prepare** (resolve facts + render): may run inside a document/representation
   transaction writing per-chunk stamps (`location_facts` snapshot ref, mode,
-  optional bounded header, `embedding_text_hash`, policy version). Does **not**
-  require one `processing_state` row per pure function.
+  optional bounded header, `embedding_text_hash`, policy version, location
+  elements for E2). Does **not** require one `processing_state` row per pure function.
 - **Embed:** durable unit is **chunk embed work** coalesced into **provider batches**
-  (size from embedder capabilities; starting hypothesis 64–128 texts). Each batch
-  has unique cost-ledger `call_key`s; poison isolation splits bad batches.
-- **Cross-store order:** upsert P1 for the batch, then stamp PG embedding refs /
-  generation; retries are idempotent; readiness rejects mixed generations for a
-  query generation.
+  (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
+  batch recovery rules: **orchestration design § embed_chunk (D80)** below —
+  single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
   embed under the active generation (or typed skips).
 

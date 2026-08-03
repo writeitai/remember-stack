@@ -146,6 +146,35 @@ splitting. `cost_ledger.lane` is copied from
 `lane IS NULL`, but they do not silently join either plane-E lane. A delivery envelope or Cloud
 Tasks header cannot choose the attribution.
 
+### embed_chunk durability (D80 — minimum contract)
+
+E1 passage embed is **not** one document-level “all strings then one provider call.” Normative
+input policy: `e1_embedding_input_policy.md` §6. Operational rules for implementers:
+
+1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
+   version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
+   stage). Pure prepare (location facts + render) may run in that job before provider calls;
+   it does not require separate ledger rows.
+2. **Batching.** The handler partitions prepared chunks missing the active
+   `passage_generation` into batches of size ≤ provider capability (hypothesis 64–128). A
+   batch **never crosses** document, representation, lane, or embedder generation.
+3. **`call_key`.** Each provider embed call uses a deterministic key  
+   `embed_chunks:{batch_index}` or `embed_chunks:{first_chunk_id}:{count}` within
+   `(processing_id, attempt)` so retries are idempotent inserts in `cost_ledger`.
+4. **Poison split.** On a batch provider failure that is not a total outage, split the batch
+   (halve until size 1) and retry; a single-chunk poison is typed fail/skip for that chunk,
+   not a document dead-letter of already-finished siblings.
+5. **Cross-store order.** For each successful batch: (a) upsert P1 rows keyed by
+   `(chunk_id, passage_generation)`, (b) stamp PG (`embedding_text_hash`, policy version,
+   generation id / ref). **Crash between (a) and (b):** on retry, if P1 already has the exact
+   composite key and text hash, **do not** re-call the provider — only complete the PG stamp.
+   A P1 row for the wrong generation must not be accepted.
+6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
+   stamp under the **active** passage generation (or a closed typed skip code: empty body,
+   etc.). Mixed generations are not queryable as “ready” for that generation pointer.
+
+K/P and other stages are unchanged by this subsection.
+
 The model-provider port returns every successful generation or embedding together with required
 provider accounting (resolved model name, input/output tokens, USD cost, and latency). A worker
 binds a small cost-meter port to the running `processing_id`; each model-using handler writes that
