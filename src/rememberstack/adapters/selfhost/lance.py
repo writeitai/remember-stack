@@ -313,10 +313,14 @@ class LanceChunkIndex:
         if not self._has_table(table_name=_CHUNK_TABLE):
             return ()
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
         where = _chunk_search_where(
             deployment_id=deployment_id,
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
+            columns=columns,
         )
         query = (
             cast(
@@ -345,10 +349,14 @@ class LanceChunkIndex:
             return ()
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
         where = _chunk_search_where(
             deployment_id=deployment_id,
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
+            columns=columns,
         )
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
@@ -360,29 +368,53 @@ class LanceChunkIndex:
         return tuple(row["chunk_id"] for row in rows)
 
     def chunk_texts(
-        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> dict[str, P1ChunkText]:
-        """Read projection text for confirmed chunk ids."""
+        """Read projection text for confirmed chunk ids (active generation)."""
         deployment_id = str(UUID(deployment_id))
         if not chunk_ids or not self._has_table(table_name=_CHUNK_TABLE):
             return {}
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
         ids = ", ".join(f"'{UUID(item)}'" for item in chunk_ids)
+        where = f"deployment_id = '{deployment_id}' AND chunk_id IN ({ids})"
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
+        if policy_generation is not None and "policy_generation" in columns:
+            where += f" AND policy_generation = '{_escape_literal(policy_generation)}'"
+        if embedder_generation is not None and "embedder_generation" in columns:
+            where += (
+                f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
+            )
+        # When unscoped, allow multiple generation rows per chunk_id.
+        limit = (
+            len(chunk_ids)
+            if policy_generation is not None
+            else max(len(chunk_ids) * 4, 1)
+        )
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
             .search()
-            .where(f"deployment_id = '{deployment_id}' AND chunk_id IN ({ids})")
-            .limit(len(chunk_ids))
+            .where(where)
+            .limit(limit)
             .to_list()
         )
-        return {
-            row["chunk_id"]: P1ChunkText(
-                chunk_id=UUID(row["chunk_id"]),
-                section_role=row["section_role"],
-                indexed_text=row["text"],
+        out: dict[str, P1ChunkText] = {}
+        for row in rows:
+            out.setdefault(
+                row["chunk_id"],
+                P1ChunkText(
+                    chunk_id=UUID(row["chunk_id"]),
+                    section_role=row["section_role"],
+                    indexed_text=row["text"],
+                ),
             )
-            for row in rows
-        }
+        return out
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
@@ -742,12 +774,14 @@ def _chunk_search_where(
     deployment_id: str,
     policy_generation: str | None,
     embedder_generation: str | None,
+    columns: set[str] | None = None,
 ) -> str:
     """Build the chunk search prefilter, optionally scoped to active generations."""
     where = f"deployment_id = '{deployment_id}'"
-    if policy_generation is not None:
+    columns = columns or set()
+    if policy_generation is not None and "policy_generation" in columns:
         where += f" AND policy_generation = '{_escape_literal(policy_generation)}'"
-    if embedder_generation is not None:
+    if embedder_generation is not None and "embedder_generation" in columns:
         where += (
             f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
         )

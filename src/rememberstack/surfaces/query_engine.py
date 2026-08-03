@@ -28,6 +28,7 @@ from sqlalchemy import TextClause
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
+from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
@@ -180,6 +181,11 @@ class QueryEngine:
         )
         self._model_provider = model_provider
         self._embedding_model = embedding_model
+        # Active D80 generation pointer for this query surface (library single-
+        # tenant / deployment-scoped binding). Search and hydration prefer
+        # rows under this pair so dual-generation cutover stays coherent.
+        self._policy_generation = EMBEDDING_INPUT_POLICY_VERSION
+        self._embedder_generation = embedding_model
         self._batch_engine = batch_engine or engine
 
     def resolve(
@@ -1171,10 +1177,18 @@ class QueryEngine:
         _validate_nomination_request(k=k, channel=channel)
         if channel == "semantic":
             return self._search_index.search_chunks(
-                deployment_id=str(deployment_id), vector=self._embed(query=query), k=k
+                deployment_id=str(deployment_id),
+                vector=self._embed(query=query),
+                k=k,
+                policy_generation=self._policy_generation,
+                embedder_generation=self._embedder_generation,
             )
         return self._search_index.search_chunks_lexical(
-            deployment_id=str(deployment_id), query=query, k=k
+            deployment_id=str(deployment_id),
+            query=query,
+            k=k,
+            policy_generation=self._policy_generation,
+            embedder_generation=self._embedder_generation,
         )
 
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
@@ -2119,6 +2133,8 @@ class QueryEngine:
         texts = self._search_index.chunk_texts(
             deployment_id=str(deployment_id),
             chunk_ids=tuple(str(item) for item in confirmed),
+            policy_generation=self._policy_generation,
+            embedder_generation=self._embedder_generation,
         )
         results: list[ChunkEvidenceResult] = []
         for chunk_id in chunk_ids:

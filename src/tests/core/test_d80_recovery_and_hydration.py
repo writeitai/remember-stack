@@ -216,6 +216,19 @@ def test_legacy_hydration_strips_embedded_prefix() -> None:
     )
 
 
+def test_provider_outage_classifier_distinguishes_poison() -> None:
+    """Total outages re-raise; invalid responses are size-1 poison candidates."""
+    from rememberstack.model import ProviderCallError
+    from rememberstack.model import ProviderInvalidResponseError
+    from rememberstack.workers.e1 import _is_provider_outage
+
+    assert _is_provider_outage(exc=ProviderInvalidResponseError("bad vector")) is False
+    assert _is_provider_outage(exc=ProviderCallError("upstream 503")) is True
+    assert _is_provider_outage(exc=TimeoutError()) is True
+    assert _is_provider_outage(exc=ConnectionError("reset")) is True
+    assert _is_provider_outage(exc=RuntimeError("unknown")) is True
+
+
 def test_multi_chunk_without_section_title_is_body_only() -> None:
     """§4.3 step 4: bare title alone does not force a multi-chunk header."""
     rendered = render_embedding_input(

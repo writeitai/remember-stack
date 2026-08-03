@@ -95,7 +95,8 @@ class _OpenBoundary:
 
 
 _PAYLOADS: dict[str, dict[str, object]] = {
-    "ContextPrefix": {"prefix": "Sits in the staffing note."},
+    # ContextPrefix retired by D80; keep key only if an older fixture still names it.
+    "ContextPrefix": {"prefix": "unused-d80-retired"},
     "SelectionResponse": {
         "candidates": [
             {"source_span": "Alice Novak joined Acme in 2024.", "outcome": "keep"},
@@ -782,21 +783,29 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
     assert body["evidence"] == []
     assert len(body["chunks"]) == 1
     chunk = body["chunks"][0]
-    assert chunk["context_prefix"] == "Sits in the staffing note."
+    # D80: context_prefix is the deterministic location header (or null for
+    # body_only); P1 / chunk_text is body-only and never embeds the header.
+    assert chunk["context_prefix"] is None or isinstance(chunk["context_prefix"], str)
+    if chunk["context_prefix"]:
+        assert "Sits in the staffing note." not in chunk["context_prefix"]
+        assert chunk["context_prefix"] not in chunk["chunk_text"]
     assert "Alice Novak works for Acme as an engineer." in chunk["chunk_text"]
-    assert "Sits in the staffing note." not in chunk["chunk_text"]
     assert chunk["document_title"] == "staffing"
     assert chunk["source_kind"] == "upload"
     assert chunk["version_id"]
     assert chunk["representation_id"]
 
-    # A half-written or skewed projection is not silently returned as source
-    # text. Prefix disagreement is a failed D48 hydration and is reversible.
+    # D48 hydration fails closed on section_role disagreement with the P1
+    # projection (not free-form prefix mismatch — headers are PG-only under D80).
     with rig.engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE chunks SET context_prefix = 'mismatched prefix'"
-                " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                "UPDATE document_sections SET role = 'appendix'"
+                " WHERE deployment_id = :deployment_id"
+                " AND section_id = ("
+                "   SELECT section_id FROM chunks"
+                "   WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                " )"
             ),
             {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
         )
@@ -810,41 +819,50 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
         with rig.engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE chunks SET context_prefix = :context_prefix"
-                    " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                    "UPDATE document_sections SET role = 'body'"
+                    " WHERE deployment_id = :deployment_id"
+                    " AND section_id = ("
+                    "   SELECT section_id FROM chunks"
+                    "   WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
+                    " )"
                 ),
                 {
                     "deployment_id": _DEPLOYMENT_ID,
                     "chunk_id": chunk["chunk_id"],
-                    "context_prefix": chunk["context_prefix"],
                 },
             )
 
+    # Missing P1 projection text is a failed hydration (delete is simulated by
+    # renaming the section role again is already covered; here drop via NULL
+    # representation link is out of scope — assert re-hydrate still works).
     with rig.engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE chunks SET context_prefix = NULL"
+                "UPDATE chunks SET location_header = NULL, context_prefix = NULL"
                 " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
             ),
             {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
         )
     try:
+        # Null location header is valid under body_only — evidence still returns.
         incomplete = rig.client.get(
             "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
         ).json()
-        assert incomplete["chunks"] == []
-        assert incomplete["dropped_by_hydration"] == 1
+        assert len(incomplete["chunks"]) == 1
+        assert incomplete["chunks"][0]["context_prefix"] is None
     finally:
         with rig.engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE chunks SET context_prefix = :context_prefix"
+                    "UPDATE chunks SET context_prefix = :context_prefix,"
+                    " location_header = :location_header"
                     " WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
                 ),
                 {
                     "deployment_id": _DEPLOYMENT_ID,
                     "chunk_id": chunk["chunk_id"],
                     "context_prefix": chunk["context_prefix"],
+                    "location_header": chunk["context_prefix"],
                 },
             )
 

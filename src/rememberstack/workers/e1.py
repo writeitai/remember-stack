@@ -40,6 +40,8 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import PackedChunk
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -364,7 +366,11 @@ class EmbedChunksHandler:
                     texts=tuple(rendered.embedding_text for _, rendered in batch),
                 )
             )
-        except Exception:
+        except Exception as exc:
+            # Rule 4: split only on non-outage failures; total outages re-raise
+            # so the stage retries instead of stamping every chunk as poison.
+            if _is_provider_outage(exc=exc):
+                raise
             if len(batch) == 1:
                 poison_skips.append(batch[0])
                 return
@@ -502,6 +508,24 @@ class EmbedChunksHandler:
             )
         if updates:
             self._catalog.record_embeddings(updates=tuple(updates))
+
+
+def _is_provider_outage(*, exc: BaseException) -> bool:
+    """Whether a provider failure is a total outage (retry) vs content poison.
+
+    Only ``ProviderInvalidResponseError`` is treated as chunk-attributable
+    poison eligible for size-1 typed skip. Transport failures, generic
+    ``ProviderCallError``, timeouts, and OS-level connection errors re-raise
+    so readiness never closes on an empty all-poison set.
+    """
+    if isinstance(exc, ProviderInvalidResponseError):
+        return False
+    if isinstance(exc, ProviderCallError):
+        return True
+    if isinstance(exc, (TimeoutError, OSError, ConnectionError)):
+        return True
+    # Unknown exceptions: fail closed as outage (retry), not silent skip.
+    return True
 
 
 def _location_facts(

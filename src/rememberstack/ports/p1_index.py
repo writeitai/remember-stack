@@ -124,7 +124,12 @@ class P1SearchPort(Protocol):
         ...
 
     def chunk_texts(
-        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> dict[str, P1ChunkText]:
         """Projection text for confirmed chunk ids; absent ids are omitted."""
         ...
