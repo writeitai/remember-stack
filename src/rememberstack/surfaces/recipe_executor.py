@@ -308,6 +308,13 @@ def _chunk_neighbors(
     return engine.chunk_neighbors(deployment_id=deployment_id, **kwargs)
 
 
+def _current_context(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The question-driven current-fact compound operation."""
+    return engine.current_context(deployment_id=deployment_id, **kwargs)
+
+
 _SINGLE_OP_HANDLERS = {
     "resolve": _resolve,
     "lookup_relations": _lookup_relations,
@@ -325,6 +332,7 @@ _SINGLE_OP_HANDLERS = {
     "claims_about": _claims_about,
     "claims_as_of": _claims_as_of,
     "chunk_neighbors": _chunk_neighbors,
+    "current_context": _current_context,
 }
 
 EXECUTABLE_OPS = frozenset(_SINGLE_OP_HANDLERS) | {

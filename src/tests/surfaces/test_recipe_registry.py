@@ -463,6 +463,7 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
         "claims_about": {"entity": "Alice"},
         "claims_as_of": {"from": _SINCE, "to": _NOW},
         "chunk_neighbors": {"chunk_id": uuid4()},
+        "current_context": {"query": "alice acme"},
         "explain": {"relation_id": corpus.relation_id},
         "identity_as_of": {"entity_id": alice},
         "changed_since": {"since": _SINCE},
@@ -501,6 +502,9 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
         ),
         "claims_as_of": engine.claims_as_of(
             deployment_id=_DEPLOYMENT_ID, from_=_SINCE, to=_NOW
+        ),
+        "current_context": engine.current_context(
+            deployment_id=_DEPLOYMENT_ID, query="alice acme"
         ),
     }
 
@@ -801,6 +805,44 @@ def test_batch_b_recipes_have_bound_descriptors_and_schemas() -> None:
         "minimum": 1,
         "maximum": 2,
     }
+
+
+def test_batch_c_recipe_has_bound_descriptor_and_schema() -> None:
+    """The current-state compound recipe carries the exact §3.2 D50 contract."""
+    recipe = next(
+        recipe for recipe in CANONICAL_RECIPES if recipe.name == "current_context"
+    )
+
+    assert recipe.chain == (
+        RecipeStep(
+            op="current_context",
+            bind={"query": "query", "k": "k", "evidence_per_fact": "evidence_per_fact"},
+        ),
+    )
+    assert recipe.output_grain is Grain.FACT
+    assert recipe.answer_intent is RecipeAnswerIntent.CURRENT_FACTS
+    assert recipe.version == 1
+    assert recipe.parameters == {
+        "query": {"type": "string", "required": True},
+        "k": {
+            "type": "integer",
+            "required": False,
+            "default": 15,
+            "minimum": 1,
+            "maximum": 30,
+        },
+        "evidence_per_fact": {
+            "type": "integer",
+            "required": False,
+            "default": 3,
+            "minimum": 1,
+            "maximum": 5,
+        },
+    }
+    assert "currently holds" in recipe.description
+    assert "60-evidence-record" in recipe.description
+    assert "never verbatim assertion history" in recipe.description
+    lint_recipe(recipe)
 
 
 def test_question_context_executes_to_both_evidence_payloads() -> None:

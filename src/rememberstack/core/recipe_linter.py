@@ -6,10 +6,11 @@ A recipe declares two enums — `output_grain` and `answer_intent` — and a
 rules the DB cannot see, so a registration that would let a recipe lie about
 what it returns is rejected before it ever reaches a surface:
 
-- **`current_facts` may ride only validity-filtered fact primitives.** This
-  is the D41 bar in full: a recipe that answers "what holds now" must compose
-  lookups/aggregates that filter both temporal clocks — never a claims search,
-  which is evidence ("what a source *asserted*"), not fact.
+- **`current_facts` may ride only validity-filtered fact operations.** This is
+  the D41 bar in full: a recipe that answers "what holds now" must compose
+  lookups or a registered compound operation that filters both temporal clocks
+  — never a claims search, which is evidence ("what a source *asserted*"), not
+  fact.
 - **The chain's terminal grain must match `output_grain`.** A recipe that
   ends on a claims search cannot advertise `fact`; one that ends on a K-page
   read cannot advertise `evidence`. The grain a caller reads is the grain the
@@ -48,8 +49,9 @@ class _OpSpec:
 
 # The op vocabulary a recipe chain may compose — exactly the set the executor
 # implements, so a lint-clean chain always runs. `validity_filtered` is the
-# strict current-instant test (both clocks): only the point-in-time lookups
-# qualify. `aggregate` is NOT one of them — its forms span history (timeline)
+# strict current-instant test (both clocks): only point-in-time lookups and
+# explicitly registered compound operations qualify. `aggregate` is NOT one
+# of them — its forms span history (timeline)
 # or count live-but-expired rows — so it can never sit in a `current_facts`
 # recipe. `fuse` returns an evidence-grade ranking (candidates to hydrate);
 # `hydrate_claims` turns that ranking into claim text while keeping scores.
@@ -77,6 +79,7 @@ _OPS: dict[str, _OpSpec] = {
     "claims_about": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
     "claims_as_of": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
     "chunk_neighbors": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
+    "current_context": _OpSpec(Grain.FACT, validity_filtered=True),
     "graph_neighborhood": _OpSpec(Grain.FACT, validity_filtered=True),
     "graph_path": _OpSpec(Grain.FACT, validity_filtered=True),
     "fuse": _OpSpec(Grain.EVIDENCE, validity_filtered=False, min_inputs=1),
