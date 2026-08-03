@@ -147,6 +147,15 @@ decontextualizations, while names present verbatim in TARGET CHUNK turn lines we
 **Section summaries and every other LLM-orientation text remain excluded from the union**, so the
 fact-injection defense is unchanged and D79 consumption rules are unchanged.
 
+**Amendment (D80, 2026-08-03):** free-form rendered location **headers** (legacy
+`context_prefix` prose) are **removed** from the grounding union. They are replaced by **typed
+allowlisted location elements** drawn from location facts with provenance
+`source | connector | deterministic_derived` (e.g. document title, section titles from source
+headings, channel/author/time when the connector metadata contract supplies them). Synthetic
+ordinals, policy mode labels, and `model_derived` orientation stay out. This keeps
+decontextualized location tokens groundable under `body_only` embedding mode. Normative:
+`e1_embedding_input_policy.md` §3.3.
+
 **Amendment (2026-07-29, token-tolerant union grounding):** the membership unit is now a token,
 not the whole added connective phrase. E2 tokenizes Unicode words and punctuation, splitting a
 possessive such as `Caroline's` into `caroline` and `'s`. A token passes when the same token occurs

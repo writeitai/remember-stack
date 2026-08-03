@@ -11,15 +11,17 @@ isolation), D23 (scale), D25 (ungated volume).
 Numbers here are starting points to measure, not committed constants (CLAUDE.md).
 
 > **Reading this cold.** Plane E is a per-document chain of workers (E0
-> ingest→convert→structure→crossref; E1 chunk/prefix/embed; E2 extract/ground; E3
-> resolve/normalize/adjudicate/label), each delivered through the D61 queue port when the
-> previous stage completes; the reference adapter uses Cloud Tasks/Cloud Run and the self-host
-> adapter uses Postgres wake-ups. Planes K and P are debounced/scheduled aggregate workers.
-> `processing_state` in Postgres is the idempotency + status + dead-letter ledger (one row per
-> target/stage/version — schema §2) and, under D67, the authority for route, due time, retry, and
-> parking state; `cost_ledger` meters every model call with lane attribution. A **lane** is a
-> parallel plane-E queue set for the same stages with its own rate limits and budgets. Scheduled
-> K/P jobs are explicitly unlaned.
+> ingest→convert→structure→crossref; E1 chunk → **prepare embedding input** → **batch embed**
+> (D80); E2 extract/ground; E3 resolve/normalize/adjudicate/label), each delivered through the
+> D61 queue port when the previous stage completes; the reference adapter uses Cloud Tasks/Cloud
+> Run and the self-host adapter uses Postgres wake-ups. Planes K and P are debounced/scheduled
+> aggregate workers. `processing_state` in Postgres is the idempotency + status + dead-letter
+> ledger (one row per target/stage/version — schema §2) and, under D67, the authority for route,
+> due time, retry, and parking state; `cost_ledger` meters every model call with lane
+> attribution. A **lane** is a parallel plane-E queue set for the same stages with its own rate
+> limits and budgets. Scheduled K/P jobs are explicitly unlaned. **D80:** default path has **no**
+> per-chunk location LLM; durable embed units are capability-bounded batches with a
+> representation readiness barrier — see `e1_embedding_input_policy.md` §6.
 
 ## 1. No workflow engine — the chain is the orchestrator (scope boundary)
 
