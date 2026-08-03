@@ -39,6 +39,8 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import EnvelopePart
 from rememberstack.model import EvidenceResult
+from rememberstack.model import EvidenceTotal
+from rememberstack.model import FactEvidence
 from rememberstack.model import FactResult
 from rememberstack.model import FactSupport
 from rememberstack.model import Freshness
@@ -513,3 +515,45 @@ def test_source_mention_metadata_is_optional_for_stored_envelopes() -> None:
         grain=Grain.EVIDENCE, sources=(legacy,), freshness=Freshness(pg_live_ts=_NOW)
     )
     assert envelope.excluded_unstamped == 0
+
+
+def test_fact_evidence_fields_are_explicit_optional_envelope_contract() -> None:
+    """Batch C associations are flat and explicit while legacy payloads stay valid."""
+    fact_id = uuid4()
+    claim_id = uuid4()
+    evidence = EvidenceResult(
+        claim_id=claim_id,
+        doc_id=uuid4(),
+        chunk_id=uuid4(),
+        claim_text="Alice works at Acme.",
+        source_span="Alice works at Acme.",
+        char_start=0,
+        char_end=20,
+        is_attributed=False,
+        is_current_testimony=True,
+    )
+    envelope = Envelope(
+        grain=Grain.FACT,
+        evidence=(evidence,),
+        fact_evidence=(
+            FactEvidence(fact_id=fact_id, claim_id=claim_id, stance="supports"),
+        ),
+        evidence_totals=(
+            EvidenceTotal(fact_id=fact_id, stance="supports", returned=1, total=4),
+            EvidenceTotal(fact_id=fact_id, stance="contradicts", returned=0, total=0),
+        ),
+        freshness=Freshness(pg_live_ts=_NOW),
+    )
+
+    assert envelope.fact_evidence[0].claim_id == claim_id
+    assert envelope.evidence_totals[0].total == 4
+    assert (
+        Envelope(grain=Grain.FACT, freshness=Freshness(pg_live_ts=_NOW)).fact_evidence
+        == ()
+    )
+
+
+def test_evidence_total_rejects_a_returned_count_above_total() -> None:
+    """The exact-total disclosure cannot contradict itself."""
+    with pytest.raises(ValidationError, match="cannot exceed"):
+        EvidenceTotal(fact_id=uuid4(), stance="supports", returned=2, total=1)

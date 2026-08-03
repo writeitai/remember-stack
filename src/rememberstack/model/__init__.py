@@ -98,6 +98,8 @@ from rememberstack.model.envelope import EntityCandidate
 from rememberstack.model.envelope import Envelope
 from rememberstack.model.envelope import EnvelopePart
 from rememberstack.model.envelope import EvidenceResult
+from rememberstack.model.envelope import EvidenceTotal
+from rememberstack.model.envelope import FactEvidence
 from rememberstack.model.envelope import FactResult
 from rememberstack.model.envelope import FactSupport
 from rememberstack.model.envelope import Freshness
@@ -399,8 +401,10 @@ __all__ = (
     "GraphPath",
     "Truncation",
     "EvalSuite",
+    "EvidenceTotal",
     "EvidenceResult",
     "ChunkEvidenceResult",
+    "FactEvidence",
     "FactForLabeling",
     "FactLabelResponse",
     "FactResult",

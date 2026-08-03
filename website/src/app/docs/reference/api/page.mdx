@@ -74,8 +74,8 @@ The stock self-host adds `resolve_entity` so recipe-only agents can obtain UUIDs
 plus `graph_neighborhood` and `graph_path` because that profile composes P2.
 Profiles without P2 do not seed the graph recipes.
 
-The stock evidence catalog also includes bounded entity, time, and source-context
-recipes:
+The stock retrieval catalog also includes these bounded entity, time,
+source-context, and current-state recipes:
 
 | Recipe | Arguments | What it returns |
 | --- | --- | --- |
@@ -83,6 +83,7 @@ recipes:
 | `claims_about` | `entity`, optional `query`, optional `k` (1–50, default 20) | D48-confirmed testimony from chunks that mention the resolved entity; a query reranks only that bounded entity set |
 | `claims_as_of` | `from`, `to`, optional `query`, optional `k` (1–50, default 20) | stamped testimony whose source-valid interval intersects the inclusive window; unknown precision is excluded and counted |
 | `chunk_neighbors` | `chunk_id`, optional `radius` (1–2, default 1) | the current source chunk and its document-order neighbors, with document edges disclosed as truncation |
+| `current_context` | `query`, optional `k` (1–30, default 15), optional `evidence_per_fact` (1–5, default 3) | current relations and observations nominated semantically for the question, with live supporting and contradicting claims; evidence is capped at 60 records per envelope |
 
 The entity-string recipes never silently choose among exact-name candidates:
 ambiguity returns candidates in `entities[]` plus a `boundary` negative, and a
@@ -186,6 +187,11 @@ representation, offsets, and source timestamps confirmed by the live spine.
 `claims_as_of` additionally returns the exact `excluded_unstamped` count.
 `documents_about` source records may include `mention_count`,
 `first_mentioned_at`, and `last_mentioned_at`.
+`current_context` is a flat fact-grain envelope: `facts[]` contains the current
+verdicts, `evidence[]` contains the backing testimony, `fact_evidence[]`
+explicitly maps each fact to each claim and stance, and `evidence_totals[]`
+reports exact returned/total counts for both stances. It has no `entity`
+argument or resolution step; facts with no live evidence are never returned.
 
 For ordinary question answering, prefer the public `question_context` recipe.
 It independently fuses semantic and BM25 claim nominations and source-chunk

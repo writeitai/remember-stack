@@ -478,6 +478,47 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         version=1,
     ),
     Recipe(
+        name="current_context",
+        description="What currently holds about the things this question mentions?"
+        " Use this for question-driven current relations and observations, with"
+        " current source testimony behind every returned fact. Semantic nomination"
+        " is capped at k facts plus one truncation probe; each fact may carry up to"
+        " evidence_per_fact supporting and contradicting claims within the hard"
+        " 60-evidence-record envelope budget. It is never verbatim assertion"
+        " history; use a claims recipe for what sources said without a current-fact"
+        " verdict.",
+        parameters={
+            "query": {"type": "string", "required": True},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 15,
+                "minimum": 1,
+                "maximum": 30,
+            },
+            "evidence_per_fact": {
+                "type": "integer",
+                "required": False,
+                "default": 3,
+                "minimum": 1,
+                "maximum": 5,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="current_context",
+                bind={
+                    "query": "query",
+                    "k": "k",
+                    "evidence_per_fact": "evidence_per_fact",
+                },
+            ),
+        ),
+        output_grain=Grain.FACT,
+        answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
+        version=1,
+    ),
+    Recipe(
         name="explain",
         description="Why do we believe a relation — the fact with its evidence"
         " and source handles (S5). Composite grain, the audit deepening hop.",

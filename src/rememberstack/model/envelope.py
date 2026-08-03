@@ -8,6 +8,7 @@ carries the minimal envelope; the full contract grows on these same fields.
 
 from enum import StrEnum
 from typing import Annotated
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -216,6 +217,33 @@ class EvidenceResult(BaseModel):
     claim_valid_kind: str | None = None
     document_title: str | None = None
     source_kind: str | None = None
+
+
+class FactEvidence(BaseModel):
+    """One explicit fact-to-claim association in a flat compound answer."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    fact_id: UUID
+    claim_id: UUID
+    stance: Literal["supports", "contradicts"]
+
+
+class EvidenceTotal(BaseModel):
+    """Exact evidence disclosure for one fact and one evidence stance."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    fact_id: UUID
+    stance: Literal["supports", "contradicts"]
+    returned: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _returned_does_not_exceed_total(self) -> "EvidenceTotal":
+        if self.returned > self.total:
+            raise ValueError("returned evidence cannot exceed its exact total")
+        return self
 
 
 class ChunkEvidenceResult(BaseModel):
@@ -497,6 +525,8 @@ class Envelope(BaseModel):
     entities: tuple[EntityCandidate, ...] = ()
     facts: tuple[FactResult, ...] = ()
     evidence: tuple[EvidenceResult, ...] = ()
+    fact_evidence: tuple[FactEvidence, ...] = ()  # explicit fact/claim/stance links
+    evidence_totals: tuple[EvidenceTotal, ...] = ()  # exact per-fact stance counts
     chunks: tuple[ChunkEvidenceResult, ...] = ()
     sources: tuple[SourceRecord, ...] = ()
     transcript: tuple["TranscriptEntry", ...] = ()  # S8: the audit surface
@@ -529,6 +559,8 @@ class Envelope(BaseModel):
                 self.entities,
                 self.facts,
                 self.evidence,
+                self.fact_evidence,
+                self.evidence_totals,
                 self.chunks,
                 self.sources,
                 self.transcript,

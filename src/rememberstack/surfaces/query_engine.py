@@ -10,6 +10,7 @@ never trigger anything.
 
 import base64
 import binascii
+from collections import Counter
 from collections.abc import Iterator
 from collections.abc import Sequence
 from datetime import datetime
@@ -39,6 +40,8 @@ from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EntityCandidate
 from rememberstack.model import Envelope
 from rememberstack.model import EvidenceResult
+from rememberstack.model import EvidenceTotal
+from rememberstack.model import FactEvidence
 from rememberstack.model import FactResult
 from rememberstack.model import FactSupport
 from rememberstack.model import Freshness
@@ -93,6 +96,12 @@ recipe returns at most 50 evidence records. Four hundred matches the existing
 interactive nomination ceiling and keeps hub-entity/time-window vector reads
 bounded without ever nominating globally and filtering afterward.
 """
+
+CURRENT_CONTEXT_EVIDENCE_BUDGET: Final = 60
+"""Hard maximum evidence associations in one current-context envelope."""
+
+_EVIDENCE_STANCES: Final = ("supports", "contradicts")
+"""Stable two-stance order for selection and exact-total disclosure."""
 
 _RERANK_SIGNALS = {"graph_distance": True, "evidence_count": False}
 """The inspectable rerank signals and whether each sorts ascending: nearer
@@ -458,6 +467,161 @@ class QueryEngine:
             ),
         )
 
+    def current_context(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 15,
+        evidence_per_fact: int = 3,
+    ) -> Envelope:
+        """Question-driven current facts with explicit two-stance evidence.
+
+        P1 nominates relation and observation labels together. PostgreSQL then
+        confirms both temporal clocks and hydrates only current testimony from
+        live lineages (D48). Evidence is source-diverse within each stance and
+        allocated rank-round-robin so the 60-record budget cannot leave a later
+        returned fact unbacked.
+        """
+        _validate_current_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        as_of = datetime.now(tz=UTC)
+        nominated = tuple(
+            dict.fromkeys(
+                UUID(item)
+                for item in self._search_index.search_facts(
+                    deployment_id=str(deployment_id),
+                    vector=self._embed(query=query),
+                    k=k + 1,
+                    kind=None,
+                )
+            )
+        )
+        candidate_ids = nominated[:k]
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            fact_rows = (
+                connection.execute(
+                    _CONFIRM_CURRENT_FACTS,
+                    {
+                        "deployment_id": deployment_id,
+                        "fact_ids": list(candidate_ids),
+                        "as_of": as_of,
+                    },
+                )
+                .mappings()
+                .all()
+                if candidate_ids
+                else []
+            )
+            evidence_rows = (
+                connection.execute(
+                    _CURRENT_FACT_EVIDENCE,
+                    {
+                        "deployment_id": deployment_id,
+                        "fact_ids": [row["fact_id"] for row in fact_rows],
+                        "fact_kinds": [row["kind"] for row in fact_rows],
+                        "per_stance_limit": evidence_per_fact,
+                    },
+                )
+                .mappings()
+                .all()
+                if fact_rows
+                else []
+            )
+
+        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
+        totals: dict[tuple[UUID, str], int] = {}
+        for row in evidence_rows:
+            key = (row["fact_id"], str(row["stance"]))
+            evidence_by_fact_stance.setdefault(key, []).append(row)
+            totals[key] = int(row["evidence_total"])
+
+        backed_rows = tuple(
+            row
+            for row in fact_rows
+            if any(
+                evidence_by_fact_stance.get((row["fact_id"], stance))
+                for stance in _EVIDENCE_STANCES
+            )
+        )
+        facts = self._enrich_current_context_facts(
+            deployment_id=deployment_id, rows=backed_rows
+        )
+        selected = _select_current_context_evidence(
+            facts=facts,
+            evidence_by_fact_stance=evidence_by_fact_stance,
+            evidence_per_fact=evidence_per_fact,
+        )
+        returned_counts = Counter(
+            (row["fact_id"], str(row["stance"])) for row in selected
+        )
+        associations = tuple(
+            FactEvidence.model_validate(
+                {
+                    "fact_id": row["fact_id"],
+                    "claim_id": row["claim_id"],
+                    "stance": str(row["stance"]),
+                }
+            )
+            for row in selected
+        )
+        evidence_by_id: dict[UUID, EvidenceResult] = {}
+        for row in selected:
+            claim_id = row["claim_id"]
+            evidence_by_id.setdefault(
+                claim_id,
+                EvidenceResult.model_validate(
+                    {
+                        key: value
+                        for key, value in dict(row).items()
+                        if key
+                        not in {
+                            "fact_id",
+                            "kind",
+                            "stance",
+                            "evidence_total",
+                            "stance_rank",
+                        }
+                    }
+                ),
+            )
+        exact_totals = tuple(
+            EvidenceTotal(
+                fact_id=fact.fact_id,
+                stance=stance,
+                returned=returned_counts[(fact.fact_id, stance)],
+                total=totals.get((fact.fact_id, stance), 0),
+            )
+            for fact in facts
+            for stance in _EVIDENCE_STANCES
+        )
+        dropped = len(candidate_ids) - len(facts)
+        return Envelope(
+            grain=Grain.FACT,
+            facts=facts,
+            evidence=tuple(evidence_by_id.values()),
+            fact_evidence=associations,
+            evidence_totals=exact_totals,
+            freshness=_freshness(),
+            truncation=Truncation(
+                truncated=len(nominated) > k,
+                returned=len(facts),
+                estimated_total=len(nominated),
+                total_is_exact=len(nominated) <= k,
+            ),
+            dropped_by_hydration=dropped,
+            negative=None
+            if facts
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=f"no current evidence-backed facts match {query!r}",
+                workaround=(
+                    "broaden the query or search claims and source passages for testimony"
+                ),
+            ),
+        )
+
     def lookup_relations(
         self,
         *,
@@ -750,13 +914,17 @@ class QueryEngine:
                 )
             claims = (
                 connection.execute(
-                    _HYDRATE_EVIDENCE_CLAIMS, {"relation_id": relation_id}
+                    _HYDRATE_EVIDENCE_CLAIMS,
+                    {"deployment_id": deployment_id, "relation_id": relation_id},
                 )
                 .mappings()
                 .all()
             )
             sources = (
-                connection.execute(_HYDRATE_SOURCES, {"relation_id": relation_id})
+                connection.execute(
+                    _HYDRATE_SOURCES,
+                    {"deployment_id": deployment_id, "relation_id": relation_id},
+                )
                 .mappings()
                 .all()
             )
@@ -1451,6 +1619,25 @@ class QueryEngine:
             for fact in facts
         )
 
+    def _enrich_current_context_facts(
+        self, *, deployment_id: UUID, rows: tuple[RowMapping, ...]
+    ) -> tuple[FactResult, ...]:
+        """Build and enrich a mixed relation/observation fact nomination."""
+        by_kind: dict[str, tuple[FactResult, ...]] = {
+            kind: tuple(
+                _fact_result(row=row, kind=kind) for row in rows if row["kind"] == kind
+            )
+            for kind in ("relation", "observation")
+        }
+        enriched = {
+            fact.fact_id: fact
+            for kind, facts in by_kind.items()
+            for fact in self._enrich_facts(
+                deployment_id=deployment_id, facts=facts, kind=kind
+            )
+        }
+        return tuple(enriched[row["fact_id"]] for row in rows)
+
     def _enrich_one(
         self,
         *,
@@ -1637,6 +1824,39 @@ def _validate_batch_b_k(*, k: int) -> None:
     """Enforce the four new recipes' shared public result bound."""
     if not 1 <= k <= 50:
         raise ValueError("recipe k must be between 1 and 50")
+
+
+def _validate_current_context_bounds(*, k: int, evidence_per_fact: int) -> None:
+    """Enforce Batch C's public fact and per-stance evidence bounds."""
+    if not 1 <= k <= 30:
+        raise ValueError("current_context k must be between 1 and 30")
+    if not 1 <= evidence_per_fact <= 5:
+        raise ValueError("evidence_per_fact must be between 1 and 5")
+
+
+def _select_current_context_evidence(
+    *,
+    facts: tuple[FactResult, ...],
+    evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]],
+    evidence_per_fact: int,
+) -> tuple[RowMapping, ...]:
+    """Allocate two-stance evidence fairly within the hard envelope budget.
+
+    Each rank round visits every returned fact and both stances before taking
+    another claim from any fact. Because k is at most 30 and the budget is 60,
+    the first round always gives every backed fact at least one association;
+    when both stances exist it also exposes both before adding depth.
+    """
+    selected: list[RowMapping] = []
+    for rank in range(evidence_per_fact):
+        for fact in facts:
+            for stance in _EVIDENCE_STANCES:
+                candidates = evidence_by_fact_stance.get((fact.fact_id, stance), [])
+                if rank < len(candidates):
+                    selected.append(candidates[rank])
+                    if len(selected) == CURRENT_CONTEXT_EVIDENCE_BUDGET:
+                        return tuple(selected)
+    return tuple(selected)
 
 
 def _bounded_truncation(*, returned: int, total: int, k: int) -> Truncation:
@@ -1968,6 +2188,116 @@ _LOOKUP_OBSERVATIONS = text(
     """
 )
 
+_CONFIRM_CURRENT_FACTS = text(
+    """
+    WITH requested AS (
+        SELECT fact_id, nomination_rank
+        FROM unnest(CAST(:fact_ids AS uuid[])) WITH ORDINALITY
+             AS nominated(fact_id, nomination_rank)
+    ), confirmed AS (
+        SELECT requested.nomination_rank, 'relation'::text AS kind,
+               r.relation_id AS fact_id,
+               coalesce(r.fact_label, r.predicate) AS label,
+               r.evidence_count, r.valid_from, r.valid_until,
+               r.ingested_at, r.invalidated_at, r.contradiction_group
+        FROM requested
+        JOIN relations r
+          ON r.deployment_id = :deployment_id
+         AND r.relation_id = requested.fact_id
+        WHERE r.invalidated_at IS NULL
+          AND (r.valid_from IS NULL OR r.valid_from <= :as_of)
+          AND (r.valid_until IS NULL OR r.valid_until > :as_of)
+        UNION ALL
+        SELECT requested.nomination_rank, 'observation'::text AS kind,
+               o.observation_id AS fact_id, o.statement AS label,
+               o.evidence_count, o.valid_from, o.valid_until,
+               o.ingested_at, o.invalidated_at, o.contradiction_group
+        FROM requested
+        JOIN observations o
+          ON o.deployment_id = :deployment_id
+         AND o.observation_id = requested.fact_id
+        WHERE o.invalidated_at IS NULL
+          AND (o.valid_from IS NULL OR o.valid_from <= :as_of)
+          AND (o.valid_until IS NULL OR o.valid_until > :as_of)
+    )
+    SELECT *
+    FROM confirmed
+    ORDER BY nomination_rank, kind, fact_id
+    """
+)
+
+_CURRENT_FACT_EVIDENCE = text(
+    """
+    WITH requested AS (
+        SELECT fact_id, kind, nomination_rank
+        FROM unnest(
+            CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[])
+        ) WITH ORDINALITY AS confirmed(fact_id, kind, nomination_rank)
+    ), links AS (
+        SELECT requested.fact_id, requested.kind, requested.nomination_rank,
+               e.claim_id, e.doc_id, e.stance::text AS stance
+        FROM requested
+        JOIN relation_evidence e
+          ON requested.kind = 'relation'
+         AND e.deployment_id = :deployment_id
+         AND e.relation_id = requested.fact_id
+        UNION ALL
+        SELECT requested.fact_id, requested.kind, requested.nomination_rank,
+               e.claim_id, e.doc_id, e.stance::text AS stance
+        FROM requested
+        JOIN observation_evidence e
+          ON requested.kind = 'observation'
+         AND e.deployment_id = :deployment_id
+         AND e.observation_id = requested.fact_id
+    ), eligible AS (
+        SELECT links.fact_id, links.kind, links.nomination_rank, links.stance,
+               c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
+               c.char_start, c.char_end, c.is_attributed,
+               c.is_current_testimony, c.asserted_at, c.claim_valid_from,
+               c.claim_valid_until, c.claim_valid_precision::text,
+               c.claim_valid_kind::text, d.title AS document_title,
+               d.source_kind, c.ingested_at AS evidence_ingested_at,
+               count(*) OVER (
+                   PARTITION BY links.fact_id, links.stance
+               ) AS evidence_total,
+               row_number() OVER (
+                   PARTITION BY links.fact_id, links.stance, links.doc_id
+                   ORDER BY c.asserted_at DESC NULLS LAST,
+                            c.ingested_at DESC, c.claim_id
+               ) AS lineage_claim_rank
+        FROM links
+        JOIN claims c
+          ON c.deployment_id = :deployment_id
+         AND c.claim_id = links.claim_id
+         AND c.doc_id = links.doc_id
+        LEFT JOIN documents d
+          ON d.deployment_id = c.deployment_id
+         AND d.doc_id = c.doc_id
+        WHERE c.is_current_testimony
+          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+    ), diverse AS (
+        SELECT eligible.*,
+               row_number() OVER (
+                   PARTITION BY fact_id, stance
+                   ORDER BY lineage_claim_rank,
+                            asserted_at DESC NULLS LAST,
+                            evidence_ingested_at DESC, doc_id, claim_id
+               ) AS stance_rank
+        FROM eligible
+    )
+    SELECT fact_id, kind, stance, evidence_total, stance_rank,
+           claim_id, doc_id, chunk_id, claim_text, source_span,
+           char_start, char_end, is_attributed, is_current_testimony,
+           asserted_at, claim_valid_from, claim_valid_until,
+           claim_valid_precision, claim_valid_kind, document_title, source_kind
+    FROM diverse
+    WHERE stance_rank <= :per_stance_limit
+    ORDER BY nomination_rank,
+             CASE stance WHEN 'supports' THEN 0 ELSE 1 END,
+             stance_rank, claim_id
+    """
+)
+
 _CONFIRM_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
@@ -2053,10 +2383,16 @@ _HYDRATE_EVIDENCE_CLAIMS = text(
            c.claim_valid_precision::text, c.claim_valid_kind::text,
            d.title AS document_title, d.source_kind
     FROM relation_evidence e
-    JOIN claims c ON c.claim_id = e.claim_id
+    JOIN claims c ON c.deployment_id = e.deployment_id
+                 AND c.claim_id = e.claim_id
+                 AND c.doc_id = e.doc_id
     LEFT JOIN documents d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
-    WHERE e.relation_id = :relation_id AND e.stance = 'supports'
+    WHERE e.deployment_id = :deployment_id
+      AND e.relation_id = :relation_id
+      AND e.stance = 'supports'
+      AND c.is_current_testimony
+      AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
     ORDER BY c.ingested_at, c.claim_id
     """
 )
@@ -2065,13 +2401,21 @@ _HYDRATE_SOURCES = text(
     """
     SELECT DISTINCT d.doc_id, d.title, d.source_kind, r.markdown_uri
     FROM relation_evidence e
-    JOIN claims c ON c.claim_id = e.claim_id
-    JOIN chunks ch ON ch.chunk_id = c.chunk_id
-    JOIN documents d ON d.doc_id = e.doc_id
+    JOIN claims c ON c.deployment_id = e.deployment_id
+                 AND c.claim_id = e.claim_id
+                 AND c.doc_id = e.doc_id
+    JOIN chunks ch ON ch.deployment_id = c.deployment_id
+                  AND ch.chunk_id = c.chunk_id
+    JOIN documents d ON d.deployment_id = e.deployment_id
+                    AND d.doc_id = e.doc_id
     LEFT JOIN document_representations r
-           ON r.representation_id = ch.representation_id
-    WHERE e.relation_id = :relation_id
+           ON r.deployment_id = ch.deployment_id
+          AND r.representation_id = ch.representation_id
+    WHERE e.deployment_id = :deployment_id
+      AND e.relation_id = :relation_id
       AND e.stance = 'supports'
+      AND c.is_current_testimony
+      AND d.deleted_at IS NULL
     """
 )
 
