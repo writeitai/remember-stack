@@ -98,6 +98,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p7_05_0017",
         "p1_03_0018",
         "p1_04_0019",
+        "p5_07_0020",
     )
     assert len(script.get_heads()) == 1
 
@@ -108,6 +109,42 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # backfill; no deployment/bootstrap seed DML belongs in this chain.
     assert migration_source.count("insert into") == 1
     assert "bootstrap_deployment" not in migration_source
+
+
+def test_batch_b_indexes_have_bound_columns_and_predicates() -> None:
+    """Lock the two new partial indexes, not merely their catalog names."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.upgrade(config=config, revision="head")
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            definitions = {
+                row["indexname"]: " ".join(row["indexdef"].split())
+                for row in connection.execute(
+                    text(
+                        "SELECT indexname, indexdef FROM pg_indexes"
+                        " WHERE schemaname = 'public'"
+                        " AND indexname IN"
+                        " ('ix_claims_valid_window', 'ix_resdec_entity_live')"
+                    )
+                ).mappings()
+            }
+    finally:
+        engine.dispose()
+
+    assert definitions == {
+        "ix_claims_valid_window": (
+            "CREATE INDEX ix_claims_valid_window ON ONLY public.claims USING btree"
+            " (deployment_id, claim_valid_from, claim_valid_until) WHERE"
+            " (claim_valid_precision <> 'unknown'::claim_valid_precision)"
+        ),
+        "ix_resdec_entity_live": (
+            "CREATE INDEX ix_resdec_entity_live ON ONLY public.resolution_decisions"
+            " USING btree (deployment_id, entity_id, mention_id) WHERE"
+            " (superseded_by IS NULL)"
+        ),
+    }
 
 
 def test_claim_citation_coordinate_migration_deduplicates_real_rows() -> None:
@@ -416,5 +453,5 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p1_04_0019"
+    assert head_before_noop == head_after_noop == "p5_07_0020"
     assert _inventory(database_url=database_url) == restored_inventory

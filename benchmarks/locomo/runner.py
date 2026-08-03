@@ -183,6 +183,7 @@ def prepare_run(
         "answer_agent_reasoning_effort": (
             selected_protocol.answer_agent_reasoning_effort
         ),
+        "answer_word_cap": selected_protocol.answer_word_cap,
         "judge_model": selected_protocol.judge_model,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
@@ -431,7 +432,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v8 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v9 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -497,6 +498,7 @@ def answer_sample(
                     answer_reader_retry_budget=(
                         context.configuration.answer_reader_retry_budget
                     ),
+                    answer_word_cap=context.configuration.answer_word_cap,
                 )
             else:
                 with tracer.question(
@@ -527,6 +529,7 @@ def answer_sample(
                         answer_reader_retry_budget=(
                             context.configuration.answer_reader_retry_budget
                         ),
+                        answer_word_cap=context.configuration.answer_word_cap,
                         question_trace=question_trace,
                     )
                     if question_trace is not None:
@@ -970,7 +973,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v8")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v9")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -980,7 +983,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v8")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v9")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1012,6 +1015,7 @@ def _validate_run(
         "knowledge_mode": configuration.knowledge_mode,
         "answer_agent_model": configuration.answer_agent_model,
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
+        "answer_word_cap": configuration.answer_word_cap,
         "judge_model": configuration.judge_model,
         "answer_agent_temperature": configuration.answer_agent_temperature,
         "judge_temperature": configuration.judge_temperature,
@@ -1035,6 +1039,7 @@ def _validate_run(
         "answer_agent_reasoning_effort": (
             selected_protocol.answer_agent_reasoning_effort
         ),
+        "answer_word_cap": selected_protocol.answer_word_cap,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
@@ -1301,6 +1306,7 @@ def _answer_one(
     max_tool_calls_per_question: int = MAX_TOOL_CALLS,
     max_agent_calls_per_question: int = MAX_AGENT_CALLS,
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
+    answer_word_cap: int | None = None,
     question_trace: QuestionTrace | None = None,
 ) -> AnswerRecord:
     """Let a bounded agent choose ordinary public recipes, then answer."""
@@ -1323,7 +1329,10 @@ def _answer_one(
             spent=state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
         )
         prompt = render_answer_agent_prompt(
-            question=question.question, tools=tools, trace=tuple(trace)
+            question=question.question,
+            tools=tools,
+            trace=tuple(trace),
+            answer_word_cap=answer_word_cap,
         )
         agent_observation = (
             None
@@ -1513,7 +1522,7 @@ def _answer_one(
                     usages=tuple(usages),
                 )
             answer = step.answer or ""
-            if len(answer.split()) > 20:
+            if answer_word_cap is not None and len(answer.split()) > answer_word_cap:
                 if agent_observation is not None:
                     agent_observation.finish(
                         usage=response.usage,
@@ -1523,7 +1532,9 @@ def _answer_one(
                 return _failed_answer(
                     question=question,
                     kind="invalid_response",
-                    message="answer agent exceeded the twenty-word answer limit",
+                    message=(
+                        f"answer agent exceeded the {answer_word_cap}-word answer limit"
+                    ),
                     retrieval_latency_ms=tool_latency_ms,
                     retrieval_succeeded=True,
                     agent_call_count=agent_call_count,

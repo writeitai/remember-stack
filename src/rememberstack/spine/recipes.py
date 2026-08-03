@@ -377,6 +377,104 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         version=2,
     ),
     Recipe(
+        name="documents_about",
+        description="Which ingested documents mention a person or thing? Use"
+        " this to browse source documents anchored to an entity name. Documents"
+        " with no resolved mention are not listed; text search can still find"
+        " their unresolved wording.",
+        parameters={
+            "entity": {"type": "string", "required": True},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 20,
+                "minimum": 1,
+                "maximum": 50,
+            },
+        },
+        chain=(RecipeStep(op="documents_about", bind={"entity": "entity", "k": "k"}),),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ORIENTATION,
+        version=1,
+    ),
+    Recipe(
+        name="claims_about",
+        description="What did sources assert that a person or thing said, did,"
+        " or was? Use this for verbatim entity-anchored testimony, optionally"
+        " reranked for a narrower question; it is evidence, never current fact.",
+        parameters={
+            "entity": {"type": "string", "required": True},
+            "query": {"type": "string", "required": False},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 20,
+                "minimum": 1,
+                "maximum": 50,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="claims_about", bind={"entity": "entity", "query": "query", "k": "k"}
+            ),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+        version=1,
+    ),
+    Recipe(
+        name="claims_as_of",
+        description="What did sources assert happened within a world-time"
+        " window? Use this for historical testimony whose stamped validity"
+        " interval intersects the requested bounds, optionally reranked by a"
+        " question; unstamped claims are counted but excluded.",
+        parameters={
+            "from": {"type": "timestamp", "required": True},
+            "to": {"type": "timestamp", "required": True},
+            "query": {"type": "string", "required": False},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 20,
+                "minimum": 1,
+                "maximum": 50,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="claims_as_of",
+                bind={"from_": "from", "to": "to", "query": "query", "k": "k"},
+            ),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+        version=1,
+    ),
+    Recipe(
+        name="chunk_neighbors",
+        description="Read the live source passage surrounding a chunk hit. Use"
+        " this to recover adjacent context in document section order; document"
+        " edges are reported explicitly through the truncation block.",
+        parameters={
+            "chunk_id": {"type": "uuid", "required": True},
+            "radius": {
+                "type": "integer",
+                "required": False,
+                "default": 1,
+                "minimum": 1,
+                "maximum": 2,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="chunk_neighbors", bind={"chunk_id": "chunk_id", "radius": "radius"}
+            ),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+        version=1,
+    ),
+    Recipe(
         name="explain",
         description="Why do we believe a relation — the fact with its evidence"
         " and source handles (S5). Composite grain, the audit deepening hop.",

@@ -1413,13 +1413,16 @@ CREATE INDEX ix_claims_flagged  ON claims (deployment_id) WHERE kept_flagged = t
 CREATE INDEX ix_claims_current  ON claims (deployment_id, doc_id) WHERE is_current_testimony; -- the D54 hot filter (counts; default claim search)
 CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = 'sampled_fail'; -- grounding regressions
 -- D41 claim-validity is projected to Lance (P1) as filterable scalar columns (claim_valid_from/until/
--- precision) beside the claim embedding (same pattern as relation windows, D8); the time-filter path
--- is Lance, so there is NO new Postgres index by default (preserves D23's btree-light mandate on this
--- ~5×10⁷ partitioned table). A `claims_as_of(t)` search recipe (D9) answers "what did sources assert
--- held over T" at the EVIDENCE grain; fact-as-of stays relations-only (D10) and the recipe registry
--- BARS claims_as_of from answering "currently true". An OPTIONAL partial btree on (deployment_id,
--- claim_valid_from, claim_valid_until) WHERE claim_valid_precision <> 'unknown' is added only if
--- PG-side temporal claim filtering is ever load-tested against D23 — a spike (§17), not a default.
+-- precision) beside the claim embedding (same pattern as relation windows, D8). Retrieval Batch B
+-- supersedes the original no-default-index stance: `claims_as_of(from,to)` first filters in the
+-- authoritative Postgres spine, then optionally ranks only that bounded set semantically. Stamped
+-- claims are the minority, so the default is the partial btree below; P1 filtering remains the
+-- recorded alternative if benchmark-scale Postgres p95 exceeds 250 ms. This evidence-grain recipe
+-- answers "what did sources assert held over T" and is barred from answering "currently true";
+-- fact-as-of stays relations-only (D10).
+CREATE INDEX ix_claims_valid_window ON claims
+  (deployment_id, claim_valid_from, claim_valid_until)
+  WHERE claim_valid_precision <> 'unknown';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- claim_extraction_decisions — the append-only, version-stamped extraction transcript (D33). It

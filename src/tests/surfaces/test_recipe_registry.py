@@ -71,6 +71,12 @@ class _FakeSearchIndex:
         """Bind the fixed nominations both the recipe and the chain will see."""
         self._claim_ids = tuple(str(claim_id) for claim_id in claim_ids)
 
+    def claim_vectors(
+        self, *, deployment_id: str, claim_ids: tuple[str, ...]
+    ) -> dict[str, tuple[float, ...]]:
+        """Return one stable vector for every requested bounded candidate."""
+        return {claim_id: (1.0, 0.0) for claim_id in claim_ids}
+
     def search_claims(
         self,
         *,
@@ -453,6 +459,10 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
         "claims_hybrid_rrf": {"query": "alice acme"},
         "chunks_hybrid_rrf": {"query": "alice acme"},
         "question_context": {"query": "alice acme"},
+        "documents_about": {"entity": "Alice"},
+        "claims_about": {"entity": "Alice"},
+        "claims_as_of": {"from": _SINCE, "to": _NOW},
+        "chunk_neighbors": {"chunk_id": uuid4()},
         "explain": {"relation_id": corpus.relation_id},
         "identity_as_of": {"entity_id": alice},
         "changed_since": {"since": _SINCE},
@@ -483,7 +493,22 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
         "pages_about": engine.pages_about(
             deployment_id=_DEPLOYMENT_ID, entity_id=alice
         ),
+        "documents_about": engine.documents_about(
+            deployment_id=_DEPLOYMENT_ID, entity="Alice"
+        ),
+        "claims_about": engine.claims_about(
+            deployment_id=_DEPLOYMENT_ID, entity="Alice"
+        ),
+        "claims_as_of": engine.claims_as_of(
+            deployment_id=_DEPLOYMENT_ID, from_=_SINCE, to=_NOW
+        ),
     }
+
+    neighbor_id = arguments["chunk_neighbors"]["chunk_id"]
+    assert isinstance(neighbor_id, UUID)
+    direct["chunk_neighbors"] = engine.chunk_neighbors(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=neighbor_id
+    )
 
     # The fused recipes nominate cheaply, hand-fuse, then confirm exactly once.
     def claim_hybrid(*, k: int, candidate_k: int) -> Envelope:
@@ -719,6 +744,61 @@ def test_question_context_keeps_claims_and_chunks_separately_typed() -> None:
     assert candidate_default > result_default
     assert recipe.version == 2
     lint_recipe(recipe)
+
+
+def test_batch_b_recipes_have_bound_descriptors_and_schemas() -> None:
+    """The four new public recipes carry the complete D50 contract."""
+    recipes = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
+    expected = {
+        "documents_about": ("documents_about", Grain.EVIDENCE),
+        "claims_about": ("claims_about", Grain.EVIDENCE),
+        "claims_as_of": ("claims_as_of", Grain.EVIDENCE),
+        "chunk_neighbors": ("chunk_neighbors", Grain.EVIDENCE),
+    }
+    for name, (op, grain) in expected.items():
+        recipe = recipes[name]
+        assert recipe.description
+        assert recipe.chain == (recipe.chain[0],)
+        assert recipe.chain[0].op == op
+        assert recipe.output_grain is grain
+        assert recipe.version == 1
+        lint_recipe(recipe)
+
+    for name in ("documents_about", "claims_about", "claims_as_of"):
+        assert recipes[name].parameters["k"] == {
+            "type": "integer",
+            "required": False,
+            "default": 20,
+            "minimum": 1,
+            "maximum": 50,
+        }
+    assert recipes["documents_about"].parameters["entity"] == {
+        "type": "string",
+        "required": True,
+    }
+    assert recipes["claims_about"].parameters["query"] == {
+        "type": "string",
+        "required": False,
+    }
+    assert recipes["claims_as_of"].parameters["from"] == {
+        "type": "timestamp",
+        "required": True,
+    }
+    assert recipes["claims_as_of"].parameters["to"] == {
+        "type": "timestamp",
+        "required": True,
+    }
+    assert recipes["chunk_neighbors"].parameters["chunk_id"] == {
+        "type": "uuid",
+        "required": True,
+    }
+    assert recipes["chunk_neighbors"].parameters["radius"] == {
+        "type": "integer",
+        "required": False,
+        "default": 1,
+        "minimum": 1,
+        "maximum": 2,
+    }
 
 
 def test_question_context_executes_to_both_evidence_payloads() -> None:

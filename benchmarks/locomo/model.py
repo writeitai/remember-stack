@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v8 protocols."""
+"""Typed values for the full-system RS-LoCoMo-Full-v9 protocols."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v8", "full-v8-strong"]
-ProtocolName = Literal["RS-LoCoMo-Full-v8", "RS-LoCoMo-Full-v8-strong"]
+ProtocolKey = Literal["full-v9", "full-v9-strong"]
+ProtocolName = Literal["RS-LoCoMo-Full-v9", "RS-LoCoMo-Full-v9-strong"]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal["openai/gpt-4o-mini", "openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
@@ -118,7 +118,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v8"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v9"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -137,6 +137,7 @@ class RunConfiguration(FrozenModel):
     knowledge_mode: Literal["not_composed"] = "not_composed"
     answer_agent_model: AnswerAgentModel = "openai/gpt-4o-mini"
     answer_agent_reasoning_effort: Literal["none"] | None = None
+    answer_word_cap: int | None = Field(default=None, ge=1)
     judge_model: JudgeModel = "openai/gpt-5.6-luna"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
@@ -376,7 +377,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v8"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v9"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

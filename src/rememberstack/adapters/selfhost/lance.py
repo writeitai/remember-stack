@@ -127,10 +127,29 @@ class LanceChunkIndex:
         )
         self._ensure_text_index(table_name=_CLAIM_TABLE)
         self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="claim_id")
         self._ensure_bitmap_index(
             table_name=_CLAIM_TABLE, column="is_current_testimony"
         )
         self._maintain_indexed_tail(table_name=_CLAIM_TABLE)
+
+    def claim_vectors(
+        self, *, deployment_id: str, claim_ids: tuple[str, ...]
+    ) -> dict[str, tuple[float, ...]]:
+        """Read vectors only for a bounded Postgres-selected claim set."""
+        deployment_id = str(UUID(deployment_id))
+        if not claim_ids or not self._has_table(table_name=_CLAIM_TABLE):
+            return {}
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="claim_id")
+        ids = ", ".join(f"'{UUID(item)}'" for item in claim_ids)
+        rows = (
+            self._connection.open_table(_CLAIM_TABLE)
+            .search()
+            .where(f"deployment_id = '{deployment_id}' AND claim_id IN ({ids})")
+            .limit(len(claim_ids))
+            .to_list()
+        )
+        return {row["claim_id"]: tuple(row["vector"]) for row in rows}
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
         """Insert or replace facts-channel rows by fact_id; idempotent."""
@@ -318,10 +337,12 @@ class LanceChunkIndex:
         if _CLAIM_TABLE in available:
             claims = self._connection.open_table(_CLAIM_TABLE)
             claims.create_index("deployment_id", config=BTree())
+            claims.create_index("claim_id", config=BTree())
             claims.create_index("is_current_testimony", config=Bitmap())
             claims.create_index("text", config=_TEXT_INDEX)
             self._text_indexes_ready.add(_CLAIM_TABLE)
             self._scalar_indexes_ready.add((_CLAIM_TABLE, "deployment_id"))
+            self._scalar_indexes_ready.add((_CLAIM_TABLE, "claim_id"))
             self._scalar_indexes_ready.add((_CLAIM_TABLE, "is_current_testimony"))
             self._mutations_since_optimize[_CLAIM_TABLE] = 0
             self._build_vector_index(table=claims)

@@ -247,6 +247,9 @@ class SourceRecord(BaseModel):
     title: str | None
     source_kind: str
     markdown_uri: str | None
+    mention_count: int | None = Field(default=None, ge=0)
+    first_mentioned_at: UTCDateTime | None = None
+    last_mentioned_at: UTCDateTime | None = None
 
 
 class GraphNode(BaseModel):
@@ -507,6 +510,7 @@ class Envelope(BaseModel):
     freshness: Freshness
     truncation: Truncation | None = None  # S18/S49: caps are never silent
     dropped_by_hydration: int = 0
+    excluded_unstamped: int = Field(default=0, ge=0)
     negative: Negative | None = None
 
     @model_validator(mode="after")

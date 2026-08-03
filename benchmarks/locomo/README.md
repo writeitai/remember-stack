@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v8 setup
+# RS-LoCoMo-Full-v9 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,13 +16,13 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v8 \
+  --protocol full-v9 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only: choose `full-v8` (the
-default) or `full-v8-strong` there, and every later stage reads that immutable
+eight-question smoke plan. `--protocol` is prepare-only: choose `full-v9` (the
+default) or `full-v9-strong` there, and every later stage reads that immutable
 choice from `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
@@ -40,10 +40,13 @@ containers so retrieved evidence does not get crowded out by audit metadata.
 Freshness, hydration-drop counts, and meaningful default-valued fields remain
 visible.
 
-V8 requires the shortest phrase that fully names the requested entities or
-values, permits up to twenty words, and forbids explanations or reasoning. Its
-two-retry malformed-completion allowance is shared across the answer loop,
-including a completion returned before the first tool call.
+V9 requires the shortest phrase that fully names the requested entities or
+values and forbids explanations or reasoning. Its `answer_word_cap` is a
+persisted, fingerprinted protocol field, but both stock registry entries leave
+it unset: the prompt renders no word-count sentence and the runner applies no
+word-count guard. The two-retry malformed-completion allowance remains shared
+across the answer loop, including a completion returned before the first tool
+call.
 
 Build the image from the revision under test — Compose otherwise serves the
 published release image, and the harness refuses to run against an engine whose
@@ -91,7 +94,7 @@ attempts in `reader_attempts` and pre-tool additional calls in
 outages and judge failures are not retried.
 
 The strong protocol pins answer-agent reasoning effort to `none` on every answer
-call. The default `full-v8` protocol sends no per-call effort field for its
+call. The default `full-v9` protocol sends no per-call effort field for its
 non-reasoning `gpt-4o-mini` answer agent. Ambient OpenRouter effort-map settings
 therefore cannot change either prepared protocol's answer behavior.
 

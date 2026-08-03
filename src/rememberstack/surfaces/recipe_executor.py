@@ -280,6 +280,34 @@ def _pages_about(
     return engine.pages_about(deployment_id=deployment_id, **kwargs)
 
 
+def _documents_about(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The entity-resolving `documents_about` op."""
+    return engine.documents_about(deployment_id=deployment_id, **kwargs)
+
+
+def _claims_about(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The entity-filtered `claims_about` op."""
+    return engine.claims_about(deployment_id=deployment_id, **kwargs)
+
+
+def _claims_as_of(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The source-validity-window `claims_as_of` op."""
+    return engine.claims_as_of(deployment_id=deployment_id, **kwargs)
+
+
+def _chunk_neighbors(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The D48-confirmed `chunk_neighbors` op."""
+    return engine.chunk_neighbors(deployment_id=deployment_id, **kwargs)
+
+
 _SINGLE_OP_HANDLERS = {
     "resolve": _resolve,
     "lookup_relations": _lookup_relations,
@@ -293,6 +321,10 @@ _SINGLE_OP_HANDLERS = {
     "transcript": _transcript,
     "delta": _delta,
     "pages_about": _pages_about,
+    "documents_about": _documents_about,
+    "claims_about": _claims_about,
+    "claims_as_of": _claims_as_of,
+    "chunk_neighbors": _chunk_neighbors,
 }
 
 EXECUTABLE_OPS = frozenset(_SINGLE_OP_HANDLERS) | {
