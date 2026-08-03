@@ -48,9 +48,9 @@ frozen product constants, unless frozen inside a named
 | **Embedding text** | Exact UTF-8 string embedded for the chunk under `(policy_version, body, location_facts)` | No |
 
 **Display / artifact body** (slice of `document.md`) remains distinct from
-**embedding text**. P1 passage search may store embedding text for the vector
-channel; lexical/FTS and agent reading should not silently require location
-headers to dominate short bodies (policy decides).
+**embedding text**. P1 stores **normalized body** for the text/BM25 column (§7);
+vectors use embedding text (which may include a header). Lexical search is therefore
+not dominated by location headers on short bodies.
 
 **Legacy name:** `context_prefix` in older code/docs means “optional rendered
 location header + historical LLM product.” New design language prefers
@@ -267,7 +267,7 @@ Never leave policy version and vector identity disagreeing on one overwritten ro
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under active generations |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
-| Policy version changes | Re-render all in-scope chunks; if hash unchanged and embedder generation unchanged, **zero-call vector attestation** into the new `passage_generation`; else provider embed |
+| Policy version changes | Re-render all in-scope chunks; if hash unchanged and embedder generation unchanged, **zero-call vector attestation** into the new `policy_generation` row set; else provider embed |
 | Scalar-only metadata (not in embedding text) | Update P1 scalar projection / PG; **no** re-embed |
 | Embedder generation changes | Provider re-embed + generation-safe P1 cutover (§7) |
 | Summary-only regeneration | No render/embed |
@@ -278,9 +278,9 @@ includes location. Block-level **extraction** reuse (D56 A1–A3) remains
 content-addressed without LLM output in identity keys.
 
 **Dual-generation cutover:** during re-embed, PG and P1 hold **versioned per-chunk
-embedding records** (or an equivalent generation manifest). Query targets an
-**active passage_generation pointer** at deployment/query scope. Cutover flips
-the pointer only when required records exist; old generation remains until
+embedding records** under `(policy_generation, embedder_generation)`. Query targets the
+**active `(policy_generation, embedder_generation)` pointer** at deployment/query scope.
+Cutover flips the pointer only when required records exist; old generation remains until
 retirement. Do not use sole in-place upsert-by-`chunk_id` as the migration story.
 
 ---

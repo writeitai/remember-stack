@@ -45,3 +45,13 @@ detail**, not a return to per-chunk location LLM or contextual embedders.
 
 Merge design PR when follow-up amendments above are on the branch; track open items as
 implementation design spikes / follow-on design PRs rather than reopening H1–H9.
+
+## Implementer-ready gate (final)
+
+After closing E2/orch/connector/claims contracts and Fable’s two must-fixes
+(generation grains; P1 body-only text):
+
+- **Fable:** Ready to implement (`fable_impl_ready.md`)
+- **Codex:** Ready to implement (`codex_impl_ready.md`)
+
+See `IMPL_READY.md`.
