@@ -2126,12 +2126,8 @@ class QueryEngine:
             projected = texts.get(str(chunk_id))
             if row is None or projected is None:
                 continue
-            context_prefix = row["context_prefix"]
-            if context_prefix is None:
-                continue
-            marker = f"{context_prefix}\n\n"
-            if not projected.indexed_text.startswith(marker):
-                continue
+            # D80: P1 text is body-only; optional location_header lives on PG.
+            location_header = row.get("location_header") or row.get("context_prefix")
             if projected.section_role != row["section_role"]:
                 continue
             results.append(
@@ -2140,8 +2136,8 @@ class QueryEngine:
                     doc_id=row["doc_id"],
                     version_id=row["version_id"],
                     representation_id=row["representation_id"],
-                    chunk_text=projected.indexed_text[len(marker) :],
-                    context_prefix=context_prefix,
+                    chunk_text=projected.indexed_text,
+                    context_prefix=location_header,
                     char_start=row["char_start"],
                     char_end=row["char_end"],
                     section_role=row["section_role"],
@@ -2988,7 +2984,7 @@ _CONFIRM_CLAIMS = text(
 _CONFIRM_CHUNKS = text(
     """
     SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
-           ch.char_start, ch.char_end, ch.context_prefix,
+           ch.char_start, ch.char_end, ch.context_prefix, ch.location_header,
            s.role::text AS section_role,
            d.title AS document_title, d.source_kind,
            v.source_modified_at, v.published_at

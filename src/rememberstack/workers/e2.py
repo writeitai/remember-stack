@@ -676,7 +676,7 @@ def _bundle_text(
         f"SECTION: path {chunk.section_path}, role {chunk.section_role}\n"
         "SECTION SUMMARIES (orientation only; never quote as source):\n"
         f"{summaries or '(none)'}\n"
-        f"CONTEXT PREFIX: {chunk.context_prefix or '(none)'}\n"
+        f"LOCATION: {_location_bundle_line(chunk=chunk)}\n"
         f"PREVIOUS CHUNK:\n{_neighbour_text(chunks=chunks, index=index - 1, document_md=document_md, section_path=chunk.section_path)}\n"
         f"NEXT CHUNK:\n{_neighbour_text(chunks=chunks, index=index + 1, document_md=document_md, section_path=chunk.section_path)}\n"
         f"TARGET CHUNK:\n{document_md[chunk.char_start : chunk.char_end]}"
@@ -714,9 +714,51 @@ def _source_grounding_elements(
             elements.append(
                 (name, document_md[neighbour.char_start : neighbour.char_end])
             )
-    if chunk.context_prefix:
-        elements.append(("context_prefix", chunk.context_prefix))
+    for kind, text in _location_grounding_pairs(chunk=chunk):
+        elements.append((kind, text))
     return tuple(elements)
+
+
+def _location_bundle_line(*, chunk: ChunkForEmbedding) -> str:
+    """Render typed location for the extractor prompt (D80)."""
+    pairs = _location_grounding_pairs(chunk=chunk)
+    if not pairs:
+        header = chunk.location_header or chunk.context_prefix
+        return header or "(none)"
+    return "; ".join(f"{kind}={text}" for kind, text in pairs)
+
+
+def _location_grounding_pairs(
+    *, chunk: ChunkForEmbedding
+) -> tuple[tuple[str, str], ...]:
+    """Typed location elements for the D32 union; never free-form header alone."""
+    import json
+
+    if chunk.location_facts_json:
+        try:
+            payload = json.loads(chunk.location_facts_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            elements = payload.get("elements")
+            if isinstance(elements, list):
+                pairs: list[tuple[str, str]] = []
+                for item in elements:
+                    if not isinstance(item, dict):
+                        continue
+                    kind = item.get("kind")
+                    text = item.get("text")
+                    if kind and text:
+                        pairs.append((str(kind), str(text)))
+                if pairs:
+                    return tuple(pairs)
+    # Structure-derived fallback when stamps absent (pre-D80 rows).
+    pairs = []
+    if chunk.section_title:
+        pairs.append(("section_title", chunk.section_title))
+    if chunk.section_role:
+        pairs.append(("section_role", chunk.section_role))
+    return tuple(pairs)
 
 
 def _failed_added_context_tokens(

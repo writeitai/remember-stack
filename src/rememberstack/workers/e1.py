@@ -1,9 +1,10 @@
-"""The E1 chain (D58): anchor-stabilized chunking, context prefixes, embeddings.
+"""The E1 chain (D58/D80): anchor-stabilized chunking and conventional embeds.
 
 The chunk stage packs the representation's block grid into section-bounded
-chunks and records their reuse keys; the embed stage writes each chunk's
-context prefix (the D63 conventional-mode branch), embeds prefix + text as one
-per-document batch, and lands the vectors in the P1 chunk index.
+chunks and records their reuse keys. The embed stage applies the D80
+deterministic embedding-input policy (optional location header + body), embeds
+in bounded batches, stores **body-only** text in P1, and stamps policy hashes
+on the spine.
 """
 
 from datetime import datetime
@@ -22,16 +23,18 @@ from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import extraction_input_hash
 from rememberstack.core import pack_blocks
-from rememberstack.model import CarryForwardSource
+from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
+from rememberstack.core.embedding_input_policy import EmbeddingInputRender
+from rememberstack.core.embedding_input_policy import location_facts_json
+from rememberstack.core.embedding_input_policy import LocationFacts
+from rememberstack.core.embedding_input_policy import render_embedding_input
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
-from rememberstack.model import ContextPrefix
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingUpdate
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
 from rememberstack.model import P1ChunkRow
@@ -43,19 +46,16 @@ from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.p1_index import ChunkIndexPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.workers.base import HandlerOutcome
-from rememberstack.workers.section_orientation import render_section_orientation
 from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSION
 
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
 
-E1_EMBED_VERSION: Final = "e1-embed-2026.07"
-"""The embed stage's component version (model identity rides settings/stamps)."""
+E1_EMBED_VERSION: Final = "e1-embed-2026.08-d80"
+"""The embed stage's component version (D80 policy path; model id on stamps)."""
 
-E1_PREFIXER_VERSION: Final = f"e1-prefix-2026.07c:temp0-1:{SECTION_ORIENTATION_VERSION}"
-"""The context-prefix call's prompt generation (D58; conventional mode, D63).
-07b pins temperature=0.0 — generation parameters are part of provenance.
-07c adds D79's bounded current-generation section-summary orientation."""
+E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
+"""Alias: policy generation replaces the retired LLM prefixer version string."""
 
 E2_EXTRACTOR_VERSION: Final = f"e2-extract-2026.07j:token-union-grounding-1:temporal-anchor-2:{SECTION_ORIENTATION_VERSION}"
 """The extractor generation baked into extraction_input_hash (D56); the E2
@@ -71,22 +71,19 @@ without making summaries hash or grounding inputs; 07e ledgers Claimify
 omissions and grounding-gate rejections on the D33 transcript (#161); 07d
 pinned temperature=0.0 on the Selection call (Claimify already carried it)."""
 
-_PREFIX_PROMPT_TEMPLATE: Final = (
-    "In one sentence, state where this passage sits in the document — "
-    "document title, section, and what surrounds it. Passage from "
-    "{title!r}, section path {section_path}, chunk {ordinal}"
-    "{section_orientation}:\n\n{head}"
-)
+_EMBED_BATCH_SIZE: Final = 64
+"""Default provider batch size for chunk embeddings (capability starting point)."""
 
 
 class E1Settings(BaseSettings):
-    """The E1 model bindings: per-deployment port configuration (D61/D63)."""
+    """The E1 model bindings: per-deployment port configuration (D61/D63/D80)."""
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_E1_")
 
     embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
+    embed_batch_size: int = Field(default=_EMBED_BATCH_SIZE, ge=1, le=512)
+    # Retired: kept so old env files do not fail validation; unused on D80 path.
     prefix_model: str = Field(default="openai/gpt-5.6-luna")
-
 
 class ChunkHandler:
     """The chunk stage: block grid → section-bounded, anchor-stabilized runs."""
@@ -147,11 +144,10 @@ class ChunkHandler:
 
 
 class EmbedChunksHandler:
-    """The embed stage: context prefixes + one embedding batch per document.
+    """The embed stage: D80 deterministic input policy + bounded embed batches.
 
-    The conventional-mode branch binds (D63): each chunk gets a generated
-    "where this sits" prefix, and prefix + verbatim text embed together. The
-    batch never crosses a document (D58's billing and lane rule).
+    No per-chunk location LLM. Renders location header (conditional) + body,
+    embeds in batches, stores body-only text in P1, stamps policy hashes on PG.
     """
 
     def __init__(
@@ -177,15 +173,7 @@ class EmbedChunksHandler:
         self._chunker_version = chunker_version(params=params)
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Prefix, embed, and index every chunk of one document version.
-
-        The D56/A3 carry-forward runs here: an unchanged chunk (same content
-        hash as a prior version's chunk in this lineage) keeps that chunk's
-        stored prefix and copies its vector — the model is called only for
-        chunks the edit actually touched. LLM output is never regenerated
-        for unchanged regions: it is the cost being avoided, and its
-        non-determinism would make every derived byte drift.
-        """
+        """Prepare embedding text, embed missing chunks in batches, stamp spine."""
         source = self._catalog.chunk_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
@@ -194,184 +182,168 @@ class EmbedChunksHandler:
             chunker_version=self._chunker_version,
         )
         if not chunks:
-            # Empty is a successful, explicit pipeline state. Continue through
-            # the no-op extraction/normalization branches so readiness has the
-            # same terminal shape as a non-empty document.
             return _extract_follow_up(work=work, source=source)
         document_md = self._artifact_store.read_bytes(
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
+        policy_generation = EMBEDDING_INPUT_POLICY_VERSION
+        embedder_generation = self._settings.embedding_model
         carry = self._catalog.carry_forward_sources(
             deployment_id=work.deployment_id,
             doc_id=source.doc_id,
             version_id=source.version_id,
-            prefixer_version=E1_PREFIXER_VERSION,
-            embedding_version=self._settings.embedding_model,
+            policy_generation=policy_generation,
+            embedding_version=embedder_generation,
         )
-        carried_vectors = self._carried_vectors(work=work, chunks=chunks, carry=carry)
-        prefixes = tuple(
-            self._resolve_prefix(
-                source=source,
-                chunk=chunk,
-                document_md=document_md,
-                carry=carry,
-                meter=meter,
+        prepared: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
+        for chunk in chunks:
+            body = document_md[chunk.char_start : chunk.char_end]
+            facts = _location_facts(
+                source=source, chunk=chunk, chunk_count=len(chunks)
             )
-            for chunk in chunks
+            rendered = render_embedding_input(facts=facts, body=body)
+            prepared.append((chunk, rendered))
+
+        # Skip empty bodies (typed); still continue pipeline.
+        active = [
+            (chunk, rendered)
+            for chunk, rendered in prepared
+            if rendered.skip_reason is None
+        ]
+        vectors: dict[UUID, tuple[float, ...]] = {}
+        for chunk, rendered in active:
+            if (
+                chunk.embedding_ref is not None
+                and chunk.embedding_text_hash == rendered.embedding_text_hash
+                and chunk.policy_generation == policy_generation
+                and chunk.embedding_version == embedder_generation
+            ):
+                # Already stamped this generation — recover vector if present.
+                continue
+            prior = carry.get(chunk.chunk_content_hash)
+            if (
+                prior is not None
+                and prior.embedding_text_hash == rendered.embedding_text_hash
+                and prior.policy_generation == policy_generation
+            ):
+                stored = self._chunk_index.chunk_vectors(
+                    deployment_id=str(work.deployment_id),
+                    chunk_ids=(str(prior.chunk_id),),
+                )
+                if str(prior.chunk_id) in stored:
+                    vectors[chunk.chunk_id] = stored[str(prior.chunk_id)]
+
+        need_embed = tuple(
+            (chunk, rendered)
+            for chunk, rendered in active
+            if chunk.chunk_id not in vectors
+            and not (
+                chunk.embedding_ref is not None
+                and chunk.embedding_text_hash == rendered.embedding_text_hash
+                and chunk.policy_generation == policy_generation
+                and chunk.embedding_version == embedder_generation
+            )
         )
-        texts = tuple(
-            f"{prefix}\n\n{document_md[chunk.char_start : chunk.char_end]}"
-            for prefix, chunk in zip(prefixes, chunks, strict=True)
-        )
-        fresh = tuple(
-            index
-            for index in range(len(chunks))
-            if chunks[index].chunk_id not in carried_vectors
-        )
-        if fresh:
+        batch_size = self._settings.embed_batch_size
+        for batch_start in range(0, len(need_embed), batch_size):
+            batch = need_embed[batch_start : batch_start + batch_size]
+            if not batch:
+                continue
+            first_id = str(min(chunk.chunk_id for chunk, _ in batch))
+            call_key = f"embed_chunks:{first_id}:{len(batch)}"
             response = self._model_provider.embed(
                 request=EmbeddingRequest(
-                    model=self._settings.embedding_model,
-                    texts=tuple(texts[index] for index in fresh),
+                    model=embedder_generation,
+                    texts=tuple(rendered.embedding_text for _, rendered in batch),
                 )
             )
-            meter.record(
-                call_key="embed_chunks", tier="embedding", usage=response.usage
+            meter.record(call_key=call_key, tier="embedding", usage=response.usage)
+            for (chunk, _rendered), vector in zip(batch, response.vectors, strict=True):
+                vectors[chunk.chunk_id] = vector
+
+        # For already-complete chunks, pull vectors from the index if needed.
+        missing_for_index = tuple(
+            chunk.chunk_id
+            for chunk, rendered in active
+            if chunk.chunk_id not in vectors
+            and chunk.embedding_ref is not None
+            and chunk.embedding_text_hash == rendered.embedding_text_hash
+        )
+        if missing_for_index:
+            stored = self._chunk_index.chunk_vectors(
+                deployment_id=str(work.deployment_id),
+                chunk_ids=tuple(str(item) for item in missing_for_index),
             )
-            fresh_vectors = dict(
-                zip(
-                    (chunks[index].chunk_id for index in fresh),
-                    response.vectors,
-                    strict=True,
-                )
-            )
-        else:
-            fresh_vectors = {}
-        vectors = {**carried_vectors, **fresh_vectors}
-        self._chunk_index.upsert_chunks(
-            rows=tuple(
+            for chunk_id in missing_for_index:
+                key = str(chunk_id)
+                if key in stored:
+                    vectors[chunk_id] = stored[key]
+
+        p1_rows: list[P1ChunkRow] = []
+        updates: list[EmbeddingUpdate] = []
+        for chunk, rendered in active:
+            if chunk.chunk_id not in vectors:
+                # Poison / missing vector — skip stamp; leave for retry.
+                continue
+            p1_rows.append(
                 P1ChunkRow(
                     chunk_id=chunk.chunk_id,
                     deployment_id=work.deployment_id,
                     doc_id=chunk.doc_id,
                     version_id=chunk.version_id,
                     section_role=chunk.section_role,
-                    text=text,
+                    text=rendered.body,
                     vector=vectors[chunk.chunk_id],
                 )
-                for chunk, text in zip(chunks, texts, strict=True)
             )
-        )
-        self._catalog.record_embeddings(
-            updates=tuple(
+            facts = _location_facts(
+                source=source, chunk=chunk, chunk_count=len(chunks)
+            )
+            facts_json = location_facts_json(
+                facts=facts, elements=rendered.location_elements
+            )
+            updates.append(
                 EmbeddingUpdate(
                     chunk_id=chunk.chunk_id,
                     embedding_ref=str(chunk.chunk_id),
-                    embedding_version=self._settings.embedding_model,
-                    context_prefix=prefix,
-                    prefixer_version=E1_PREFIXER_VERSION,
+                    embedding_version=embedder_generation,
+                    location_header=rendered.location_header,
+                    embedding_text_hash=rendered.embedding_text_hash,
+                    embedding_input_policy_version=policy_generation,
+                    policy_generation=policy_generation,
+                    location_facts_json=facts_json,
+                    context_prefix=rendered.location_header,
+                    prefixer_version=policy_generation,
                 )
-                for chunk, prefix in zip(chunks, prefixes, strict=True)
             )
-        )
+        if p1_rows:
+            self._chunk_index.upsert_chunks(rows=tuple(p1_rows))
+        if updates:
+            self._catalog.record_embeddings(updates=tuple(updates))
         return _extract_follow_up(work=work, source=source)
 
-    def _carried_vectors(
-        self,
-        *,
-        work: ClaimedWork,
-        chunks: tuple[ChunkForEmbedding, ...],
-        carry: dict[str, CarryForwardSource],
-    ) -> dict[UUID, tuple[float, ...]]:
-        """Copy prior versions' vectors for unchanged chunks (D56).
 
-        A carried chunk whose vector is missing from the index (pruned or
-        never landed) simply falls back to the fresh-embed path — reuse is
-        an economy, never a correctness dependency.
-        """
-        wanted = {
-            str(carry[chunk.chunk_content_hash].chunk_id): chunk.chunk_id
-            for chunk in chunks
-            if chunk.chunk_content_hash in carry
-        }
-        if not wanted:
-            return {}
-        stored = self._chunk_index.chunk_vectors(
-            deployment_id=str(work.deployment_id), chunk_ids=tuple(wanted)
-        )
-        return {
-            wanted[prior_id]: vector
-            for prior_id, vector in stored.items()
-            if prior_id in wanted
-        }
-
-    def _resolve_prefix(
-        self,
-        *,
-        source: ChunkSource,
-        chunk: ChunkForEmbedding,
-        document_md: str,
-        carry: dict[str, CarryForwardSource],
-        meter: CostMeterPort,
-    ) -> str:
-        """One chunk's "where this sits" sentence: replayed if already stored.
-
-        Resolution order (D7 replay, then D56 carry-forward, then the model):
-        the row's own stored prefix of this generation; a prior version's
-        stored prefix for the same content hash; only then a model call.
-        """
-        if (
-            chunk.context_prefix is not None
-            and chunk.prefixer_version == E1_PREFIXER_VERSION
-        ):
-            return chunk.context_prefix
-        carried = carry.get(chunk.chunk_content_hash)
-        if carried is not None:
-            return carried.context_prefix
-        head = document_md[chunk.char_start : chunk.char_end][:400]
-        prompt = _prefix_prompt(source=source, chunk=chunk, head=head)
-        response = self._model_provider.generate(
-            request=ModelRequest(
-                model=self._settings.prefix_model, prompt=prompt, temperature=0.0
-            ),
-            response_type=ContextPrefix,
-        )
-        meter.record(
-            call_key=f"prefix:{chunk.chunk_id}", tier="prefix", usage=response.usage
-        )
-        return response.output.prefix
-
-
-def _prefix_prompt(*, source: ChunkSource, chunk: ChunkForEmbedding, head: str) -> str:
-    """Render the prefix input; a degraded generation contributes zero bytes.
-
-    The instruction constrains the prefixer's OUTPUT, not just its reading:
-    summaries are abstractive LLM text, and the stored prefix is a quotable
-    added_context element downstream — a prefix that restates a summary's
-    claim would launder second-order content into the grounding surface
-    (review finding; accepted residual is location-description only).
-    """
-    orientation = render_section_orientation(
-        sections=source.sections,
-        target_path=chunk.section_path,
-        target_section_id=chunk.section_id,
-    )
-    section_orientation = (
-        ""
-        if orientation is None
-        else (
-            "\nSECTION SUMMARIES (background only — use them to describe"
-            " WHERE the passage sits; never restate or assert a fact from a"
-            " summary in your sentence):\n"
-            f"{orientation}"
-        )
-    )
-    return _PREFIX_PROMPT_TEMPLATE.format(
-        title=source.title or "untitled",
+def _location_facts(
+    *, source: ChunkSource, chunk: ChunkForEmbedding, chunk_count: int
+) -> LocationFacts:
+    """Build structured location facts for one chunk (structure-derived only)."""
+    section_title = chunk.section_title
+    if section_title is None:
+        for section in source.sections:
+            if section.section_id == chunk.section_id:
+                section_title = section.title
+                break
+    return LocationFacts(
+        chunk_id=chunk.chunk_id,
+        doc_id=chunk.doc_id,
+        version_id=chunk.version_id,
+        title=source.title,
+        source_kind=source.source_kind,
+        source_shape="document",
+        section_title=section_title,
         section_path=chunk.section_path,
-        ordinal=chunk.ordinal,
-        section_orientation=section_orientation,
-        head=head,
+        section_role=chunk.section_role,
+        chunk_count=chunk_count,
     )
 
 

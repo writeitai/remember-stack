@@ -93,7 +93,10 @@ class ChunkCatalog:
                 .mappings()
                 .all()
             )
-        return tuple(ChunkForEmbedding.model_validate(dict(row)) for row in rows)
+        return tuple(
+            ChunkForEmbedding.model_validate(_normalize_chunk_embed_row(dict(row)))
+            for row in rows
+        )
 
     def carry_forward_sources(
         self,
@@ -101,19 +104,15 @@ class ChunkCatalog:
         deployment_id: UUID,
         doc_id: UUID,
         version_id: UUID,
-        prefixer_version: str,
+        policy_generation: str,
         embedding_version: str,
     ) -> dict[str, CarryForwardSource]:
-        """Prior chunks of this lineage reusable by content hash (D56/A3).
+        """Prior chunks reusable when embedding identity matches (D80).
 
-        For each content hash: the nearest STRICTLY EARLIER version's chunk
-        that already carries a stored prefix of the same prefixer generation
-        and an embedding of the same embedding generation — the carry-forward
-        source for an unchanged chunk in the new version. Earlier-only keeps
-        version ancestry honest (a queued v2 never adopts a fast v3's
-        context); duplicate identical chunks within one source version pick
-        deterministically (lowest ordinal), and prefix + vector always copy
-        from the SAME source row, so the indexed text and its vector agree.
+        For each content hash: nearest strictly earlier version's chunk that
+        already has embedding_text_hash + policy_generation + embedding_version
+        and an embedding_ref — vector copy is only valid when the new render
+        produces the same embedding_text_hash under the same policy/embedder.
         """
         with self._engine.connect() as connection:
             rows = (
@@ -123,7 +122,7 @@ class ChunkCatalog:
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
                         "version_id": version_id,
-                        "prefixer_version": prefixer_version,
+                        "policy_generation": policy_generation,
                         "embedding_version": embedding_version,
                     },
                 )
@@ -132,18 +131,32 @@ class ChunkCatalog:
             )
         return {
             row["chunk_content_hash"]: CarryForwardSource(
-                chunk_id=row["chunk_id"], context_prefix=row["context_prefix"]
+                chunk_id=row["chunk_id"],
+                location_header=row["location_header"],
+                embedding_text_hash=row["embedding_text_hash"],
+                policy_generation=row["policy_generation"],
+                context_prefix=row["location_header"] or row["context_prefix"],
             )
             for row in rows
         }
 
     def record_embeddings(self, *, updates: tuple[EmbeddingUpdate, ...]) -> None:
-        """Write the embed stage's refs, prefixes, and version stamps back."""
+        """Write the embed stage's refs, D80 stamps, and version fields back."""
         if not updates:
             return
         with self._engine.begin() as connection:
             for update in updates:
                 connection.execute(_UPDATE_EMBEDDING, update.model_dump(mode="json"))
+
+
+def _normalize_chunk_embed_row(row: dict) -> dict:
+    """Coerce JSONB and optional D80 fields for ChunkForEmbedding."""
+    facts = row.get("location_facts_json")
+    if facts is not None and not isinstance(facts, str):
+        import json
+
+        row["location_facts_json"] = json.dumps(facts)
+    return row
 
 
 _SELECT_CHUNK_SOURCE = text(
@@ -162,7 +175,7 @@ _SELECT_CHUNK_SOURCE = text(
 _SELECT_SECTIONS = text(
     """
     SELECT s.section_id, s.node_path, s.role, s.block_start, s.block_end,
-           s.summary
+           s.summary, s.title
     FROM document_sections s
     JOIN document_representations r
       ON r.representation_id = s.representation_id
@@ -201,8 +214,12 @@ _SELECT_FOR_EMBEDDING = text(
     """
     SELECT c.chunk_id, c.doc_id, c.version_id, c.ordinal,
            c.char_start, c.char_end, c.context_prefix, c.prefixer_version,
+           c.location_header, c.embedding_text_hash,
+           c.embedding_input_policy_version, c.policy_generation,
+           c.embedding_ref, c.embedding_version, c.location_facts_json,
            c.chunk_content_hash, c.extraction_input_hash, c.section_id,
-           s.role AS section_role, s.node_path AS section_path
+           s.role AS section_role, s.node_path AS section_path,
+           s.title AS section_title
     FROM chunks c
     JOIN document_sections s ON s.section_id = c.section_id
     WHERE c.representation_id = :representation_id
@@ -214,15 +231,16 @@ _SELECT_FOR_EMBEDDING = text(
 _SELECT_CARRY_FORWARD = text(
     """
     SELECT DISTINCT ON (c.chunk_content_hash)
-           c.chunk_content_hash, c.chunk_id, c.context_prefix
+           c.chunk_content_hash, c.chunk_id, c.context_prefix,
+           c.location_header, c.embedding_text_hash, c.policy_generation
     FROM chunks c
     JOIN document_versions cv ON cv.version_id = c.version_id
     WHERE c.deployment_id = :deployment_id
       AND c.doc_id = :doc_id
       AND cv.version_no < (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
-      AND c.context_prefix IS NOT NULL
-      AND c.prefixer_version = :prefixer_version
+      AND c.embedding_text_hash IS NOT NULL
+      AND c.policy_generation = :policy_generation
       AND c.embedding_version = :embedding_version
       AND c.embedding_ref IS NOT NULL
     ORDER BY c.chunk_content_hash, cv.version_no DESC, c.ordinal
@@ -234,6 +252,11 @@ _UPDATE_EMBEDDING = text(
     UPDATE chunks
     SET embedding_ref = :embedding_ref,
         embedding_version = :embedding_version,
+        location_header = :location_header,
+        embedding_text_hash = :embedding_text_hash,
+        embedding_input_policy_version = :embedding_input_policy_version,
+        policy_generation = :policy_generation,
+        location_facts_json = CAST(:location_facts_json AS jsonb),
         context_prefix = :context_prefix,
         prefixer_version = :prefixer_version
     WHERE chunk_id = :chunk_id

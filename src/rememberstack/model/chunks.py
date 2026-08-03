@@ -28,6 +28,7 @@ class SectionSpan(BaseModel):
     block_start: int = Field(ge=0)
     block_end: int = Field(ge=-1)
     summary: str | None = None
+    title: str | None = None
 
 
 class ChunkSource(BaseModel):
@@ -106,39 +107,56 @@ class ChunkForEmbedding(BaseModel):
     """The section row the chunk was cut under — the cross-generation guard
     input for summary orientation (optional: legacy constructors omit it and
     the guard simply does not arm)."""
-    context_prefix: str | None
-    prefixer_version: str | None
+    section_title: str | None = None
+    context_prefix: str | None = None
+    """Legacy free-form prefix and/or D80 location_header stamp."""
+    prefixer_version: str | None = None
+    location_header: str | None = None
+    embedding_text_hash: str | None = None
+    embedding_input_policy_version: str | None = None
+    policy_generation: str | None = None
+    embedding_ref: str | None = None
+    embedding_version: str | None = None
+    location_facts_json: str | None = None
 
 
 class CarryForwardSource(BaseModel):
-    """A prior version's chunk whose LLM-derived context is carried forward.
+    """A prior version's chunk whose embedding identity can be reused (D80).
 
-    D56/A3: for an unchanged chunk (same content hash within the lineage) the
-    stored prefix and embedding are REUSED, never regenerated — LLM output is
-    non-deterministic, so regenerating would both pay again and produce
-    different bytes.
+    Reuse requires matching embedding_text_hash, policy_generation, and
+    embedder generation — not content hash alone when location participates.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chunk_id: UUID
-    context_prefix: str
+    location_header: str | None = None
+    embedding_text_hash: str
+    policy_generation: str
+    context_prefix: str | None = None
+    """Legacy alias for location_header when migrating older rows."""
 
 
 class EmbeddingUpdate(BaseModel):
-    """The embed stage's write-back onto one chunk row."""
+    """The embed stage's write-back onto one chunk row (D80 stamps)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chunk_id: UUID
     embedding_ref: _NonEmpty
     embedding_version: _NonEmpty
-    context_prefix: _NonEmpty
-    prefixer_version: _NonEmpty
+    location_header: str | None = None
+    embedding_text_hash: _NonEmpty
+    embedding_input_policy_version: _NonEmpty
+    policy_generation: _NonEmpty
+    location_facts_json: str | None = None
+    # Legacy columns kept for transition / older readers.
+    context_prefix: str | None = None
+    prefixer_version: str | None = None
 
 
 class ContextPrefix(BaseModel):
-    """The structured response of the E1 context-prefix call (D58/D63)."""
+    """Legacy structured response of the E1 context-prefix LLM call (retired default)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

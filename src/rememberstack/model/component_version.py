@@ -32,6 +32,7 @@ class PipelineComponent(StrEnum):
     CROSSREFERENCER = "crossreferencer"
     CHUNKER = "chunker"
     CONTEXT_PREFIXER = "context_prefixer"
+    EMBEDDING_INPUT_POLICY = "embedding_input_policy"
     EXTRACTOR = "extractor"
     GROUNDER = "grounder"
     RESOLVER = "resolver"
