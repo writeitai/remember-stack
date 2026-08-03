@@ -81,6 +81,7 @@ class GraphQueries:
         believed_at: datetime | None = None,
         limit: int = DEFAULT_NEIGHBORHOOD_CAP,
         continuation: str | None = None,
+        include_paths: bool = False,
     ) -> Envelope:
         """Everything within `hops` of the entity, distance-ranked (S18/S19).
 
@@ -101,6 +102,7 @@ class GraphQueries:
                 believed_at=believed_at,
                 limit=limit,
                 continuation=continuation,
+                include_paths=include_paths,
             )
         except _TransientEngineError as error:
             return self._transient(error=error)
@@ -115,6 +117,7 @@ class GraphQueries:
         believed_at: datetime | None,
         limit: int,
         continuation: str | None,
+        include_paths: bool,
     ) -> Envelope:
         """The neighborhood body (a transient engine fault surfaces above)."""
         connection = self._connection()
@@ -135,7 +138,7 @@ class GraphQueries:
         # returns). SHORTEST gives one result per reachable node — exactly
         # what a distance-ranked neighborhood is — in BFS time.
         pattern = (
-            f"MATCH (a:Entity {{id: $entity_id}})"
+            f"MATCH {'p = ' if include_paths else ''}(a:Entity {{id: $entity_id}})"
             f" -[r:RELATES* SHORTEST 1..{clamped}"
             f" (r, n | WHERE {guard}{predicate_filter})]-"
             f" (b:Entity)"
@@ -147,9 +150,12 @@ class GraphQueries:
         total, exact = self._count_reachable(
             connection, pattern=pattern, parameters=parameters
         )
+        projection = "b.id, b.name, b.type, length(r) AS hops"
+        if include_paths:
+            projection += ", nodes(p) AS path_nodes, rels(p) AS path_edges"
         rows = _rows(
             connection,
-            f"{pattern} RETURN b.id, b.name, b.type, length(r) AS hops"
+            f"{pattern} RETURN {projection}"
             " ORDER BY hops, b.name, b.id SKIP $offset LIMIT $fetch",  # noqa: S608
             {**parameters, "offset": offset, "fetch": limit + 1},
             fresh=self._reconnect,
@@ -164,6 +170,23 @@ class GraphQueries:
             )
             for row in page_rows
         )
+        paths: tuple[GraphPath, ...] = ()
+        edges: tuple[GraphEdge, ...] = ()
+        if include_paths:
+            ranked_paths = tuple(
+                _path_from_row([row[3], row[4], row[5]]) for row in page_rows
+            )
+            edges_by_id: dict[UUID, GraphEdge] = {}
+            for path in ranked_paths:
+                for edge in path.edges:
+                    edges_by_id.setdefault(edge.relation_id, edge)
+            edges = tuple(edges_by_id.values())[:limit]
+            selected_edge_ids = {edge.relation_id for edge in edges}
+            paths = tuple(
+                path
+                for path in ranked_paths
+                if all(edge.relation_id in selected_edge_ids for edge in path.edges)
+            )
         if not nodes and offset == 0:
             return self._empty(
                 explanation=(
@@ -185,6 +208,8 @@ class GraphQueries:
             as_of_valid_at=applied_valid_at,
             as_of_believed_at=believed_at,
             nodes=nodes,
+            paths=paths,
+            edges=edges,
             freshness=self._freshness(),
             truncation=Truncation(
                 truncated=more or hops > MAX_ENGINE_HOPS,

@@ -108,6 +108,15 @@ class RecipeExecutor:
             return self._graph_step(op=step.op, kwargs=kwargs)
         if step.op == "graph_path":
             return self._graph_step(op=step.op, kwargs=kwargs)
+        if step.op == "multi_hop_context":
+            if self._graph is None:
+                raise RecipeExecutionError(
+                    "recipe op 'multi_hop_context' requires a composed P2 graph"
+                    " query surface"
+                )
+            return self._engine.multi_hop_context(
+                deployment_id=deployment_id, graph_queries=self._graph, **kwargs
+            )
         handler = _SINGLE_OP_HANDLERS.get(step.op)
         if handler is None:
             raise RecipeExecutionError(
@@ -340,6 +349,7 @@ EXECUTABLE_OPS = frozenset(_SINGLE_OP_HANDLERS) | {
     "hydrate_claims",
     "hydrate_chunks",
     "combine_evidence",
+    "multi_hop_context",
     "graph_neighborhood",
     "graph_path",
 }

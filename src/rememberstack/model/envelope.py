@@ -306,6 +306,7 @@ class GraphEdge(BaseModel):
     valid_until: UTCDateTime | None
     ingested_at: UTCDateTime | None
     invalidated_at: UTCDateTime | None
+    support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
 
 
 class GraphPath(BaseModel):

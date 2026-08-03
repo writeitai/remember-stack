@@ -19,6 +19,7 @@ from itertools import batched
 import math
 from typing import Final
 from typing import Literal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import text
@@ -46,6 +47,9 @@ from rememberstack.model import FactResult
 from rememberstack.model import FactSupport
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import GraphEdge
+from rememberstack.model import GraphNode
+from rememberstack.model import GraphPath
 from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import PageRef
@@ -59,6 +63,9 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.entity_registry import normalized_lemma
+
+if TYPE_CHECKING:
+    from rememberstack.surfaces.graph_queries import GraphQueries
 
 DEFAULT_DELTA_LIMIT = 500
 """How many change-feed rows one `delta` page returns before truncating —
@@ -99,6 +106,15 @@ bounded without ever nominating globally and filtering afterward.
 
 CURRENT_CONTEXT_EVIDENCE_BUDGET: Final = 60
 """Hard maximum evidence associations in one current-context envelope."""
+
+MULTI_HOP_CONTEXT_EVIDENCE_BUDGET: Final = 60
+"""Hard maximum associations and returned claim/chunk content records."""
+
+MULTI_HOP_QUESTION_CONTEXT_K: Final = 50
+"""The existing question-context recipe's per-grain result cap."""
+
+MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K: Final = 200
+"""The existing question-context recipe's per-channel nomination cap."""
 
 _EVIDENCE_STANCES: Final = ("supports", "contradicts")
 """Stable two-stance order for selection and exact-total disclosure."""
@@ -548,10 +564,11 @@ class QueryEngine:
         facts = self._enrich_current_context_facts(
             deployment_id=deployment_id, rows=backed_rows
         )
-        selected = _select_current_context_evidence(
-            facts=facts,
+        selected = _select_fact_evidence(
+            fact_ids=tuple(fact.fact_id for fact in facts),
             evidence_by_fact_stance=evidence_by_fact_stance,
             evidence_per_fact=evidence_per_fact,
+            budget=CURRENT_CONTEXT_EVIDENCE_BUDGET,
         )
         returned_counts = Counter(
             (row["fact_id"], str(row["stance"])) for row in selected
@@ -620,6 +637,276 @@ class QueryEngine:
                     "broaden the query or search claims and source passages for testimony"
                 ),
             ),
+        )
+
+    def multi_hop_context(
+        self,
+        *,
+        deployment_id: UUID,
+        graph_queries: "GraphQueries",
+        query: str,
+        entity_a: str,
+        entity_b: str | None = None,
+        k: int = 15,
+        hops: int = 2,
+        evidence_per_fact: int = 3,
+    ) -> Envelope:
+        """One-call graph connection context with quotable source evidence.
+
+        Entity strings resolve through the uniform T0 recipe helper. P2 then
+        supplies either a shortest path or a distance-ranked neighborhood,
+        while one batched PostgreSQL statement re-confirms every nominated
+        edge and hydrates both evidence stances. The ordinary question-context
+        retrieval runs afterward and its claims/passages are unioned into the
+        same flat evidence-grain envelope.
+        """
+        _validate_multi_hop_context_bounds(
+            k=k, hops=hops, evidence_per_fact=evidence_per_fact
+        )
+        entity_a_id, resolution = self._resolve_recipe_entity(
+            deployment_id=deployment_id, entity=entity_a, grain=Grain.EVIDENCE
+        )
+        if resolution is not None:
+            return resolution
+        assert entity_a_id is not None
+
+        entity_b_id: UUID | None = None
+        if entity_b is not None:
+            entity_b_id, resolution = self._resolve_recipe_entity(
+                deployment_id=deployment_id, entity=entity_b, grain=Grain.EVIDENCE
+            )
+            if resolution is not None:
+                return resolution
+            assert entity_b_id is not None
+
+        graph = (
+            graph_queries.path(
+                from_entity_id=entity_a_id, to_entity_id=entity_b_id, max_hops=hops
+            )
+            if entity_b_id is not None
+            else graph_queries.neighborhood(
+                entity_id=entity_a_id, hops=hops, limit=k, include_paths=True
+            )
+        )
+        candidate_edges_by_id: dict[UUID, GraphEdge] = {}
+        for edge in graph.edges:
+            candidate_edges_by_id.setdefault(edge.relation_id, edge)
+            if len(candidate_edges_by_id) == k:
+                break
+        candidate_edge_ids = tuple(candidate_edges_by_id)
+
+        evidence_rows: Sequence[RowMapping] = []
+        if candidate_edge_ids:
+            as_of = datetime.now(tz=UTC)
+            with self._engine.connect().execution_options(
+                isolation_level="REPEATABLE READ"
+            ) as connection:
+                evidence_rows = (
+                    connection.execute(
+                        _MULTI_HOP_EDGE_EVIDENCE,
+                        {
+                            "deployment_id": deployment_id,
+                            "relation_ids": list(candidate_edge_ids),
+                            "as_of": as_of,
+                            "per_stance_limit": evidence_per_fact,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
+
+        confirmed_rows: dict[UUID, RowMapping] = {}
+        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
+        totals: dict[tuple[UUID, str], int] = {}
+        for row in evidence_rows:
+            relation_id = row["fact_id"]
+            confirmed_rows.setdefault(relation_id, row)
+            if row["claim_id"] is None:
+                continue
+            stance = str(row["stance"])
+            key = (relation_id, stance)
+            evidence_by_fact_stance.setdefault(key, []).append(row)
+            totals[key] = int(row["evidence_total"])
+
+        kept_edges_by_id: dict[UUID, GraphEdge] = {}
+        confirmed_nodes: dict[UUID, tuple[str, str]] = {}
+        for relation_id in candidate_edge_ids:
+            row = confirmed_rows.get(relation_id)
+            if row is None:
+                continue
+            withdrawn = bool(row["support_withdrawn"])
+            has_current_support = bool(
+                evidence_by_fact_stance.get((relation_id, "supports"))
+            )
+            if not has_current_support and not withdrawn:
+                continue
+            kept_edges_by_id[relation_id] = _graph_edge_from_confirmed_row(row=row)
+            confirmed_nodes[row["subject_id"]] = (
+                str(row["subject_name"]),
+                str(row["subject_type"]),
+            )
+            confirmed_nodes[row["object_id"]] = (
+                str(row["object_name"]),
+                str(row["object_type"]),
+            )
+
+        retained_paths = _confirmed_graph_paths(
+            paths=graph.paths, edges_by_id=kept_edges_by_id, nodes_by_id=confirmed_nodes
+        )
+        if entity_b_id is not None:
+            retained_edge_ids = {
+                edge.relation_id for path in retained_paths for edge in path.edges
+            }
+            kept_edges_by_id = {
+                relation_id: edge
+                for relation_id, edge in kept_edges_by_id.items()
+                if relation_id in retained_edge_ids
+            }
+        retained_edges = tuple(kept_edges_by_id.values())
+        retained_nodes = _confirmed_graph_nodes(
+            graph_nodes=graph.nodes,
+            paths=retained_paths,
+            edges=retained_edges,
+            nodes_by_id=confirmed_nodes,
+        )
+
+        selected = _select_fact_evidence(
+            fact_ids=tuple(edge.relation_id for edge in retained_edges),
+            evidence_by_fact_stance=evidence_by_fact_stance,
+            evidence_per_fact=evidence_per_fact,
+            budget=MULTI_HOP_CONTEXT_EVIDENCE_BUDGET,
+        )
+        returned_counts = Counter(
+            (row["fact_id"], str(row["stance"])) for row in selected
+        )
+        associations = tuple(
+            FactEvidence.model_validate(
+                {
+                    "fact_id": row["fact_id"],
+                    "claim_id": row["claim_id"],
+                    "stance": str(row["stance"]),
+                }
+            )
+            for row in selected
+        )
+        edge_evidence_by_id: dict[UUID, EvidenceResult] = {}
+        for row in selected:
+            edge_evidence_by_id.setdefault(
+                row["claim_id"], _evidence_result_from_fact_row(row=row)
+            )
+        exact_totals = tuple(
+            EvidenceTotal(
+                fact_id=edge.relation_id,
+                stance=stance,
+                returned=returned_counts[(edge.relation_id, stance)],
+                total=totals.get((edge.relation_id, stance), 0),
+            )
+            for edge in retained_edges
+            for stance in _EVIDENCE_STANCES
+        )
+
+        question_context = self._question_context_retrieval(
+            deployment_id=deployment_id, query=query
+        )
+        evidence_by_id = dict(edge_evidence_by_id)
+        for record in question_context.evidence:
+            if (
+                record.claim_id not in evidence_by_id
+                and len(evidence_by_id) == MULTI_HOP_CONTEXT_EVIDENCE_BUDGET
+            ):
+                break
+            evidence_by_id.setdefault(record.claim_id, record)
+        chunks_by_id: dict[UUID, ChunkEvidenceResult] = {}
+        for record in question_context.chunks:
+            if (
+                len(evidence_by_id) + len(chunks_by_id)
+                == MULTI_HOP_CONTEXT_EVIDENCE_BUDGET
+            ):
+                break
+            chunks_by_id.setdefault(record.chunk_id, record)
+        question_evidence_by_id = {
+            record.claim_id: record for record in question_context.evidence
+        }
+        question_chunks_by_id = {
+            record.chunk_id: record for record in question_context.chunks
+        }
+        uncapped_content_total = len(
+            set(edge_evidence_by_id) | set(question_evidence_by_id)
+        ) + len(question_chunks_by_id)
+        returned_content_total = len(evidence_by_id) + len(chunks_by_id)
+        content_elided = returned_content_total < uncapped_content_total
+
+        graph_failed = graph.negative is not None
+        confirmed_empty = entity_b_id is not None and not retained_paths
+        neighborhood_empty = entity_b_id is None and not retained_edges
+        path_exceeds_edge_cap = bool(
+            entity_b_id is not None
+            and graph.paths
+            and not retained_paths
+            and any(
+                len({edge.relation_id for edge in path.edges}) > k
+                for path in graph.paths
+            )
+        )
+        negative = graph.negative
+        if not graph_failed and path_exceeds_edge_cap:
+            negative = Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=(
+                    f"a path within {hops} hop(s) exists, but its structural"
+                    f" edges exceed the requested k={k} edge envelope cap"
+                ),
+                workaround="increase k to at least the path length",
+            )
+        elif not graph_failed and (confirmed_empty or neighborhood_empty):
+            negative = Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=(
+                    f"no current evidence-backed path within {hops} hop(s) connects"
+                    f" {entity_a!r} and {entity_b!r}"
+                    if entity_b is not None
+                    else (
+                        f"no current evidence-backed edge within {hops} hop(s)"
+                        f" surrounds {entity_a!r}"
+                    )
+                ),
+                workaround="widen the hop bound or inspect source testimony directly",
+            )
+
+        graph_more = bool(graph.truncation and graph.truncation.truncated)
+        edge_candidates_elided = len(candidate_edges_by_id) < len(
+            {edge.relation_id for edge in graph.edges}
+        )
+        estimated_edges = len(candidate_edges_by_id)
+        if graph_more or edge_candidates_elided:
+            estimated_edges = max(estimated_edges + 1, k + 1)
+        returned_records = len(retained_edges) + returned_content_total
+        estimated_records = estimated_edges + uncapped_content_total
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            evidence=tuple(evidence_by_id.values()),
+            fact_evidence=associations,
+            evidence_totals=exact_totals,
+            chunks=tuple(chunks_by_id.values()),
+            nodes=retained_nodes,
+            paths=retained_paths,
+            edges=retained_edges,
+            freshness=graph.freshness.model_copy(
+                update={"pg_live_ts": datetime.now(tz=UTC)}
+            ),
+            truncation=Truncation(
+                truncated=graph_more or edge_candidates_elided or content_elided,
+                returned=returned_records,
+                estimated_total=estimated_records,
+                total_is_exact=not graph_more and not edge_candidates_elided,
+            ),
+            dropped_by_hydration=(
+                len(candidate_edge_ids)
+                - len(retained_edges)
+                + graph.dropped_by_hydration
+                + question_context.dropped_by_hydration
+            ),
+            negative=negative,
         )
 
     def lookup_relations(
@@ -1478,6 +1765,76 @@ class QueryEngine:
         finally:
             connection.close()
 
+    def _question_context_retrieval(
+        self, *, deployment_id: UUID, query: str
+    ) -> Envelope:
+        """Run the stock question-context mechanics inside a compound op.
+
+        This deliberately mirrors the registered recipe's two independent
+        semantic/BM25 nominations, RRF, one confirmation per grain, and typed
+        claim/chunk union. Keeping it inside ``multi_hop_context`` avoids the
+        executor dataflow and ``combine_evidence`` shape conflict that makes a
+        multi-step public Batch D chain invalid.
+        """
+
+        def hydrate_claim_context() -> Envelope:
+            semantic = self.nominate_claims(
+                deployment_id=deployment_id,
+                query=query,
+                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                channel="semantic",
+            )
+            lexical = self.nominate_claims(
+                deployment_id=deployment_id,
+                query=query,
+                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                channel="bm25",
+            )
+            fused = self.fuse(
+                rankings=(
+                    tuple(item.item_id for item in semantic.ranking),
+                    tuple(item.item_id for item in lexical.ranking),
+                ),
+                k=DEFAULT_RRF_K,
+                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+            )
+            return self.hydrate_claims(
+                deployment_id=deployment_id,
+                claim_ids=tuple(item.item_id for item in fused.ranking),
+                ranking=fused.ranking,
+            )
+
+        def hydrate_chunk_context() -> Envelope:
+            semantic = self.nominate_chunks(
+                deployment_id=deployment_id,
+                query=query,
+                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                channel="semantic",
+            )
+            lexical = self.nominate_chunks(
+                deployment_id=deployment_id,
+                query=query,
+                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                channel="bm25",
+            )
+            fused = self.fuse(
+                rankings=(
+                    tuple(item.item_id for item in semantic.ranking),
+                    tuple(item.item_id for item in lexical.ranking),
+                ),
+                k=DEFAULT_RRF_K,
+                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+            )
+            return self.hydrate_chunks(
+                deployment_id=deployment_id,
+                chunk_ids=tuple(item.item_id for item in fused.ranking),
+                ranking=fused.ranking,
+            )
+
+        return self.combine_evidence(
+            inputs=(hydrate_claim_context(), hydrate_chunk_context())
+        )
+
     def _resolve_recipe_entity(
         self, *, deployment_id: UUID, entity: str, grain: Grain
     ) -> tuple[UUID | None, Envelope | None]:
@@ -1834,11 +2191,24 @@ def _validate_current_context_bounds(*, k: int, evidence_per_fact: int) -> None:
         raise ValueError("evidence_per_fact must be between 1 and 5")
 
 
-def _select_current_context_evidence(
+def _validate_multi_hop_context_bounds(
+    *, k: int, hops: int, evidence_per_fact: int
+) -> None:
+    """Enforce Batch D's public edge, hop, and per-stance evidence bounds."""
+    if not 1 <= k <= 30:
+        raise ValueError("multi_hop_context k must be between 1 and 30")
+    if not 1 <= hops <= 2:
+        raise ValueError("multi_hop_context hops must be between 1 and 2")
+    if not 1 <= evidence_per_fact <= 5:
+        raise ValueError("evidence_per_fact must be between 1 and 5")
+
+
+def _select_fact_evidence(
     *,
-    facts: tuple[FactResult, ...],
+    fact_ids: Sequence[UUID],
     evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]],
     evidence_per_fact: int,
+    budget: int,
 ) -> tuple[RowMapping, ...]:
     """Allocate two-stance evidence fairly within the hard envelope budget.
 
@@ -1849,14 +2219,118 @@ def _select_current_context_evidence(
     """
     selected: list[RowMapping] = []
     for rank in range(evidence_per_fact):
-        for fact in facts:
+        for fact_id in fact_ids:
             for stance in _EVIDENCE_STANCES:
-                candidates = evidence_by_fact_stance.get((fact.fact_id, stance), [])
+                candidates = evidence_by_fact_stance.get((fact_id, stance), [])
                 if rank < len(candidates):
                     selected.append(candidates[rank])
-                    if len(selected) == CURRENT_CONTEXT_EVIDENCE_BUDGET:
+                    if len(selected) == budget:
                         return tuple(selected)
     return tuple(selected)
+
+
+def _evidence_result_from_fact_row(*, row: RowMapping) -> EvidenceResult:
+    """Project one joined fact-evidence row to the public claim contract."""
+    excluded = {
+        "fact_id",
+        "kind",
+        "nomination_rank",
+        "stance",
+        "evidence_total",
+        "stance_rank",
+        "support_withdrawn",
+        "subject_id",
+        "object_id",
+        "predicate",
+        "fact",
+        "evidence_count",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at",
+        "subject_name",
+        "subject_type",
+        "object_name",
+        "object_type",
+    }
+    return EvidenceResult.model_validate(
+        {key: value for key, value in dict(row).items() if key not in excluded}
+    )
+
+
+def _graph_edge_from_confirmed_row(*, row: RowMapping) -> GraphEdge:
+    """Build one edge from live PostgreSQL state, never projection text."""
+    return GraphEdge(
+        relation_id=row["fact_id"],
+        subject_id=row["subject_id"],
+        object_id=row["object_id"],
+        predicate=row["predicate"],
+        fact=row["fact"],
+        evidence_count=row["evidence_count"],
+        valid_from=row["valid_from"],
+        valid_until=row["valid_until"],
+        ingested_at=row["ingested_at"],
+        invalidated_at=row["invalidated_at"],
+        support=(
+            FactSupport.WITHDRAWN if row["support_withdrawn"] else FactSupport.CURRENT
+        ),
+    )
+
+
+def _confirmed_graph_paths(
+    *,
+    paths: Sequence[GraphPath],
+    edges_by_id: dict[UUID, GraphEdge],
+    nodes_by_id: dict[UUID, tuple[str, str]],
+) -> tuple[GraphPath, ...]:
+    """D48-confirm paths as units and replace projection labels from PG."""
+    confirmed: list[GraphPath] = []
+    for path in paths:
+        if not all(edge.relation_id in edges_by_id for edge in path.edges):
+            continue
+        nodes = tuple(
+            GraphNode(
+                entity_id=node.entity_id,
+                name=nodes_by_id.get(node.entity_id, (node.name, node.type))[0],
+                type=nodes_by_id.get(node.entity_id, (node.name, node.type))[1],
+                hops=node.hops,
+            )
+            for node in path.nodes
+        )
+        confirmed.append(
+            path.model_copy(
+                update={
+                    "nodes": nodes,
+                    "edges": tuple(
+                        edges_by_id[edge.relation_id] for edge in path.edges
+                    ),
+                }
+            )
+        )
+    return tuple(confirmed)
+
+
+def _confirmed_graph_nodes(
+    *,
+    graph_nodes: Sequence[GraphNode],
+    paths: Sequence[GraphPath],
+    edges: Sequence[GraphEdge],
+    nodes_by_id: dict[UUID, tuple[str, str]],
+) -> tuple[GraphNode, ...]:
+    """Keep only nodes connected by returned edges, in graph-rank order."""
+    connected_ids = {
+        entity_id for edge in edges for entity_id in (edge.subject_id, edge.object_id)
+    }
+    ordered = tuple(graph_nodes) + tuple(node for path in paths for node in path.nodes)
+    returned: dict[UUID, GraphNode] = {}
+    for node in ordered:
+        if node.entity_id not in connected_ids or node.entity_id in returned:
+            continue
+        name, entity_type = nodes_by_id.get(node.entity_id, (node.name, node.type))
+        returned[node.entity_id] = node.model_copy(
+            update={"name": name, "type": entity_type}
+        )
+    return tuple(returned.values())
 
 
 def _bounded_truncation(*, returned: int, total: int, k: int) -> Truncation:
@@ -2295,6 +2769,112 @@ _CURRENT_FACT_EVIDENCE = text(
     ORDER BY nomination_rank,
              CASE stance WHEN 'supports' THEN 0 ELSE 1 END,
              stance_rank, claim_id
+    """
+)
+
+_MULTI_HOP_EDGE_EVIDENCE = text(
+    """
+    WITH requested AS (
+        SELECT relation_id, graph_rank
+        FROM unnest(CAST(:relation_ids AS uuid[])) WITH ORDINALITY
+             AS nominated(relation_id, graph_rank)
+    ), confirmed AS (
+        SELECT requested.graph_rank, r.relation_id AS fact_id,
+               r.subject_entity_id AS subject_id,
+               r.object_entity_id AS object_id, r.predicate,
+               r.fact_label AS fact, r.evidence_count,
+               r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
+               subject.canonical_name AS subject_name, subject.type AS subject_type,
+               object.canonical_name AS object_name, object.type AS object_type,
+               EXISTS (
+                   SELECT 1
+                   FROM review_queue q
+                   WHERE q.deployment_id = :deployment_id
+                     AND q.item_kind = 'support_withdrawn'
+                     AND q.status IN ('pending', 'deferred')
+                     AND (q.candidate ->> 'fact_id') = r.relation_id::text
+               ) AS support_withdrawn
+        FROM requested
+        JOIN relations r
+          ON r.deployment_id = :deployment_id
+         AND r.relation_id = requested.relation_id
+        JOIN entities subject
+          ON subject.deployment_id = r.deployment_id
+         AND subject.entity_id = r.subject_entity_id
+        JOIN entities object
+          ON object.deployment_id = r.deployment_id
+         AND object.entity_id = r.object_entity_id
+        WHERE r.invalidated_at IS NULL
+          AND (r.valid_from IS NULL OR r.valid_from <= :as_of)
+          AND (r.valid_until IS NULL OR r.valid_until > :as_of)
+    ), links AS (
+        SELECT confirmed.fact_id, confirmed.graph_rank,
+               e.claim_id, e.doc_id, e.stance::text AS stance
+        FROM confirmed
+        JOIN relation_evidence e
+          ON e.deployment_id = :deployment_id
+         AND e.relation_id = confirmed.fact_id
+    ), eligible AS (
+        SELECT links.fact_id, links.graph_rank, links.stance,
+               c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
+               c.char_start, c.char_end, c.is_attributed,
+               c.is_current_testimony, c.asserted_at, c.claim_valid_from,
+               c.claim_valid_until, c.claim_valid_precision::text,
+               c.claim_valid_kind::text, d.title AS document_title,
+               d.source_kind, c.ingested_at AS evidence_ingested_at,
+               count(*) OVER (
+                   PARTITION BY links.fact_id, links.stance
+               ) AS evidence_total,
+               row_number() OVER (
+                   PARTITION BY links.fact_id, links.stance, links.doc_id
+                   ORDER BY c.asserted_at DESC NULLS LAST,
+                            c.ingested_at DESC, c.claim_id
+               ) AS lineage_claim_rank
+        FROM links
+        JOIN claims c
+          ON c.deployment_id = :deployment_id
+         AND c.claim_id = links.claim_id
+         AND c.doc_id = links.doc_id
+        LEFT JOIN documents d
+          ON d.deployment_id = c.deployment_id
+         AND d.doc_id = c.doc_id
+        WHERE c.is_current_testimony
+          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+    ), diverse AS (
+        SELECT eligible.*,
+               row_number() OVER (
+                   PARTITION BY fact_id, stance
+                   ORDER BY lineage_claim_rank,
+                            asserted_at DESC NULLS LAST,
+                            evidence_ingested_at DESC, doc_id, claim_id
+               ) AS stance_rank
+        FROM eligible
+    ), limited AS (
+        SELECT *
+        FROM diverse
+        WHERE stance_rank <= :per_stance_limit
+    )
+    SELECT confirmed.graph_rank AS nomination_rank, confirmed.fact_id,
+           confirmed.subject_id, confirmed.object_id, confirmed.predicate,
+           confirmed.fact, confirmed.evidence_count, confirmed.valid_from,
+           confirmed.valid_until, confirmed.ingested_at, confirmed.invalidated_at,
+           confirmed.subject_name, confirmed.subject_type,
+           confirmed.object_name, confirmed.object_type,
+           confirmed.support_withdrawn,
+           limited.stance, limited.evidence_total, limited.stance_rank,
+           limited.claim_id, limited.doc_id, limited.chunk_id,
+           limited.claim_text, limited.source_span, limited.char_start,
+           limited.char_end, limited.is_attributed,
+           limited.is_current_testimony, limited.asserted_at,
+           limited.claim_valid_from, limited.claim_valid_until,
+           limited.claim_valid_precision, limited.claim_valid_kind,
+           limited.document_title, limited.source_kind
+    FROM confirmed
+    LEFT JOIN limited ON limited.fact_id = confirmed.fact_id
+    ORDER BY confirmed.graph_rank,
+             CASE limited.stance WHEN 'supports' THEN 0
+                                 WHEN 'contradicts' THEN 1 ELSE 2 END,
+             limited.stance_rank NULLS LAST, limited.claim_id NULLS LAST
     """
 )
 

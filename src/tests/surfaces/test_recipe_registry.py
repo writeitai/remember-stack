@@ -845,6 +845,90 @@ def test_batch_c_recipe_has_bound_descriptor_and_schema() -> None:
     lint_recipe(recipe)
 
 
+def test_batch_d_recipe_has_one_step_bound_descriptor_and_schema() -> None:
+    """The connection compound recipe carries the exact §3.3 D50 contract."""
+    recipe = next(
+        recipe for recipe in GRAPH_RECIPES if recipe.name == "multi_hop_context"
+    )
+
+    assert recipe.chain == (
+        RecipeStep(
+            op="multi_hop_context",
+            bind={
+                "query": "query",
+                "entity_a": "entity_a",
+                "entity_b": "entity_b",
+                "k": "k",
+                "hops": "hops",
+                "evidence_per_fact": "evidence_per_fact",
+            },
+        ),
+    )
+    assert recipe.output_grain is Grain.EVIDENCE
+    assert recipe.answer_intent is RecipeAnswerIntent.ASSERTION_HISTORY
+    assert recipe.version == 1
+    assert recipe.parameters == {
+        "query": {"type": "string", "required": True},
+        "entity_a": {"type": "string", "required": True},
+        "entity_b": {"type": "string", "required": False},
+        "k": {
+            "type": "integer",
+            "required": False,
+            "default": 15,
+            "minimum": 1,
+            "maximum": 30,
+        },
+        "hops": {
+            "type": "integer",
+            "required": False,
+            "default": 2,
+            "minimum": 1,
+            "maximum": 2,
+        },
+        "evidence_per_fact": {
+            "type": "integer",
+            "required": False,
+            "default": 3,
+            "minimum": 1,
+            "maximum": 5,
+        },
+    }
+    assert "Edges are STRUCTURE" in recipe.description
+    assert "quotable answers come from evidence[]" in recipe.description
+    assert "hard 60" in recipe.description
+    lint_recipe(recipe)
+
+
+def test_batch_d_one_step_recipe_dispatches_the_compound_engine_op() -> None:
+    """The public recipe executes one compound method, not a graph chain."""
+    recipe = next(
+        recipe for recipe in GRAPH_RECIPES if recipe.name == "multi_hop_context"
+    )
+    expected = Envelope(grain=Grain.EVIDENCE, freshness=Freshness(pg_live_ts=_NOW))
+    engine = MagicMock(spec=QueryEngine)
+    engine.multi_hop_context.return_value = expected
+    graph = MagicMock()
+
+    replayed = RecipeExecutor(query_engine=engine, graph_queries=graph).execute(
+        deployment_id=_DEPLOYMENT_ID,
+        recipe=recipe,
+        arguments={
+            "query": "How are Alice and Acme connected?",
+            "entity_a": "Alice",
+            "entity_b": "Acme",
+        },
+    )
+
+    assert replayed is expected
+    engine.multi_hop_context.assert_called_once_with(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=graph,
+        query="How are Alice and Acme connected?",
+        entity_a="Alice",
+        entity_b="Acme",
+    )
+
+
 def test_question_context_executes_to_both_evidence_payloads() -> None:
     """The stock chain returns claim and source evidence in one envelope."""
     claim_id = uuid4()
@@ -1054,6 +1138,7 @@ def test_when_to_use_guidance_is_on_choice_sensitive_recipes() -> None:
     assert "not a biography" in by_name["identity_as_of"].description
     assert "connect" in by_name["graph_path"].description
     assert "surrounds" in by_name["graph_neighborhood"].description
+    assert "connection questions" in by_name["multi_hop_context"].description
     assert "may be empty when K is not composed" in by_name["pages_about"].description
 
 
