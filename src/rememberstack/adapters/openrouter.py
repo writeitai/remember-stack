@@ -261,13 +261,23 @@ class OpenRouterModelProvider:
         )
         try:
             ordered = sorted(body["data"], key=lambda item: item["index"])
-            return EmbeddingResponse(
-                vectors=tuple(tuple(item["embedding"]) for item in ordered), usage=usage
-            )
+            vectors = tuple(tuple(item["embedding"]) for item in ordered)
         except (KeyError, TypeError, ValueError) as err:
-            raise OpenRouterProviderError(
+            # Malformed response body: content/shape failure so embed poison-split
+            # can isolate a bad batch (not a total-outage retry of every chunk).
+            raise OpenRouterInvalidResponseError(
                 "unusable embeddings body", usage=usage
             ) from err
+        if len(vectors) != len(request.texts):
+            raise OpenRouterInvalidResponseError(
+                f"embedding count {len(vectors)} != batch size {len(request.texts)}",
+                usage=usage,
+            )
+        if any(len(vector) == 0 for vector in vectors):
+            raise OpenRouterInvalidResponseError(
+                "provider returned an empty embedding vector", usage=usage
+            )
+        return EmbeddingResponse(vectors=vectors, usage=usage)
 
     def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
         """POST one JSON request; non-2xx responses become typed errors."""

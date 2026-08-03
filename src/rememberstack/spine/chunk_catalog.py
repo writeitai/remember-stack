@@ -164,7 +164,9 @@ _SELECT_CHUNK_SOURCE = text(
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
            r.markdown_uri, r.blocks_uri, d.title, d.source_kind,
            v.source_modified_at, v.published_at, v.language,
-           r.structurer_version
+           r.structurer_version,
+           coalesce(v.source_shape, 'document') AS source_shape,
+           v.channel_ref, v.thread_ref, v.author_ref, v.message_ts
     FROM document_representations r
     JOIN document_versions v ON v.version_id = r.version_id
     JOIN documents d ON d.doc_id = v.doc_id

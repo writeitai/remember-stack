@@ -243,11 +243,14 @@ class SelfHostProfile:
         from rememberstack.surfaces import QueryEngine
         from rememberstack.surfaces import RecipeExecutor
         from rememberstack.surfaces import RecipeSurface
+        from rememberstack.workers import E1Settings
         from rememberstack.workers import GraphSnapshotReader
-        from rememberstack.workers import P1Settings
         from rememberstack.workers.e0 import UploadIngestor
 
-        p1_settings = P1Settings.model_validate({})
+        # D80: query-side embedder_generation must match E1 write stamps.
+        # E1 owns passage vectors; do not let REMEMBERSTACK_P1_EMBEDDING_MODEL
+        # silently desync search from the embed stage.
+        e1_settings = E1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
         graph_queries = GraphQueries(
             reader=GraphSnapshotReader(
@@ -261,7 +264,7 @@ class SelfHostProfile:
             engine=self._engine,
             search_index=LanceChunkIndex(root=self._settings.lance_root),
             model_provider=self._model_provider,
-            embedding_model=p1_settings.embedding_model,
+            embedding_model=e1_settings.embedding_model,
         )
         app = build_api(
             engine=query_engine,
