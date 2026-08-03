@@ -68,6 +68,7 @@ def test_short_message_atom_with_channel_gets_compact_header() -> None:
             source_shape="message_atom",
             chunk_count=1,
             section_title=None,
+            title=None,
             channel_ref="C123",
             author_ref="U9",
             message_ts="2026-08-01T12:00:00Z",
@@ -77,8 +78,28 @@ def test_short_message_atom_with_channel_gets_compact_header() -> None:
     assert rendered.mode is EmbedHeaderMode.LOCATION_HEADER
     assert rendered.location_header is not None
     assert "C123" in rendered.location_header
+    # Whole-field fit under H_MAX — never mid-field "Time: 2026-"
+    assert "Time: 2026-" not in (rendered.location_header + "x")
     assert rendered.embedding_text.endswith("yes, ship it")
 
+
+def test_header_drops_whole_fields_not_mid_slice() -> None:
+    """Long field sets shrink by omitting trailing fields entirely."""
+    rendered = render_embedding_input(
+        facts=_facts(
+            title="Quarterly business review for the enterprise division",
+            section_title="Detailed results and regional breakdown",
+            channel_ref="C-ENGINEERING-ALERTS",
+            author_ref="U-ALICE-VERY-LONG",
+            message_ts="2026-08-01T12:00:00.000000Z",
+            chunk_count=3,
+        ),
+        body="A" * 80,
+    )
+    header = rendered.location_header or ""
+    assert "Document:" in header or "Channel:" in header
+    # No partial field endings from code-point slicing.
+    assert not header.endswith((": ", "for th", "2026-"))
 
 def test_empty_body_skips() -> None:
     """Empty bodies do not embed."""

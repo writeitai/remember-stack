@@ -57,19 +57,12 @@ E1_EMBED_VERSION: Final = "e1-embed-2026.08-d80"
 E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 """Alias: policy generation replaces the retired LLM prefixer version string."""
 
-E2_EXTRACTOR_VERSION: Final = f"e2-extract-2026.07j:token-union-grounding-1:temporal-anchor-2:{SECTION_ORIENTATION_VERSION}"
-"""The extractor generation baked into extraction_input_hash (D56); the E2
-stage (WP-1.3) binds its handler to this same constant. 07j extends the temporal
-rule to quoted and attributed claim forms (#158 follow-up); 07i makes D32
-layer-2 union grounding token-tolerant for closed functional scaffolding while
-keeping every content and numeric token source-bound; 07h requires relative
-temporal expressions to resolve against an in-document absolute anchor into
-structured D41 valid-time while claim text keeps the source wording (#158);
-07g makes D32 layer-2 grounding union-based across source-derived bundle texts
-with advisory source tags; 07f adds D79 summary orientation to the bundle
-without making summaries hash or grounding inputs; 07e ledgers Claimify
-omissions and grounding-gate rejections on the D33 transcript (#161); 07d
-pinned temperature=0.0 on the Selection call (Claimify already carried it)."""
+E2_EXTRACTOR_VERSION: Final = (
+    f"e2-extract-2026.08a:d80-location-elements-1:"
+    f"token-union-grounding-1:temporal-anchor-2:{SECTION_ORIENTATION_VERSION}"
+)
+"""Extractor generation in extraction_input_hash (D56). 08a: D80 typed location
+elements replace free-form context_prefix in the bundle/grounding union."""
 
 _EMBED_BATCH_SIZE: Final = 64
 """Default provider batch size for chunk embeddings (capability starting point)."""
@@ -244,7 +237,50 @@ class EmbedChunksHandler:
                 and chunk.embedding_version == embedder_generation
             )
         )
+        # Already-complete stamps: recover vectors without re-embedding.
+        missing_for_index = tuple(
+            chunk.chunk_id
+            for chunk, rendered in active
+            if chunk.chunk_id not in vectors
+            and chunk.embedding_ref is not None
+            and chunk.embedding_text_hash == rendered.embedding_text_hash
+            and chunk.policy_generation == policy_generation
+            and chunk.embedding_version == embedder_generation
+        )
+        if missing_for_index:
+            stored = self._chunk_index.chunk_vectors(
+                deployment_id=str(work.deployment_id),
+                chunk_ids=tuple(str(item) for item in missing_for_index),
+            )
+            for chunk_id in missing_for_index:
+                key = str(chunk_id)
+                if key in stored:
+                    vectors[chunk_id] = stored[key]
+
         batch_size = self._settings.embed_batch_size
+        # Stamp carried vectors (no provider call) before fresh batches.
+        carried_pairs = tuple(
+            (chunk, rendered)
+            for chunk, rendered in active
+            if chunk.chunk_id in vectors
+            and not (
+                chunk.embedding_ref is not None
+                and chunk.embedding_text_hash == rendered.embedding_text_hash
+                and chunk.policy_generation == policy_generation
+                and chunk.embedding_version == embedder_generation
+            )
+        )
+        if carried_pairs:
+            self._commit_batch(
+                work=work,
+                source=source,
+                chunk_count=len(chunks),
+                batch=carried_pairs,
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+            )
+
         for batch_start in range(0, len(need_embed), batch_size):
             batch = need_embed[batch_start : batch_start + batch_size]
             if not batch:
@@ -260,30 +296,35 @@ class EmbedChunksHandler:
             meter.record(call_key=call_key, tier="embedding", usage=response.usage)
             for (chunk, _rendered), vector in zip(batch, response.vectors, strict=True):
                 vectors[chunk.chunk_id] = vector
-
-        # For already-complete chunks, pull vectors from the index if needed.
-        missing_for_index = tuple(
-            chunk.chunk_id
-            for chunk, rendered in active
-            if chunk.chunk_id not in vectors
-            and chunk.embedding_ref is not None
-            and chunk.embedding_text_hash == rendered.embedding_text_hash
-        )
-        if missing_for_index:
-            stored = self._chunk_index.chunk_vectors(
-                deployment_id=str(work.deployment_id),
-                chunk_ids=tuple(str(item) for item in missing_for_index),
+            # Per-batch P1 then PG (orchestration D80 crash recovery).
+            self._commit_batch(
+                work=work,
+                source=source,
+                chunk_count=len(chunks),
+                batch=batch,
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
             )
-            for chunk_id in missing_for_index:
-                key = str(chunk_id)
-                if key in stored:
-                    vectors[chunk_id] = stored[key]
+        return _extract_follow_up(work=work, source=source)
 
+    def _commit_batch(
+        self,
+        *,
+        work: ClaimedWork,
+        source: ChunkSource,
+        chunk_count: int,
+        batch: tuple[tuple[ChunkForEmbedding, EmbeddingInputRender], ...]
+        | list[tuple[ChunkForEmbedding, EmbeddingInputRender]],
+        vectors: dict[UUID, tuple[float, ...]],
+        policy_generation: str,
+        embedder_generation: str,
+    ) -> None:
+        """Upsert P1 then stamp PG for one batch (cross-store order)."""
         p1_rows: list[P1ChunkRow] = []
         updates: list[EmbeddingUpdate] = []
-        for chunk, rendered in active:
+        for chunk, rendered in batch:
             if chunk.chunk_id not in vectors:
-                # Poison / missing vector — skip stamp; leave for retry.
                 continue
             p1_rows.append(
                 P1ChunkRow(
@@ -297,7 +338,7 @@ class EmbedChunksHandler:
                 )
             )
             facts = _location_facts(
-                source=source, chunk=chunk, chunk_count=len(chunks)
+                source=source, chunk=chunk, chunk_count=chunk_count
             )
             facts_json = location_facts_json(
                 facts=facts, elements=rendered.location_elements
@@ -320,7 +361,6 @@ class EmbedChunksHandler:
             self._chunk_index.upsert_chunks(rows=tuple(p1_rows))
         if updates:
             self._catalog.record_embeddings(updates=tuple(updates))
-        return _extract_follow_up(work=work, source=source)
 
 
 def _location_facts(

@@ -207,10 +207,12 @@ def render_embedding_input(*, facts: LocationFacts, body: str) -> EmbeddingInput
         full = _render_full_header(facts=facts)
         compact = _render_compact_header(facts=facts)
         body_len = policy_length(normalized)
-        if body_len <= T_SHORT or policy_length(full) >= ALPHA * body_len:
-            header = _truncate_header(compact or full)
+        if body_len <= T_SHORT or (
+            full and policy_length(full) >= ALPHA * body_len
+        ):
+            header = compact or full or None
         else:
-            header = _truncate_header(full)
+            header = full or compact or None
         if not header:
             mode = EmbedHeaderMode.BODY_ONLY
             header = None
@@ -256,8 +258,8 @@ def _decide_mode(*, facts: LocationFacts, body: str) -> EmbedHeaderMode:
         return EmbedHeaderMode.BODY_ONLY
     if facts.chunk_count >= 2 and (
         (facts.section_title and facts.section_title.strip())
-        or facts.source_shape
-        in {"transcript", "thread", "channel_export", "document"}
+        or facts.source_shape in {"transcript", "thread", "channel_export"}
+        or (facts.title and facts.title.strip())
     ):
         return EmbedHeaderMode.LOCATION_HEADER
     if (
@@ -284,47 +286,64 @@ def _has_useful_coordinates(*, facts: LocationFacts) -> bool:
 
 
 def _render_full_header(*, facts: LocationFacts) -> str:
-    parts: list[str] = []
-    if facts.title and facts.title.strip():
-        parts.append(f"Document: {_escape(facts.title.strip())}")
-    if facts.section_title and facts.section_title.strip():
-        parts.append(f"Section: {_escape(facts.section_title.strip())}")
-    elif facts.section_path:
-        parts.append(f"Section path: {_escape(facts.section_path)}")
-    if facts.section_role:
-        parts.append(f"Role: {_escape(facts.section_role)}")
-    if facts.channel_ref:
-        parts.append(f"Channel: {_escape(facts.channel_ref)}")
-    if facts.author_ref:
-        parts.append(f"Author: {_escape(facts.author_ref)}")
-    if facts.message_ts:
-        parts.append(f"Time: {_escape(facts.message_ts)}")
-    return "; ".join(parts)
+    """Full header from whole fields only (never numeric node_path alone)."""
+    return _join_header_fields(_full_header_fields(facts=facts))
 
 
 def _render_compact_header(*, facts: LocationFacts) -> str:
-    parts: list[str] = []
+    """Compact header: message coords first, else title/section title."""
+    return _join_header_fields(_compact_header_fields(facts=facts))
+
+
+def _full_header_fields(*, facts: LocationFacts) -> list[str]:
+    fields: list[str] = []
+    if facts.title and facts.title.strip():
+        fields.append(f"Document: {_escape(facts.title.strip())}")
+    if facts.section_title and facts.section_title.strip():
+        fields.append(f"Section: {_escape(facts.section_title.strip())}")
+    # Deliberately omit bare numeric section_path — renumbering would cascade re-embeds.
+    if facts.section_role:
+        fields.append(f"Role: {_escape(facts.section_role)}")
     if facts.channel_ref:
-        parts.append(f"Channel: {_escape(facts.channel_ref)}")
+        fields.append(f"Channel: {_escape(facts.channel_ref)}")
     if facts.author_ref:
-        parts.append(f"Author: {_escape(facts.author_ref)}")
+        fields.append(f"Author: {_escape(facts.author_ref)}")
     if facts.message_ts:
-        parts.append(f"Time: {_escape(facts.message_ts)}")
-    if not parts and facts.title and facts.title.strip():
-        parts.append(f"Document: {_escape(facts.title.strip())}")
-    if not parts and facts.section_title and facts.section_title.strip():
-        parts.append(f"Section: {_escape(facts.section_title.strip())}")
-    if facts.section_role and parts:
-        parts.append(f"Role: {_escape(facts.section_role)}")
-    return "; ".join(parts)
+        fields.append(f"Time: {_escape(facts.message_ts)}")
+    return fields
 
 
-def _truncate_header(header: str) -> str:
-    text = header.strip()
-    if policy_length(text) <= H_MAX:
-        return text
-    # Truncate on code-point boundary.
-    return text[:H_MAX].rstrip()
+def _compact_header_fields(*, facts: LocationFacts) -> list[str]:
+    fields: list[str] = []
+    if facts.channel_ref:
+        fields.append(f"Channel: {_escape(facts.channel_ref)}")
+    if facts.author_ref:
+        fields.append(f"Author: {_escape(facts.author_ref)}")
+    if facts.message_ts:
+        fields.append(f"Time: {_escape(facts.message_ts)}")
+    if not fields and facts.title and facts.title.strip():
+        fields.append(f"Document: {_escape(facts.title.strip())}")
+    if not fields and facts.section_title and facts.section_title.strip():
+        fields.append(f"Section: {_escape(facts.section_title.strip())}")
+    if facts.section_role and fields:
+        fields.append(f"Role: {_escape(facts.section_role)}")
+    return fields
+
+
+def _join_header_fields(fields: list[str]) -> str:
+    """Fit under H_MAX by dropping whole trailing fields — never mid-field slice."""
+    if not fields:
+        return ""
+    kept: list[str] = []
+    for field in fields:
+        candidate = "; ".join([*kept, field])
+        if policy_length(candidate) > H_MAX:
+            break
+        kept.append(field)
+    if kept:
+        return "; ".join(kept)
+    # Single field longer than H_MAX: omit header entirely (caller may body_only).
+    return ""
 
 
 def _escape(value: str) -> str:
