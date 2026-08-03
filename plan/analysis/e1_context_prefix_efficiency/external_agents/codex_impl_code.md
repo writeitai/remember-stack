@@ -1,265 +1,180 @@
-# Codex — D80 implementation review (post-must-fix)
+# Codex — D80 implementation review (post residual fixes)
 
-**Verdict: Request changes**
+**Verdict: Approve with nits**
 
-Post-must-fix re-review of branch `code/d80-embedding-input-impl` against
-`e1_embedding_input_policy.md` §3–§7 and `orchestration_design.md` § embed_chunk
-rules 1–6. Prior blockers in pure policy, generation-keyed P1, recovery match,
-E2 allowlist, and legacy strip **mostly landed**. The branch still ships with
-**red integration tests**, a **total-outage → poison-skip** contract violation,
-**no query-side active-generation filter**, and **stale D66 docs**. Those are
-blocking.
+Re-review of branch `code/d80-embedding-input-impl` after residual must-fix
+pass (claimed fixed as of commit `f09a774+`). Scope: verify the five prior
+blockers, re-check design fidelity for embed_chunk rules 1–6 and D80 §3–§7,
+and reassess residual risk. Review only; no production `src/` edits.
+
+---
+
+## Claimed residual must-fixes — verification
+
+| # | Claimed fix | Status | Evidence |
+|---|---|---|---|
+| 1 | Outage vs poison classification | **Fixed** | `_embed_batch_with_poison_split` re-raises when `_is_provider_outage` (`workers/e1.py:369–373`). Only `ProviderInvalidResponseError` is non-outage / size-1 poison (`:513–528`). `ProviderCallError`, timeouts, `OSError`/`ConnectionError`, and unknown exceptions fail closed as outage (retry). |
+| 2 | Active generation filter on QueryEngine search + `chunk_texts` | **Fixed** | `QueryEngine` binds `_policy_generation = EMBEDDING_INPUT_POLICY_VERSION` and `_embedder_generation = embedding_model` (`surfaces/query_engine.py:158–162`). `_nominate_chunk_ids` passes both into semantic and BM25 search (`:720–732`). Hydration `chunk_texts` is generation-scoped (`:1558–1562`). Lance applies filters via `_chunk_search_where` and generation-aware limits (`adapters/selfhost/lance.py:319–324, 370–417, 772–788`). Profile wires `embedding_model` into `QueryEngine` (`profiles/selfhost.py:260–264`). |
+| 3 | Stale e2_chain + retrieval_api assertions | **Fixed** | `test_e2_chain.py:413–423` asserts **absence** of retired `"state where this passage sits"` and presence of `LOCATION:` in extractor prompts. `test_retrieval_api.py:786–792` accepts deterministic header or null; forbids canned free-form prose in header; checks header not embedded in `chunk_text`. Hydration skew test mutates `section_role` (real D48 drop path) and nulls `location_header`/`context_prefix` without treating null header as drop (`:798–852`). |
+| 4 | D66 API docs | **Fixed** (one residual wording nit) | `website/src/app/docs/reference/api/page.mdx:183–185` now says optional **deterministic** `context_prefix` (location header under embedding-input policy) separately from **body-only** `chunk_text`. The later “verbatim source passages in `chunks[]`” line (`:194`) is slightly imprecise under whitespace normalization (S-doc below). |
+| 5 | Outage classifier unit test | **Fixed** | `test_provider_outage_classifier_distinguishes_poison` in `src/tests/core/test_d80_recovery_and_hydration.py:219–229` covers invalid-response vs call-error / timeout / connection / unknown. |
+
+**Conclusion on prior blockers:** all five residual must-fixes are present in
+code and tests. No remaining **blocking** contract violations found in this
+pass.
 
 ---
 
 ## Must-fix findings
 
-### M1 — Broader integration suite still asserts retired prefix-LLM behavior
-
-The focused unit/migration suite (below) is structurally green. The live
-chain/API proofs that actually exercise E1→E2→search against a database are
-still written for the old product:
-
-| Test | Broken assertion | Actual D80 behavior |
-|---|---|---|
-| `src/tests/workers/test_e2_chain.py:413–416` | expects a prompt containing `"state where this passage sits"` | E1 no longer emits that instruction; E2 bundle uses `LOCATION:` typed line |
-| `src/tests/surfaces/test_retrieval_api.py:785–787` | `context_prefix == "Sits in the staffing note."` | Deterministic header (e.g. title/section/role), dual-written to `location_header`/`context_prefix` |
-| Same retrieval test’s “mismatched prefix” branch (`:795–808`) | `UPDATE chunks SET context_prefix = 'mismatched prefix'` then expects hydration drop | Confirm path prefers `location_header or context_prefix` (`query_engine.py:1557–1558`); dual-write leaves `location_header` intact, so the mutation is a no-op |
-
-Also still carrying dead canned `ContextPrefix` fixtures:
-`test_retrieval_api.py:98`, `test_e1_chain.py:109`, `test_e3_chain.py:195`,
-`test_lifecycle_reconciliation.py:134`.
-
-**Fix:** rewrite assertions to D80 facts — zero location-LLM prompts, P1 text
-body-only, PG stamp / API `context_prefix` is the deterministic header (or
-null), hydration drop tests must mutate the field the confirm path actually
-reads (`location_header` and/or section_role / missing P1).
-
-### M2 — Poison split treats total outage as success-with-all-skips
-
-Orchestration rule 4: split only on failure that is **not** a total outage;
-size-1 poison is a typed skip for that chunk.
-
-Implementation (`workers/e1.py:360–394`):
-
-```text
-except Exception:
-    if len(batch) == 1:
-        poison_skips.append(batch[0]); return
-    # else halve and recurse
-```
-
-Every exception is treated as candidate poison. A network/provider outage on a
-64-chunk batch halves to 64 size-1 failures, stamps `embedding_ref=skip:poison_chunk`
-for **every** chunk (`:315–323`), passes the readiness barrier (`:325–339`),
-and enqueues E2 with **zero searchable vectors**.
-
-That is the opposite of “typed fail for a poison chunk, not a document
-dead-letter of finished siblings” under a total outage: finished siblings
-never existed, and the document is falsely embed-ready.
-
-**Fix:** classify outages (transport / 5xx / rate-limit / adapter “provider
-unavailable”) and **re-raise** so the work row retries; only apply size-1
-typed skip for chunk-attributable failures (or after an explicit
-non-outage signal from the provider port). Do not close readiness on a
-full-set poison skip without a non-outage proof.
-
-### M3 — Query never scopes to the active `(policy_generation, embedder_generation)`
-
-Design §4.5 / §5.2 / §7: P1 rows are generation-keyed; search/filter uses the
-**active** pair pointer; cutover flips the pointer only when required rows
-exist.
-
-What landed:
-
-- Lance upsert key is the triple (`adapters/selfhost/lance.py:89–95`) ✅
-- `match_chunk_embeddings` / generation-scoped `chunk_vectors` ✅
-- Dual-generation coexistence proven in unit test ✅
-
-What did **not** land:
-
-- No deployment/query-scope **active pointer** store
-- `QueryEngine._nominate_chunk_ids` calls `search_chunks` /
-  `search_chunks_lexical` **without** generations
-  (`surfaces/query_engine.py:713–719`)
-- Port defaults keep filters optional (`ports/p1_index.py:108–121`)
-- `chunk_texts` is unscoped (`lance.py:362–385`); with two rows per
-  `chunk_id`, `limit=len(chunk_ids)` can drop ids or return an arbitrary
-  generation’s projection
-
-During re-embed / embedder swap, unscoped ANN/BM25 can mix generations (wrong
-metric/dimension risk if dimensions ever differ; always wrong identity during
-cutover). This is the remaining half of prior must-fix #1.
-
-**Fix:** resolve active `(policy_generation, embedder_generation)` at query
-scope (settings/deployment stamp is enough for library-boundary single-tenant)
-and pass it on every chunk search + text projection. Refuse unscoped search
-when multiple generations exist for a deployment, or always require the
-pointer.
-
-### M4 — D66 same-PR docs still describe the retired product
-
-`website/src/app/docs/reference/api/page.mdx:183–185`:
-
-> Chunk results disclose their **generated** `context_prefix` separately from
-> **verbatim** `chunk_text`
-
-Both claims are false under D80: header is deterministic (when present);
-P1/`chunk_text` is normalized body-only, not the raw `document.md` slice.
-Standing D66 obligation is unmet.
-
-### M5 — Claimed “poison split” coverage is missing; recovery is only half-tested
-
-`test_d80_recovery_and_hydration.py` docstring claims “recovery, poison split,
-E2 validation, legacy hydration.” Actual tests:
-
-| Covered | Missing |
-|---|---|
-| `match_chunk_embeddings` triple+hash | Handler-level: P1 present, PG missing → no provider re-call |
-| Dual-generation row coexistence | Handler-level: PG stamp present, P1 missing → re-embed + repair |
-| E2 closed kind/provenance | Poison split halves then size-1 skip; siblings committed |
-| Legacy `_strip_legacy_prefix` | Total-outage re-raise (M2) |
-| §4.3 multi-chunk without section title | Readiness fail when vectors missing (non-skip) |
-
-Without handler fault-injection, M2 and partial-batch recovery can regress
-silently.
+*None.* Prior M1–M5 are closed.
 
 ---
 
 ## Should-fix findings
 
-### S1 — Connector packaging never reaches E1 from the spine
+### S1 — E1 write embedder vs QueryEngine active pointer can desync
 
-`ChunkSource` now has `source_shape`, `channel_ref`, `thread_ref`,
-`author_ref`, `message_ts` (`model/chunks.py:52–57`). `_location_facts` maps
-them (`e1.py:517–531`). **But** `_SELECT_CHUNK_SOURCE`
-(`chunk_catalog.py:162–172`) only selects
-`d.title, d.source_kind, …` — no packaging columns. No migration adds them to
-`documents` / `document_versions` / source-map spans either.
+- **Write path:** `embedder_generation = E1Settings.embedding_model`
+  (`REMEMBERSTACK_E1_…`, `e1.py:185`).
+- **Query path:** `QueryEngine(embedding_model=P1Settings.embedding_model)`
+  (`REMEMBERSTACK_P1_…`, `selfhost.py:250–264`).
 
-Production path therefore always gets defaults (`source_shape="document"`,
-refs `None`). Message-atom compact headers and `source_shape` P1 scalars are
-reachable **only** from unit tests that construct `LocationFacts` directly.
-Design §3.2 permits missing connector metadata, so this is not a pure-policy
-bug — but prior must-fix #3 asked for a real map path; the map is a dead end.
+Defaults match (`qwen/qwen3-embedding-8b`). If only one env is set, ANN/BM25
+and hydration filter on a generation that was never written → empty chunk
+evidence with no loud failure. Prefer one shared settings key (or wire QueryEngine
+from the same object E1 uses).
 
-### S2 — E2 Claimify instruction text still names “CONTEXT PREFIX”
+### S2 — Production OpenRouter embed path never raises poison-class errors
 
-`workers/e2.py:160` still tells the model additions may come from “stored
-CONTEXT PREFIX”. Bundle members are now `LOCATION:` typed pairs only. Stale
-instruction invites the model to invent prefix-shaped `added_context` that the
-grounding gate then drops (noise, not silent incorrect membership). Align the
-prompt with §3.3.
+`_is_provider_outage` only treats `ProviderInvalidResponseError` as chunk
+poison. OpenRouter `embed` raises `OpenRouterProviderError` (`ProviderCallError`)
+for HTTP failures **and** unusable embedding bodies
+(`adapters/openrouter.py:267–270, 275–278`). So size-1 `skip:poison_chunk` is
+effectively unreachable with the production adapter.
 
-### S3 — Missing `provenance` is admitted into the grounding union
+This is **fail-closed** (correct direction vs the old all-poison readiness
+bug): outages and unusable bodies retry / DLQ rather than false embed-ready.
+But rule 4’s typed poison path is unexercised in production. Map
+schema/body-shape failures on embed to `ProviderInvalidResponseError` (or a
+dedicated subclass) when the failure is response-content, not transport.
 
-`_location_grounding_pairs` (`e2.py:780–783`):
+### S3 — No handler-level poison-split / outage re-raise test
 
-```python
-if provenance is not None and str(provenance) not in _LOCATION_ELEMENT_PROVENANCE:
-    continue
-```
+Classifier unit test lands (M5). Still missing:
 
-`provenance is None` passes. Design’s closed record requires provenance;
-membership rule is allowlisted provenance. Reject missing provenance the same
-way as `model_derived`.
+- batch of N → one invalid-response size-1 skip + siblings committed;
+- total outage on batch → exception propagates, **no** `skip:poison_chunk`
+  stamps, readiness does not close.
 
-### S4 — `normalize_body` still collapses newlines
+Without that, a future `except Exception: poison_skips.append` regression is
+easy.
 
-`embedding_input_policy.py:104–106` collapses **all** whitespace to single
-spaces. That string is both embedding body and P1 BM25/evidence text. Lists,
-code, and multi-paragraph structure become one line. §4.1 allows policy-owned
-normalization, but the choice is still undocumented in the version artifact
-description. Prefer preserving newlines (collapse only horizontal runs) or
-pin the collapse explicitly in `EMBEDDING_INPUT_POLICY_VERSION` docs.
+### S4 — E2 Claimify instruction still says “CONTEXT PREFIX”
 
-### S5 — Invented `"untitled"` coordinate heuristic
+`workers/e2.py:160` still lists “stored CONTEXT PREFIX” as a quotable bundle
+source. Bundle members are typed `LOCATION:` pairs only. Align prompt with
+§3.3 (same as prior S2).
 
-`_has_useful_coordinates` treats title `"untitled"` (any case) as absent
-(`embedding_input_policy.py:278`). Not in §4.3. Either delete or freeze in the
-policy artifact text.
+### S5 — Missing `provenance` still admitted into grounding union
 
-### S6 — Migration dead code
+`_location_grounding_pairs` (`e2.py:780–783`) skips only when provenance is
+present and disallowed; `None` passes. Prefer reject-missing for closed records.
 
-`p8_01_0021_d80_embedding_input.py:30–34` still does
-`name = column_sql.split()[0]` / `del name`. Harmless; remove.
+### S6 — Connector packaging never loads from spine (prior S1)
 
-### S7 — Embedder generation identity is still bare model id
+`ChunkSource` defaults `source_shape="document"` and message refs `None`
+(`model/chunks.py:52–57`). `_SELECT_CHUNK_SOURCE` still selects only document
+title/source_kind (`chunk_catalog.py:162–172`); no packaging columns in spine.
+Message-atom compact headers remain unit-test-only.
 
-`embedder_generation = self._settings.embedding_model` (`e1.py:183`). Design
-wants model + dimension + metric + provider params in the generation identity
-(§4.5 / §8). Cost/correctness risk on silent provider param drift. Record as
-follow-on if not in this PR’s generation string.
+### S7 — `normalize_body` collapses all whitespace
 
-### S8 — Zero-call attestation on same-version policy bump
+`embedding_input_policy.py:104–106` turns lists/code/paragraphs into one line
+for both embed input and P1 BM25/evidence text. Policy-owned, but not pinned
+in the version artifact description. Prefer preserving newlines or document in
+`EMBEDDING_INPUT_POLICY_VERSION` text.
 
-Cross-version carry-forward exists (`carry_forward_sources` + hash match).
-Same-version policy-generation change with unchanged `embedding_text_hash` +
-embedder still takes the provider path (cost only). Design §4.5 allows
-zero-call attestation into a new policy row.
+### S8 — Invented `"untitled"` coordinate heuristic
 
-### S9 — Prepare stamps only after success/skip
+`_has_useful_coordinates` (`embedding_input_policy.py:278`) treats title
+`"untitled"` as absent. Not in §4.3; freeze in policy artifact or delete.
 
-Design §6.2 allows pure prepare stamps before provider calls. Impl stamps on
-`_commit_batch` / `_stamp_skips` only. Acceptable under “may”; means a crash
-mid-batch recomputes renders (cheap) and relies on P1 hash match for vector
-reuse (now present). Optional tighten: durable prepare before embed.
+### S9 — Migration dead code
 
-### S10 — `test_e1_chain` does not prove P1 text is body-only
+`p8_01_0021_d80_embedding_input.py:30–34` still binds `name` / `del name`.
+Harmless; remove.
 
-Updated acceptance checks stamps and zero LLM prompts
-(`test_e1_chain.py:219–231`) but never asserts Lance `text == normalize(body)`
-while embedded provider text may be `header + body`. That was the single most
-important retrieval property the old prefix-in-P1 test accidentally proved.
-Add it.
+### S10 — Embedder generation is still bare model id
+
+`embedder_generation = embedding_model` only (`e1.py:185`). Design §4.5/§8
+wants model + dimension + metric + provider params. Silent param drift can
+reuse wrong vectors. Tracked follow-on is acceptable if explicit.
+
+### S11 — `test_e1_chain` still does not assert P1 body-only text
+
+Stamps and zero LLM prompts are asserted (`test_e1_chain.py:219–231`); Lance
+`text == normalize(body)` while provider may embed `header + body` is not.
+Add one projection assertion.
+
+### S12 — Docs nit: “verbatim source passages”
+
+`page.mdx:194` still says “verbatim source passages in `chunks[]`”. Under D80
+the payload is normalized body-only (plus separate deterministic header).
+Prefer “body-only source passages” for consistency with lines 183–185.
 
 ---
 
 ## Residual risks / deferred work
 
-1. **Dual-generation cutover ops** — storage allows two rows; no active pointer,
-   retirement path, or query gate (M3). Unsafe to run a real re-embed migration
-   against live query traffic.
-2. **Connector metadata contract (§3.2)** — not in PG; message_atom product
-   path unblocked only after connector + spine columns + SELECT (S1).
-3. **Recipe filter support for new scalars** — P1 now can store
-   `source_kind` / `source_shape`; no evidence recipes declare operators on
-   them yet (§5.1: a scalar no recipe filters on does not satisfy retrieval).
-4. **Claims do not inherit message scalars** — correctly not implemented
-   (§5.5); join-based recipes remain future retrieval work.
-5. **Fault-injection spike §10.4** — still no automated kill-between-P1-and-PG
-   proof at handler level (M5).
-6. **H_MAX≈48** — compact message headers still routinely drop `Time:` /
-   `Author:` as whole fields; correct bounding, weak location signal until
-   constants are measured and versioned (§10.1–10.3).
-7. **D74 purge of new scalars/facts** — not re-audited in this pass; confirm
-   forget deletes generation-keyed Lance rows (all generations) and
-   `location_facts_json`.
+1. **Cutover pointer is code/settings, not readiness-gated.** Query always
+   filters the active pair from the policy constant + embedder string. Bumping
+   `EMBEDDING_INPUT_POLICY_VERSION` or the embed model instantly hides prior
+   rows until re-embed completes. Dual-generation *storage* works; dual-generation
+   *ops* (flip only when required rows exist; retirement of old rows) is still
+   an operational follow-on, not implemented as a durable pointer store.
+2. **E1/P1 settings split (S1)** — misconfiguration → silent empty chunk search.
+3. **Poison path dead under OpenRouter (S2)** — safe, incomplete rule-4 coverage.
+4. **Connector metadata contract (§3.2)** — product path for message atoms still
+   blocked on spine + SELECT (S6).
+5. **Recipe filters on new P1 scalars** — `source_kind` / `source_shape` written;
+   no evidence recipes declare operators yet.
+6. **Claims do not inherit message scalars** — correctly not implemented (§5.5).
+7. **Handler fault-injection §10.4** — no kill-between-P1-and-PG automated proof
+   at handler level (S3 adjacent).
+8. **H_MAX≈48** — compact message headers still drop whole fields; measure and
+   version.
+9. **D74 purge** — confirm forget deletes all generation-keyed Lance rows and
+   `location_facts_json` (not re-audited this pass).
+10. **Search-filter unit proof** — dual-gen coexistence is tested for
+    `chunk_vectors` / `match_chunk_embeddings`, not for
+    `search_chunks` / `search_chunks_lexical` filtering out the inactive
+    generation. Worth one Lance unit test.
 
 ---
 
 ## Design fidelity notes
 
-### Re-verify prior must-fixes
+### Prior residual must-fixes (this pass)
 
-| # | Prior must-fix | Status |
-|---|---|---|
-| 1 | P1→PG recovery + generation cutover | **Partial.** Composite P1 key + `embedding_text_hash` + `match_chunk_embeddings` recovery + per-batch P1→PG order + missing-P1 re-embed path are real. Active query pointer / cutover filter **not** done (M3). |
-| 2 | Poison split / typed skip / readiness | **Partial.** Halve-to-1, `skip:empty_body` / `skip:poison_chunk` stamps, readiness fail on missing non-skip vectors — yes. Total-outage misclassification — **no** (M2). |
-| 3 | `source_shape` path + E2 closed enum / provenance + no `section_role` | **Partial.** E2 allowlist + provenance filter + no `section_role` in union — **yes**. Production `source_shape`/refs always default — **no** (S1). |
-| 4 | Legacy hydration | **Fixed** for the common case: strip when PG has no policy stamp (`query_engine.py:1554–1565`, `_strip_legacy_prefix`). Lance legacy columns init to `'legacy'` on upgrade. |
-| 5 | Red tests fixed | **Partial.** Focused D80/migration modules fixed. **e2_chain + retrieval_api (and related fixtures) still red** (M1). |
+| Prior | Status after residual pass |
+|---|---|
+| M1 e2_chain + retrieval_api | **Fixed** |
+| M2 total-outage → poison | **Fixed** (fail-closed classifier + re-raise) |
+| M3 query active generation | **Fixed** (settings stamp + Lance prefilter) |
+| M4 D66 API docs | **Fixed** (wording nit S12 remains) |
+| M5 classifier test | **Fixed** (handler-level still open as S3) |
 
 ### Orchestration embed_chunk rules 1–6
 
 | Rule | Verdict | Evidence |
 |---|---|---|
-| 1 Claiming row / pure prepare in job | ✅ | Single `EMBED_CHUNK` handler; prepare is in-process |
+| 1 Claiming row / pure prepare in job | ✅ | Single `EMBED_CHUNK` handler; prepare in-process |
 | 2 Batching ≤ capability; no cross doc/rep/lane/gen | ✅ | `embed_batch_size` default 64; one representation per claim |
-| 3 `call_key = embed_chunks:{first}:{count}` | ✅ | `e1.py:358–359` (`min` UUID as first id) |
-| 4 Poison split | ⚠️ | Split exists; total-outage handling wrong (M2) |
-| 5 P1 then PG; retry without provider if triple+hash match | ✅ | `_commit_batch` order; `match_chunk_embeddings` recovery |
-| 6 Readiness under active pair or typed skip | ⚠️ | Checks vectors ∪ closed skips; all-poison-skip false ready (M2) |
+| 3 `call_key = embed_chunks:{first}:{count}` | ✅ | `e1.py:360–361` (`min` UUID as first id) |
+| 4 Poison split | ✅ with S2 | Outages re-raise; only `ProviderInvalidResponseError` size-1 skips; OpenRouter rarely emits that type |
+| 5 P1 then PG; retry without provider if triple+hash match | ✅ | `_commit_batch` order; `match_chunk_embeddings` recovery; re-stamp recovered pairs missing PG |
+| 6 Readiness under active pair or typed skip | ✅ | Missing non-skip vectors raise; empty_body / poison_chunk closed skips |
 
 ### Policy §3–§7 highlights
 
@@ -267,18 +182,18 @@ Add it.
 |---|---|
 | No location LLM on default path | ✅ |
 | Total pure `render_embedding_input` + version `e1-embed-input-v1:char` | ✅ |
-| §4.3 ordered modes; step 4 without bare `"document"` shape | ✅ (`embedding_input_policy.py:259–265`) |
+| §4.3 ordered modes; step 4 without bare `"document"` shape | ✅ |
 | No numeric `node_path` header fallback | ✅ |
-| Whole-field header bound under `H_MAX` | ✅ (`_join_header_fields`) |
-| Empty body → typed skip | ✅ stamped `skip:empty_body` |
-| P1 text = normalized body only | ✅ write path; **under-tested** (S10) |
-| Header separate on PG + API field | ✅ dual-write `location_header`/`context_prefix` |
-| LocationElement closed kinds; no summary | ✅ builder + E2 consumer |
+| Whole-field header bound under `H_MAX` | ✅ |
+| Empty body → typed skip | ✅ |
+| P1 text = normalized body only | ✅ write; under-tested (S11) |
+| Header separate on PG + API field | ✅ dual-write |
+| LocationElement closed kinds; no summary | ✅ |
 | Free-form header out of grounding union | ✅ |
 | P1 key `(chunk_id, policy_generation, embedder_generation)` | ✅ |
-| Universal P1 scalars projected on write | ✅ `source_kind`, `source_shape`, generations (recipe filters still open) |
+| Query filters active pair | ✅ |
 | Claims do not inherit message scalars | ✅ |
-| E2 extractor generation bumped for bundle/union change | ✅ `e2-extract-2026.08a:d80-location-elements-1:…` |
+| E2 extractor generation bumped | ✅ |
 
 ---
 
@@ -295,49 +210,40 @@ uv run pytest \
   src/tests/adapters/test_lance_retrieval.py -q
 ```
 
-**This review agent has no shell execution tool**, so pytest was **not** run
-here. Static collection of those modules shows:
+**This review agent has no shell execution tool**, so pytest was **not**
+executed here. Static review of those modules shows:
 
-- No import of removed `_prefix_prompt`
-- `p8_01_0021` is in the expected revision chain
-- Policy / recovery / d79 / lance tests are self-contained unit tests
+- Policy / recovery / outage classifier tests are self-contained and import the
+  live `_is_provider_outage` / Lance / hydration helpers.
+- `p8_01_0021` remains on the linear migration chain (file present;
+  `down_revision = p5_07_0020`).
+- No remaining imports of removed `_prefix_prompt` in the d79 suite.
+- Integration assertion rewrites (e2_chain, retrieval_api) match D80 product
+  behavior on paper.
 
-**Expected focused result:** green (assuming local env matches CI).
-
-**Expected broader result (must-fix M1):** red when DB fixtures run:
-
-- `test_e2_chain.py::test_claims_land_grounded_…` (retired location-LLM prompt)
-- `test_retrieval_api.py::test_lexical_claim_and_live_chunk_search_…` (canned
-  prefix + dual-write mismatch branch)
-
-Re-run the focused command and the two integration modules above before
-merge.
+**Operator action before merge:** run the focused command above (and, with
+Postgres fixtures, `test_e2_chain` + `test_retrieval_api` smoke) in the branch
+environment. Expect green if env matches CI.
 
 ---
 
 ## Executive summary
 
-1. **Verdict: Request changes** — durability and pure-policy cores are largely
-   real; merge blockers remain.
-2. Prior pure-policy bugs (mid-field truncation, numeric `Section path:`, step-4
-   over-breadth, free-form union membership) are **fixed**.
-3. Prior operational holes (generation-keyed P1, per-batch P1→PG, hash recovery,
-   empty/poison skip stamps, readiness incomplete raise) are **mostly fixed**.
-4. **M1:** e2_chain + retrieval_api still assert prefix-LLM product behavior —
-   branch is still red against a real database.
-5. **M2:** any provider exception poison-skips size-1 tails and can mark an
-   entire document embed-ready with zero vectors (total outage).
-6. **M3:** dual-generation storage without query active-pair filter — cutover
-   is not safe.
-7. **M4:** D66 API docs still say “generated” prefix and “verbatim” chunk text.
-8. **M5:** no true poison-split / handler crash-recovery tests despite the
-   module name.
-9. Connector `source_shape`/message refs are model fields only; spine never
-   loads them (S1).
-10. E2 prompt text still says CONTEXT PREFIX (S2); missing provenance still
-    enters the union (S3).
-11. Approve only after M1–M5 (integration rewrite, outage vs poison, active
-    generation on search, docs, fault-injection tests). S1–S10 may ship as
-    tracked follow-ups if explicitly sequenced outside this PR.
-12. With M1–M5 closed, the D80 design’s hard path (deterministic input,
-    generation-safe vectors, typed E2 location) is in good shape.
+1. **Verdict: Approve with nits** — all five residual must-fixes (outage vs
+   poison, active generation on search/hydration, stale integration assertions,
+   D66 API wording, classifier unit test) are present and correct in code.
+2. Pure-policy core, generation-keyed P1, P1→PG recovery, typed E2 location
+   membership, and legacy hydration strip remain solid.
+3. Poison classification is now fail-closed; the remaining gap is that production
+   OpenRouter embed errors never become typed poison (S2) and there is no
+   handler-level fault-injection test (S3).
+4. Query cutover filtering is real via settings stamp; ops still lack a
+   readiness-gated pointer flip and E1/P1 embedder env can desync (S1).
+5. Non-blocking follow-ups: connector packaging spine path (S6), E2 prompt
+   “CONTEXT PREFIX” (S4), missing provenance reject (S5), body-only P1 assert
+   (S11), docs “verbatim” nit (S12), bare embedder identity (S10).
+6. **Approve for merge** of the D80 implementation on this branch once the
+   focused pytest command is green locally/CI. Treat S1–S12 as tracked nits /
+   follow-ons, not merge blockers — unless an operator plans to diverge
+   `REMEMBERSTACK_E1_EMBEDDING_MODEL` from `REMEMBERSTACK_P1_EMBEDDING_MODEL`,
+   in which case S1 should be fixed first.
