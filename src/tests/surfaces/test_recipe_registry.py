@@ -535,12 +535,13 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
                 [item.item_id for item in second.ranking],
             ],
             k=60,
-            limit=k,
         )
         return engine.hydrate_claims(
             deployment_id=_DEPLOYMENT_ID,
             claim_ids=[item.item_id for item in fused.ranking],
             ranking=fused.ranking,
+            limit=k,
+            group_exact_text=True,
         )
 
     def chunk_hybrid(*, k: int, candidate_k: int) -> Envelope:
@@ -563,12 +564,12 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
                 [item.item_id for item in second.ranking],
             ],
             k=60,
-            limit=k,
         )
         return engine.hydrate_chunks(
             deployment_id=_DEPLOYMENT_ID,
             chunk_ids=[item.item_id for item in fused.ranking],
             ranking=fused.ranking,
+            limit=k,
         )
 
     direct["claims_hybrid_rrf"] = claim_hybrid(k=30, candidate_k=100)
@@ -700,8 +701,10 @@ def test_claims_hybrid_rrf_chain_ends_with_claim_hydration() -> None:
     assert recipe.chain[-1].inputs == (2,)
     assert recipe.chain[0].settings["channel"] == "semantic"
     assert recipe.chain[1].settings["channel"] == "bm25"
-    assert recipe.chain[2].bind == {"limit": "k"}
-    assert recipe.version == 5
+    assert recipe.chain[2].bind == {}
+    assert recipe.chain[3].bind == {"limit": "k"}
+    assert recipe.chain[3].settings == {"group_exact_text": True}
+    assert recipe.version == 6
     lint_recipe(recipe)
 
 
@@ -717,8 +720,9 @@ def test_chunks_hybrid_rrf_nominates_then_confirms_once() -> None:
     assert recipe.chain[-1].inputs == (2,)
     assert recipe.chain[0].settings["channel"] == "semantic"
     assert recipe.chain[1].settings["channel"] == "bm25"
-    assert recipe.chain[2].bind == {"limit": "k"}
-    assert recipe.version == 2
+    assert recipe.chain[2].bind == {}
+    assert recipe.chain[3].bind == {"limit": "k"}
+    assert recipe.version == 3
     lint_recipe(recipe)
 
 
@@ -746,7 +750,12 @@ def test_question_context_keeps_claims_and_chunks_separately_typed() -> None:
     assert isinstance(candidate_default, int)
     assert isinstance(result_default, int)
     assert candidate_default > result_default
-    assert recipe.version == 2
+    assert recipe.chain[2].bind == {}
+    assert recipe.chain[3].bind == {"limit": "k"}
+    assert recipe.chain[3].settings == {"group_exact_text": True}
+    assert recipe.chain[6].bind == {}
+    assert recipe.chain[7].bind == {"limit": "k"}
+    assert recipe.version == 3
     lint_recipe(recipe)
 
 
@@ -866,7 +875,7 @@ def test_batch_d_recipe_has_one_step_bound_descriptor_and_schema() -> None:
     )
     assert recipe.output_grain is Grain.EVIDENCE
     assert recipe.answer_intent is RecipeAnswerIntent.ASSERTION_HISTORY
-    assert recipe.version == 1
+    assert recipe.version == 2
     assert recipe.parameters == {
         "query": {"type": "string", "required": True},
         "entity_a": {"type": "string", "required": True},
@@ -1006,7 +1015,9 @@ def test_question_context_executes_to_both_evidence_payloads() -> None:
         arguments={"query": "Where did Alice join?", "k": 10, "candidate_k": 20},
     )
 
-    assert envelope.evidence == (evidence,)
+    assert tuple(record.claim_id for record in envelope.evidence) == (claim_id,)
+    assert envelope.evidence[0].corroboration_count == 1
+    assert envelope.evidence[0].grouped_claim_ids == (claim_id,)
     assert envelope.chunks == (chunk,)
     assert envelope.grain is Grain.EVIDENCE
     assert claim_confirmations == 1

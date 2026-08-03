@@ -207,11 +207,18 @@ the live passage in `chunks[]`.
 
 For ordinary question answering, prefer the public `question_context` recipe.
 It independently fuses semantic and BM25 claim nominations and source-chunk
-nominations, then confirms each fused list once. The result keeps atomic
-claims in `evidence[]` and verbatim source passages in `chunks[]`; neither
-payload is promoted to current-fact truth. `claims_hybrid_rrf` and
-`chunks_hybrid_rrf` expose either half when a caller needs only one evidence
-type.
+nominations, confirms the complete already-fetched pools, and takes the final
+bound only after live confirmation. A stale head result is therefore refilled
+from the deterministic ranked tail without another index search. Exact claim
+texts are grouped after NFKC, case-folding, whitespace collapse, and
+leading/trailing punctuation removal. The highest-ranked confirmed claim
+represents each group; its `corroboration_count` counts distinct document
+lineages and `grouped_claim_ids` lists only live PostgreSQL-confirmed members.
+The result keeps those atomic claims in `evidence[]` and verbatim source
+passages in `chunks[]`; neither payload is promoted to current-fact truth.
+`claims_hybrid_rrf` and `chunks_hybrid_rrf` expose either half when a caller
+needs only one evidence type. Recipe catalog entries expose their integer
+`version`, so clients can pin the behavior that produced an answer.
 
 `resolve` always returns every exact-name candidate. Supplying focal entities only
 reorders those candidates: a candidate related to more of the supplied entities

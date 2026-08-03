@@ -585,6 +585,26 @@ def test_graph_edge_support_marker_defaults_for_old_stored_envelopes() -> None:
     assert flagged.support is FactSupport.WITHDRAWN
 
 
+def test_claim_grouping_fields_default_for_old_stored_envelopes() -> None:
+    """Batch E claim-group metadata does not invalidate legacy payloads."""
+    legacy = EvidenceResult.model_validate(
+        {
+            "claim_id": uuid4(),
+            "doc_id": uuid4(),
+            "chunk_id": uuid4(),
+            "claim_text": "Legacy claim.",
+            "source_span": "Legacy claim.",
+            "char_start": 0,
+            "char_end": 13,
+            "is_attributed": False,
+            "is_current_testimony": True,
+        }
+    )
+
+    assert legacy.corroboration_count is None
+    assert legacy.grouped_claim_ids == ()
+
+
 def test_evidence_total_rejects_a_returned_count_above_total() -> None:
     """The exact-total disclosure cannot contradict itself."""
     with pytest.raises(ValidationError, match="cannot exceed"):

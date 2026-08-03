@@ -238,7 +238,10 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         name="claims_hybrid_rrf",
         description="Verbatim claims for a query: independent semantic and"
         " BM25 nominations fused by reciprocal-rank fusion (S46), then"
-        " hydrated to claim text. Evidence grain with ranking scores kept.",
+        " D48-confirmed with deterministic tail refill. Exact normalized-text"
+        " duplicates are grouped under the highest-ranked claim; each result"
+        " reports distinct-lineage corroboration and every confirmed grouped"
+        " claim id. Evidence grain with ranking scores kept.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -267,21 +270,25 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
                 settings={"channel": "bm25"},
                 bind={"query": "query", "k": "candidate_k"},
             ),
+            RecipeStep(op="fuse", settings={"k": 60}, inputs=(0, 1)),
             RecipeStep(
-                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(0, 1)
+                op="hydrate_claims",
+                settings={"group_exact_text": True},
+                bind={"limit": "k"},
+                inputs=(2,),
             ),
-            RecipeStep(op="hydrate_claims", inputs=(2,)),
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=5,
+        version=6,
     ),
     Recipe(
         name="chunks_hybrid_rrf",
         description="Live source passages for a query: independent semantic"
         " and BM25 nominations fused by RRF, then D48-confirmed against the"
-        " current ready source coordinate. Evidence grain; chunks are not"
-        " claims or facts.",
+        " current ready source coordinate with deterministic refill from the"
+        " already-fetched ranked tail. Evidence grain; chunks are not claims"
+        " or facts.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -310,20 +317,21 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
                 settings={"channel": "bm25"},
                 bind={"query": "query", "k": "candidate_k"},
             ),
-            RecipeStep(
-                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(0, 1)
-            ),
-            RecipeStep(op="hydrate_chunks", inputs=(2,)),
+            RecipeStep(op="fuse", settings={"k": 60}, inputs=(0, 1)),
+            RecipeStep(op="hydrate_chunks", bind={"limit": "k"}, inputs=(2,)),
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=2,
+        version=3,
     ),
     Recipe(
         name="question_context",
         description="High-recall question context: hybrid claim retrieval plus"
         " hybrid live-source retrieval. Returns atomic claims and source"
-        " chunks as separately typed evidence; neither is current-fact truth.",
+        " chunks as separately typed evidence, refilling confirmation drops"
+        " from each already-fetched ranked tail. Exact-text claim groups report"
+        " distinct-lineage corroboration and confirmed member ids; neither"
+        " payload is current-fact truth.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -352,10 +360,13 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
                 settings={"channel": "bm25"},
                 bind={"query": "query", "k": "candidate_k"},
             ),
+            RecipeStep(op="fuse", settings={"k": 60}, inputs=(0, 1)),
             RecipeStep(
-                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(0, 1)
+                op="hydrate_claims",
+                settings={"group_exact_text": True},
+                bind={"limit": "k"},
+                inputs=(2,),
             ),
-            RecipeStep(op="hydrate_claims", inputs=(2,)),
             RecipeStep(
                 op="nominate_chunks",
                 settings={"channel": "semantic"},
@@ -366,15 +377,13 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
                 settings={"channel": "bm25"},
                 bind={"query": "query", "k": "candidate_k"},
             ),
-            RecipeStep(
-                op="fuse", settings={"k": 60}, bind={"limit": "k"}, inputs=(4, 5)
-            ),
-            RecipeStep(op="hydrate_chunks", inputs=(6,)),
+            RecipeStep(op="fuse", settings={"k": 60}, inputs=(4, 5)),
+            RecipeStep(op="hydrate_chunks", bind={"limit": "k"}, inputs=(6,)),
             RecipeStep(op="combine_evidence", inputs=(3, 7)),
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=2,
+        version=3,
     ),
     Recipe(
         name="documents_about",
@@ -584,7 +593,8 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
         " 60-record budget allocates edge backing first for round-0 coverage,"
         " then fills remaining evidence[]/chunks[] capacity from question"
         " context (which nominates 200 per channel and caps each pre-union"
-        " grain at 50).",
+        " grain at 50 after tail refill; exact-text question-claim groups"
+        " disclose distinct-lineage corroboration and confirmed member ids).",
         parameters={
             "query": {"type": "string", "required": True},
             "entity_a": {"type": "string", "required": True},
@@ -626,7 +636,7 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=1,
+        version=2,
     ),
     Recipe(
         name="graph_neighborhood",
