@@ -401,7 +401,9 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         name="claims_about",
         description="What did sources assert that a person or thing said, did,"
         " or was? Use this for verbatim entity-anchored testimony, optionally"
-        " reranked for a narrower question; it is evidence, never current fact.",
+        " reranked for a narrower question. With a query, semantic ranking covers"
+        " at most the 400 matching claims most recent by assertion then ingestion"
+        " time; it is evidence, never current fact.",
         parameters={
             "entity": {"type": "string", "required": True},
             "query": {"type": "string", "required": False},
@@ -426,8 +428,9 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
         name="claims_as_of",
         description="What did sources assert happened within a world-time"
         " window? Use this for historical testimony whose stamped validity"
-        " interval intersects the requested bounds, optionally reranked by a"
-        " question; unstamped claims are counted but excluded.",
+        " interval intersects the requested bounds. With a query, semantic"
+        " ranking covers at most the 400 matching claims with the most-recent"
+        " valid-from times; unstamped claims are counted but excluded.",
         parameters={
             "from": {"type": "timestamp", "required": True},
             "to": {"type": "timestamp", "required": True},

@@ -886,7 +886,7 @@ def test_single_run_summary_json_is_unchanged(
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v9","protocol_fingerprint":'
-        '"7e28f7cc94164e8d162944c52c4d5342c33bca2addfb17984f1137630fdd9bae",'
+        '"907160041595f71b880e9482d55236821dfcbc2accb6166c91c1508220295b1a",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1004,7 +1004,7 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
     assert weak.answer_agent_reasoning_effort is None
     assert weak.answer_reader_retry_budget == 2
     assert weak.protocol_fingerprint == (
-        "7e28f7cc94164e8d162944c52c4d5342c33bca2addfb17984f1137630fdd9bae"
+        "907160041595f71b880e9482d55236821dfcbc2accb6166c91c1508220295b1a"
     )
     assert weak.protocol_fingerprint != (
         "dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac"
@@ -1014,7 +1014,7 @@ def test_prepared_protocol_pins_and_fingerprints_are_distinct(
     assert strong.answer_agent_reasoning_effort == "none"
     assert strong.answer_reader_retry_budget == 2
     assert strong.protocol_fingerprint == (
-        "4347bc71ff3da8405a05c2709e3eb2ca723d342fee7c57bac0190da4811ff7b7"
+        "26479f70aca3d093172d187af0e6c0f42adba16c775d61442680585f8c7d74e3"
     )
     assert strong.protocol_fingerprint != (
         "ccf6b7b28397f4311a08403aa1c4639f209e90532d9430f54f12003fd017fe8b"

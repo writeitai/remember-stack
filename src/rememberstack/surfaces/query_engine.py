@@ -381,10 +381,7 @@ class QueryEngine:
             deployment_id=deployment_id, claim_ids=candidate_ids, query=query, k=k
         )
         evidence, dropped = self._confirm_claims(
-            deployment_id=deployment_id,
-            claim_ids=ordered_ids,
-            current_only=False,
-            include_deleted=True,
+            deployment_id=deployment_id, claim_ids=ordered_ids, current_only=False
         )
         confirmed = {record.claim_id for record in evidence}
         return Envelope(
@@ -430,7 +427,9 @@ class QueryEngine:
                 freshness=_freshness(),
                 negative=Negative(
                     kind=NegativeKind.UNKNOWN_ENTITY,
-                    explanation=f"current source chunk {chunk_id} does not exist",
+                    explanation=(
+                        f"chunk_id {chunk_id} does not identify a current source chunk"
+                    ),
                     workaround="search live source chunks again and use a returned chunk_id",
                 ),
             )
@@ -1824,10 +1823,14 @@ _CLAIMS_AS_OF_CANDIDATES = text(
     """
     SELECT c.claim_id, count(*) OVER () AS total_count
     FROM claims c
+    LEFT JOIN documents d
+      ON d.deployment_id = c.deployment_id
+     AND d.doc_id = c.doc_id
     WHERE c.deployment_id = :deployment_id
       AND c.claim_valid_precision <> 'unknown'
       AND c.claim_valid_from <= :to
       AND (c.claim_valid_until IS NULL OR c.claim_valid_until >= :from)
+      AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
     ORDER BY c.claim_valid_from DESC, c.claim_id
     LIMIT :candidate_limit
     """

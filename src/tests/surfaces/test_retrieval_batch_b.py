@@ -515,6 +515,75 @@ def test_claims_as_of_intersects_open_windows_and_counts_unknown(
     assert answer.excluded_unstamped == 1
 
 
+def test_claims_as_of_excludes_tombstoned_lineages_before_candidate_bound(
+    corpus: _Corpus,
+) -> None:
+    tombstoned_doc_id = uuid4()
+    tombstoned_claim_id = uuid4()
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                " source_ref, title) VALUES (:doc, :deployment, 'upload',"
+                " :source_ref, 'Tombstoned Batch B document')"
+            ),
+            {
+                "doc": tombstoned_doc_id,
+                "deployment": _DEPLOYMENT_ID,
+                "source_ref": f"batch-b-tombstone-{tombstoned_doc_id}",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, claim_valid_from, claim_valid_until,"
+                " claim_valid_precision, claim_valid_kind, extractor_version,"
+                " ingested_at) VALUES (:claim, :deployment, :doc, :chunk, :body,"
+                " :body, 0, 30, true, true, :valid_at, :valid_at, 'day',"
+                " 'event_time', 'batch-b', :ingested_at)"
+            ),
+            {
+                "claim": tombstoned_claim_id,
+                "deployment": _DEPLOYMENT_ID,
+                "doc": tombstoned_doc_id,
+                "chunk": uuid4(),
+                "body": "A removed source described a later June event.",
+                "valid_at": datetime(2024, 6, 20, tzinfo=UTC),
+                "ingested_at": _MENTIONED_AT,
+            },
+        )
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET deleted_at = :at WHERE doc_id = :doc"),
+            {"at": _MENTIONED_AT, "doc": tombstoned_doc_id},
+        )
+
+    try:
+        answer = corpus.query_engine().claims_as_of(
+            deployment_id=_DEPLOYMENT_ID, from_=_WINDOW_FROM, to=_WINDOW_TO, k=1
+        )
+
+        assert tuple(claim.claim_id for claim in answer.evidence) == (
+            corpus.claim_ids[1],
+        )
+        assert tombstoned_claim_id not in {claim.claim_id for claim in answer.evidence}
+        assert answer.dropped_by_hydration == 0
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM claims WHERE deployment_id = :deployment"
+                    " AND claim_id = :claim"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "claim": tombstoned_claim_id},
+            )
+            connection.execute(
+                text("DELETE FROM documents WHERE doc_id = :doc"),
+                {"doc": tombstoned_doc_id},
+            )
+
+
 def test_claims_as_of_semantically_ranks_only_the_window_set(corpus: _Corpus) -> None:
     corpus.provider.embedded_texts.clear()
     answer = corpus.query_engine().claims_as_of(
@@ -554,6 +623,17 @@ def test_chunk_neighbors_preserve_order_and_disclose_document_edges(
     )
     assert answer.truncation is not None
     assert answer.truncation.truncated is truncated
+
+
+def test_chunk_neighbors_unknown_chunk_names_chunk_id(corpus: _Corpus) -> None:
+    unknown_chunk_id = uuid4()
+    answer = corpus.query_engine().chunk_neighbors(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=unknown_chunk_id
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.UNKNOWN_ENTITY
+    assert f"chunk_id {unknown_chunk_id}" in answer.negative.explanation
 
 
 @pytest.mark.parametrize("recipe", ("documents", "claims"))

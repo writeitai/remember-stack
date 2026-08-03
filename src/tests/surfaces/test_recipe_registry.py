@@ -780,6 +780,8 @@ def test_batch_b_recipes_have_bound_descriptors_and_schemas() -> None:
         "type": "string",
         "required": False,
     }
+    assert "400" in recipes["claims_about"].description
+    assert "400" in recipes["claims_as_of"].description
     assert recipes["claims_as_of"].parameters["from"] == {
         "type": "timestamp",
         "required": True,

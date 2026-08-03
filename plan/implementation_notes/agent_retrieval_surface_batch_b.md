@@ -34,6 +34,13 @@ claim_valid_precision <> 'unknown'`. PostgreSQL performs inclusive interval inte
 at most 400 stamped IDs for an optional bounded semantic rerank. The exact unstamped count is read in
 the same repeatable-read snapshot.
 
+For both semantic forms, the ranking pool is the deterministic PostgreSQL head, not every match in
+the envelope's exact `total`: `claims_about` ranks at most 400 live entity-filtered claims ordered by
+assertion time, ingestion time, then claim UUID; `claims_as_of` ranks at most 400 live stamped claims
+ordered by most-recent `claim_valid_from`, then claim UUID. This is deliberately filter-in-PostgreSQL,
+rank-the-bounded-set: filtering before ranking avoids the recall ceiling of global semantic nomination,
+while design principle 7 bounds projection work and the returned envelope.
+
 ## Measured plans
 
 Measurements used PostgreSQL 16.14 in the repository's pinned pg_partman image, `work_mem=4MB`, two
