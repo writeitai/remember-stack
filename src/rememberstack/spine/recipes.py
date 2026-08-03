@@ -574,6 +574,61 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
 
 GRAPH_RECIPES: tuple[Recipe, ...] = (
     Recipe(
+        name="multi_hop_context",
+        description="How do two named entities connect, or what surrounds one"
+        " named entity, in source-backed context? Use this for one-call"
+        " connection questions. Edges are STRUCTURE; quotable answers come"
+        " from evidence[] and live source passages come from chunks[]. The"
+        " graph fan-out is capped at k edges and two hops. Each edge may carry"
+        " up to evidence_per_fact supporting and contradicting claims. A hard"
+        " 60-record budget allocates edge backing first for round-0 coverage,"
+        " then fills remaining evidence[]/chunks[] capacity from question"
+        " context (which nominates 200 per channel and caps each pre-union"
+        " grain at 50).",
+        parameters={
+            "query": {"type": "string", "required": True},
+            "entity_a": {"type": "string", "required": True},
+            "entity_b": {"type": "string", "required": False},
+            "k": {
+                "type": "integer",
+                "required": False,
+                "default": 15,
+                "minimum": 1,
+                "maximum": 30,
+            },
+            "hops": {
+                "type": "integer",
+                "required": False,
+                "default": 2,
+                "minimum": 1,
+                "maximum": 2,
+            },
+            "evidence_per_fact": {
+                "type": "integer",
+                "required": False,
+                "default": 3,
+                "minimum": 1,
+                "maximum": 5,
+            },
+        },
+        chain=(
+            RecipeStep(
+                op="multi_hop_context",
+                bind={
+                    "query": "query",
+                    "entity_a": "entity_a",
+                    "entity_b": "entity_b",
+                    "k": "k",
+                    "hops": "hops",
+                    "evidence_per_fact": "evidence_per_fact",
+                },
+            ),
+        ),
+        output_grain=Grain.EVIDENCE,
+        answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+        version=1,
+    ),
+    Recipe(
         name="graph_neighborhood",
         description="Current P2 graph neighborhood around an entity, ranked by"
         " distance and carrying explicit truncation metadata. Prefer to expand"

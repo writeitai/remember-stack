@@ -45,6 +45,7 @@ from rememberstack.model import FactResult
 from rememberstack.model import FactSupport
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import GraphEdge
 from rememberstack.model import IdentityRegime
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
@@ -551,6 +552,37 @@ def test_fact_evidence_fields_are_explicit_optional_envelope_contract() -> None:
         Envelope(grain=Grain.FACT, freshness=Freshness(pg_live_ts=_NOW)).fact_evidence
         == ()
     )
+
+
+def test_graph_edge_support_marker_defaults_for_old_stored_envelopes() -> None:
+    """Batch D adds D54 support without invalidating stored graph payloads."""
+    relation_id = uuid4()
+    legacy = Envelope.model_validate(
+        {
+            "grain": "evidence",
+            "edges": [
+                {
+                    "relation_id": relation_id,
+                    "subject_id": uuid4(),
+                    "object_id": uuid4(),
+                    "predicate": "works_for",
+                    "fact": "Alice works for Acme",
+                    "evidence_count": 1,
+                    "valid_from": None,
+                    "valid_until": None,
+                    "ingested_at": _NOW,
+                    "invalidated_at": None,
+                }
+            ],
+            "freshness": {"pg_live_ts": _NOW},
+        }
+    )
+    assert legacy.edges[0].support is FactSupport.CURRENT
+
+    flagged = GraphEdge.model_validate(
+        {**legacy.edges[0].model_dump(exclude={"support"}), "support": "withdrawn"}
+    )
+    assert flagged.support is FactSupport.WITHDRAWN
 
 
 def test_evidence_total_rejects_a_returned_count_above_total() -> None:

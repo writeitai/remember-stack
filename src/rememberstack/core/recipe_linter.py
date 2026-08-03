@@ -80,6 +80,7 @@ _OPS: dict[str, _OpSpec] = {
     "claims_as_of": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
     "chunk_neighbors": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
     "current_context": _OpSpec(Grain.FACT, validity_filtered=True),
+    "multi_hop_context": _OpSpec(Grain.EVIDENCE, validity_filtered=False),
     "graph_neighborhood": _OpSpec(Grain.FACT, validity_filtered=True),
     "graph_path": _OpSpec(Grain.FACT, validity_filtered=True),
     "fuse": _OpSpec(Grain.EVIDENCE, validity_filtered=False, min_inputs=1),
