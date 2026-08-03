@@ -20,6 +20,7 @@ import math
 from typing import Final
 from typing import Literal
 from typing import TYPE_CHECKING
+import unicodedata
 from uuid import UUID
 
 from sqlalchemy import text
@@ -810,12 +811,19 @@ class QueryEngine:
         )
         evidence_by_id = dict(edge_evidence_by_id)
         for record in question_context.evidence:
-            if (
-                record.claim_id not in evidence_by_id
-                and len(evidence_by_id) == MULTI_HOP_CONTEXT_EVIDENCE_BUDGET
-            ):
+            existing = evidence_by_id.get(record.claim_id)
+            if existing is not None:
+                if record.corroboration_count is not None:
+                    evidence_by_id[record.claim_id] = existing.model_copy(
+                        update={
+                            "corroboration_count": record.corroboration_count,
+                            "grouped_claim_ids": record.grouped_claim_ids,
+                        }
+                    )
+                continue
+            if len(evidence_by_id) == MULTI_HOP_CONTEXT_EVIDENCE_BUDGET:
                 break
-            evidence_by_id.setdefault(record.claim_id, record)
+            evidence_by_id[record.claim_id] = record
         chunks_by_id: dict[UUID, ChunkEvidenceResult] = {}
         for record in question_context.chunks:
             if (
@@ -1349,6 +1357,8 @@ class QueryEngine:
         deployment_id: UUID,
         claim_ids: Sequence[UUID],
         ranking: Sequence[RankedItem] = (),
+        limit: int | None = None,
+        group_exact_text: bool = False,
     ) -> Envelope:
         """Confirm claim ids into evidence rows, keeping any prior ranking.
 
@@ -1356,14 +1366,24 @@ class QueryEngine:
         output of `fuse`/`rerank`): re-reads each claim from the spine and
         drops what no longer confirms. When a ranking is supplied, scores and
         order are preserved on the envelope for the confirmed ids so a fused
-        result is usable without a second tool call.
+        result is usable without a second tool call. Hybrid recipes pass their
+        final ``limit`` only here, after the complete fused candidate pool has
+        been confirmed, so a rejected head candidate is deterministically
+        replaced from the already-fetched tail. Claim hybrids additionally
+        group exact normalized-text duplicates before that final cut.
         """
+        if limit is not None and limit < 1:
+            raise ValueError("hydrate_claims limit must be at least 1")
         ordered_ids = tuple(claim_ids)
         evidence, dropped = self._confirm_claims(
             deployment_id=deployment_id, claim_ids=ordered_ids
         )
-        confirmed = {record.claim_id for record in evidence}
-        kept_ranking = tuple(item for item in ranking if item.item_id in confirmed)
+        if group_exact_text:
+            evidence = _group_claim_evidence(evidence=evidence)
+        if limit is not None:
+            evidence = evidence[:limit]
+        returned = {record.claim_id for record in evidence}
+        kept_ranking = tuple(item for item in ranking if item.item_id in returned)
         return Envelope(
             grain=Grain.EVIDENCE,
             evidence=evidence,
@@ -1385,14 +1405,24 @@ class QueryEngine:
         deployment_id: UUID,
         chunk_ids: Sequence[UUID],
         ranking: Sequence[RankedItem] = (),
+        limit: int | None = None,
     ) -> Envelope:
-        """Confirm chunk ids into live source evidence, preserving scores."""
+        """Confirm chunk ids into live source evidence, preserving scores.
+
+        A hybrid supplies its final ``limit`` after the complete fused pool,
+        allowing confirmed tail candidates to refill head candidates that no
+        longer pass D48 without another projection read.
+        """
+        if limit is not None and limit < 1:
+            raise ValueError("hydrate_chunks limit must be at least 1")
         ordered_ids = tuple(chunk_ids)
         chunks, dropped = self._confirm_chunks(
             deployment_id=deployment_id, chunk_ids=ordered_ids
         )
-        confirmed = {record.chunk_id for record in chunks}
-        kept_ranking = tuple(item for item in ranking if item.item_id in confirmed)
+        if limit is not None:
+            chunks = chunks[:limit]
+        returned = {record.chunk_id for record in chunks}
+        kept_ranking = tuple(item for item in ranking if item.item_id in returned)
         return Envelope(
             grain=Grain.EVIDENCE,
             chunks=chunks,
@@ -1796,12 +1826,13 @@ class QueryEngine:
                     tuple(item.item_id for item in lexical.ranking),
                 ),
                 k=DEFAULT_RRF_K,
-                limit=MULTI_HOP_QUESTION_CONTEXT_K,
             )
             return self.hydrate_claims(
                 deployment_id=deployment_id,
                 claim_ids=tuple(item.item_id for item in fused.ranking),
                 ranking=fused.ranking,
+                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+                group_exact_text=True,
             )
 
         def hydrate_chunk_context() -> Envelope:
@@ -1823,12 +1854,12 @@ class QueryEngine:
                     tuple(item.item_id for item in lexical.ranking),
                 ),
                 k=DEFAULT_RRF_K,
-                limit=MULTI_HOP_QUESTION_CONTEXT_K,
             )
             return self.hydrate_chunks(
                 deployment_id=deployment_id,
                 chunk_ids=tuple(item.item_id for item in fused.ranking),
                 ranking=fused.ranking,
+                limit=MULTI_HOP_QUESTION_CONTEXT_K,
             )
 
         return self.combine_evidence(
@@ -2340,6 +2371,44 @@ def _bounded_truncation(*, returned: int, total: int, k: int) -> Truncation:
         returned=returned,
         estimated_total=total,
         total_is_exact=True,
+    )
+
+
+def _normalize_hybrid_text(*, value: str) -> str:
+    """Batch E's recipe-versioned exact-text grouping normalizer.
+
+    The transformation order is binding: NFKC, casefold, whitespace-run
+    collapse, then removal of leading and trailing Unicode punctuation. It
+    deliberately performs no stemming, lemmatization, or semantic matching.
+    """
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    collapsed = " ".join(normalized.split())
+    start = 0
+    end = len(collapsed)
+    while start < end and unicodedata.category(collapsed[start]).startswith("P"):
+        start += 1
+    while end > start and unicodedata.category(collapsed[end - 1]).startswith("P"):
+        end -= 1
+    return collapsed[start:end]
+
+
+def _group_claim_evidence(
+    *, evidence: Sequence[EvidenceResult]
+) -> tuple[EvidenceResult, ...]:
+    """Group confirmed claims in incoming rank order by normalized text."""
+    grouped: dict[str, list[EvidenceResult]] = {}
+    for record in evidence:
+        grouped.setdefault(_normalize_hybrid_text(value=record.claim_text), []).append(
+            record
+        )
+    return tuple(
+        members[0].model_copy(
+            update={
+                "corroboration_count": len({member.doc_id for member in members}),
+                "grouped_claim_ids": tuple(member.claim_id for member in members),
+            }
+        )
+        for members in grouped.values()
     )
 
 

@@ -187,6 +187,7 @@ def _descriptor(recipe: Recipe) -> ToolDescriptor:
         input_schema=schema,
         output_grain=recipe.output_grain.value,
         answer_intent=recipe.answer_intent.value,
+        version=recipe.version,
     )
 
 

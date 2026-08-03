@@ -217,6 +217,8 @@ class EvidenceResult(BaseModel):
     claim_valid_kind: str | None = None
     document_title: str | None = None
     source_kind: str | None = None
+    corroboration_count: int | None = Field(default=None, ge=1)
+    grouped_claim_ids: tuple[UUID, ...] = ()
 
 
 class FactEvidence(BaseModel):

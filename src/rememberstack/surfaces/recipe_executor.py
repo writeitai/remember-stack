@@ -90,6 +90,7 @@ class RecipeExecutor:
             return self._hydrate_claims_step(
                 deployment_id=deployment_id,
                 step=step,
+                kwargs=kwargs,
                 envelopes=envelopes,
                 rankings=rankings,
             )
@@ -97,6 +98,7 @@ class RecipeExecutor:
             return self._hydrate_chunks_step(
                 deployment_id=deployment_id,
                 step=step,
+                kwargs=kwargs,
                 envelopes=envelopes,
                 rankings=rankings,
             )
@@ -129,6 +131,7 @@ class RecipeExecutor:
         *,
         deployment_id: UUID,
         step: RecipeStep,
+        kwargs: dict[str, Any],
         envelopes: list[Envelope],
         rankings: list[list[UUID]],
     ) -> Envelope:
@@ -142,7 +145,10 @@ class RecipeExecutor:
         source = envelopes[source_index]
         claim_ids = rankings[source_index]
         return self._engine.hydrate_claims(
-            deployment_id=deployment_id, claim_ids=claim_ids, ranking=source.ranking
+            deployment_id=deployment_id,
+            claim_ids=claim_ids,
+            ranking=source.ranking,
+            **kwargs,
         )
 
     def _hydrate_chunks_step(
@@ -150,6 +156,7 @@ class RecipeExecutor:
         *,
         deployment_id: UUID,
         step: RecipeStep,
+        kwargs: dict[str, Any],
         envelopes: list[Envelope],
         rankings: list[list[UUID]],
     ) -> Envelope:
@@ -165,6 +172,7 @@ class RecipeExecutor:
             deployment_id=deployment_id,
             chunk_ids=rankings[source_index],
             ranking=source.ranking,
+            **kwargs,
         )
 
     def _graph_step(self, *, op: str, kwargs: dict[str, Any]) -> Envelope:

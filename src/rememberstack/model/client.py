@@ -39,6 +39,7 @@ class ToolDescriptor(BaseModel):
     input_schema: dict[str, object]
     output_grain: str
     answer_intent: str
+    version: int | None = Field(default=None, ge=1)
 
 
 class PipelineStageReadiness(BaseModel):
