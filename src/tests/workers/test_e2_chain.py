@@ -410,14 +410,16 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
     )
     assert all(call["cost_usd"] == 0 for call in metered_calls)
     summary_line = "TARGET 0: A Project Atlas launch report."
-    assert any(
-        "state where this passage sits" in prompt and summary_line in prompt
+    # D80: no location-LLM prefix stage; orientation still reaches E2 extraction.
+    assert not any(
+        "state where this passage sits" in prompt
         for prompt in rig.provider.generated_prompts
     )
     assert any(
         "Selection stage of a claim extractor" in prompt
         and "SECTION SUMMARIES (orientation only; never quote as source):" in prompt
         and summary_line in prompt
+        and "LOCATION:" in prompt
         for prompt in rig.provider.generated_prompts
     )
 

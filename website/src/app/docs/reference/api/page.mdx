@@ -183,8 +183,9 @@ Evidence rows returned by claim search and relation hydration include
 `claim_valid_precision`, and `claim_valid_kind`. These fields distinguish when
 the source spoke from the source-asserted world interval during which the fact
 holds or happened; they are evidence, not the fact layer's current-validity
-verdict. Chunk results disclose their generated `context_prefix` separately
-from verbatim `chunk_text` and carry the current document, version,
+verdict. Chunk results disclose an optional deterministic `context_prefix`
+(location header under the embedding-input policy) separately from body-only
+`chunk_text` and carry the current document, version,
 representation, offsets, and source timestamps confirmed by the live spine.
 `claims_as_of` additionally returns the exact `excluded_unstamped` count.
 `documents_about` source records may include `mention_count`,

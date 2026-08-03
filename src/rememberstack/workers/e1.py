@@ -1,9 +1,10 @@
-"""The E1 chain (D58): anchor-stabilized chunking, context prefixes, embeddings.
+"""The E1 chain (D58/D80): anchor-stabilized chunking and conventional embeds.
 
 The chunk stage packs the representation's block grid into section-bounded
-chunks and records their reuse keys; the embed stage writes each chunk's
-context prefix (the D63 conventional-mode branch), embeds prefix + text as one
-per-document batch, and lands the vectors in the P1 chunk index.
+chunks and records their reuse keys. The embed stage applies the D80
+deterministic embedding-input policy (optional location header + body), embeds
+in bounded batches, stores **body-only** text in P1, and stamps policy hashes
+on the spine.
 """
 
 from datetime import datetime
@@ -22,69 +23,61 @@ from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import extraction_input_hash
 from rememberstack.core import pack_blocks
-from rememberstack.model import CarryForwardSource
+from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
+from rememberstack.core.embedding_input_policy import EmbeddingInputRender
+from rememberstack.core.embedding_input_policy import location_facts_json
+from rememberstack.core.embedding_input_policy import LocationFacts
+from rememberstack.core.embedding_input_policy import render_embedding_input
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
-from rememberstack.model import ContextPrefix
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingUpdate
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import PackedChunk
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.p1_index import ChunkIndexPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.workers.base import HandlerOutcome
-from rememberstack.workers.section_orientation import render_section_orientation
 from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSION
 
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
 
-E1_EMBED_VERSION: Final = "e1-embed-2026.07"
-"""The embed stage's component version (model identity rides settings/stamps)."""
+E1_EMBED_VERSION: Final = "e1-embed-2026.08-d80"
+"""The embed stage's component version (D80 policy path; model id on stamps)."""
 
-E1_PREFIXER_VERSION: Final = f"e1-prefix-2026.07c:temp0-1:{SECTION_ORIENTATION_VERSION}"
-"""The context-prefix call's prompt generation (D58; conventional mode, D63).
-07b pins temperature=0.0 — generation parameters are part of provenance.
-07c adds D79's bounded current-generation section-summary orientation."""
+E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
+"""Alias: policy generation replaces the retired LLM prefixer version string."""
 
-E2_EXTRACTOR_VERSION: Final = f"e2-extract-2026.07j:token-union-grounding-1:temporal-anchor-2:{SECTION_ORIENTATION_VERSION}"
-"""The extractor generation baked into extraction_input_hash (D56); the E2
-stage (WP-1.3) binds its handler to this same constant. 07j extends the temporal
-rule to quoted and attributed claim forms (#158 follow-up); 07i makes D32
-layer-2 union grounding token-tolerant for closed functional scaffolding while
-keeping every content and numeric token source-bound; 07h requires relative
-temporal expressions to resolve against an in-document absolute anchor into
-structured D41 valid-time while claim text keeps the source wording (#158);
-07g makes D32 layer-2 grounding union-based across source-derived bundle texts
-with advisory source tags; 07f adds D79 summary orientation to the bundle
-without making summaries hash or grounding inputs; 07e ledgers Claimify
-omissions and grounding-gate rejections on the D33 transcript (#161); 07d
-pinned temperature=0.0 on the Selection call (Claimify already carried it)."""
-
-_PREFIX_PROMPT_TEMPLATE: Final = (
-    "In one sentence, state where this passage sits in the document — "
-    "document title, section, and what surrounds it. Passage from "
-    "{title!r}, section path {section_path}, chunk {ordinal}"
-    "{section_orientation}:\n\n{head}"
+E2_EXTRACTOR_VERSION: Final = (
+    f"e2-extract-2026.08a:d80-location-elements-1:"
+    f"token-union-grounding-1:temporal-anchor-2:{SECTION_ORIENTATION_VERSION}"
 )
+"""Extractor generation in extraction_input_hash (D56). 08a: D80 typed location
+elements replace free-form context_prefix in the bundle/grounding union."""
+
+_EMBED_BATCH_SIZE: Final = 64
+"""Default provider batch size for chunk embeddings (capability starting point)."""
 
 
 class E1Settings(BaseSettings):
-    """The E1 model bindings: per-deployment port configuration (D61/D63)."""
+    """The E1 model bindings: per-deployment port configuration (D61/D63/D80)."""
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_E1_")
 
     embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
+    embed_batch_size: int = Field(default=_EMBED_BATCH_SIZE, ge=1, le=512)
+    # Retired: kept so old env files do not fail validation; unused on D80 path.
     prefix_model: str = Field(default="openai/gpt-5.6-luna")
 
 
@@ -147,11 +140,10 @@ class ChunkHandler:
 
 
 class EmbedChunksHandler:
-    """The embed stage: context prefixes + one embedding batch per document.
+    """The embed stage: D80 deterministic input policy + bounded embed batches.
 
-    The conventional-mode branch binds (D63): each chunk gets a generated
-    "where this sits" prefix, and prefix + verbatim text embed together. The
-    batch never crosses a document (D58's billing and lane rule).
+    No per-chunk location LLM. Renders location header (conditional) + body,
+    embeds in batches, stores body-only text in P1, stamps policy hashes on PG.
     """
 
     def __init__(
@@ -177,15 +169,7 @@ class EmbedChunksHandler:
         self._chunker_version = chunker_version(params=params)
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Prefix, embed, and index every chunk of one document version.
-
-        The D56/A3 carry-forward runs here: an unchanged chunk (same content
-        hash as a prior version's chunk in this lineage) keeps that chunk's
-        stored prefix and copies its vector — the model is called only for
-        chunks the edit actually touched. LLM output is never regenerated
-        for unchanged regions: it is the cost being avoided, and its
-        non-determinism would make every derived byte drift.
-        """
+        """Prepare embedding text, embed missing chunks in batches, stamp spine."""
         source = self._catalog.chunk_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
@@ -194,184 +178,376 @@ class EmbedChunksHandler:
             chunker_version=self._chunker_version,
         )
         if not chunks:
-            # Empty is a successful, explicit pipeline state. Continue through
-            # the no-op extraction/normalization branches so readiness has the
-            # same terminal shape as a non-empty document.
             return _extract_follow_up(work=work, source=source)
         document_md = self._artifact_store.read_bytes(
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
+        policy_generation = EMBEDDING_INPUT_POLICY_VERSION
+        embedder_generation = self._settings.embedding_model
         carry = self._catalog.carry_forward_sources(
             deployment_id=work.deployment_id,
             doc_id=source.doc_id,
             version_id=source.version_id,
-            prefixer_version=E1_PREFIXER_VERSION,
-            embedding_version=self._settings.embedding_model,
+            policy_generation=policy_generation,
+            embedding_version=embedder_generation,
         )
-        carried_vectors = self._carried_vectors(work=work, chunks=chunks, carry=carry)
-        prefixes = tuple(
-            self._resolve_prefix(
+        prepared: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
+        for chunk in chunks:
+            body = document_md[chunk.char_start : chunk.char_end]
+            facts = _location_facts(source=source, chunk=chunk, chunk_count=len(chunks))
+            rendered = render_embedding_input(facts=facts, body=body)
+            prepared.append((chunk, rendered))
+
+        skipped = tuple(
+            (chunk, rendered)
+            for chunk, rendered in prepared
+            if rendered.skip_reason is not None
+        )
+        if skipped:
+            self._stamp_skips(
+                batch=skipped,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
                 source=source,
-                chunk=chunk,
-                document_md=document_md,
-                carry=carry,
-                meter=meter,
+                chunk_count=len(chunks),
             )
-            for chunk in chunks
-        )
-        texts = tuple(
-            f"{prefix}\n\n{document_md[chunk.char_start : chunk.char_end]}"
-            for prefix, chunk in zip(prefixes, chunks, strict=True)
-        )
-        fresh = tuple(
-            index
-            for index in range(len(chunks))
-            if chunks[index].chunk_id not in carried_vectors
-        )
-        if fresh:
-            response = self._model_provider.embed(
-                request=EmbeddingRequest(
-                    model=self._settings.embedding_model,
-                    texts=tuple(texts[index] for index in fresh),
-                )
-            )
-            meter.record(
-                call_key="embed_chunks", tier="embedding", usage=response.usage
-            )
-            fresh_vectors = dict(
-                zip(
-                    (chunks[index].chunk_id for index in fresh),
-                    response.vectors,
-                    strict=True,
-                )
+
+        active = [
+            (chunk, rendered)
+            for chunk, rendered in prepared
+            if rendered.skip_reason is None
+        ]
+        vectors: dict[UUID, tuple[float, ...]] = {}
+        pg_complete: set[UUID] = set()
+
+        # D80 recovery: accept a P1 triple only when stored hash matches prepare.
+        active_ids = tuple(str(chunk.chunk_id) for chunk, _ in active)
+        if active_ids and hasattr(self._chunk_index, "match_chunk_embeddings"):
+            matched = self._chunk_index.match_chunk_embeddings(
+                deployment_id=str(work.deployment_id),
+                chunk_ids=active_ids,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
             )
         else:
-            fresh_vectors = {}
-        vectors = {**carried_vectors, **fresh_vectors}
-        self._chunk_index.upsert_chunks(
-            rows=tuple(
+            matched = {}
+        for chunk, rendered in active:
+            key = str(chunk.chunk_id)
+            if key not in matched:
+                continue
+            vector, stored_hash = matched[key]
+            if stored_hash == rendered.embedding_text_hash:
+                vectors[chunk.chunk_id] = vector
+
+        # Cross-version carry-forward when embedding identity matches.
+        for chunk, rendered in active:
+            if chunk.chunk_id in vectors:
+                continue
+            prior = carry.get(chunk.chunk_content_hash)
+            if (
+                prior is None
+                or prior.embedding_text_hash != rendered.embedding_text_hash
+                or prior.policy_generation != policy_generation
+            ):
+                continue
+            stored = self._chunk_index.chunk_vectors(
+                deployment_id=str(work.deployment_id),
+                chunk_ids=(str(prior.chunk_id),),
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+            )
+            if str(prior.chunk_id) in stored:
+                vectors[chunk.chunk_id] = stored[str(prior.chunk_id)]
+
+        # PG stamp may already exist for this generation — only counts if P1 exists.
+        for chunk, rendered in active:
+            if (
+                chunk.embedding_ref is not None
+                and not str(chunk.embedding_ref).startswith("skip:")
+                and chunk.embedding_text_hash == rendered.embedding_text_hash
+                and chunk.policy_generation == policy_generation
+                and chunk.embedding_version == embedder_generation
+                and chunk.chunk_id in vectors
+            ):
+                pg_complete.add(chunk.chunk_id)
+
+        # Stamp P1→PG for recovered/carried vectors that lack a matching PG stamp.
+        recovered_pairs = tuple(
+            (chunk, rendered)
+            for chunk, rendered in active
+            if chunk.chunk_id in vectors and chunk.chunk_id not in pg_complete
+        )
+        if recovered_pairs:
+            self._commit_batch(
+                work=work,
+                source=source,
+                chunk_count=len(chunks),
+                batch=recovered_pairs,
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+            )
+            pg_complete.update(chunk.chunk_id for chunk, _ in recovered_pairs)
+
+        need_embed = tuple(
+            (chunk, rendered)
+            for chunk, rendered in active
+            if chunk.chunk_id not in vectors
+        )
+        poison_skips: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
+        for batch_start in range(0, len(need_embed), self._settings.embed_batch_size):
+            batch = need_embed[
+                batch_start : batch_start + self._settings.embed_batch_size
+            ]
+            if not batch:
+                continue
+            self._embed_batch_with_poison_split(
+                work=work,
+                source=source,
+                chunk_count=len(chunks),
+                batch=tuple(batch),
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                meter=meter,
+                poison_skips=poison_skips,
+            )
+
+        if poison_skips:
+            self._stamp_skips(
+                batch=tuple(poison_skips),
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                source=source,
+                chunk_count=len(chunks),
+                skip_code="poison_chunk",
+            )
+
+        # Readiness: every non-skipped chunk has a vector under the active pair
+        # (or a closed typed skip, including poison_chunk).
+        closed_skips = {
+            chunk.chunk_id for chunk, rendered in prepared if rendered.skip_reason
+        } | {chunk.chunk_id for chunk, _ in poison_skips}
+        missing = [
+            chunk.chunk_id
+            for chunk, _rendered in active
+            if chunk.chunk_id not in vectors and chunk.chunk_id not in closed_skips
+        ]
+        if missing:
+            raise RuntimeError(
+                "embed_chunk readiness incomplete; missing vectors for "
+                f"{len(missing)} chunk(s)"
+            )
+        return _extract_follow_up(work=work, source=source)
+
+    def _embed_batch_with_poison_split(
+        self,
+        *,
+        work: ClaimedWork,
+        source: ChunkSource,
+        chunk_count: int,
+        batch: tuple[tuple[ChunkForEmbedding, EmbeddingInputRender], ...],
+        vectors: dict[UUID, tuple[float, ...]],
+        policy_generation: str,
+        embedder_generation: str,
+        meter: CostMeterPort,
+        poison_skips: list[tuple[ChunkForEmbedding, EmbeddingInputRender]],
+    ) -> None:
+        """Embed one batch; on failure, halve until size-1 poison is typed-skip."""
+        if not batch:
+            return
+        first_id = str(min(chunk.chunk_id for chunk, _ in batch))
+        call_key = f"embed_chunks:{first_id}:{len(batch)}"
+        try:
+            response = self._model_provider.embed(
+                request=EmbeddingRequest(
+                    model=embedder_generation,
+                    texts=tuple(rendered.embedding_text for _, rendered in batch),
+                )
+            )
+        except Exception as exc:
+            # Rule 4: split only on non-outage failures; total outages re-raise
+            # so the stage retries instead of stamping every chunk as poison.
+            if _is_provider_outage(exc=exc):
+                raise
+            if len(batch) == 1:
+                poison_skips.append(batch[0])
+                return
+            mid = len(batch) // 2
+            self._embed_batch_with_poison_split(
+                work=work,
+                source=source,
+                chunk_count=chunk_count,
+                batch=batch[:mid],
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                meter=meter,
+                poison_skips=poison_skips,
+            )
+            self._embed_batch_with_poison_split(
+                work=work,
+                source=source,
+                chunk_count=chunk_count,
+                batch=batch[mid:],
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                meter=meter,
+                poison_skips=poison_skips,
+            )
+            return
+        meter.record(call_key=call_key, tier="embedding", usage=response.usage)
+        for (chunk, _rendered), vector in zip(batch, response.vectors, strict=True):
+            vectors[chunk.chunk_id] = vector
+        self._commit_batch(
+            work=work,
+            source=source,
+            chunk_count=chunk_count,
+            batch=batch,
+            vectors=vectors,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+        )
+
+    def _commit_batch(
+        self,
+        *,
+        work: ClaimedWork,
+        source: ChunkSource,
+        chunk_count: int,
+        batch: tuple[tuple[ChunkForEmbedding, EmbeddingInputRender], ...]
+        | list[tuple[ChunkForEmbedding, EmbeddingInputRender]],
+        vectors: dict[UUID, tuple[float, ...]],
+        policy_generation: str,
+        embedder_generation: str,
+    ) -> None:
+        """Upsert P1 then stamp PG for one batch (cross-store order)."""
+        p1_rows: list[P1ChunkRow] = []
+        updates: list[EmbeddingUpdate] = []
+        for chunk, rendered in batch:
+            if chunk.chunk_id not in vectors:
+                continue
+            if not rendered.body:
+                continue
+            p1_rows.append(
                 P1ChunkRow(
                     chunk_id=chunk.chunk_id,
                     deployment_id=work.deployment_id,
                     doc_id=chunk.doc_id,
                     version_id=chunk.version_id,
                     section_role=chunk.section_role,
-                    text=text,
+                    text=rendered.body,
                     vector=vectors[chunk.chunk_id],
+                    policy_generation=policy_generation,
+                    embedder_generation=embedder_generation,
+                    embedding_text_hash=rendered.embedding_text_hash,
+                    source_kind=source.source_kind,
+                    source_shape=source.source_shape,
                 )
-                for chunk, text in zip(chunks, texts, strict=True)
             )
-        )
-        self._catalog.record_embeddings(
-            updates=tuple(
+            facts = _location_facts(source=source, chunk=chunk, chunk_count=chunk_count)
+            facts_json = location_facts_json(
+                facts=facts, elements=rendered.location_elements
+            )
+            updates.append(
                 EmbeddingUpdate(
                     chunk_id=chunk.chunk_id,
                     embedding_ref=str(chunk.chunk_id),
-                    embedding_version=self._settings.embedding_model,
-                    context_prefix=prefix,
-                    prefixer_version=E1_PREFIXER_VERSION,
+                    embedding_version=embedder_generation,
+                    location_header=rendered.location_header,
+                    embedding_text_hash=rendered.embedding_text_hash,
+                    embedding_input_policy_version=policy_generation,
+                    policy_generation=policy_generation,
+                    location_facts_json=facts_json,
+                    context_prefix=rendered.location_header,
+                    prefixer_version=policy_generation,
                 )
-                for chunk, prefix in zip(chunks, prefixes, strict=True)
             )
-        )
-        return _extract_follow_up(work=work, source=source)
+        if p1_rows:
+            self._chunk_index.upsert_chunks(rows=tuple(p1_rows))
+        if updates:
+            self._catalog.record_embeddings(updates=tuple(updates))
 
-    def _carried_vectors(
+    def _stamp_skips(
         self,
         *,
-        work: ClaimedWork,
-        chunks: tuple[ChunkForEmbedding, ...],
-        carry: dict[str, CarryForwardSource],
-    ) -> dict[UUID, tuple[float, ...]]:
-        """Copy prior versions' vectors for unchanged chunks (D56).
-
-        A carried chunk whose vector is missing from the index (pruned or
-        never landed) simply falls back to the fresh-embed path — reuse is
-        an economy, never a correctness dependency.
-        """
-        wanted = {
-            str(carry[chunk.chunk_content_hash].chunk_id): chunk.chunk_id
-            for chunk in chunks
-            if chunk.chunk_content_hash in carry
-        }
-        if not wanted:
-            return {}
-        stored = self._chunk_index.chunk_vectors(
-            deployment_id=str(work.deployment_id), chunk_ids=tuple(wanted)
-        )
-        return {
-            wanted[prior_id]: vector
-            for prior_id, vector in stored.items()
-            if prior_id in wanted
-        }
-
-    def _resolve_prefix(
-        self,
-        *,
+        batch: tuple[tuple[ChunkForEmbedding, EmbeddingInputRender], ...],
+        policy_generation: str,
+        embedder_generation: str,
         source: ChunkSource,
-        chunk: ChunkForEmbedding,
-        document_md: str,
-        carry: dict[str, CarryForwardSource],
-        meter: CostMeterPort,
-    ) -> str:
-        """One chunk's "where this sits" sentence: replayed if already stored.
-
-        Resolution order (D7 replay, then D56 carry-forward, then the model):
-        the row's own stored prefix of this generation; a prior version's
-        stored prefix for the same content hash; only then a model call.
-        """
-        if (
-            chunk.context_prefix is not None
-            and chunk.prefixer_version == E1_PREFIXER_VERSION
-        ):
-            return chunk.context_prefix
-        carried = carry.get(chunk.chunk_content_hash)
-        if carried is not None:
-            return carried.context_prefix
-        head = document_md[chunk.char_start : chunk.char_end][:400]
-        prompt = _prefix_prompt(source=source, chunk=chunk, head=head)
-        response = self._model_provider.generate(
-            request=ModelRequest(
-                model=self._settings.prefix_model, prompt=prompt, temperature=0.0
-            ),
-            response_type=ContextPrefix,
-        )
-        meter.record(
-            call_key=f"prefix:{chunk.chunk_id}", tier="prefix", usage=response.usage
-        )
-        return response.output.prefix
+        chunk_count: int,
+        skip_code: str | None = None,
+    ) -> None:
+        """Persist typed skip codes on PG so readiness can close without P1 rows."""
+        updates: list[EmbeddingUpdate] = []
+        for chunk, rendered in batch:
+            code = skip_code or rendered.skip_reason or "skip"
+            facts = _location_facts(source=source, chunk=chunk, chunk_count=chunk_count)
+            facts_json = location_facts_json(
+                facts=facts, elements=rendered.location_elements
+            )
+            updates.append(
+                EmbeddingUpdate(
+                    chunk_id=chunk.chunk_id,
+                    embedding_ref=f"skip:{code}",
+                    embedding_version=embedder_generation,
+                    location_header=None,
+                    embedding_text_hash=rendered.embedding_text_hash,
+                    embedding_input_policy_version=policy_generation,
+                    policy_generation=policy_generation,
+                    location_facts_json=facts_json,
+                    context_prefix=None,
+                    prefixer_version=policy_generation,
+                )
+            )
+        if updates:
+            self._catalog.record_embeddings(updates=tuple(updates))
 
 
-def _prefix_prompt(*, source: ChunkSource, chunk: ChunkForEmbedding, head: str) -> str:
-    """Render the prefix input; a degraded generation contributes zero bytes.
+def _is_provider_outage(*, exc: BaseException) -> bool:
+    """Whether a provider failure is a total outage (retry) vs content poison.
 
-    The instruction constrains the prefixer's OUTPUT, not just its reading:
-    summaries are abstractive LLM text, and the stored prefix is a quotable
-    added_context element downstream — a prefix that restates a summary's
-    claim would launder second-order content into the grounding surface
-    (review finding; accepted residual is location-description only).
+    Only ``ProviderInvalidResponseError`` is treated as chunk-attributable
+    poison eligible for size-1 typed skip. Transport failures, generic
+    ``ProviderCallError``, timeouts, and OS-level connection errors re-raise
+    so readiness never closes on an empty all-poison set.
     """
-    orientation = render_section_orientation(
-        sections=source.sections,
-        target_path=chunk.section_path,
-        target_section_id=chunk.section_id,
-    )
-    section_orientation = (
-        ""
-        if orientation is None
-        else (
-            "\nSECTION SUMMARIES (background only — use them to describe"
-            " WHERE the passage sits; never restate or assert a fact from a"
-            " summary in your sentence):\n"
-            f"{orientation}"
-        )
-    )
-    return _PREFIX_PROMPT_TEMPLATE.format(
-        title=source.title or "untitled",
+    if isinstance(exc, ProviderInvalidResponseError):
+        return False
+    if isinstance(exc, ProviderCallError):
+        return True
+    if isinstance(exc, (TimeoutError, OSError, ConnectionError)):
+        return True
+    # Unknown exceptions: fail closed as outage (retry), not silent skip.
+    return True
+
+
+def _location_facts(
+    *, source: ChunkSource, chunk: ChunkForEmbedding, chunk_count: int
+) -> LocationFacts:
+    """Build structured location facts from spine + connector packaging fields."""
+    section_title = chunk.section_title
+    if section_title is None:
+        for section in source.sections:
+            if section.section_id == chunk.section_id:
+                section_title = section.title
+                break
+    return LocationFacts(
+        chunk_id=chunk.chunk_id,
+        doc_id=chunk.doc_id,
+        version_id=chunk.version_id,
+        title=source.title,
+        source_kind=source.source_kind,
+        source_shape=source.source_shape,
+        section_title=section_title,
         section_path=chunk.section_path,
-        ordinal=chunk.ordinal,
-        section_orientation=section_orientation,
-        head=head,
+        section_role=chunk.section_role,
+        chunk_count=chunk_count,
+        channel_ref=source.channel_ref,
+        thread_ref=source.thread_ref,
+        author_ref=source.author_ref,
+        message_ts=source.message_ts,
     )
 
 

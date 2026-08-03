@@ -396,6 +396,10 @@ class _Corpus:
         )
 
     def _seed_p1(self) -> None:
+        from rememberstack.core.embedding_input_policy import (
+            EMBEDDING_INPUT_POLICY_VERSION,
+        )
+
         self.index.upsert_chunks(
             rows=tuple(
                 P1ChunkRow(
@@ -406,6 +410,9 @@ class _Corpus:
                     section_role="body",
                     text=f"Context {ordinal}.\n\nChunk body {ordinal}.",
                     vector=(float(ordinal + 1), 0.0),
+                    # Match QueryEngine active D80 generation pointer.
+                    policy_generation=EMBEDDING_INPUT_POLICY_VERSION,
+                    embedder_generation="batch-b",
                 )
                 for ordinal, chunk_id in enumerate(self.chunk_ids)
             )

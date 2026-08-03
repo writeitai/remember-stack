@@ -28,6 +28,7 @@ from sqlalchemy import TextClause
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
+from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
@@ -180,6 +181,11 @@ class QueryEngine:
         )
         self._model_provider = model_provider
         self._embedding_model = embedding_model
+        # Active D80 generation pointer for this query surface (library single-
+        # tenant / deployment-scoped binding). Search and hydration prefer
+        # rows under this pair so dual-generation cutover stays coherent.
+        self._policy_generation = EMBEDDING_INPUT_POLICY_VERSION
+        self._embedder_generation = embedding_model
         self._batch_engine = batch_engine or engine
 
     def resolve(
@@ -1171,10 +1177,18 @@ class QueryEngine:
         _validate_nomination_request(k=k, channel=channel)
         if channel == "semantic":
             return self._search_index.search_chunks(
-                deployment_id=str(deployment_id), vector=self._embed(query=query), k=k
+                deployment_id=str(deployment_id),
+                vector=self._embed(query=query),
+                k=k,
+                policy_generation=self._policy_generation,
+                embedder_generation=self._embedder_generation,
             )
         return self._search_index.search_chunks_lexical(
-            deployment_id=str(deployment_id), query=query, k=k
+            deployment_id=str(deployment_id),
+            query=query,
+            k=k,
+            policy_generation=self._policy_generation,
+            embedder_generation=self._embedder_generation,
         )
 
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
@@ -2119,6 +2133,8 @@ class QueryEngine:
         texts = self._search_index.chunk_texts(
             deployment_id=str(deployment_id),
             chunk_ids=tuple(str(item) for item in confirmed),
+            policy_generation=self._policy_generation,
+            embedder_generation=self._embedder_generation,
         )
         results: list[ChunkEvidenceResult] = []
         for chunk_id in chunk_ids:
@@ -2126,12 +2142,18 @@ class QueryEngine:
             projected = texts.get(str(chunk_id))
             if row is None or projected is None:
                 continue
-            context_prefix = row["context_prefix"]
-            if context_prefix is None:
-                continue
-            marker = f"{context_prefix}\n\n"
-            if not projected.indexed_text.startswith(marker):
-                continue
+            # D80: P1 text is body-only when policy_generation is present.
+            # Legacy rows may store prefix + "\n\n" + body in P1 text; strip
+            # the stored prefix when hydrating so agents never see mangled body.
+            location_header = row.get("location_header") or row.get("context_prefix")
+            policy_generation = row.get("policy_generation") or row.get(
+                "embedding_input_policy_version"
+            )
+            chunk_text = projected.indexed_text
+            if not policy_generation and location_header:
+                chunk_text = _strip_legacy_prefix(
+                    indexed_text=chunk_text, location_header=str(location_header)
+                )
             if projected.section_role != row["section_role"]:
                 continue
             results.append(
@@ -2140,8 +2162,8 @@ class QueryEngine:
                     doc_id=row["doc_id"],
                     version_id=row["version_id"],
                     representation_id=row["representation_id"],
-                    chunk_text=projected.indexed_text[len(marker) :],
-                    context_prefix=context_prefix,
+                    chunk_text=chunk_text,
+                    context_prefix=location_header,
                     char_start=row["char_start"],
                     char_end=row["char_end"],
                     section_role=row["section_role"],
@@ -2196,6 +2218,22 @@ class QueryEngine:
             request=EmbeddingRequest(model=self._embedding_model, texts=(query,))
         )
         return response.vectors[0]
+
+
+def _strip_legacy_prefix(*, indexed_text: str, location_header: str) -> str:
+    """Remove a legacy prefix embedded in P1 text when policy stamps are absent.
+
+    Pre-D80 rows stored ``prefix + "\\n\\n" + body`` in the Lance text column.
+    D80 stores body-only; this branch keeps evidence hydration correct for
+    unrebuilt legacy rows without inventing new body bytes.
+    """
+    if not location_header:
+        return indexed_text
+    for separator in ("\n\n", "\n"):
+        marker = f"{location_header}{separator}"
+        if indexed_text.startswith(marker):
+            return indexed_text[len(marker) :]
+    return indexed_text
 
 
 def _validate_nomination_request(*, k: int, channel: str) -> None:
@@ -2988,7 +3026,8 @@ _CONFIRM_CLAIMS = text(
 _CONFIRM_CHUNKS = text(
     """
     SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
-           ch.char_start, ch.char_end, ch.context_prefix,
+           ch.char_start, ch.char_end, ch.context_prefix, ch.location_header,
+           ch.policy_generation, ch.embedding_input_policy_version,
            s.role::text AS section_role,
            d.title AS document_title, d.source_kind,
            v.source_modified_at, v.published_at

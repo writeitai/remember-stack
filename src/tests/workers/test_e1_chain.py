@@ -201,7 +201,8 @@ def test_document_reaches_lance_with_prefixed_embeddings(rig: _E1Rig) -> None:
                 text(
                     "SELECT ordinal, block_start, block_end, token_count,"
                     " chunk_content_hash, extraction_input_hash, chunker_version,"
-                    " context_prefix, prefixer_version, embedding_ref,"
+                    " context_prefix, location_header, embedding_text_hash,"
+                    " policy_generation, embedding_ref,"
                     " embedding_version, char_start, char_end"
                     " FROM chunks WHERE version_id = :version_id ORDER BY ordinal"
                 ),
@@ -215,19 +216,19 @@ def test_document_reaches_lance_with_prefixed_embeddings(rig: _E1Rig) -> None:
     for row in rows:
         covered.extend(range(row["block_start"], row["block_end"] + 1))
         assert row["chunker_version"] == chunker_version(params=_PARAMS)
-        assert row["context_prefix"] == "Sits early in the test document."
+        # D80: deterministic policy stamps; no LLM location prose.
+        assert row["embedding_text_hash"] is not None
+        assert row["policy_generation"] is not None
         assert row["embedding_ref"] is not None
         assert row["embedding_version"] == "qwen/qwen3-embedding-8b"
         assert _SOURCE[row["char_start"] : row["char_end"]].strip()
     assert covered == list(range(covered[-1] + 1))  # gap-free partition
 
     assert rig.chunk_index.row_count() == len(rows)
-    # the embedded text is prefix + verbatim chunk body (conventional mode, D63):
-    assert all(
-        embedded.startswith("Sits early in the test document.\n\n")
-        for embedded in rig.provider.embedded_texts
-    )
-    assert len(rig.provider.generated_prompts) == len(rows)
+    # D80: no per-chunk location LLM; embed texts are non-empty deterministic strings.
+    assert len(rig.provider.generated_prompts) == 0
+    assert len(rig.provider.embedded_texts) == len(rows)
+    assert all(text.strip() for text in rig.provider.embedded_texts)
 
 
 def test_rerunning_the_chunk_stage_replays_the_stored_packing(

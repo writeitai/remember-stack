@@ -25,6 +25,8 @@ from rememberstack.core.core_manifest import CoreManifest
 from rememberstack.core.core_manifest import EntityTypeDefinition
 from rememberstack.core.core_manifest import PredicateDefinition
 from rememberstack.core.core_manifest import PredicateSignatureDefinition
+from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
+from rememberstack.core.embedding_input_policy import render_embedding_input
 from rememberstack.core.extension_packs import ExtensionPack
 from rememberstack.core.extension_packs import PackEntityType
 from rememberstack.core.extension_packs import PackPredicate
@@ -86,6 +88,8 @@ __all__ = (
     "extraction_input_hash",
     "is_anchor",
     "pack_blocks",
+    "EMBEDDING_INPUT_POLICY_VERSION",
+    "render_embedding_input",
     "CORE_MANIFEST",
     "ExtensionPack",
     "PackEntityType",
