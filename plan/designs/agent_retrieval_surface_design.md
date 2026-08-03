@@ -26,8 +26,10 @@ call budget minimal-effort agents actually spend.*
    (chunks), current facts (relations/observations), documents, and graph
    structure travel in their own typed top-level envelope fields; where
    one answer carries several of them (§3.2, §3.3) the explicit
-   `fact_evidence[]` association records — never ordering, never
-   flattening — say what backs what. (`EnvelopePart` is single-grain and
+   `fact_evidence[]` association records say what backs what —
+   associations are never implied by ordering. (Flat envelopes are the
+   binding shape; what this principle prohibits is implicit
+   association, not flatness.) (`EnvelopePart` is single-grain and
    is not used by the tools in this design.)
 4. **D48 everywhere.** All content-bearing output passes
    nominate-then-confirm; projections never leak unconfirmed text.
@@ -160,8 +162,12 @@ parts are NOT used): a **flat envelope**, `output_grain = Grain.FACT` (the
 grain `relation_current` uses), `facts[]` and backing `evidence[]` in
 their existing top-level fields, plus an explicit association list
 `fact_evidence[]` of `(fact_id, claim_id, stance)` records — a new
-optional Envelope model field (model addition, Batch C, parallel to the
-GraphEdge D54 marker; optional-with-default keeps compatibility) — with
+optional Envelope model field added in Batch C and shared by Batch D
+(the model forbids extra fields, so this is an explicit schema addition;
+optional-with-default keeps stored envelopes parsing). Exact structure:
+`fact_evidence[] = {fact_id: uuid, claim_id: uuid, stance:
+'supports'|'contradicts'}` plus per-fact `evidence_totals[] = {fact_id,
+stance, returned: int, total: int}` — with
 per-stance `returned`/`total` counts per fact, so nothing about which
 claim backs which fact is implied by ordering. `evidence_per_fact`
 minimum is **1** (zero would violate principle 5). `answer_intent =
