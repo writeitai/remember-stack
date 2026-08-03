@@ -693,9 +693,9 @@ def _source_grounding_elements(
     """Return the complete D32 layer-2 membership union.
 
     Every member is source-derived: the target chunk slice, deterministic
-    document header, available same-section neighbours, and the stored context
-    prefix. Section summaries are deliberately absent; D79 orientation text
-    must never become a fact-injection path.
+    document header, same-section neighbours, and validated D80
+    LocationElement rows. Free-form location headers and section summaries
+    are deliberately absent (D79/D80).
     """
     chunk = chunks[index]
     elements = [
@@ -720,18 +720,38 @@ def _source_grounding_elements(
 
 
 def _location_bundle_line(*, chunk: ChunkForEmbedding) -> str:
-    """Render typed location for the extractor prompt (D80)."""
+    """Render typed location for the extractor prompt (D80).
+
+    Free-form ``location_header`` / legacy ``context_prefix`` are never
+    bundle members (§3.3) — only validated LocationElement pairs.
+    """
     pairs = _location_grounding_pairs(chunk=chunk)
     if not pairs:
-        header = chunk.location_header or chunk.context_prefix
-        return header or "(none)"
+        return "(none)"
     return "; ".join(f"{kind}={text}" for kind, text in pairs)
+
+
+_LOCATION_ELEMENT_KINDS = frozenset(
+    {
+        "document_title",
+        "section_title",
+        "channel",
+        "thread",
+        "author",
+        "timestamp",
+        "source_kind",
+        "other_source",
+    }
+)
+_LOCATION_ELEMENT_PROVENANCE = frozenset(
+    {"source", "connector", "deterministic_derived"}
+)
 
 
 def _location_grounding_pairs(
     *, chunk: ChunkForEmbedding
 ) -> tuple[tuple[str, str], ...]:
-    """Typed location elements for the D32 union; never free-form header alone."""
+    """Typed location elements for the D32 union; closed enum only."""
     import json
 
     if chunk.location_facts_json:
@@ -748,16 +768,30 @@ def _location_grounding_pairs(
                         continue
                     kind = item.get("kind")
                     text = item.get("text")
-                    if kind and text:
-                        pairs.append((str(kind), str(text)))
+                    provenance = item.get("provenance")
+                    if not kind or not text:
+                        continue
+                    kind_s = str(kind)
+                    text_s = str(text).strip()
+                    # Closed allowlist + provenance: never admit model_derived
+                    # or unknown kinds as grounding sources.
+                    if kind_s not in _LOCATION_ELEMENT_KINDS:
+                        continue
+                    if provenance is not None and str(provenance) not in (
+                        _LOCATION_ELEMENT_PROVENANCE
+                    ):
+                        continue
+                    if not text_s:
+                        continue
+                    pairs.append((kind_s, text_s))
                 if pairs:
                     return tuple(pairs)
-    # Structure-derived fallback when stamps absent (pre-D80 rows).
+    # Structure-derived fallback for pre-D80 rows: only allowlisted kinds.
+    # Never promote section_role (not a LocationElement kind) or free-form
+    # prefix text into the grounding union.
     pairs = []
-    if chunk.section_title:
-        pairs.append(("section_title", chunk.section_title))
-    if chunk.section_role:
-        pairs.append(("section_role", chunk.section_role))
+    if chunk.section_title and chunk.section_title.strip():
+        pairs.append(("section_title", chunk.section_title.strip()))
     return tuple(pairs)
 
 

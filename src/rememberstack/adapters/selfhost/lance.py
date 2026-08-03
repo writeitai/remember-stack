@@ -66,7 +66,7 @@ class LanceChunkIndex:
         self._mutations_since_optimize: dict[str, int] = {}
 
     def upsert_chunks(self, *, rows: tuple[P1ChunkRow, ...]) -> None:
-        """Insert or replace rows by chunk_id; re-runs are idempotent."""
+        """Insert or replace rows by generation triple; re-runs are idempotent."""
         if not rows:
             return
         payload = [
@@ -78,31 +78,101 @@ class LanceChunkIndex:
                 "section_role": row.section_role,
                 "text": row.text,
                 "vector": list(row.vector),
+                "policy_generation": row.policy_generation,
+                "embedder_generation": row.embedder_generation,
+                "embedding_text_hash": row.embedding_text_hash,
+                "source_kind": row.source_kind,
+                "source_shape": row.source_shape,
             }
             for row in rows
         ]
-        self._upsert(table=_CHUNK_TABLE, key="chunk_id", payload=payload)
+        # D80: dual-generation cutover keys on the full triple, not chunk_id alone.
+        self._ensure_chunk_generation_columns()
+        self._upsert(
+            table=_CHUNK_TABLE,
+            key=["chunk_id", "policy_generation", "embedder_generation"],
+            payload=payload,
+        )
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="policy_generation")
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="embedder_generation")
         self._maintain_indexed_tail(table_name=_CHUNK_TABLE)
 
     def chunk_vectors(
-        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> dict[str, tuple[float, ...]]:
         """Stored vectors for the requested ids (absent ids are omitted)."""
         deployment_id = str(UUID(deployment_id))
         if not chunk_ids or not self._has_table(table_name=_CHUNK_TABLE):
             return {}
         ids = ", ".join(f"'{UUID(item)}'" for item in chunk_ids)
+        where = f"deployment_id = '{deployment_id}' AND chunk_id IN ({ids})"
+        columns = {field.name for field in self._connection.open_table(_CHUNK_TABLE).schema}
+        if policy_generation is not None and "policy_generation" in columns:
+            where += f" AND policy_generation = '{_escape_literal(policy_generation)}'"
+        elif policy_generation is not None and "policy_generation" not in columns:
+            # Pre-D80 table cannot satisfy a generation-scoped lookup.
+            return {}
+        if embedder_generation is not None and "embedder_generation" in columns:
+            where += (
+                f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
+            )
+        # Prefer generation-scoped rows; when unscoped, take first hit per chunk_id.
+        limit = len(chunk_ids) if policy_generation is not None else len(chunk_ids) * 4
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
             .search()
-            .where(f"deployment_id = '{deployment_id}' AND chunk_id IN ({ids})")
+            .where(where)
+            .limit(max(limit, 1))
+            .to_list()
+        )
+        out: dict[str, tuple[float, ...]] = {}
+        for row in rows:
+            out.setdefault(row["chunk_id"], tuple(row["vector"]))
+        return out
+
+    def match_chunk_embeddings(
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str,
+        embedder_generation: str,
+    ) -> dict[str, tuple[tuple[float, ...], str]]:
+        """Vectors + stored hash for the active generation triple (D80 recovery)."""
+        deployment_id = str(UUID(deployment_id))
+        if not chunk_ids or not self._has_table(table_name=_CHUNK_TABLE):
+            return {}
+        columns = {field.name for field in self._connection.open_table(_CHUNK_TABLE).schema}
+        if "policy_generation" not in columns or "embedder_generation" not in columns:
+            return {}
+        ids = ", ".join(f"'{UUID(item)}'" for item in chunk_ids)
+        where = (
+            f"deployment_id = '{deployment_id}' AND chunk_id IN ({ids})"
+            f" AND policy_generation = '{_escape_literal(policy_generation)}'"
+            f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
+        )
+        rows = (
+            self._connection.open_table(_CHUNK_TABLE)
+            .search()
+            .where(where)
             .limit(len(chunk_ids))
             .to_list()
         )
-        return {row["chunk_id"]: tuple(row["vector"]) for row in rows}
+        return {
+            row["chunk_id"]: (
+                tuple(row["vector"]),
+                str(row.get("embedding_text_hash") or ""),
+            )
+            for row in rows
+        }
 
     def upsert_claims(self, *, rows: tuple[P1ClaimRow, ...]) -> None:
         """Insert or replace claims-channel rows by claim_id; idempotent."""
@@ -230,19 +300,30 @@ class LanceChunkIndex:
         return tuple(row["claim_id"] for row in rows)
 
     def search_chunks(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> tuple[str, ...]:
         """Nominate source chunk ids by vector similarity."""
         deployment_id = str(UUID(deployment_id))
         if not self._has_table(table_name=_CHUNK_TABLE):
             return ()
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        where = _chunk_search_where(
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+        )
         query = (
             cast(
                 "LanceVectorQueryBuilder",
                 self._connection.open_table(_CHUNK_TABLE)
                 .search(list(vector))
-                .where(f"deployment_id = '{deployment_id}'", prefilter=True),
+                .where(where, prefilter=True),
             )
             .nprobes(LANCE_NPROBES)
             .limit(k)
@@ -250,7 +331,13 @@ class LanceChunkIndex:
         return tuple(row["chunk_id"] for row in query.to_list())
 
     def search_chunks_lexical(
-        self, *, deployment_id: str, query: str, k: int
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> tuple[str, ...]:
         """Nominate source chunk ids by native full-text/BM25 ranking."""
         deployment_id = str(UUID(deployment_id))
@@ -258,10 +345,15 @@ class LanceChunkIndex:
             return ()
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        where = _chunk_search_where(
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+        )
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
             .search(query, query_type="fts", fts_columns="text")
-            .where(f"deployment_id = '{deployment_id}'", prefilter=True)
+            .where(where, prefilter=True)
             .limit(k)
             .to_list()
         )
@@ -564,7 +656,11 @@ class LanceChunkIndex:
         return self._connection.open_table(table).count_rows()
 
     def _upsert(
-        self, *, table: str, key: str, payload: list[dict[str, object]]
+        self,
+        *,
+        table: str,
+        key: str | list[str],
+        payload: list[dict[str, object]],
     ) -> None:
         """Create-or-merge rows despite concurrent Lance dataset commits."""
         if not payload:
@@ -614,3 +710,45 @@ class LanceChunkIndex:
         if not self._has_table(table_name=_CHUNK_TABLE):
             return 0
         return self._connection.open_table(_CHUNK_TABLE).count_rows()
+
+    def _ensure_chunk_generation_columns(self) -> None:
+        """Add D80 generation/scalar columns to pre-D80 Lance chunk tables."""
+        if not self._has_table(table_name=_CHUNK_TABLE):
+            return
+        table = self._connection.open_table(_CHUNK_TABLE)
+        existing = {field.name for field in table.schema}
+        # SQL expressions initialize missing columns for legacy rows.
+        transforms: dict[str, str] = {}
+        for column, sql_default in (
+            ("policy_generation", "'legacy'"),
+            ("embedder_generation", "'legacy'"),
+            ("embedding_text_hash", "''"),
+            ("source_kind", "'unknown'"),
+            ("source_shape", "'document'"),
+        ):
+            if column not in existing:
+                transforms[column] = sql_default
+        if transforms:
+            table.add_columns(transforms)
+
+
+def _escape_literal(value: str) -> str:
+    """Escape single quotes for Lance filter string literals."""
+    return value.replace("'", "''")
+
+
+def _chunk_search_where(
+    *,
+    deployment_id: str,
+    policy_generation: str | None,
+    embedder_generation: str | None,
+) -> str:
+    """Build the chunk search prefilter, optionally scoped to active generations."""
+    where = f"deployment_id = '{deployment_id}'"
+    if policy_generation is not None:
+        where += f" AND policy_generation = '{_escape_literal(policy_generation)}'"
+    if embedder_generation is not None:
+        where += (
+            f" AND embedder_generation = '{_escape_literal(embedder_generation)}'"
+        )
+    return where

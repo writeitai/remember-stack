@@ -15,16 +15,36 @@ class ChunkIndexPort(Protocol):
     """Write the P1 chunk table without exposing vector-store types."""
 
     def upsert_chunks(self, *, rows: tuple[P1ChunkRow, ...]) -> None:
-        """Insert or replace rows by chunk_id; re-runs are idempotent."""
+        """Insert or replace rows by generation triple; re-runs are idempotent."""
         ...
 
     def chunk_vectors(
-        self, *, deployment_id: str, chunk_ids: tuple[str, ...]
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> dict[str, tuple[float, ...]]:
         """Stored vectors for the requested ids (absent ids are omitted).
 
         The D56 embedding-reuse read: an unchanged chunk in a new version
-        copies its predecessor's vector instead of re-embedding.
+        copies its predecessor's vector instead of re-embedding. When
+        generations are provided, only the matching D80 triple is returned.
+        """
+        ...
+
+    def match_chunk_embeddings(
+        self,
+        *,
+        deployment_id: str,
+        chunk_ids: tuple[str, ...],
+        policy_generation: str,
+        embedder_generation: str,
+    ) -> dict[str, tuple[tuple[float, ...], str]]:
+        """Vectors + stored embedding_text_hash for the active generation triple.
+
+        Crash recovery: if the triple and hash match prepare, skip the provider.
         """
         ...
 
@@ -80,13 +100,25 @@ class P1SearchPort(Protocol):
         ...
 
     def search_chunks(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> tuple[str, ...]:
         """Ranked chunk-id nominations from the semantic source channel."""
         ...
 
     def search_chunks_lexical(
-        self, *, deployment_id: str, query: str, k: int
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
     ) -> tuple[str, ...]:
         """Ranked chunk-id nominations from the lexical source channel."""
         ...

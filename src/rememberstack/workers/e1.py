@@ -197,116 +197,213 @@ class EmbedChunksHandler:
             rendered = render_embedding_input(facts=facts, body=body)
             prepared.append((chunk, rendered))
 
-        # Skip empty bodies (typed); still continue pipeline.
+        skipped = tuple(
+            (chunk, rendered)
+            for chunk, rendered in prepared
+            if rendered.skip_reason is not None
+        )
+        if skipped:
+            self._stamp_skips(
+                batch=skipped,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                source=source,
+                chunk_count=len(chunks),
+            )
+
         active = [
             (chunk, rendered)
             for chunk, rendered in prepared
             if rendered.skip_reason is None
         ]
         vectors: dict[UUID, tuple[float, ...]] = {}
+        pg_complete: set[UUID] = set()
+
+        # D80 recovery: accept a P1 triple only when stored hash matches prepare.
+        active_ids = tuple(str(chunk.chunk_id) for chunk, _ in active)
+        if active_ids and hasattr(self._chunk_index, "match_chunk_embeddings"):
+            matched = self._chunk_index.match_chunk_embeddings(
+                deployment_id=str(work.deployment_id),
+                chunk_ids=active_ids,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+            )
+        else:
+            matched = {}
         for chunk, rendered in active:
-            if (
-                chunk.embedding_ref is not None
-                and chunk.embedding_text_hash == rendered.embedding_text_hash
-                and chunk.policy_generation == policy_generation
-                and chunk.embedding_version == embedder_generation
-            ):
-                # Already stamped this generation — recover vector if present.
+            key = str(chunk.chunk_id)
+            if key not in matched:
+                continue
+            vector, stored_hash = matched[key]
+            if stored_hash == rendered.embedding_text_hash:
+                vectors[chunk.chunk_id] = vector
+
+        # Cross-version carry-forward when embedding identity matches.
+        for chunk, rendered in active:
+            if chunk.chunk_id in vectors:
                 continue
             prior = carry.get(chunk.chunk_content_hash)
             if (
-                prior is not None
-                and prior.embedding_text_hash == rendered.embedding_text_hash
-                and prior.policy_generation == policy_generation
+                prior is None
+                or prior.embedding_text_hash != rendered.embedding_text_hash
+                or prior.policy_generation != policy_generation
             ):
-                stored = self._chunk_index.chunk_vectors(
-                    deployment_id=str(work.deployment_id),
-                    chunk_ids=(str(prior.chunk_id),),
-                )
-                if str(prior.chunk_id) in stored:
-                    vectors[chunk.chunk_id] = stored[str(prior.chunk_id)]
+                continue
+            stored = self._chunk_index.chunk_vectors(
+                deployment_id=str(work.deployment_id),
+                chunk_ids=(str(prior.chunk_id),),
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+            )
+            if str(prior.chunk_id) in stored:
+                vectors[chunk.chunk_id] = stored[str(prior.chunk_id)]
+
+        # PG stamp may already exist for this generation — only counts if P1 exists.
+        for chunk, rendered in active:
+            if (
+                chunk.embedding_ref is not None
+                and not str(chunk.embedding_ref).startswith("skip:")
+                and chunk.embedding_text_hash == rendered.embedding_text_hash
+                and chunk.policy_generation == policy_generation
+                and chunk.embedding_version == embedder_generation
+                and chunk.chunk_id in vectors
+            ):
+                pg_complete.add(chunk.chunk_id)
+
+        # Stamp P1→PG for recovered/carried vectors that lack a matching PG stamp.
+        recovered_pairs = tuple(
+            (chunk, rendered)
+            for chunk, rendered in active
+            if chunk.chunk_id in vectors and chunk.chunk_id not in pg_complete
+        )
+        if recovered_pairs:
+            self._commit_batch(
+                work=work,
+                source=source,
+                chunk_count=len(chunks),
+                batch=recovered_pairs,
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+            )
+            pg_complete.update(chunk.chunk_id for chunk, _ in recovered_pairs)
 
         need_embed = tuple(
             (chunk, rendered)
             for chunk, rendered in active
             if chunk.chunk_id not in vectors
-            and not (
-                chunk.embedding_ref is not None
-                and chunk.embedding_text_hash == rendered.embedding_text_hash
-                and chunk.policy_generation == policy_generation
-                and chunk.embedding_version == embedder_generation
-            )
         )
-        # Already-complete stamps: recover vectors without re-embedding.
-        missing_for_index = tuple(
-            chunk.chunk_id
-            for chunk, rendered in active
-            if chunk.chunk_id not in vectors
-            and chunk.embedding_ref is not None
-            and chunk.embedding_text_hash == rendered.embedding_text_hash
-            and chunk.policy_generation == policy_generation
-            and chunk.embedding_version == embedder_generation
-        )
-        if missing_for_index:
-            stored = self._chunk_index.chunk_vectors(
-                deployment_id=str(work.deployment_id),
-                chunk_ids=tuple(str(item) for item in missing_for_index),
-            )
-            for chunk_id in missing_for_index:
-                key = str(chunk_id)
-                if key in stored:
-                    vectors[chunk_id] = stored[key]
-
-        batch_size = self._settings.embed_batch_size
-        # Stamp carried vectors (no provider call) before fresh batches.
-        carried_pairs = tuple(
-            (chunk, rendered)
-            for chunk, rendered in active
-            if chunk.chunk_id in vectors
-            and not (
-                chunk.embedding_ref is not None
-                and chunk.embedding_text_hash == rendered.embedding_text_hash
-                and chunk.policy_generation == policy_generation
-                and chunk.embedding_version == embedder_generation
-            )
-        )
-        if carried_pairs:
-            self._commit_batch(
+        poison_skips: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
+        for batch_start in range(0, len(need_embed), self._settings.embed_batch_size):
+            batch = need_embed[
+                batch_start : batch_start + self._settings.embed_batch_size
+            ]
+            if not batch:
+                continue
+            self._embed_batch_with_poison_split(
                 work=work,
                 source=source,
                 chunk_count=len(chunks),
-                batch=carried_pairs,
+                batch=tuple(batch),
                 vectors=vectors,
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
+                meter=meter,
+                poison_skips=poison_skips,
             )
 
-        for batch_start in range(0, len(need_embed), batch_size):
-            batch = need_embed[batch_start : batch_start + batch_size]
-            if not batch:
-                continue
-            first_id = str(min(chunk.chunk_id for chunk, _ in batch))
-            call_key = f"embed_chunks:{first_id}:{len(batch)}"
+        if poison_skips:
+            self._stamp_skips(
+                batch=tuple(poison_skips),
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                source=source,
+                chunk_count=len(chunks),
+                skip_code="poison_chunk",
+            )
+
+        # Readiness: every non-skipped chunk has a vector under the active pair
+        # (or a closed typed skip, including poison_chunk).
+        closed_skips = {
+            chunk.chunk_id for chunk, rendered in prepared if rendered.skip_reason
+        } | {chunk.chunk_id for chunk, _ in poison_skips}
+        missing = [
+            chunk.chunk_id
+            for chunk, _rendered in active
+            if chunk.chunk_id not in vectors and chunk.chunk_id not in closed_skips
+        ]
+        if missing:
+            raise RuntimeError(
+                "embed_chunk readiness incomplete; missing vectors for "
+                f"{len(missing)} chunk(s)"
+            )
+        return _extract_follow_up(work=work, source=source)
+
+    def _embed_batch_with_poison_split(
+        self,
+        *,
+        work: ClaimedWork,
+        source: ChunkSource,
+        chunk_count: int,
+        batch: tuple[tuple[ChunkForEmbedding, EmbeddingInputRender], ...],
+        vectors: dict[UUID, tuple[float, ...]],
+        policy_generation: str,
+        embedder_generation: str,
+        meter: CostMeterPort,
+        poison_skips: list[tuple[ChunkForEmbedding, EmbeddingInputRender]],
+    ) -> None:
+        """Embed one batch; on failure, halve until size-1 poison is typed-skip."""
+        if not batch:
+            return
+        first_id = str(min(chunk.chunk_id for chunk, _ in batch))
+        call_key = f"embed_chunks:{first_id}:{len(batch)}"
+        try:
             response = self._model_provider.embed(
                 request=EmbeddingRequest(
                     model=embedder_generation,
                     texts=tuple(rendered.embedding_text for _, rendered in batch),
                 )
             )
-            meter.record(call_key=call_key, tier="embedding", usage=response.usage)
-            for (chunk, _rendered), vector in zip(batch, response.vectors, strict=True):
-                vectors[chunk.chunk_id] = vector
-            # Per-batch P1 then PG (orchestration D80 crash recovery).
-            self._commit_batch(
+        except Exception:
+            if len(batch) == 1:
+                poison_skips.append(batch[0])
+                return
+            mid = len(batch) // 2
+            self._embed_batch_with_poison_split(
                 work=work,
                 source=source,
-                chunk_count=len(chunks),
-                batch=batch,
+                chunk_count=chunk_count,
+                batch=batch[:mid],
                 vectors=vectors,
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
+                meter=meter,
+                poison_skips=poison_skips,
             )
-        return _extract_follow_up(work=work, source=source)
+            self._embed_batch_with_poison_split(
+                work=work,
+                source=source,
+                chunk_count=chunk_count,
+                batch=batch[mid:],
+                vectors=vectors,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                meter=meter,
+                poison_skips=poison_skips,
+            )
+            return
+        meter.record(call_key=call_key, tier="embedding", usage=response.usage)
+        for (chunk, _rendered), vector in zip(batch, response.vectors, strict=True):
+            vectors[chunk.chunk_id] = vector
+        self._commit_batch(
+            work=work,
+            source=source,
+            chunk_count=chunk_count,
+            batch=batch,
+            vectors=vectors,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+        )
 
     def _commit_batch(
         self,
@@ -326,6 +423,8 @@ class EmbedChunksHandler:
         for chunk, rendered in batch:
             if chunk.chunk_id not in vectors:
                 continue
+            if not rendered.body:
+                continue
             p1_rows.append(
                 P1ChunkRow(
                     chunk_id=chunk.chunk_id,
@@ -335,6 +434,11 @@ class EmbedChunksHandler:
                     section_role=chunk.section_role,
                     text=rendered.body,
                     vector=vectors[chunk.chunk_id],
+                    policy_generation=policy_generation,
+                    embedder_generation=embedder_generation,
+                    embedding_text_hash=rendered.embedding_text_hash,
+                    source_kind=source.source_kind,
+                    source_shape=source.source_shape,
                 )
             )
             facts = _location_facts(
@@ -362,11 +466,48 @@ class EmbedChunksHandler:
         if updates:
             self._catalog.record_embeddings(updates=tuple(updates))
 
+    def _stamp_skips(
+        self,
+        *,
+        batch: tuple[tuple[ChunkForEmbedding, EmbeddingInputRender], ...],
+        policy_generation: str,
+        embedder_generation: str,
+        source: ChunkSource,
+        chunk_count: int,
+        skip_code: str | None = None,
+    ) -> None:
+        """Persist typed skip codes on PG so readiness can close without P1 rows."""
+        updates: list[EmbeddingUpdate] = []
+        for chunk, rendered in batch:
+            code = skip_code or rendered.skip_reason or "skip"
+            facts = _location_facts(
+                source=source, chunk=chunk, chunk_count=chunk_count
+            )
+            facts_json = location_facts_json(
+                facts=facts, elements=rendered.location_elements
+            )
+            updates.append(
+                EmbeddingUpdate(
+                    chunk_id=chunk.chunk_id,
+                    embedding_ref=f"skip:{code}",
+                    embedding_version=embedder_generation,
+                    location_header=None,
+                    embedding_text_hash=rendered.embedding_text_hash,
+                    embedding_input_policy_version=policy_generation,
+                    policy_generation=policy_generation,
+                    location_facts_json=facts_json,
+                    context_prefix=None,
+                    prefixer_version=policy_generation,
+                )
+            )
+        if updates:
+            self._catalog.record_embeddings(updates=tuple(updates))
+
 
 def _location_facts(
     *, source: ChunkSource, chunk: ChunkForEmbedding, chunk_count: int
 ) -> LocationFacts:
-    """Build structured location facts for one chunk (structure-derived only)."""
+    """Build structured location facts from spine + connector packaging fields."""
     section_title = chunk.section_title
     if section_title is None:
         for section in source.sections:
@@ -379,11 +520,15 @@ def _location_facts(
         version_id=chunk.version_id,
         title=source.title,
         source_kind=source.source_kind,
-        source_shape="document",
+        source_shape=source.source_shape,
         section_title=section_title,
         section_path=chunk.section_path,
         section_role=chunk.section_role,
         chunk_count=chunk_count,
+        channel_ref=source.channel_ref,
+        thread_ref=source.thread_ref,
+        author_ref=source.author_ref,
+        message_ts=source.message_ts,
     )
 
 

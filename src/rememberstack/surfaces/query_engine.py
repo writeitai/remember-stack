@@ -2126,8 +2126,18 @@ class QueryEngine:
             projected = texts.get(str(chunk_id))
             if row is None or projected is None:
                 continue
-            # D80: P1 text is body-only; optional location_header lives on PG.
+            # D80: P1 text is body-only when policy_generation is present.
+            # Legacy rows may store prefix + "\n\n" + body in P1 text; strip
+            # the stored prefix when hydrating so agents never see mangled body.
             location_header = row.get("location_header") or row.get("context_prefix")
+            policy_generation = row.get("policy_generation") or row.get(
+                "embedding_input_policy_version"
+            )
+            chunk_text = projected.indexed_text
+            if not policy_generation and location_header:
+                chunk_text = _strip_legacy_prefix(
+                    indexed_text=chunk_text, location_header=str(location_header)
+                )
             if projected.section_role != row["section_role"]:
                 continue
             results.append(
@@ -2136,7 +2146,7 @@ class QueryEngine:
                     doc_id=row["doc_id"],
                     version_id=row["version_id"],
                     representation_id=row["representation_id"],
-                    chunk_text=projected.indexed_text,
+                    chunk_text=chunk_text,
                     context_prefix=location_header,
                     char_start=row["char_start"],
                     char_end=row["char_end"],
@@ -2192,6 +2202,22 @@ class QueryEngine:
             request=EmbeddingRequest(model=self._embedding_model, texts=(query,))
         )
         return response.vectors[0]
+
+
+def _strip_legacy_prefix(*, indexed_text: str, location_header: str) -> str:
+    """Remove a legacy prefix embedded in P1 text when policy stamps are absent.
+
+    Pre-D80 rows stored ``prefix + "\\n\\n" + body`` in the Lance text column.
+    D80 stores body-only; this branch keeps evidence hydration correct for
+    unrebuilt legacy rows without inventing new body bytes.
+    """
+    if not location_header:
+        return indexed_text
+    for separator in ("\n\n", "\n"):
+        marker = f"{location_header}{separator}"
+        if indexed_text.startswith(marker):
+            return indexed_text[len(marker) :]
+    return indexed_text
 
 
 def _validate_nomination_request(*, k: int, channel: str) -> None:
@@ -2985,6 +3011,7 @@ _CONFIRM_CHUNKS = text(
     """
     SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
            ch.char_start, ch.char_end, ch.context_prefix, ch.location_header,
+           ch.policy_generation, ch.embedding_input_policy_version,
            s.role::text AS section_role,
            d.title AS document_title, d.source_kind,
            v.source_modified_at, v.published_at

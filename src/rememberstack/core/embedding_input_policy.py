@@ -256,10 +256,11 @@ def _decide_mode(*, facts: LocationFacts, body: str) -> EmbedHeaderMode:
         return EmbedHeaderMode.BODY_ONLY
     if not _has_useful_coordinates(facts=facts):
         return EmbedHeaderMode.BODY_ONLY
+    # §4.3 step 4: multi-chunk only when a real section title path exists, or
+    # the packaging shape is transcript/thread/channel_export — not bare title.
     if facts.chunk_count >= 2 and (
         (facts.section_title and facts.section_title.strip())
         or facts.source_shape in {"transcript", "thread", "channel_export"}
-        or (facts.title and facts.title.strip())
     ):
         return EmbedHeaderMode.LOCATION_HEADER
     if (

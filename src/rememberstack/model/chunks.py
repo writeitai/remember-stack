@@ -49,6 +49,12 @@ class ChunkSource(BaseModel):
     language: str | None
     structurer_version: str
     sections: tuple[SectionSpan, ...]
+    # D80 connector packaging (defaults until connectors emit typed metadata).
+    source_shape: str = "document"
+    channel_ref: str | None = None
+    thread_ref: str | None = None
+    author_ref: str | None = None
+    message_ts: str | None = None
 
 
 class PackedChunk(BaseModel):
@@ -164,7 +170,11 @@ class ContextPrefix(BaseModel):
 
 
 class P1ChunkRow(BaseModel):
-    """One row of the P1 chunk table: text + vector + filter scalars (D8)."""
+    """One row of the P1 chunk table: text + vector + filter scalars (D8/D80).
+
+    Generation-safe key is ``(chunk_id, policy_generation, embedder_generation)``.
+    Legacy constructors may omit D80 fields; production E1 always stamps them.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -175,6 +185,11 @@ class P1ChunkRow(BaseModel):
     section_role: str
     text: _NonEmpty
     vector: Annotated[tuple[float, ...], Field(min_length=1)]
+    policy_generation: str = "legacy"
+    embedder_generation: str = "legacy"
+    embedding_text_hash: str = ""
+    source_kind: str = "unknown"
+    source_shape: str = "document"
 
 
 class P1ChunkText(BaseModel):
