@@ -29,14 +29,15 @@ the body — the extreme case being a definition with `WHERE false`, which
 publishes the declared contract and no rows, and which a shape check reports as
 clean. The manifest hash cannot see it either, by design: it is taken over the
 *authored* DDL in the repository, so it says what the checkout intends and
-nothing about what a particular server is actually running. So
-`live_schema_differences()` also compares definitions, in the one way that is
-sound: the same repository is migrated into a scratch database **on the same
-server**, every `memory_v1` view and every private helper is deparsed with
-`pg_get_viewdef()` in both databases, and the two are compared pairwise. Same
-server means the same printer on both sides, so the comparison is exact without
-the deparser ever becoming a hash input — the drift is caught, and
-`surface_manifest_hash` stays reproducible from source with no server at all.
+nothing about what a particular server is actually running. So a second comparison exists beside the shape check:
+`deployed_definition_differences()` takes the running connection and a
+connection to a scratch database on the **same server**, migrated from this
+repository, deparses every `memory_v1` view and every private helper in both
+with `pg_get_viewdef()`, and compares them pairwise. Same server means the same
+printer on both sides, so the comparison is exact without the deparser ever
+becoming a hash input — the drift is caught, and `surface_manifest_hash` stays
+reproducible from source with no server at all. `live_schema_differences()`
+remains the shape gate; a caller that wants both runs both.
 
 The file has two halves, and the split is deliberate.
 
@@ -64,6 +65,9 @@ from pydantic import ConfigDict
 from sqlalchemy import Connection
 from sqlalchemy import text
 
+from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
+    PRIVATE_HELPER_VIEWS,
+)
 from rememberstack.spine.query_space.ast_serializer import SERIALIZER_VERSION
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
@@ -457,3 +461,52 @@ def _build_annotations() -> dict[str, CanonicalValue]:
             for contract in VIEW_CONTRACTS
         },
     }
+
+
+def deployed_definitions(connection: Connection) -> dict[str, str]:
+    """Deparse every public view and private helper the database is running.
+
+    `pg_get_viewdef` is the server's own printer, so two databases on the same
+    server print the same definition the same way. That is what makes the
+    pairwise comparison in `deployed_definition_differences()` exact without
+    the printer's output ever becoming a hash input.
+    """
+    rows = connection.execute(
+        text(
+            "SELECT n.nspname || '.' || c.relname AS name,"
+            " pg_get_viewdef(c.oid, true) AS definition"
+            " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE c.relkind = 'v'"
+            "   AND (n.nspname = :schema"
+            "        OR (n.nspname = 'public' AND c.relname = ANY(:helpers)))"
+        ),
+        {"schema": QUERY_SPACE_SCHEMA, "helpers": list(PRIVATE_HELPER_VIEWS)},
+    ).mappings()
+    return {str(row["name"]): " ".join(str(row["definition"]).split()) for row in rows}
+
+
+def deployed_definition_differences(
+    *, connection: Connection, reference: Connection
+) -> tuple[str, ...]:
+    """Compare what the database RUNS with an independently migrated build.
+
+    Shape is not enough: `CREATE OR REPLACE VIEW` can keep every column, type,
+    and comment identical while replacing the body — the extreme case being a
+    definition with `WHERE false`, which publishes the declared contract and no
+    rows. The manifest hash cannot see that either, by design: it is taken over
+    the authored DDL in the repository, so it says what the checkout intends,
+    not what a particular server is running. `reference` is a connection to a
+    scratch database on the SAME server, migrated from this repository; a
+    disagreement here is deployed drift.
+    """
+    running = deployed_definitions(connection)
+    intended = deployed_definitions(reference)
+    problems: list[str] = []
+    for name in sorted(set(intended) | set(running)):
+        if name not in running:
+            problems.append(f"{name} is missing from the deployed schema")
+        elif name not in intended:
+            problems.append(f"{name} is deployed but not part of this build")
+        elif running[name] != intended[name]:
+            problems.append(f"{name} definition differs from the migrated build")
+    return tuple(problems)

@@ -53,6 +53,8 @@ from rememberstack.spine.query_space import POSTGRESQL_MAJOR
 from rememberstack.spine.query_space import QUARANTINE_CATEGORIES
 from rememberstack.spine.query_space import render_manifest
 from rememberstack.spine.query_space import VIEW_CONTRACTS
+from rememberstack.spine.query_space.manifest import deployed_definition_differences
+from rememberstack.spine.query_space.manifest import deployed_definitions
 from rememberstack.spine.query_space.manifest import MANIFEST_PATH
 from rememberstack.spine.settings import load_database_settings
 
@@ -2791,3 +2793,181 @@ def test_quarantine_report_counts_what_the_public_views_omit(corpus: _Corpus) ->
     for category in report.categories:
         assert category.repair
         assert category.explanation.endswith(".")
+
+
+def test_deployed_definition_drift_is_detected(
+    database_engine: Engine, database_url: str
+) -> None:
+    """A body swap that preserves the interface is caught, not waved through.
+
+    `CREATE OR REPLACE VIEW` can keep every column, type, and comment while
+    replacing what the view returns. Shape comparison reports that as clean and
+    the manifest hash cannot see it at all — the hash is taken over the
+    authored DDL, so it describes the checkout, not the server. The pairwise
+    definition comparison against an independently migrated build is what
+    closes that gap.
+    """
+    admin = create_engine(database_url, isolation_level="AUTOCOMMIT")
+    # A unique name per run: a leftover scratch database from an interrupted
+    # run would otherwise be migrated a second time and fail on its own types.
+    scratch_name = f"remember_defcheck_{uuid4().hex[:8]}"
+    try:
+        with admin.connect() as connection:
+            connection.execute(
+                text(f'DROP DATABASE IF EXISTS "{scratch_name}" WITH (FORCE)')
+            )
+            connection.execute(text(f'CREATE DATABASE "{scratch_name}"'))
+        rendered = (
+            make_url(database_url)
+            .set(database=scratch_name)
+            .render_as_string(hide_password=False)
+        )
+        config = Config(str(_ROOT / "alembic.ini"))
+        config.set_main_option("sqlalchemy.url", rendered)
+        command.upgrade(config=config, revision="head")
+        reference = create_engine(rendered)
+        try:
+            with database_engine.connect() as live, reference.connect() as intended:
+                assert (
+                    deployed_definition_differences(connection=live, reference=intended)
+                    == ()
+                )
+                original = deployed_definitions(live)["memory_v1.claims_live"]
+                assert original
+
+            # Swap the body, keep the interface, and roll the swap back.
+            with database_engine.begin() as live:
+                live.execute(
+                    text(
+                        "CREATE OR REPLACE VIEW memory_v1.claims_live AS"
+                        " SELECT q.* FROM (SELECT * FROM memory_v1.claims_live) AS q"
+                        " WHERE false"
+                    )
+                )
+                with reference.connect() as intended:
+                    drift = deployed_definition_differences(
+                        connection=live, reference=intended
+                    )
+                assert "memory_v1.claims_live definition differs" in " ".join(drift)
+                live.rollback()
+
+            with database_engine.connect() as live, reference.connect() as intended:
+                assert (
+                    deployed_definition_differences(connection=live, reference=intended)
+                    == ()
+                )
+        finally:
+            reference.dispose()
+    finally:
+        with admin.connect() as connection:
+            connection.execute(
+                text(f'DROP DATABASE IF EXISTS "{scratch_name}" WITH (FORCE)')
+            )
+        admin.dispose()
+
+
+def test_an_entity_seen_only_in_superseded_content_stays_a_member(
+    corpus: _Corpus,
+) -> None:
+    """Membership is the surviving-lineage floor; the counts are current-only.
+
+    The distinction matters in exactly this case: an entity whose every
+    mention was superseded by a later version of a live lineage is still
+    associated with surviving provenance, so it remains published — with both
+    current-content counts at zero, which is the honest number. The probe runs
+    inside a rolled-back transaction so the shared corpus keeps its shape.
+    """
+    entity_id = uuid4()
+    mention_id = uuid4()
+    with corpus.engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            superseded = (
+                connection.execute(
+                    text(
+                        "SELECT ch.chunk_id, ch.doc_id, cc.claim_id"
+                        " FROM chunks ch"
+                        " JOIN documents d ON d.doc_id = ch.doc_id"
+                        "  AND d.deployment_id = ch.deployment_id"
+                        " JOIN chunk_claims cc ON cc.chunk_id = ch.chunk_id"
+                        "  AND cc.deployment_id = ch.deployment_id"
+                        " WHERE d.deployment_id = :deployment"
+                        "   AND d.deleted_at IS NULL"
+                        "   AND ch.version_id <> d.current_version_id"
+                        " LIMIT 1"
+                    ),
+                    {"deployment": _DEPLOYMENT_ID},
+                )
+                .mappings()
+                .first()
+            )
+            assert superseded is not None, "the corpus must contain superseded content"
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    " canonical_name, normalized_name) VALUES (:entity,"
+                    " :deployment, 'Person', 'Superseded Only', 'superseded only')"
+                ),
+                {"entity": entity_id, "deployment": _DEPLOYMENT_ID},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO mentions (mention_id, deployment_id,"
+                    " surface_form, normalized_lemma, canonical_name_form,"
+                    " emitted_type, language, claim_id, chunk_id, doc_id,"
+                    " char_start, char_end, created_at)"
+                    " VALUES (:mention, :deployment, 'Superseded Only',"
+                    " 'superseded only', 'Superseded Only', 'Person', 'en',"
+                    " :claim, :chunk, :doc, 0, 5, now())"
+                ),
+                {
+                    "mention": mention_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "claim": superseded["claim_id"],
+                    "chunk": superseded["chunk_id"],
+                    "doc": superseded["doc_id"],
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO resolution_decisions (decision_id,"
+                    " deployment_id, mention_id, entity_id, method, confidence,"
+                    " resolver_version, decided_at) VALUES (:decision,"
+                    " :deployment, :mention, :entity, 'T0', 1.0,"
+                    " 'batch-a-proofs', now())"
+                ),
+                {
+                    "decision": uuid4(),
+                    "deployment": _DEPLOYMENT_ID,
+                    "mention": mention_id,
+                    "entity": entity_id,
+                },
+            )
+
+            published = (
+                connection.execute(
+                    text(
+                        "SELECT live_mention_count, live_document_count"
+                        " FROM memory_v1.entities_current"
+                        " WHERE deployment_id = :deployment"
+                        "   AND entity_id = :entity"
+                    ),
+                    {"deployment": _DEPLOYMENT_ID, "entity": entity_id},
+                )
+                .mappings()
+                .all()
+            )
+            rows = connection.execute(
+                text(
+                    "SELECT count(*) FROM memory_v1.entity_document_mentions"
+                    " WHERE deployment_id = :deployment AND entity_id = :entity"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "entity": entity_id},
+            ).scalar_one()
+        finally:
+            transaction.rollback()
+
+    assert len(published) == 1, "a superseded-only association is still provenance"
+    assert published[0]["live_mention_count"] == 0
+    assert published[0]["live_document_count"] == 0
+    assert rows == 0

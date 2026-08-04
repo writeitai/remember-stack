@@ -5,7 +5,7 @@
 §6, §9.1–§9.4, §11.1
 **Migration:** `p9_01_0022_memory_v1_query_space`
 **Manifest:** `src/rememberstack/spine/query_space/memory_v1_manifest.json`
-**`surface_manifest_hash`:** `01ecaf182c58ed7d…` (full value in the manifest)
+**`surface_manifest_hash`:** `e46f13a57f13c9a2…` (full value in the manifest)
 
 Batch A is the schema contract: the `memory_v1` relation set, the machine-readable
 manifest that describes it, the canonicalizer that turns that manifest into one stable

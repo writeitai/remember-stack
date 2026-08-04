@@ -25,6 +25,8 @@ from rememberstack.spine.query_space.deletion_matrix import write_matrix
 from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import build_manifest
 from rememberstack.spine.query_space.manifest import declared_views
+from rememberstack.spine.query_space.manifest import deployed_definition_differences
+from rememberstack.spine.query_space.manifest import deployed_definitions
 from rememberstack.spine.query_space.manifest import introspect_live_schema
 from rememberstack.spine.query_space.manifest import live_schema_differences
 from rememberstack.spine.query_space.manifest import load_manifest
@@ -63,6 +65,8 @@ __all__ = [
     "canonical_json",
     "canonical_json_bytes",
     "declared_views",
+    "deployed_definition_differences",
+    "deployed_definitions",
     "introspect_live_schema",
     "live_schema_differences",
     "load_manifest",
