@@ -62,6 +62,24 @@ _TYPE_NAMES: Final = {
 }
 
 
+def _type_name(cursor: psycopg.Cursor, oid: int) -> str:
+    """The SQL type name for a result column, asked of the server itself.
+
+    A static OID table cannot know array or extension types; `format_type`
+    is the same function the catalog gate uses, so both sides agree.
+    """
+    static = _TYPE_NAMES.get(oid)
+    if static is not None:
+        return static
+    try:
+        row = cursor.connection.execute(
+            "SELECT pg_catalog.format_type(%s::oid, NULL)", (oid,)
+        ).fetchone()
+    except psycopg.Error:
+        return str(oid)
+    return str(row[0]) if row and row[0] else str(oid)
+
+
 def _encoded_size(value: object) -> int:
     """The real wire size of one bound value.
 
@@ -109,9 +127,30 @@ def _sql_type_family(value: object) -> str:
     if isinstance(value, float):
         return "double precision"
     if isinstance(value, (list, tuple)):
-        return "array"
+        # An array of integers and an array of text are different types.
+        element = _sql_type_family(value[0]) if value else "unknown"
+        return f"{element}[]"
     if value is None:
         return "unknown"
+    from datetime import date
+    from datetime import datetime as _datetime
+    from datetime import time as _time
+    from decimal import Decimal
+    from uuid import UUID as _UUID
+
+    if isinstance(value, _datetime):
+        # A naive value carries no zone and is a different SQL type.
+        return "timestamptz" if value.tzinfo is not None else "timestamp"
+    if isinstance(value, date):
+        return "date"
+    if isinstance(value, _time):
+        return "time"
+    if isinstance(value, Decimal):
+        return "numeric"
+    if isinstance(value, _UUID):
+        return "uuid"
+    if isinstance(value, dict):
+        return "jsonb"
     return type(value).__name__.lower()
 
 
@@ -131,8 +170,12 @@ class QuerySandboxExecutor:
         connect: Callable[[], psycopg.Connection],
         audit: AuditTrail | None = None,
         kill_switches: KillSwitches | None = None,
+        analytical_entitlement: bool = False,
     ) -> None:
         self._deployment_id = deployment_id
+        # §4.3: the analytical tier requires an operator entitlement and its
+        # own pool. A caller asking for it without one runs interactive.
+        self._analytical_entitlement = analytical_entitlement
         self._connect = connect
         self._audit = audit or AuditTrail.disabled()
         self._kills = kill_switches or KillSwitches()
@@ -192,6 +235,8 @@ class QuerySandboxExecutor:
         request_id = uuid4()
         started = datetime.now().astimezone()
         clock = time.monotonic()
+        if tier is LimitTier.ANALYTICAL and not self._analytical_entitlement:
+            tier = LimitTier.INTERACTIVE
         limits = TIER_LIMITS[tier]
         row_cap = clamp_rows(tier=limits, requested=max_rows)
         result_limits = ResultLimits(
@@ -328,8 +373,10 @@ class QuerySandboxExecutor:
                 columns = tuple(
                     ResultColumn(
                         name=d.name,
-                        sql_type=_TYPE_NAMES.get(d.type_code, str(d.type_code)),
-                        nullable=True,
+                        type=_type_name(cursor, d.type_code),
+                        nullable=True,  # PostgreSQL does not report result
+                        # nullability for computed columns; the contract says
+                        # so rather than guessing per expression.
                     )
                     for d in (cursor.description or ())
                 )
@@ -396,10 +443,11 @@ class QuerySandboxExecutor:
         kept: list[tuple[object, ...]] = []
         byte_truncated = False
         for row in rows:
-            encoded_bytes += len(json.dumps(row, default=str).encode())
-            if encoded_bytes > byte_cap:
+            row_bytes = len(json.dumps(row, default=str).encode())
+            if encoded_bytes + row_bytes > byte_cap:
                 byte_truncated = True
                 break
+            encoded_bytes += row_bytes
             kept.append(tuple(row))
 
         evaluated_at = None
@@ -418,7 +466,7 @@ class QuerySandboxExecutor:
             columns=columns,
             rows=tuple(kept),
             returned_row_count=len(kept),
-            returned_byte_count=encoded_bytes if not byte_truncated else byte_cap,
+            returned_byte_count=encoded_bytes,
             limits=limits_model,
             truncated=truncated or byte_truncated,
             truncation_reason=(
@@ -443,12 +491,13 @@ class QuerySandboxExecutor:
         clock: float,
         limits_model: ResultLimits,
         principal: str,
+        query_hash: str = "",
     ) -> QueryResult:
         outcome = QueryResult(
             request_id=request_id,
             deployment_id=self._deployment_id,
             surface_manifest_hash=self._manifest_hash,
-            query_hash="",
+            query_hash=query_hash,
             limits=limits_model,
             execution_started_at=started,
             elapsed_ms=(time.monotonic() - clock) * 1000,

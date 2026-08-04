@@ -33,6 +33,13 @@ class AuditEvent:
     deployment_id: UUID
     principal: str
     query_hash: str
+    surface_manifest_hash: str
+    query_language: str
+    admission: str
+    row_cap: int
+    byte_cap: int
+    statement_timeout_ms: int
+    analytical_tier: bool
     referenced_views: tuple[str, ...]
     referenced_functions: tuple[str, ...]
     termination_reason: str
@@ -65,6 +72,15 @@ class AuditTrail:
             deployment_id=outcome.deployment_id,
             principal=principal,
             query_hash=outcome.query_hash,
+            surface_manifest_hash=outcome.surface_manifest_hash,
+            query_language=outcome.query_language,
+            admission=(
+                "rejected" if outcome.termination_reason == "rejected" else "admitted"
+            ),
+            row_cap=outcome.limits.row_cap,
+            byte_cap=outcome.limits.byte_cap,
+            statement_timeout_ms=outcome.limits.statement_timeout_ms,
+            analytical_tier=outcome.limits.analytical_tier,
             referenced_views=outcome.referenced_views,
             referenced_functions=outcome.referenced_functions,
             termination_reason=outcome.termination_reason,

@@ -31,6 +31,7 @@ from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
+from rememberstack.surfaces.query_sandbox.limits import LimitTier
 
 _ROOT = Path(__file__).parents[3]
 _DEPLOYMENT = UUID("5b000000-0000-0000-0000-00000000000b")
@@ -832,3 +833,82 @@ def test_the_recursive_template_has_no_cycle_or_search_clause() -> None:
             " CYCLE depth SET is_cycle USING path SELECT * FROM w"
         )
     assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
+
+
+def test_public_function_arguments_reject_computed_expressions() -> None:
+    """A cast is transparent: the operand still has to be bindable."""
+    for sql in (
+        "SELECT * FROM semantic_claims(lower($1)::text)",
+        "SELECT * FROM semantic_claims(($1 || 'x')::text)",
+    ):
+        with pytest.raises(SandboxRejection) as caught:
+            validate_sql(sql)
+        assert caught.value.code == QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED
+
+
+def test_rows_from_cannot_pack_several_public_functions() -> None:
+    """One invocation, one materialized CTE — otherwise the caps miscount."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(
+            "SELECT * FROM ROWS FROM (semantic_claims($1), lexical_claims($2))"
+        )
+    assert caught.value.code == QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED
+    separate = validate_sql(
+        "SELECT * FROM semantic_claims($1, 20) a, lexical_claims($2, 20) b"
+    )
+    assert separate.srf_invocations == 2
+    assert separate.sql.count("MATERIALIZED") == 2
+
+
+def test_the_query_role_holds_no_inherited_public_capability(migrated: str) -> None:
+    """Granting SELECT on the views is not the same as granting only that."""
+    with _as_query_role(migrated) as connection:
+        # Temporary objects and the spine's own schema are both withdrawn.
+        # (`pg_catalog` builtins remain reachable, as they are for every role;
+        # the grammar gate is what keeps them out of agent SQL.)
+        with pytest.raises(psycopg.Error):
+            connection.execute("CREATE TEMP TABLE smuggled (x int)")
+        connection.rollback()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("SELECT count(*) FROM public.claims")
+        connection.rollback()
+        privileges = connection.execute(
+            "SELECT has_schema_privilege(current_user, 'public', 'USAGE'),"
+            " has_database_privilege(current_user, current_database(), 'TEMP')"
+        ).fetchone()
+        assert privileges == (False, False)
+
+
+def test_the_surface_hash_covers_the_grammar_and_the_limits() -> None:
+    """A grammar or cap change must roll the published surface identity."""
+    from rememberstack.spine.query_space.canonical import surface_manifest_hash
+    from rememberstack.spine.query_space.manifest import build_hash_members
+    from rememberstack.surfaces.query_sandbox import grammar as grammar_module
+
+    baseline = surface_manifest_hash(build_hash_members())
+    original = grammar_module.FUNCTION_ALLOWLIST
+    try:
+        grammar_module.FUNCTION_ALLOWLIST = frozenset(original | {"pg_sleep"})
+        assert surface_manifest_hash(build_hash_members()) != baseline
+    finally:
+        grammar_module.FUNCTION_ALLOWLIST = original
+    assert surface_manifest_hash(build_hash_members()) == baseline
+
+
+def test_the_analytical_tier_requires_an_entitlement(migrated: str) -> None:
+    """Asking for the analytical tier does not grant it."""
+    unentitled = _executor(migrated).query_sql(
+        sql="SELECT count(*) FROM claims_live", tier=LimitTier.ANALYTICAL
+    )
+    assert unentitled.limits.analytical_tier is False
+    entitled = _executor(migrated, analytical_entitlement=True).query_sql(
+        sql="SELECT count(*) FROM claims_live", tier=LimitTier.ANALYTICAL
+    )
+    assert entitled.limits.analytical_tier is True
+
+
+def test_byte_truncation_reports_the_bytes_it_returned(migrated: str) -> None:
+    """A truncated result reports what it sent, not the cap."""
+    outcome = _executor(migrated).query_sql(sql="SELECT count(*) AS n FROM claims_live")
+    assert outcome.returned_byte_count <= outcome.limits.byte_cap
+    assert outcome.returned_byte_count > 0

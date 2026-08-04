@@ -45,7 +45,7 @@ class ViewDescription:
     grain: str
     row_key: tuple[str, ...]
     comment: str
-    columns: tuple[tuple[str, str, bool], ...]  # (name, sql_type, nullable)
+    columns: tuple[tuple[str, str, bool], ...]  # (name, type, nullable)
 
 
 @dataclass(frozen=True)

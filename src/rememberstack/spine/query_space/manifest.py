@@ -165,7 +165,11 @@ def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
 
 
 def stub_limits() -> dict[str, CanonicalValue]:
-    """Return the bound, still-unpopulated grammar and resource-limit member."""
+    """Return the bound, still-unpopulated grammar and resource-limit member.
+
+    Superseded by `_sandbox_limits_member()` once the sandbox exists; kept for
+    a checkout that has the schema but not yet the surfaces package.
+    """
     return {
         "contract": "memory_v1.limits/1",
         "sql_grammar": {"operators": [], "pg_catalog_functions": []},
@@ -179,12 +183,47 @@ def stub_limits() -> dict[str, CanonicalValue]:
     }
 
 
+def _sandbox_limits_member() -> dict[str, CanonicalValue]:
+    """The §6 `limits` member: the grammar and the caps, not a placeholder.
+
+    A change to an allowlist entry or a tier cap changes the public surface,
+    so it must roll `surface_manifest_hash` — that is what makes the hash an
+    identity rather than a description of the views alone. The sandbox is
+    imported lazily so the schema package keeps no import-time dependency on
+    the surfaces package.
+    """
+    from rememberstack.surfaces.query_sandbox import grammar
+    from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
+
+    sql_grammar: dict[str, CanonicalValue] = {
+        "functions": list(sorted(grammar.FUNCTION_ALLOWLIST)),
+        "operators": list(sorted(grammar.OPERATOR_ALLOWLIST)),
+        "cast_types": list(sorted(grammar.CAST_TYPE_ALLOWLIST)),
+        "public_functions": list(sorted(grammar.PUBLIC_SRF_NAMES)),
+        "srf_invocations_max": grammar.SRF_INVOCATIONS_MAX,
+        "recursion_depth_max": grammar.RECURSION_DEPTH_MAX,
+    }
+    resource_limits: dict[str, CanonicalValue] = {
+        tier.value: {
+            field: getattr(caps, field) for field in sorted(caps.__dataclass_fields__)
+        }
+        for tier, caps in TIER_LIMITS.items()
+    }
+    return {
+        "contract": "memory_v1.limits/1",
+        "sql_grammar": sql_grammar,
+        "resource_limits": resource_limits,
+        "cypher_dialect": {"contract": "memory_v1.cypher/1", "clauses": []},
+        "p2_projection": {"contract": "memory_v1.p2/1"},
+    }
+
+
 def build_hash_members() -> dict[str, CanonicalValue]:
     """Build the exact document `surface_manifest_hash` is taken over."""
     return {
         "core_operation_descriptors": stub_core_operation_descriptors(),
         "function_signatures": stub_function_signatures(),
-        "limits": stub_limits(),
+        "limits": _sandbox_limits_member(),
         "views_schema": _build_views_schema(),
     }
 

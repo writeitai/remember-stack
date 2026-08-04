@@ -28,7 +28,7 @@ class ResultColumn(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
-    sql_type: str
+    type: str
     nullable: bool
 
 
@@ -79,6 +79,7 @@ class QueryResult(BaseModel):
     surface_manifest_hash: str
     query_space_schema: Literal["memory_v1"] = "memory_v1"
     query_hash: str
+    query_language: Literal["sql", "cypher"] = "sql"
     saved_query: dict[str, str] | None = None
     referenced_views: tuple[str, ...] = ()
     referenced_functions: tuple[str, ...] = ()

@@ -65,6 +65,35 @@ def upgrade() -> None:
     op.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {_VIEW_OWNER}")
     op.execute(f"GRANT USAGE ON SCHEMA memory_v1 TO {_VIEW_OWNER}")
 
+    # PostgreSQL grants several capabilities to PUBLIC by default, and every
+    # role inherits them — so "the query role was granted only SELECT on the
+    # views" is not the same as "the query role can only select the views".
+    # Within this deployment's database those defaults are withdrawn: no
+    # schema usage, no temporary objects, no executing the spine's own
+    # functions. (Per-deployment routing, D68, makes this database-local
+    # revocation both safe and complete.)
+    op.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
+    # The database name is not a parameterizable identifier, so it is read
+    # from the connection and quoted.
+    op.execute(
+        f"""
+        DO $$
+        BEGIN
+            EXECUTE format(
+                'REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database()
+            );
+            -- CONNECT goes back to exactly the role that must have it, so
+            -- the withdrawal is a narrowing rather than a lockout.
+            EXECUTE format(
+                'GRANT CONNECT ON DATABASE %I TO {_QUERY_ROLE}',
+                current_database()
+            );
+        END $$;
+        """
+    )
+    op.execute("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC")
+    op.execute("REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM PUBLIC")
+
     for view_name in sorted(VIEW_CONTRACTS_BY_NAME):
         op.execute(f"ALTER VIEW memory_v1.{view_name} OWNER TO {_VIEW_OWNER}")
 

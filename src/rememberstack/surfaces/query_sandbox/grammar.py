@@ -62,7 +62,7 @@ PUBLIC_SRF_NAMES: Final = frozenset(
 )
 SRF_INVOCATIONS_MAX: Final = 3
 
-_FUNCTION_ALLOWLIST: Final = frozenset(
+FUNCTION_ALLOWLIST: Final = frozenset(
     {
         "count",
         "sum",
@@ -110,7 +110,7 @@ _FUNCTION_ALLOWLIST: Final = frozenset(
     }
 )
 
-_OPERATOR_ALLOWLIST: Final = frozenset(
+OPERATOR_ALLOWLIST: Final = frozenset(
     {
         "=",
         "<>",
@@ -146,7 +146,7 @@ _OPERATOR_ALLOWLIST: Final = frozenset(
     }
 )
 
-_CAST_TYPE_ALLOWLIST: Final = frozenset(
+CAST_TYPE_ALLOWLIST: Final = frozenset(
     {
         "uuid",
         "text",
@@ -171,7 +171,7 @@ _CAST_TYPE_ALLOWLIST: Final = frozenset(
     }
 )
 
-_RECURSION_DEPTH_MAX: Final = 6
+RECURSION_DEPTH_MAX: Final = 6
 
 
 @dataclass
@@ -263,7 +263,7 @@ class _AllowlistVisitor(Visitor):
             self.srf_calls.append(node)
             self.functions.add(name)
             return None
-        if name not in _FUNCTION_ALLOWLIST:
+        if name not in FUNCTION_ALLOWLIST:
             raise _reject(
                 QueryErrorCode.FUNCTION_NOT_ALLOWED, f"function {name} is not allowed"
             )
@@ -272,7 +272,7 @@ class _AllowlistVisitor(Visitor):
 
     def visit_A_Expr(self, ancestors, node: A_Expr):  # noqa: ANN001, ANN201
         for piece in node.name or ():
-            if isinstance(piece, String) and _sval(piece) not in _OPERATOR_ALLOWLIST:
+            if isinstance(piece, String) and _sval(piece) not in OPERATOR_ALLOWLIST:
                 raise _reject(
                     QueryErrorCode.OPERATOR_NOT_ALLOWED,
                     f"operator {piece.sval} is not allowed",
@@ -287,7 +287,7 @@ class _AllowlistVisitor(Visitor):
             if _sval(part)
         ]
         bare = names[-1].lower() if names else ""
-        if bare not in _CAST_TYPE_ALLOWLIST:
+        if bare not in CAST_TYPE_ALLOWLIST:
             raise _reject(
                 QueryErrorCode.OPERATOR_NOT_ALLOWED, f"cast to {bare} is not allowed"
             )
@@ -586,11 +586,11 @@ def _validate_recursive_template(clause, owner=None) -> None:  # noqa: ANN001
     bound = _recursive_arm_depth_bound(
         recursive_arm, qualifier=None if sole_source else self_alias
     )
-    if bound is None or bound > _RECURSION_DEPTH_MAX:
+    if bound is None or bound > RECURSION_DEPTH_MAX:
         raise _reject(
             QueryErrorCode.UNBOUNDED_RECURSION,
             "the recursive term must be bounded by the literal predicate"
-            f" depth < N with N <= {_RECURSION_DEPTH_MAX}, with no OR around it",
+            f" depth < N with N <= {RECURSION_DEPTH_MAX}, with no OR around it",
         )
 
 
@@ -781,6 +781,20 @@ class _SrfPlacementVisitor(Visitor):
         self.accepted: list[FuncCall] = []
 
     def visit_RangeFunction(self, ancestors, node: RangeFunction):  # noqa: ANN001, ANN201
+        public_calls = sum(
+            1
+            for entry in node.functions or ()
+            for call in ((entry[0] if isinstance(entry, tuple) else entry),)
+            if isinstance(call, FuncCall) and _func_name(call) in PUBLIC_SRF_NAMES
+        )
+        if public_calls > 1:
+            # ROWS FROM packs several functions into ONE from-item, which the
+            # rewrite would materialize as one CTE — the per-invocation caps
+            # would then count one where the caller wrote several.
+            raise _reject(
+                QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED,
+                "each public function invocation needs its own FROM item",
+            )
         top_level = _range_function_is_top_level(ancestors)
         if node.lateral and top_level:
             top_level = False
@@ -829,10 +843,20 @@ def _ancestor_nodes(ancestors):  # noqa: ANN001, ANN201
 
 
 def _assert_srf_arguments_bindable(call: FuncCall) -> None:
+    """Every argument must be a literal or a bound parameter, cast or not.
+
+    A cast is transparent, so the operand is what matters: `lower($1)::text`
+    and `($1 || 'x')::text` are computed expressions wearing a cast.
+    """
     from pglast.ast import A_Const
 
+    def bindable(node: object) -> bool:
+        while isinstance(node, TypeCast):
+            node = node.arg
+        return isinstance(node, (A_Const, ParamRef))
+
     for arg in call.args or ():
-        if not isinstance(arg, (A_Const, ParamRef, TypeCast)):
+        if not bindable(arg):
             raise _reject(
                 QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED,
                 "public function arguments must be literals or bound parameters",
