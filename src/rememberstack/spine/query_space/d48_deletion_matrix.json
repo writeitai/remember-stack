@@ -1,0 +1,650 @@
+{
+  "cell_count": 144,
+  "cells": [
+    {
+      "surface": "memory_v1.changes_visible",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.chunks_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.claims_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.documents_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.entities_current",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.facts_current",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.mentions_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.pages_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.sections_live",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "lineage"
+    },
+    {
+      "surface": "memory_v1.changes_visible",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.chunks_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.claims_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.documents_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.entities_current",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.facts_current",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.mentions_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.pages_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.sections_live",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "version"
+    },
+    {
+      "surface": "memory_v1.changes_visible",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.chunks_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.claims_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.documents_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.entities_current",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.facts_current",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.mentions_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.pages_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.sections_live",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "representation"
+    },
+    {
+      "surface": "memory_v1.changes_visible",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.chunks_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.claims_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.documents_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.entities_current",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.facts_current",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.mentions_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.pages_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.sections_live",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "claim"
+    },
+    {
+      "surface": "memory_v1.changes_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.chunks_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.claims_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.documents_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.entities_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.facts_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.mentions_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.pages_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.sections_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "surface": "memory_v1.changes_visible",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.chunks_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.claims_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.documents_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.entities_current",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.facts_current",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.mentions_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.pages_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.sections_live",
+      "target_id": "k_target"
+    },
+    {
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "k_target"
+    }
+  ],
+  "contract": "memory_v1.d48_deletion_matrix/1",
+  "expectation": "After the mutation, no row of this relation carries any identifier from the target's forbidden set.",
+  "schema": "memory_v1",
+  "surface_count": 24,
+  "surfaces": [
+    "changes_visible",
+    "chunks_live",
+    "claim_occurrences_live",
+    "claims_live",
+    "claims_visible_history",
+    "contradiction_members_current",
+    "document_crossrefs_live",
+    "document_versions_visible",
+    "documents_live",
+    "entities_current",
+    "entity_aliases_current",
+    "entity_document_mentions",
+    "evidence_lineage",
+    "fact_claim_evidence_live",
+    "facts_current",
+    "facts_visible_history",
+    "graph_edges_current",
+    "graph_edges_visible_history",
+    "identity_events_visible",
+    "mentions_live",
+    "page_evidence_visible",
+    "pages_live",
+    "sections_live",
+    "testimony_currency_events_visible"
+  ],
+  "target_count": 6,
+  "targets": [
+    {
+      "forbidden_identifiers": "The lineage id and every identifier derived from it: its versions, representations, sections, chunks, claims, mentions, cross-references, testimony-currency events, the entity whose only provenance it was, and the fact whose only evidence lineage it was.",
+      "mutation": "Set documents.deleted_at on the fixture lineage.",
+      "summary": "A live document lineage is forgotten.",
+      "target_id": "lineage"
+    },
+    {
+      "forbidden_identifiers": "The version id and every identifier derived from it: its representation, sections, chunks, claims, and mentions. The facts those claims evidenced keep their surviving historical provenance and are deliberately not forbidden.",
+      "mutation": "Set document_versions.deleted_at on the fixture version.",
+      "summary": "One non-current version of a live lineage is tombstoned.",
+      "target_id": "version"
+    },
+    {
+      "forbidden_identifiers": "The superseded representation id and the sections and chunks cut from it. The fixture lineage carries no claims, so no testimony legitimately outlives the reading and the forbidden set stays global.",
+      "mutation": "Insert a new ready representation, point the version's current representation at it, and leave the previous reading in place.",
+      "summary": "The current ready reading of a live version is superseded.",
+      "target_id": "representation"
+    },
+    {
+      "forbidden_identifiers": "The claim id. The fact it evidenced keeps its association row and stays visible with a reduced count, which is the D54 behaviour rather than a leak.",
+      "mutation": "Delete the claim row and its chunk occurrences.",
+      "summary": "One claim is purged from the testimony record.",
+      "target_id": "claim"
+    },
+    {
+      "forbidden_identifiers": "The fact id, which must disappear from the fact relations, the evidence bridge, the contradiction and graph projections, and the change feed.",
+      "mutation": "Delete the fact's relation or observation evidence rows.",
+      "summary": "Every evidence lineage of one fact is removed.",
+      "target_id": "fact_provenance"
+    },
+    {
+      "forbidden_identifiers": "The cited lineage id and its derived identifiers. The citing page stays visible; only the citation leaves, which is what proves a chunk-content hash locator cannot authorize a read on its own.",
+      "mutation": "Set documents.deleted_at on the cited lineage.",
+      "summary": "The lineage a knowledge page cites is forgotten.",
+      "target_id": "k_target"
+    }
+  ]
+}

@@ -1,0 +1,3666 @@
+{
+  "annotations": {
+    "note": "Physical indexes and fixtures are deliberately outside the hashed members: adding an index or a fixture must not roll surface_manifest_hash.",
+    "views": {
+      "changes_visible": {
+        "fixtures": {
+          "negative": "changes_visible.forgotten_lineage_change_absent",
+          "positive": "changes_visible.fact_ingest_event_present"
+        },
+        "indexes_used": [
+          "ix_adjud_relation",
+          "ix_obsadjud_observation",
+          "ix_kcompilations_artifact"
+        ]
+      },
+      "chunks_live": {
+        "fixtures": {
+          "negative": "chunks_live.superseded_version_chunk_absent",
+          "positive": "chunks_live.current_representation_chunk_present"
+        },
+        "indexes_used": [
+          "ix_chunks_doc",
+          "ix_chunks_version",
+          "ix_chunks_section"
+        ]
+      },
+      "claim_occurrences_live": {
+        "fixtures": {
+          "negative": "claim_occurrences_live.repeated_attachment_collapsed",
+          "positive": "claim_occurrences_live.current_chunk_occurrence_present"
+        },
+        "indexes_used": [
+          "ix_chunkclaims_claim",
+          "chunk_claims_pkey"
+        ]
+      },
+      "claims_live": {
+        "fixtures": {
+          "negative": "claims_live.superseded_testimony_absent",
+          "positive": "claims_live.current_testimony_present"
+        },
+        "indexes_used": [
+          "ix_claims_current",
+          "ix_claims_doc",
+          "ix_claims_chunk"
+        ]
+      },
+      "claims_visible_history": {
+        "fixtures": {
+          "negative": "claims_visible_history.forgotten_lineage_claim_absent",
+          "positive": "claims_visible_history.superseded_testimony_present"
+        },
+        "indexes_used": [
+          "ix_claims_doc",
+          "ix_claims_chunk",
+          "ix_claims_valid_window"
+        ]
+      },
+      "contradiction_members_current": {
+        "fixtures": {
+          "negative": "contradiction_members_current.ungrouped_fact_absent",
+          "positive": "contradiction_members_current.both_sides_present"
+        },
+        "indexes_used": [
+          "ix_relations_contradiction",
+          "ix_observations_contradiction"
+        ]
+      },
+      "document_crossrefs_live": {
+        "fixtures": {
+          "negative": "document_crossrefs_live.forgotten_target_absent",
+          "positive": "document_crossrefs_live.both_endpoints_live_present"
+        },
+        "indexes_used": [
+          "ix_crossrefs_from",
+          "ix_crossrefs_to"
+        ]
+      },
+      "document_versions_visible": {
+        "fixtures": {
+          "negative": "document_versions_visible.tombstoned_version_absent",
+          "positive": "document_versions_visible.live_version_present"
+        },
+        "indexes_used": [
+          "document_versions_pkey",
+          "documents_pkey"
+        ]
+      },
+      "documents_live": {
+        "fixtures": {
+          "negative": "documents_live.tombstoned_lineage_absent",
+          "positive": "documents_live.live_lineage_present"
+        },
+        "indexes_used": [
+          "documents_pkey",
+          "ix_documents_live",
+          "document_versions_pkey"
+        ]
+      },
+      "entities_current": {
+        "fixtures": {
+          "negative": "entities_current.merged_entity_absent",
+          "positive": "entities_current.survivor_with_live_provenance_present"
+        },
+        "indexes_used": [
+          "entities_pkey",
+          "ix_entities_type"
+        ]
+      },
+      "entity_aliases_current": {
+        "fixtures": {
+          "negative": "entity_aliases_current.forgotten_entity_alias_absent",
+          "positive": "entity_aliases_current.alias_redirected_to_survivor"
+        },
+        "indexes_used": [
+          "ix_aliases_entity",
+          "ix_aliases_lemma_exact"
+        ]
+      },
+      "entity_document_mentions": {
+        "fixtures": {
+          "negative": "entity_document_mentions.forgotten_lineage_pair_absent",
+          "positive": "entity_document_mentions.exact_live_count_present"
+        },
+        "indexes_used": [
+          "ix_mentions_doc",
+          "ix_chunks_version",
+          "ix_resdec_live",
+          "ix_resdec_entity_live"
+        ]
+      },
+      "evidence_lineage": {
+        "fixtures": {
+          "negative": "evidence_lineage.forgotten_lineage_evidence_absent",
+          "positive": "evidence_lineage.repetition_does_not_add_a_lineage"
+        },
+        "indexes_used": [
+          "relation_evidence_pkey",
+          "observation_evidence_pkey"
+        ]
+      },
+      "fact_claim_evidence_live": {
+        "fixtures": {
+          "negative": "fact_claim_evidence_live.superseded_testimony_absent",
+          "positive": "fact_claim_evidence_live.both_stances_present"
+        },
+        "indexes_used": [
+          "relation_evidence_pkey",
+          "observation_evidence_pkey",
+          "ix_relevidence_claim",
+          "ix_obsevidence_claim"
+        ]
+      },
+      "facts_current": {
+        "fixtures": {
+          "negative": "facts_current.ended_window_fact_absent",
+          "positive": "facts_current.open_window_fact_present"
+        },
+        "indexes_used": [
+          "relations_pkey",
+          "observations_pkey",
+          "ix_review_pending"
+        ]
+      },
+      "facts_visible_history": {
+        "fixtures": {
+          "negative": "facts_visible_history.forgotten_provenance_fact_absent",
+          "positive": "facts_visible_history.invalidated_fact_present"
+        },
+        "indexes_used": [
+          "relations_pkey",
+          "observations_pkey",
+          "relation_evidence_pkey",
+          "observation_evidence_pkey",
+          "ix_review_pending"
+        ]
+      },
+      "graph_edges_current": {
+        "fixtures": {
+          "negative": "graph_edges_current.observation_never_projects",
+          "positive": "graph_edges_current.survivor_endpoints_present"
+        },
+        "indexes_used": [
+          "ix_relations_block_subj",
+          "ix_relations_block_obj",
+          "ix_relations_live"
+        ]
+      },
+      "graph_edges_visible_history": {
+        "fixtures": {
+          "negative": "graph_edges_visible_history.forgotten_provenance_edge_absent",
+          "positive": "graph_edges_visible_history.invalidated_edge_present"
+        },
+        "indexes_used": [
+          "ix_relations_block_subj",
+          "ix_relations_predicate"
+        ]
+      },
+      "identity_events_visible": {
+        "fixtures": {
+          "negative": "identity_events_visible.forgotten_source_event_absent",
+          "positive": "identity_events_visible.resolution_and_merge_arms_present"
+        },
+        "indexes_used": [
+          "ix_resdec_entity",
+          "ix_merge_survivor",
+          "ix_merge_absorbed"
+        ]
+      },
+      "mentions_live": {
+        "fixtures": {
+          "negative": "mentions_live.superseded_version_mention_absent",
+          "positive": "mentions_live.unresolved_mention_present"
+        },
+        "indexes_used": [
+          "ix_mentions_doc",
+          "ix_resdec_mention",
+          "ix_resdec_live"
+        ]
+      },
+      "page_evidence_visible": {
+        "fixtures": {
+          "negative": "page_evidence_visible.forgotten_target_link_absent",
+          "positive": "page_evidence_visible.claim_coordinate_link_present"
+        },
+        "indexes_used": [
+          "ux_kae_link",
+          "ix_kae_claim_coordinate",
+          "ix_kae_relation",
+          "ix_kae_doc"
+        ]
+      },
+      "pages_live": {
+        "fixtures": {
+          "negative": "pages_live.tombstoned_page_absent",
+          "positive": "pages_live.compiled_page_present"
+        },
+        "indexes_used": [
+          "knowledge_artifacts_pkey",
+          "ix_kartifacts_stale",
+          "ix_krefresh_runnable"
+        ]
+      },
+      "sections_live": {
+        "fixtures": {
+          "negative": "sections_live.superseded_generation_section_absent",
+          "positive": "sections_live.current_representation_section_present"
+        },
+        "indexes_used": [
+          "ix_sections_doc",
+          "uq_sections_generation_path"
+        ]
+      },
+      "testimony_currency_events_visible": {
+        "fixtures": {
+          "negative": "testimony_currency_events_visible.forgotten_lineage_transition_absent",
+          "positive": "testimony_currency_events_visible.reextraction_transition_present"
+        },
+        "indexes_used": [
+          "ix_currency_claim",
+          "ix_currency_doc"
+        ]
+      }
+    }
+  },
+  "hash_members": {
+    "core_operation_descriptors": {
+      "contract": "memory_v1.core_operations/1",
+      "operations": []
+    },
+    "function_signatures": {
+      "contract": "memory_v1.functions/1",
+      "functions": []
+    },
+    "limits": {
+      "contract": "memory_v1.limits/1",
+      "cypher_dialect": {
+        "allowed_clauses": [],
+        "rejected_constructs": []
+      },
+      "p2_projection": {
+        "contract_version": null,
+        "edge_types": {},
+        "node_types": {}
+      },
+      "resource_limits": {
+        "analytical_hard_cap": {},
+        "default": {},
+        "interactive_hard_cap": {}
+      },
+      "sql_grammar": {
+        "operators": [],
+        "pg_catalog_functions": []
+      }
+    },
+    "views_schema": {
+      "definition_ast_serializer": "memory_v1.ast/1",
+      "postgresql_major": 16,
+      "schema": "memory_v1",
+      "schema_major": 1,
+      "views": [
+        {
+          "clock_semantics": "transaction_time_event",
+          "columns": [
+            {
+              "comment": "The deployment that owns the change event.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which kind of change event this is, naming both the changed object and the transition.",
+              "enum_values": [
+                "relation_ingest",
+                "relation_invalidation",
+                "relation_supersession",
+                "observation_ingest",
+                "observation_invalidation",
+                "observation_supersession",
+                "claim_ingest",
+                "knowledge_page_compilation"
+              ],
+              "name": "object_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Identity of the event within its own source, unique together with object_kind.",
+              "enum_values": null,
+              "name": "event_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The object that changed, joinable to the relation named by object_kind.",
+              "enum_values": null,
+              "name": "object_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "When the change occurred, which is a transaction-time instant and never world validity.",
+              "enum_values": null,
+              "name": "occurred_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Short human-readable label for the changed object, drawn only from objects that are themselves visible.",
+              "enum_values": null,
+              "name": "label",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "comment": "One row per externally visible change event, keyed by the synthetic pair (deployment_id, object_kind, event_id): every union arm names its own transition in object_kind and supplies an identifier from its own source table, so the underlying identifier spaces cannot collide. Each arm reads an already invariant-bearing relation or joins one, so a change event appears only while its object is still visible. THERE IS DELIBERATELY NO DELETION ARM: forgetting a lineage, tombstoning a version, or retiring a page removes the affected events instead of announcing the removal, and labels are drawn only from visible objects, so neither the event set nor the label text can become a side channel for what was forgotten. The occurrence clock is transaction time and never world validity, the feed is uncapped at the relation level so a caller bounds it with an ordinary predicate, and the view carries no counts and asserts no facts.",
+          "definition_ast": "(w:select w:h o:. w:deployment_id o:, s:relation_ingest o::: w:text w:as w:object_kind o:, w:h o:. w:fact_id w:as w:event_id o:, w:h o:. w:fact_id w:as w:object_id o:, w:h o:. w:ingested_at w:as w:occurred_at o:, w:coalesce (w:h o:. w:fact_label o:, w:h o:. w:predicate) w:as w:label w:from w:memory_v1 o:. w:facts_visible_history w:h w:where w:h o:. w:fact_kind o:= s:relation o::: w:text w:union w:all w:select w:h o:. w:deployment_id o:, s:relation_invalidation o::: w:text w:as w:object_kind o:, w:h o:. w:fact_id w:as w:event_id o:, w:h o:. w:fact_id w:as w:object_id o:, w:h o:. w:invalidated_at w:as w:occurred_at o:, w:coalesce (w:h o:. w:fact_label o:, w:h o:. w:predicate) w:as w:label w:from w:memory_v1 o:. w:facts_visible_history w:h w:where w:h o:. w:fact_kind o:= s:relation o::: w:text w:and w:h o:. w:invalidated_at w:is w:not w:null w:union w:all w:select w:ra o:. w:deployment_id o:, s:relation_supersession o::: w:text w:as w:object_kind o:, w:ra o:. w:adjudication_id w:as w:event_id o:, w:h o:. w:fact_id w:as w:object_id o:, w:ra o:. w:decided_at w:as w:occurred_at o:, w:coalesce (w:h o:. w:fact_label o:, w:h o:. w:predicate) w:as w:label w:from w:relation_adjudications w:ra w:join w:memory_v1 o:. w:facts_visible_history w:h w:on w:h o:. w:deployment_id o:= w:ra o:. w:deployment_id w:and w:h o:. w:fact_kind o:= s:relation o::: w:text w:and w:h o:. w:fact_id o:= w:ra o:. w:relation_id w:where w:ra o:. w:outcome o:= s:supersede o::: w:adjudication_outcome w:union w:all w:select w:h o:. w:deployment_id o:, s:observation_ingest o::: w:text w:as w:object_kind o:, w:h o:. w:fact_id w:as w:event_id o:, w:h o:. w:fact_id w:as w:object_id o:, w:h o:. w:ingested_at w:as w:occurred_at o:, w:coalesce (w:h o:. w:fact_label o:, w:h o:. w:statement) w:as w:label w:from w:memory_v1 o:. w:facts_visible_history w:h w:where w:h o:. w:fact_kind o:= s:observation o::: w:text w:union w:all w:select w:h o:. w:deployment_id o:, s:observation_invalidation o::: w:text w:as w:object_kind o:, w:h o:. w:fact_id w:as w:event_id o:, w:h o:. w:fact_id w:as w:object_id o:, w:h o:. w:invalidated_at w:as w:occurred_at o:, w:coalesce (w:h o:. w:fact_label o:, w:h o:. w:statement) w:as w:label w:from w:memory_v1 o:. w:facts_visible_history w:h w:where w:h o:. w:fact_kind o:= s:observation o::: w:text w:and w:h o:. w:invalidated_at w:is w:not w:null w:union w:all w:select w:oa o:. w:deployment_id o:, s:observation_supersession o::: w:text w:as w:object_kind o:, w:oa o:. w:adjudication_id w:as w:event_id o:, w:h o:. w:fact_id w:as w:object_id o:, w:oa o:. w:decided_at w:as w:occurred_at o:, w:coalesce (w:h o:. w:fact_label o:, w:h o:. w:statement) w:as w:label w:from w:observation_adjudications w:oa w:join w:memory_v1 o:. w:facts_visible_history w:h w:on w:h o:. w:deployment_id o:= w:oa o:. w:deployment_id w:and w:h o:. w:fact_kind o:= s:observation o::: w:text w:and w:h o:. w:fact_id o:= w:oa o:. w:observation_id w:where w:oa o:. w:outcome o:= s:supersede o::: w:adjudication_outcome w:union w:all w:select w:c o:. w:deployment_id o:, s:claim_ingest o::: w:text w:as w:object_kind o:, w:c o:. w:claim_id w:as w:event_id o:, w:c o:. w:claim_id w:as w:object_id o:, w:c o:. w:ingested_at w:as w:occurred_at o:, q:left (w:c o:. w:claim_text o:, n:120) w:as w:label w:from w:memory_v1 o:. w:claims_visible_history w:c w:union w:all w:select w:kc o:. w:deployment_id o:, s:knowledge_page_compilation o::: w:text w:as w:object_kind o:, w:kc o:. w:compilation_id w:as w:event_id o:, w:p o:. w:artifact_id w:as w:object_id o:, w:kc o:. w:compiled_at w:as w:occurred_at o:, w:p o:. w:git_path w:as w:label w:from w:knowledge_compilations w:kc w:join w:memory_v1 o:. w:pages_live w:p w:on w:p o:. w:deployment_id o:= w:kc o:. w:deployment_id w:and w:p o:. w:artifact_id o:= w:kc o:. w:artifact_id o:;)",
+          "grain": "one externally visible change event",
+          "grain_tag": "change_event_visible",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "object_id"
+              ],
+              "target": "memory_v1.facts_visible_history"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "object_id"
+              ],
+              "target": "memory_v1.claims_visible_history"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "object_id"
+              ],
+              "target": "memory_v1.pages_live"
+            }
+          ],
+          "name": "changes_visible",
+          "qualified_name": "memory_v1.changes_visible",
+          "row_key": [
+            "deployment_id",
+            "object_kind",
+            "event_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns the chunk.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this retrieval unit within the current reading.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage the chunk belongs to.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The lineage's current version the chunk was cut from.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current ready reading whose block grid and offsets the chunk uses.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The section containing the chunk, null when the chunk has no section in the current structure generation.",
+              "enum_values": null,
+              "name": "section_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Position of the chunk within the document.",
+              "enum_values": null,
+              "name": "ordinal",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "First block ordinal packed into the chunk.",
+              "enum_values": null,
+              "name": "block_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Last block ordinal packed into the chunk, inclusive.",
+              "enum_values": null,
+              "name": "block_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Start character offset of the chunk within this representation's markdown.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of the chunk within this representation's markdown.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Token length of the chunk, null when it was never measured.",
+              "enum_values": null,
+              "name": "token_count",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "Hash of the chunk's ordered block hashes, which is its content identity.",
+              "enum_values": null,
+              "name": "chunk_content_hash",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Hash of the stable extraction inputs, which is the reuse key that avoids re-extracting unchanged content.",
+              "enum_values": null,
+              "name": "extraction_input_hash",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Hash of the exact text that was embedded under the D80 policy, null when the chunk has not been embedded.",
+              "enum_values": null,
+              "name": "embedding_text_hash",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The deterministic D80 location facts as structured data, null when no policy generation has stamped the chunk.",
+              "enum_values": null,
+              "name": "location_facts",
+              "nullable": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "The deterministic D80 location header prepended to the embedded text; it is generated orientation text and is never asserted evidence.",
+              "enum_values": null,
+              "name": "location_header",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The D80 embedding-input policy in force for this chunk, null when unstamped.",
+              "enum_values": null,
+              "name": "embedding_input_policy_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The generation label of that policy application, null when unstamped.",
+              "enum_values": null,
+              "name": "policy_generation",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The embedder generation that produced the chunk vector, null when the chunk has not been embedded.",
+              "enum_values": null,
+              "name": "embedder_generation",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The chunker configuration that produced this cut, null on rows written before the stamp existed.",
+              "enum_values": null,
+              "name": "chunker_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The context-prefixer generation for this chunk, null when no prefix was generated.",
+              "enum_values": null,
+              "name": "prefixer_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "When the chunk row was written, which is a processing instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "created_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per chunk coordinate in the current ready representation of a live lineage, keyed by (deployment_id, chunk_id) and joined to documents_live on (deployment_id, doc_id) and to sections_live on (deployment_id, section_id). This relation is metadata only and deliberately carries no authoritative body column: chunk text is returned solely by the confirmed body-fetch path, which re-verifies the coordinate and the content and embedding hashes before any bytes leave the system. Chunks of superseded versions, non-ready readings, and forgotten lineages are absent, and a section_id is exposed only when that section belongs to the representation's current structure generation. The location header is generated orientation text, never evidence; the view carries no counts and no validity clocks.",
+          "definition_ast": "(w:select w:c o:. w:deployment_id o:, w:c o:. w:chunk_id o:, w:c o:. w:doc_id o:, w:c o:. w:version_id o:, w:c o:. w:representation_id o:, w:sec o:. w:section_id o:, w:c o:. w:ordinal o:, w:c o:. w:block_start o:, w:c o:. w:block_end o:, w:c o:. w:char_start o:, w:c o:. w:char_end o:, w:c o:. w:token_count o:, w:c o:. w:chunk_content_hash o:, w:c o:. w:extraction_input_hash o:, w:c o:. w:embedding_text_hash o:, w:c o:. w:location_facts_json w:as w:location_facts o:, w:c o:. w:location_header o:, w:c o:. w:embedding_input_policy_version o:, w:c o:. w:policy_generation o:, w:c o:. w:embedding_version w:as w:embedder_generation o:, w:c o:. w:chunker_version o:, w:c o:. w:prefixer_version o:, w:c o:. w:created_at w:from w:chunks w:c w:join w:memory_v1 o:. w:documents_live w:dl w:on w:dl o:. w:deployment_id o:= w:c o:. w:deployment_id w:and w:dl o:. w:doc_id o:= w:c o:. w:doc_id w:and w:dl o:. w:current_version_id o:= w:c o:. w:version_id w:and w:dl o:. w:current_representation_id o:= w:c o:. w:representation_id w:and w:dl o:. w:has_current_ready_content w:join w:document_representations w:r w:on w:r o:. w:deployment_id o:= w:c o:. w:deployment_id w:and w:r o:. w:representation_id o:= w:c o:. w:representation_id w:left w:join w:document_sections w:sec w:on w:sec o:. w:deployment_id o:= w:c o:. w:deployment_id w:and w:sec o:. w:section_id o:= w:c o:. w:section_id w:and w:sec o:. w:structure_generation_id o:= w:r o:. w:current_structure_generation_id o:;)",
+          "grain": "one chunk coordinate in a current ready representation",
+          "grain_tag": "chunk_current_content",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "section_id"
+              ],
+              "target": "memory_v1.sections_live"
+            }
+          ],
+          "name": "chunks_live",
+          "qualified_name": "memory_v1.chunks_live",
+          "row_key": [
+            "deployment_id",
+            "chunk_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns the occurrence.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The claim carried by this chunk occurrence.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current-content chunk that carries the claim.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "How this occurrence was derived from the source, such as passthrough, asr, or ocr; null when the reading recorded no label.",
+              "enum_values": null,
+              "name": "derivation_kind",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The live lineage carrying the occurrence.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The lineage's current version carrying the occurrence.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current ready reading carrying the occurrence.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The section containing the carrying chunk, null when the chunk has no section in the current structure generation.",
+              "enum_values": null,
+              "name": "section_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "How mediated this occurrence is, such as source_expression or model_observation; null when the reading recorded no mode.",
+              "enum_values": null,
+              "name": "evidence_mode",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The resolved source locator set for this occurrence, null when the reading resolved none.",
+              "enum_values": null,
+              "name": "source_locators",
+              "nullable": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "When this occurrence was first recorded, which is a processing instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "attached_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per current claim occurrence, keyed by (deployment_id, claim_id, chunk_id, derivation_kind) with null derivation kinds treated as equal, and joined to claims_visible_history on (deployment_id, claim_id) and to chunks_live on (deployment_id, chunk_id). It is the explicit association answering which current chunk, version, representation, and section carry a claim, which a re-attachment of the same claim to the same chunk under the same derivation does not duplicate: repeated attachments collapse to the earliest, so attached_at is the first time the occurrence was recorded. Occurrences in superseded versions, non-ready readings, and forgotten lineages are absent. Source locators are provenance, not evidence text; the view carries no counts and no validity clocks.",
+          "definition_ast": "(w:select w:distinct w:on (w:cc o:. w:deployment_id o:, w:cc o:. w:claim_id o:, w:cc o:. w:chunk_id o:, w:cc o:. w:derivation_kind) w:cc o:. w:deployment_id o:, w:cc o:. w:claim_id o:, w:cc o:. w:chunk_id o:, w:cc o:. w:derivation_kind o:, w:cl o:. w:doc_id o:, w:cl o:. w:version_id o:, w:cl o:. w:representation_id o:, w:cl o:. w:section_id o:, w:cc o:. w:evidence_mode o:, w:cc o:. w:source_locators o:, w:cc o:. w:created_at w:as w:attached_at w:from w:chunk_claims w:cc w:join w:memory_v1 o:. w:chunks_live w:cl w:on w:cl o:. w:deployment_id o:= w:cc o:. w:deployment_id w:and w:cl o:. w:chunk_id o:= w:cc o:. w:chunk_id w:join w:memory_v1 o:. w:claims_visible_history w:ch w:on w:ch o:. w:deployment_id o:= w:cc o:. w:deployment_id w:and w:ch o:. w:claim_id o:= w:cc o:. w:claim_id w:order w:by w:cc o:. w:deployment_id o:, w:cc o:. w:claim_id o:, w:cc o:. w:chunk_id o:, w:cc o:. w:derivation_kind o:, w:cc o:. w:created_at o:, w:cc o:. w:evidence_mode o:;)",
+          "grain": "one current claim occurrence",
+          "grain_tag": "claim_occurrence_current_content",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "claim_id"
+              ],
+              "target": "memory_v1.claims_visible_history"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "chunk_id"
+              ],
+              "target": "memory_v1.chunks_live"
+            }
+          ],
+          "name": "claim_occurrences_live",
+          "qualified_name": "memory_v1.claim_occurrences_live",
+          "row_key": [
+            "deployment_id",
+            "claim_id",
+            "chunk_id",
+            "derivation_kind"
+          ]
+        },
+        {
+          "clock_semantics": "claim_validity_immutable",
+          "columns": [
+            {
+              "comment": "The deployment that owns the claim.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this immutable claim.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage that asserted the claim.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The non-tombstoned version the claim was extracted from.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The reading whose character offsets the claim's anchors use.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The chunk the claim was extracted from.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The standalone assertion as extracted, which is source testimony rather than adjudicated truth.",
+              "enum_values": null,
+              "name": "claim_text",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The verbatim slice of the source the claim derives from.",
+              "enum_values": null,
+              "name": "source_span",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Start character offset of source_span within the named representation's markdown.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of source_span within the named representation's markdown.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "The substrings decontextualization added, each with the bundle source it came from.",
+              "enum_values": null,
+              "name": "added_context",
+              "nullable": false,
+              "type": "jsonb"
+            },
+            {
+              "comment": "How the claim behaves over time, either static, dynamic, or atemporal; null when unclassified.",
+              "enum_values": [
+                "static",
+                "dynamic",
+                "atemporal"
+              ],
+              "name": "temporal_class",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "True when the claim preserves an attribution, so it entails that someone said it rather than that it holds.",
+              "enum_values": null,
+              "name": "is_attributed",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "Result of the sampled independent grounding audit, defaulting to unaudited.",
+              "enum_values": [
+                "unaudited",
+                "sampled_pass",
+                "sampled_fail",
+                "escalated"
+              ],
+              "name": "audit_status",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "True when selection kept the claim but marked it for review.",
+              "enum_values": null,
+              "name": "kept_flagged",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "The extractor generation that produced the claim, which is part of the D54 extraction basis.",
+              "enum_values": null,
+              "name": "extractor_version",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Assertion-event time: when the source asserted this, null when the source carries no date.",
+              "enum_values": null,
+              "name": "asserted_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown.",
+              "enum_values": null,
+              "name": "claim_valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable end of that interval, null for open-per-source or unknown as disambiguated by claim_valid_precision.",
+              "enum_values": null,
+              "name": "claim_valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Granularity of the asserted interval, from unknown through instant, day, month, quarter, and year to open.",
+              "enum_values": [
+                "unknown",
+                "instant",
+                "day",
+                "month",
+                "quarter",
+                "year",
+                "open"
+              ],
+              "name": "claim_valid_precision",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Which world-interval was asserted, such as event_time or measurement_period; null when unclassified.",
+              "enum_values": [
+                "proposition_validity",
+                "event_time",
+                "measurement_period",
+                "effective_period"
+              ],
+              "name": "claim_valid_kind",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Transaction-time: when this deployment extracted the claim.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The connector family of the asserting lineage.",
+              "enum_values": null,
+              "name": "source_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable human-usable handle for the asserting lineage, formed from its connector-native identity.",
+              "enum_values": null,
+              "name": "source_handle",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "comment": "One row per current-testimony claim, keyed by (deployment_id, claim_id): the subset of claims_visible_history whose D54 currency flag is still set. Like every claim relation this is IMMUTABLE SOURCE TESTIMONY, and \"live\" here means current transcription of a live source, never current truth: a claim in this relation can be contradicted by the adjudicated worldview, and querying its validity window to answer what holds now is the wrong query — start from facts_current and follow fact_claim_evidence_live back to here. Claim-evidence overlap is inclusive at both endpoints; a null endpoint is unbounded or unknown per claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent, and this relation is the sole claim input to the D54 counting path. The view carries no counts.",
+          "definition_ast": "(w:select w:deployment_id o:, w:claim_id o:, w:doc_id o:, w:version_id o:, w:representation_id o:, w:chunk_id o:, w:claim_text o:, w:source_span o:, w:char_start o:, w:char_end o:, w:added_context o:, w:temporal_class o:, w:is_attributed o:, w:audit_status o:, w:kept_flagged o:, w:extractor_version o:, w:asserted_at o:, w:claim_valid_from o:, w:claim_valid_until o:, w:claim_valid_precision o:, w:claim_valid_kind o:, w:ingested_at o:, w:source_kind o:, w:source_handle w:from w:memory_v1 o:. w:claims_visible_history w:h w:where w:is_current_testimony o:;)",
+          "grain": "one current-testimony claim",
+          "grain_tag": "claim_current_testimony",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "claims_live",
+          "qualified_name": "memory_v1.claims_live",
+          "row_key": [
+            "deployment_id",
+            "claim_id"
+          ]
+        },
+        {
+          "clock_semantics": "claim_validity_immutable",
+          "columns": [
+            {
+              "comment": "The deployment that owns the claim.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this immutable claim.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage that asserted the claim.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The non-tombstoned version the claim was extracted from.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The reading whose character offsets the claim's anchors use.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The chunk the claim was extracted from.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The standalone assertion as extracted, which is source testimony rather than adjudicated truth.",
+              "enum_values": null,
+              "name": "claim_text",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The verbatim slice of the source the claim derives from.",
+              "enum_values": null,
+              "name": "source_span",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Start character offset of source_span within the named representation's markdown.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of source_span within the named representation's markdown.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "The substrings decontextualization added, each with the bundle source it came from.",
+              "enum_values": null,
+              "name": "added_context",
+              "nullable": false,
+              "type": "jsonb"
+            },
+            {
+              "comment": "How the claim behaves over time, either static, dynamic, or atemporal; null when unclassified.",
+              "enum_values": [
+                "static",
+                "dynamic",
+                "atemporal"
+              ],
+              "name": "temporal_class",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "True when the claim preserves an attribution, so it entails that someone said it rather than that it holds.",
+              "enum_values": null,
+              "name": "is_attributed",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "Result of the sampled independent grounding audit, defaulting to unaudited.",
+              "enum_values": [
+                "unaudited",
+                "sampled_pass",
+                "sampled_fail",
+                "escalated"
+              ],
+              "name": "audit_status",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "True when selection kept the claim but marked it for review.",
+              "enum_values": null,
+              "name": "kept_flagged",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "The extractor generation that produced the claim, which is part of the D54 extraction basis.",
+              "enum_values": null,
+              "name": "extractor_version",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Assertion-event time: when the source asserted this, null when the source carries no date.",
+              "enum_values": null,
+              "name": "asserted_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown.",
+              "enum_values": null,
+              "name": "claim_valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable end of that interval, null for open-per-source or unknown as disambiguated by claim_valid_precision.",
+              "enum_values": null,
+              "name": "claim_valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Granularity of the asserted interval, from unknown through instant, day, month, quarter, and year to open.",
+              "enum_values": [
+                "unknown",
+                "instant",
+                "day",
+                "month",
+                "quarter",
+                "year",
+                "open"
+              ],
+              "name": "claim_valid_precision",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Which world-interval was asserted, such as event_time or measurement_period; null when unclassified.",
+              "enum_values": [
+                "proposition_validity",
+                "event_time",
+                "measurement_period",
+                "effective_period"
+              ],
+              "name": "claim_valid_kind",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Transaction-time: when this deployment extracted the claim.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The connector family of the asserting lineage.",
+              "enum_values": null,
+              "name": "source_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable human-usable handle for the asserting lineage, formed from its connector-native identity.",
+              "enum_values": null,
+              "name": "source_handle",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "True while this claim is the current transcription of its chunk under D54; false once a newer extraction generation or a living-mode version move superseded it.",
+              "enum_values": null,
+              "name": "is_current_testimony",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "comment": "One row per claim whose source lineage is live and whose source version is not tombstoned, keyed by (deployment_id, claim_id) and joined to documents_live on (deployment_id, doc_id) and to document_versions_visible on (deployment_id, version_id). This relation is IMMUTABLE SOURCE TESTIMONY and never answers what currently holds: claim_valid_from and claim_valid_until say when a source asserted a proposition applied, not what the system believes now, and filtering them by an instant is the classic wrong current-truth query — use facts_current instead. Claim-evidence overlap is INCLUSIVE at both endpoints, because an instant-precision claim has equal endpoints that a half-open convention would make empty. A null claim_valid_from means unbounded-before or unknown and a null claim_valid_until means open-per-source or unknown, disambiguated by claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent; is_current_testimony is D54 bookkeeping and never validity. The view carries no counts.",
+          "definition_ast": "(w:select w:c o:. w:deployment_id o:, w:c o:. w:claim_id o:, w:c o:. w:doc_id o:, w:ch o:. w:version_id o:, w:ch o:. w:representation_id o:, w:c o:. w:chunk_id o:, w:c o:. w:claim_text o:, w:c o:. w:source_span o:, w:c o:. w:char_start o:, w:c o:. w:char_end o:, w:c o:. w:added_context o:, w:c o:. w:temporal_class o::: w:text w:as w:temporal_class o:, w:c o:. w:is_attributed o:, w:c o:. w:audit_status o::: w:text w:as w:audit_status o:, w:c o:. w:kept_flagged o:, w:c o:. w:extractor_version o:, w:c o:. w:asserted_at o:, w:c o:. w:claim_valid_from o:, w:c o:. w:claim_valid_until o:, w:c o:. w:claim_valid_precision o::: w:text w:as w:claim_valid_precision o:, w:c o:. w:claim_valid_kind o::: w:text w:as w:claim_valid_kind o:, w:c o:. w:ingested_at o:, w:dl o:. w:source_kind o:, (w:dl o:. w:source_kind o:|| s:: o::: w:text) o:|| w:coalesce (w:dl o:. w:source_ref o:, w:dl o:. w:doc_id o::: w:text) w:as w:source_handle o:, w:c o:. w:is_current_testimony w:from w:claims w:c w:join w:chunks w:ch w:on w:ch o:. w:deployment_id o:= w:c o:. w:deployment_id w:and w:ch o:. w:chunk_id o:= w:c o:. w:chunk_id w:join w:memory_v1 o:. w:document_versions_visible w:vv w:on w:vv o:. w:deployment_id o:= w:ch o:. w:deployment_id w:and w:vv o:. w:version_id o:= w:ch o:. w:version_id w:and w:vv o:. w:doc_id o:= w:c o:. w:doc_id w:join w:memory_v1 o:. w:documents_live w:dl w:on w:dl o:. w:deployment_id o:= w:c o:. w:deployment_id w:and w:dl o:. w:doc_id o:= w:c o:. w:doc_id o:;)",
+          "grain": "one historically visible claim with surviving lineage",
+          "grain_tag": "claim_visible_history",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "claims_visible_history",
+          "qualified_name": "memory_v1.claims_visible_history",
+          "row_key": [
+            "deployment_id",
+            "claim_id"
+          ]
+        },
+        {
+          "clock_semantics": "bitemporal_current_at_evaluated_at",
+          "columns": [
+            {
+              "comment": "The deployment that owns the fact.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The shared identifier binding the members of one unadjudicated contradiction.",
+              "enum_values": null,
+              "name": "contradiction_group",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which fact layer this member belongs to, either relation or observation.",
+              "enum_values": [
+                "relation",
+                "observation"
+              ],
+              "name": "fact_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable identity of the member fact.",
+              "enum_values": null,
+              "name": "fact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Human-readable sentence for the member, null when no label has been generated.",
+              "enum_values": null,
+              "name": "fact_label",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "World-time start of the member, null for unknown or always.",
+              "enum_values": null,
+              "name": "valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "World-time end of the member, null while the member is open.",
+              "enum_values": null,
+              "name": "valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Transaction-time start: when the system first believed the member.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Exact count of distinct current-testimony lineages supporting the member.",
+              "enum_values": null,
+              "name": "evidence_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exact count of distinct current-testimony lineages contradicting the member.",
+              "enum_values": null,
+              "name": "contradict_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exactly current or withdrawn, derived at read time from the open review queue.",
+              "enum_values": [
+                "current",
+                "withdrawn"
+              ],
+              "name": "support_state",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The single statement instant at which both clocks were applied, shared with every other current relation in the statement.",
+              "enum_values": null,
+              "name": "evaluated_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per current member of a contradiction group, keyed by (deployment_id, contradiction_group, fact_kind, fact_id) and joined to facts_current on (deployment_id, fact_kind, fact_id). A contradiction group is the system declining to silently pick a winner, so both sides stand and are visible here with their own clocks, counts, and support state. Membership, clocks, and the shared evaluation instant are inherited unchanged from facts_current, including the half-open world-time interval and the surviving-provenance requirement. Because arbitrary SQL can still filter this relation down to one side, a result built from it carries no platform guarantee that co-members are complete: that guarantee belongs to the assured operations. The counts are exact counts of distinct current-testimony lineages, and support state is derived at read time.",
+          "definition_ast": "(w:select w:deployment_id o:, w:contradiction_group o:, w:fact_kind o:, w:fact_id o:, w:fact_label o:, w:valid_from o:, w:valid_until o:, w:ingested_at o:, w:evidence_count o:, w:contradict_count o:, w:support_state o:, w:evaluated_at w:from w:memory_v1 o:. w:facts_current w:f w:where w:contradiction_group w:is w:not w:null o:;)",
+          "grain": "one current contradiction-group member",
+          "grain_tag": "contradiction_member_current",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "fact_kind",
+                "fact_id"
+              ],
+              "target": "memory_v1.facts_current"
+            }
+          ],
+          "name": "contradiction_members_current",
+          "qualified_name": "memory_v1.contradiction_members_current",
+          "row_key": [
+            "deployment_id",
+            "contradiction_group",
+            "fact_kind",
+            "fact_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns both endpoint lineages.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this cross-reference.",
+              "enum_values": null,
+              "name": "crossref_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage that makes the reference.",
+              "enum_values": null,
+              "name": "from_doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage that is referenced.",
+              "enum_values": null,
+              "name": "to_doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "What kind of reference this is, one of cites, links_to, attaches, or replies_to.",
+              "enum_values": [
+                "cites",
+                "links_to",
+                "attaches",
+                "replies_to"
+              ],
+              "name": "kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Bounded surrounding context of the reference, truncated to 500 characters and null when none was captured.",
+              "enum_values": null,
+              "name": "context",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "When the reference was extracted, which is a processing instant.",
+              "enum_values": null,
+              "name": "created_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). A reference whose target was never ingested, or whose source or target lineage has been forgotten, is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.",
+          "definition_ast": "(w:select w:x o:. w:deployment_id o:, w:x o:. w:crossref_id o:, w:source o:. w:doc_id w:as w:from_doc_id o:, w:target o:. w:doc_id w:as w:to_doc_id o:, w:x o:. w:kind o::: w:text w:as w:kind o:, q:left (w:x o:. w:context o:, n:500) w:as w:context o:, w:x o:. w:created_at w:from w:document_crossrefs w:x w:join w:memory_v1 o:. w:documents_live w:source w:on w:source o:. w:deployment_id o:= w:x o:. w:deployment_id w:and w:source o:. w:doc_id o:= w:x o:. w:from_doc_id w:join w:memory_v1 o:. w:documents_live w:target w:on w:target o:. w:deployment_id o:= w:x o:. w:deployment_id w:and w:target o:. w:doc_id o:= w:x o:. w:to_doc_id o:;)",
+          "grain": "one live document cross-reference",
+          "grain_tag": "document_crossref_live",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "from_doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "to_doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            }
+          ],
+          "name": "document_crossrefs_live",
+          "qualified_name": "memory_v1.document_crossrefs_live",
+          "row_key": [
+            "deployment_id",
+            "crossref_id"
+          ]
+        },
+        {
+          "clock_semantics": "ingest_and_supersession_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns the version.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this observed snapshot of the lineage.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The lineage this version belongs to, joinable to documents_live.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "One-based ordinal of the version within its lineage.",
+              "enum_values": null,
+              "name": "version_no",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Hash of the immutable bytes this version observed, shared by lineages carrying identical content.",
+              "enum_values": null,
+              "name": "content_hash",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The connector revision or etag for this snapshot, null when the source has none.",
+              "enum_values": null,
+              "name": "source_version_ref",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Processing status of the version, such as ready or failed.",
+              "enum_values": [
+                "ingesting",
+                "converting",
+                "structuring",
+                "ready",
+                "failed",
+                "deleted"
+              ],
+              "name": "status",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The reading of this version that is currently live, null while no reading has completed.",
+              "enum_values": null,
+              "name": "current_representation_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Transaction-time origin: when this deployment ingested the snapshot.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the source says this snapshot was authored, null when the source gives no date.",
+              "enum_values": null,
+              "name": "source_modified_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The document's own publication date for this snapshot, null when unknown.",
+              "enum_values": null,
+              "name": "published_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Detected primary language of this snapshot, null when undetected.",
+              "enum_values": null,
+              "name": "language",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "When a newer version became current, null while this version is still the lineage's current one.",
+              "enum_values": null,
+              "name": "superseded_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "True only for the lineage's current snapshot.",
+              "enum_values": null,
+              "name": "is_current_version",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "comment": "One row per non-tombstoned version of a live document lineage, keyed by (deployment_id, version_id) and joined to documents_live on (deployment_id, doc_id). A tombstoned version and every version of a forgotten lineage are absent, which is why the whole schema authorizes version-derived rows through this relation rather than through document_versions directly. This is version history, not fact history: is_current_version says which snapshot the lineage currently points at, and no column here asserts what the system currently believes to be true. The view carries no counts.",
+          "definition_ast": "(w:select w:v o:. w:deployment_id o:, w:v o:. w:version_id o:, w:v o:. w:doc_id o:, w:v o:. w:version_no o:, w:v o:. w:content_hash o:, w:v o:. w:source_version_ref o:, w:v o:. w:status o::: w:text w:as w:status o:, w:v o:. w:current_representation_id o:, w:v o:. w:ingested_at o:, w:v o:. w:source_modified_at o:, w:v o:. w:published_at o:, w:v o:. w:language o:, w:v o:. w:superseded_at o:, w:not w:v o:. w:version_id w:is w:distinct w:from w:d o:. w:current_version_id w:as w:is_current_version w:from w:document_versions w:v w:join w:documents w:d w:on w:d o:. w:deployment_id o:= w:v o:. w:deployment_id w:and w:d o:. w:doc_id o:= w:v o:. w:doc_id w:and w:d o:. w:deleted_at w:is w:null w:where w:v o:. w:deleted_at w:is w:null o:;)",
+          "grain": "one visible version of a live lineage",
+          "grain_tag": "document_version_visible",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            }
+          ],
+          "name": "document_versions_visible",
+          "qualified_name": "memory_v1.document_versions_visible",
+          "row_key": [
+            "deployment_id",
+            "version_id"
+          ]
+        },
+        {
+          "clock_semantics": "source_observation_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns this document lineage; every join to another memory_v1 relation carries it.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable lineage identity, unique within the deployment and never reused.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The connector family that produced the lineage, such as google_drive or upload.",
+              "enum_values": null,
+              "name": "source_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The connector-native stable identifier, null for one-shot sources that have none.",
+              "enum_values": null,
+              "name": "source_ref",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The original location of the source, null when the source has no addressable location.",
+              "enum_values": null,
+              "name": "source_uri",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Best-effort human title of the lineage, which is orientation text rather than asserted evidence.",
+              "enum_values": null,
+              "name": "title",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The D55 currency mode of the lineage, either snapshot or living.",
+              "enum_values": [
+                "snapshot",
+                "living"
+              ],
+              "name": "versioning_mode",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The D42 provenance stamp, either external or system_generated.",
+              "enum_values": [
+                "external",
+                "system_generated"
+              ],
+              "name": "origin",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The instant this deployment first observed the lineage.",
+              "enum_values": null,
+              "name": "first_seen_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The instant the connector last observed the lineage, null when it has never been re-observed.",
+              "enum_values": null,
+              "name": "last_observed_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The lineage's current snapshot, null when no non-tombstoned current version exists.",
+              "enum_values": null,
+              "name": "current_version_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "The one-based ordinal of the current version within the lineage, null when there is no visible current version.",
+              "enum_values": null,
+              "name": "current_version_no",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "Processing status of the current version, null when there is no visible current version.",
+              "enum_values": [
+                "ingesting",
+                "converting",
+                "structuring",
+                "ready",
+                "failed",
+                "deleted"
+              ],
+              "name": "current_version_status",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The current ready reading of the current version, null when no ready representation exists.",
+              "enum_values": null,
+              "name": "current_representation_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "True only when the lineage has a ready current version and a ready current representation, which is the precondition every current-content relation joins on.",
+              "enum_values": null,
+              "name": "has_current_ready_content",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "When the source says the current snapshot was authored, which dates derived testimony.",
+              "enum_values": null,
+              "name": "source_modified_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The document's own publication date on the current version, null when unknown.",
+              "enum_values": null,
+              "name": "published_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Detected primary language of the current version, null when undetected.",
+              "enum_values": null,
+              "name": "language",
+              "nullable": true,
+              "type": "text"
+            }
+          ],
+          "comment": "One row per live document lineage, keyed by (deployment_id, doc_id). A tombstoned lineage is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name deleted state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.",
+          "definition_ast": "(w:select w:d o:. w:deployment_id o:, w:d o:. w:doc_id o:, w:d o:. w:source_kind o:, w:d o:. w:source_ref o:, w:d o:. w:source_uri o:, w:d o:. w:title o:, w:d o:. w:versioning_mode o::: w:text w:as w:versioning_mode o:, w:d o:. w:origin o::: w:text w:as w:origin o:, w:d o:. w:first_seen_at o:, w:d o:. w:last_observed_at o:, w:v o:. w:version_id w:as w:current_version_id o:, w:v o:. w:version_no w:as w:current_version_no o:, w:v o:. w:status o::: w:text w:as w:current_version_status o:, w:r o:. w:representation_id w:as w:current_representation_id o:, w:r o:. w:representation_id w:is w:not w:null w:and w:v o:. w:status o:= s:ready o::: w:document_status w:as w:has_current_ready_content o:, w:v o:. w:source_modified_at o:, w:v o:. w:published_at o:, w:v o:. w:language w:from w:documents w:d w:left w:join w:document_versions w:v w:on w:v o:. w:deployment_id o:= w:d o:. w:deployment_id w:and w:v o:. w:doc_id o:= w:d o:. w:doc_id w:and w:v o:. w:version_id o:= w:d o:. w:current_version_id w:and w:v o:. w:deleted_at w:is w:null w:left w:join w:document_representations w:r w:on w:r o:. w:deployment_id o:= w:v o:. w:deployment_id w:and w:r o:. w:version_id o:= w:v o:. w:version_id w:and w:r o:. w:representation_id o:= w:v o:. w:current_representation_id w:and w:r o:. w:status o:= s:ready o::: w:text w:where w:d o:. w:deleted_at w:is w:null o:;)",
+          "grain": "one live document lineage",
+          "grain_tag": "document_lineage_live",
+          "join_keys": [],
+          "name": "documents_live",
+          "qualified_name": "memory_v1.documents_live",
+          "row_key": [
+            "deployment_id",
+            "doc_id"
+          ]
+        },
+        {
+          "clock_semantics": "registry_maintenance_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns the entity.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable survivor identity, which is never reused and never rewritten by a merge.",
+              "enum_values": null,
+              "name": "entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Canonical type of the entity as voted across its mentions.",
+              "enum_values": null,
+              "name": "entity_type",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Preferred display name of the entity.",
+              "enum_values": null,
+              "name": "canonical_name",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Accent-folded lower-case form of the canonical name, used for matching.",
+              "enum_values": null,
+              "name": "normalized_name",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Confidence in the type vote, null when never scored.",
+              "enum_values": null,
+              "name": "type_confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "Registry-maintained blurb about the entity; it is labeled orientation text and is never asserted evidence.",
+              "enum_values": null,
+              "name": "profile_summary",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Exact count of distinct live mentions of this entity across live lineages.",
+              "enum_values": null,
+              "name": "live_mention_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exact count of live document lineages that mention this entity.",
+              "enum_values": null,
+              "name": "live_document_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Relation degree cached from the latest published graph snapshot, which is orientation and can lag live state.",
+              "enum_values": null,
+              "name": "graph_degree",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "When the entity was minted.",
+              "enum_values": null,
+              "name": "created_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the entity registry row was last maintained.",
+              "enum_values": null,
+              "name": "updated_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires surviving provenance: an entity appears only while at least one live document lineage still mentions it or is bridged to it, so an entity whose every source has been forgotten is absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. The mention and document counts are exact over live lineages; graph_degree is copied from the latest published graph snapshot and is therefore orientation that can lag live state. profile_summary is orientation text, never evidence. The clocks are registry maintenance instants and carry no world-validity meaning.",
+          "definition_ast": "(w:select w:e o:. w:deployment_id o:, w:e o:. w:entity_id o:, w:e o:. w:type w:as w:entity_type o:, w:e o:. w:canonical_name o:, w:e o:. w:normalized_name o:, w:e o:. w:type_confidence o:, w:e o:. w:profile_summary o:, w:live o:. w:mention_count w:as w:live_mention_count o:, w:live o:. w:document_count w:as w:live_document_count o:, w:e o:. w:graph_degree o::: w:bigint w:as w:graph_degree o:, w:e o:. w:created_at o:, w:e o:. w:updated_at w:from w:entities w:e w:cross w:join w:lateral (w:select w:coalesce (w:sum (w:edm o:. w:mention_count) o:, n:0 o::: w:numeric) o::: w:bigint w:as w:mention_count o:, w:count (o:*) w:as w:document_count w:from w:memory_v1 o:. w:entity_document_mentions w:edm w:where w:edm o:. w:deployment_id o:= w:e o:. w:deployment_id w:and w:edm o:. w:entity_id o:= w:e o:. w:entity_id) w:live w:where w:e o:. w:status o:= s:active o::: w:entity_status w:and (w:live o:. w:document_count o:> n:0 w:or (w:exists (w:select n:1 w:from w:documents w:d w:join w:v_memory_entity_survivor w:s w:on w:s o:. w:deployment_id o:= w:d o:. w:deployment_id w:and w:s o:. w:entity_id o:= w:d o:. w:document_entity_id w:where w:d o:. w:deployment_id o:= w:e o:. w:deployment_id w:and w:d o:. w:deleted_at w:is w:null w:and w:s o:. w:survivor_entity_id o:= w:e o:. w:entity_id))) o:;)",
+          "grain": "one externally visible survivor entity",
+          "grain_tag": "entity_survivor_current",
+          "join_keys": [],
+          "name": "entities_current",
+          "qualified_name": "memory_v1.entities_current",
+          "row_key": [
+            "deployment_id",
+            "entity_id"
+          ]
+        },
+        {
+          "clock_semantics": "observation_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns the alias.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this alias row.",
+              "enum_values": null,
+              "name": "alias_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The entity the alias was originally recorded against, which may since have been merged away.",
+              "enum_values": null,
+              "name": "source_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The survivor entity the alias currently names, joinable to entities_current.",
+              "enum_values": null,
+              "name": "entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The surface form as observed or as canonicalized.",
+              "enum_values": null,
+              "name": "alias_text",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Accent-folded lower-case match key for the alias.",
+              "enum_values": null,
+              "name": "normalized_lemma",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Where the alias came from, either source when observed in a document or llm_canonical when emitted by the extractor.",
+              "enum_values": [
+                "source",
+                "llm_canonical"
+              ],
+              "name": "provenance",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Confidence that this surface really names the entity, null when never scored.",
+              "enum_values": null,
+              "name": "confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "When the alias was first recorded.",
+              "enum_values": null,
+              "name": "first_seen",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the alias was last observed.",
+              "enum_values": null,
+              "name": "last_seen",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per current alias-to-survivor mapping, keyed by (deployment_id, alias_id) and joined to entities_current on (deployment_id, entity_id). Merge redirects are resolved, so an alias recorded against a since-merged entity now names the survivor while source_entity_id preserves where it was recorded. An alias whose survivor has no surviving provenance is absent, because membership is inherited from entities_current. The clocks are observation instants rather than validity, and the view carries no counts.",
+          "definition_ast": "(w:select w:a o:. w:deployment_id o:, w:a o:. w:alias_id o:, w:a o:. w:entity_id w:as w:source_entity_id o:, w:ec o:. w:entity_id o:, w:a o:. w:alias_text o:, w:a o:. w:normalized_lemma o:, w:a o:. w:provenance o::: w:text w:as w:provenance o:, w:a o:. w:confidence o:, w:a o:. w:first_seen o:, w:a o:. w:last_seen w:from w:aliases w:a w:join w:v_memory_entity_survivor w:s w:on w:s o:. w:deployment_id o:= w:a o:. w:deployment_id w:and w:s o:. w:entity_id o:= w:a o:. w:entity_id w:join w:memory_v1 o:. w:entities_current w:ec w:on w:ec o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:ec o:. w:entity_id o:= w:s o:. w:survivor_entity_id o:;)",
+          "grain": "one current alias-to-survivor mapping",
+          "grain_tag": "entity_alias_current",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            }
+          ],
+          "name": "entity_aliases_current",
+          "qualified_name": "memory_v1.entity_aliases_current",
+          "row_key": [
+            "deployment_id",
+            "alias_id"
+          ]
+        },
+        {
+          "clock_semantics": "mention_observation_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns both the entity and the document.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The survivor entity, with merge redirects already resolved.",
+              "enum_values": null,
+              "name": "entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage the entity is mentioned in.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Exact count of distinct visible mentions of this survivor in this lineage.",
+              "enum_values": null,
+              "name": "mention_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "When the earliest counted mention was recorded.",
+              "enum_values": null,
+              "name": "first_mentioned_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the latest counted mention was recorded.",
+              "enum_values": null,
+              "name": "last_mentioned_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per survivor entity and live document lineage, keyed by (deployment_id, entity_id, doc_id) and joined to entities_current on (deployment_id, entity_id) and documents_live on (deployment_id, doc_id). The mention count is EXACT rather than sampled or capped, and it counts exactly the mentions that are themselves visible: a mention is counted only when its chunk resolves to a non-tombstoned version of a live lineage and its live resolution decision points at this survivor. Mentions of forgotten lineages, mentions of tombstoned versions, mentions with no chunk coordinate, and mentions whose resolution has been superseded are therefore counted nowhere. Merge redirects are resolved before counting, so a merged entity contributes to its survivor and never appears on its own. The clocks are mention-recording instants, not world-validity, and this relation carries no evidence and no fact semantics.",
+          "definition_ast": "(w:select w:m o:. w:deployment_id o:, w:s o:. w:survivor_entity_id w:as w:entity_id o:, w:vv o:. w:doc_id o:, w:count (w:distinct w:m o:. w:mention_id) w:as w:mention_count o:, w:min (w:m o:. w:created_at) w:as w:first_mentioned_at o:, w:max (w:m o:. w:created_at) w:as w:last_mentioned_at w:from w:mentions w:m w:join w:chunks w:ch w:on w:ch o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:ch o:. w:chunk_id o:= w:m o:. w:chunk_id w:join w:memory_v1 o:. w:document_versions_visible w:vv w:on w:vv o:. w:deployment_id o:= w:ch o:. w:deployment_id w:and w:vv o:. w:version_id o:= w:ch o:. w:version_id w:and w:vv o:. w:doc_id o:= w:m o:. w:doc_id w:join w:resolution_decisions w:rd w:on w:rd o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:rd o:. w:mention_id o:= w:m o:. w:mention_id w:and w:rd o:. w:superseded_by w:is w:null w:join w:v_memory_entity_survivor w:s w:on w:s o:. w:deployment_id o:= w:rd o:. w:deployment_id w:and w:s o:. w:entity_id o:= w:rd o:. w:entity_id w:join w:entities w:e w:on w:e o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:e o:. w:entity_id o:= w:s o:. w:survivor_entity_id w:and w:e o:. w:status o:= s:active o::: w:entity_status w:group w:by w:m o:. w:deployment_id o:, w:s o:. w:survivor_entity_id o:, w:vv o:. w:doc_id o:;)",
+          "grain": "one survivor entity × live document",
+          "grain_tag": "entity_document_mention_live",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            }
+          ],
+          "name": "entity_document_mentions",
+          "qualified_name": "memory_v1.entity_document_mentions",
+          "row_key": [
+            "deployment_id",
+            "entity_id",
+            "doc_id"
+          ]
+        },
+        {
+          "clock_semantics": "assertion_event_range",
+          "columns": [
+            {
+              "comment": "The deployment that owns the evidence.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which fact layer the evidence points at, either relation or observation.",
+              "enum_values": [
+                "relation",
+                "observation"
+              ],
+              "name": "fact_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The adjudicated fact this lineage supports or contradicts.",
+              "enum_values": null,
+              "name": "fact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live document lineage that is the counted unit of corroboration.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Exactly supports or contradicts.",
+              "enum_values": [
+                "supports",
+                "contradicts"
+              ],
+              "name": "stance",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The connector family of the lineage.",
+              "enum_values": null,
+              "name": "source_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable human-usable handle for the lineage, formed from its connector-native identity.",
+              "enum_values": null,
+              "name": "source_handle",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "How many current-testimony claims in this lineage take this stance, which is DESCRIPTIVE ONLY and is never an evidence count.",
+              "enum_values": null,
+              "name": "claim_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "The most recently asserted claim of this lineage and stance, chosen deterministically as a readable exemplar.",
+              "enum_values": null,
+              "name": "representative_claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Earliest assertion instant among those claims, null when none of them carries a date.",
+              "enum_values": null,
+              "name": "asserted_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Latest assertion instant among those claims, null when none of them carries a date.",
+              "enum_values": null,
+              "name": "asserted_to",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per fact, current-testimony document lineage, and stance, keyed by (deployment_id, fact_kind, fact_id, doc_id, stance) and joined to the fact relations on (deployment_id, fact_kind, fact_id) and to documents_live on (deployment_id, doc_id). THIS RELATION IS THE SOLE PUBLIC INPUT FOR D54 EVIDENCE COUNTS: an evidence count is the number of rows here for a fact and stance, which is exactly the number of distinct current-testimony source lineages, so repeating an assertion inside one document and re-extracting the same document both leave every count unchanged while a genuinely independent second source moves it by one. claim_count is descriptive colour about how loudly one lineage says it and must never be summed into an evidence count. Evidence from forgotten lineages and from superseded testimony is absent. The assertion range is source-asserted event time, not fact validity.",
+          "definition_ast": "(w:select w:deployment_id o:, w:fact_kind o:, w:fact_id o:, w:doc_id o:, w:stance o:, w:source_kind o:, w:source_handle o:, w:count (o:*) w:as w:claim_count o:, (w:array_agg (w:claim_id w:order w:by w:asserted_at w:desc w:nulls w:last o:, w:claim_id)) o:[ n:1 o:] w:as w:representative_claim_id o:, w:min (w:asserted_at) w:as w:asserted_from o:, w:max (w:asserted_at) w:as w:asserted_to w:from w:memory_v1 o:. w:fact_claim_evidence_live w:e w:group w:by w:deployment_id o:, w:fact_kind o:, w:fact_id o:, w:doc_id o:, w:stance o:, w:source_kind o:, w:source_handle o:;)",
+          "grain": "one fact × current-testimony document lineage × stance",
+          "grain_tag": "evidence_lineage",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "fact_kind",
+                "fact_id"
+              ],
+              "target": "memory_v1.facts_visible_history"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "representative_claim_id"
+              ],
+              "target": "memory_v1.claims_live"
+            }
+          ],
+          "name": "evidence_lineage",
+          "qualified_name": "memory_v1.evidence_lineage",
+          "row_key": [
+            "deployment_id",
+            "fact_kind",
+            "fact_id",
+            "doc_id",
+            "stance"
+          ]
+        },
+        {
+          "clock_semantics": "claim_validity_immutable",
+          "columns": [
+            {
+              "comment": "The deployment that owns the association.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which fact layer the association points at, either relation or observation.",
+              "enum_values": [
+                "relation",
+                "observation"
+              ],
+              "name": "fact_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The adjudicated fact this claim supports or contradicts.",
+              "enum_values": null,
+              "name": "fact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current-testimony claim on the other side of the bridge.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Exactly supports or contradicts, matching the shipped evidence stance vocabulary.",
+              "enum_values": [
+                "supports",
+                "contradicts"
+              ],
+              "name": "stance",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The live lineage that asserted the claim, which is the unit D54 counts.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The connector family of that lineage.",
+              "enum_values": null,
+              "name": "source_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable human-usable handle for that lineage, formed from its connector-native identity.",
+              "enum_values": null,
+              "name": "source_handle",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "When the source asserted the claim, null when the source carries no date.",
+              "enum_values": null,
+              "name": "asserted_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown.",
+              "enum_values": null,
+              "name": "claim_valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable end of that interval, null for open-per-source or unknown.",
+              "enum_values": null,
+              "name": "claim_valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Granularity of the asserted interval, from unknown through instant to open.",
+              "enum_values": [
+                "unknown",
+                "instant",
+                "day",
+                "month",
+                "quarter",
+                "year",
+                "open"
+              ],
+              "name": "claim_valid_precision",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Which world-interval was asserted, null when unclassified.",
+              "enum_values": [
+                "proposition_validity",
+                "event_time",
+                "measurement_period",
+                "effective_period"
+              ],
+              "name": "claim_valid_kind",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "When the association was recorded, which is a processing instant rather than a validity clock.",
+              "enum_values": null,
+              "name": "linked_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per current claim-to-fact association, keyed by (deployment_id, fact_kind, fact_id, claim_id, stance) and joined to facts_current or facts_visible_history on (deployment_id, fact_kind, fact_id) and to claims_live on (deployment_id, claim_id). This is the AUDITABLE BRIDGE between the two truth layers: it records which immutable testimony supports or contradicts an adjudicated fact, and stance is exactly supports or contradicts. Only current testimony from live lineages appears, and an association whose denormalized lineage disagrees with its claim's lineage is treated as mismatched state and dropped rather than exposed. The claim-validity columns are the SOURCE's asserted interval, inclusive at both endpoints and never the fact's validity; a null endpoint is unbounded or unknown. The view carries no counts: aggregate evidence_lineage instead.",
+          "definition_ast": "(w:select w:re o:. w:deployment_id o:, s:relation o::: w:text w:as w:fact_kind o:, w:re o:. w:relation_id w:as w:fact_id o:, w:re o:. w:claim_id o:, w:re o:. w:stance o::: w:text w:as w:stance o:, w:c o:. w:doc_id o:, w:c o:. w:source_kind o:, w:c o:. w:source_handle o:, w:c o:. w:asserted_at o:, w:c o:. w:claim_valid_from o:, w:c o:. w:claim_valid_until o:, w:c o:. w:claim_valid_precision o:, w:c o:. w:claim_valid_kind o:, w:re o:. w:created_at w:as w:linked_at w:from w:relation_evidence w:re w:join w:memory_v1 o:. w:claims_live w:c w:on w:c o:. w:deployment_id o:= w:re o:. w:deployment_id w:and w:c o:. w:claim_id o:= w:re o:. w:claim_id w:and w:c o:. w:doc_id o:= w:re o:. w:doc_id w:union w:all w:select w:oe o:. w:deployment_id o:, s:observation o::: w:text w:as w:fact_kind o:, w:oe o:. w:observation_id w:as w:fact_id o:, w:oe o:. w:claim_id o:, w:oe o:. w:stance o::: w:text w:as w:stance o:, w:c o:. w:doc_id o:, w:c o:. w:source_kind o:, w:c o:. w:source_handle o:, w:c o:. w:asserted_at o:, w:c o:. w:claim_valid_from o:, w:c o:. w:claim_valid_until o:, w:c o:. w:claim_valid_precision o:, w:c o:. w:claim_valid_kind o:, w:oe o:. w:created_at w:as w:linked_at w:from w:observation_evidence w:oe w:join w:memory_v1 o:. w:claims_live w:c w:on w:c o:. w:deployment_id o:= w:oe o:. w:deployment_id w:and w:c o:. w:claim_id o:= w:oe o:. w:claim_id w:and w:c o:. w:doc_id o:= w:oe o:. w:doc_id o:;)",
+          "grain": "one current claim-to-fact association",
+          "grain_tag": "fact_claim_evidence_live",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "fact_kind",
+                "fact_id"
+              ],
+              "target": "memory_v1.facts_visible_history"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "claim_id"
+              ],
+              "target": "memory_v1.claims_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            }
+          ],
+          "name": "fact_claim_evidence_live",
+          "qualified_name": "memory_v1.fact_claim_evidence_live",
+          "row_key": [
+            "deployment_id",
+            "fact_kind",
+            "fact_id",
+            "claim_id",
+            "stance"
+          ]
+        },
+        {
+          "clock_semantics": "bitemporal_current_at_evaluated_at",
+          "columns": [
+            {
+              "comment": "The deployment that owns the fact.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which fact layer this row belongs to, either relation or observation.",
+              "enum_values": [
+                "relation",
+                "observation"
+              ],
+              "name": "fact_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable identity of the adjudicated fact.",
+              "enum_values": null,
+              "name": "fact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Survivor identity of the subject entity, with merge redirects resolved.",
+              "enum_values": null,
+              "name": "subject_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The governed predicate of a relation, null for an observation.",
+              "enum_values": null,
+              "name": "predicate",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Survivor identity of the object entity of a relation, null for an observation.",
+              "enum_values": null,
+              "name": "object_entity_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "The canonical statement of an observation, null for a relation.",
+              "enum_values": null,
+              "name": "statement",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Human-readable sentence for the fact, null when no label has been generated.",
+              "enum_values": null,
+              "name": "fact_label",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "World-time start of the fact, null for unknown or always.",
+              "enum_values": null,
+              "name": "valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "World-time end of the fact, null while the fact is open; the interval is half-open, so a fact whose valid_until equals the evaluation instant is already excluded.",
+              "enum_values": null,
+              "name": "valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Transaction-time start: when the system first believed the fact.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Shared identifier of an unadjudicated contradiction, null when the fact is in no contradiction group.",
+              "enum_values": null,
+              "name": "contradiction_group",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Aggregate confidence over the fact's evidence, null when never scored.",
+              "enum_values": null,
+              "name": "confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "Exact count of distinct current-testimony lineages supporting the fact.",
+              "enum_values": null,
+              "name": "evidence_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exact count of distinct current-testimony lineages contradicting the fact.",
+              "enum_values": null,
+              "name": "contradict_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exactly current or withdrawn, derived at read time from the open review queue.",
+              "enum_values": [
+                "current",
+                "withdrawn"
+              ],
+              "name": "support_state",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The single statement instant at which both clocks were applied, shared by every current relation referenced in the same statement.",
+              "enum_values": null,
+              "name": "evaluated_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per currently valid relation or observation, keyed by (deployment_id, fact_kind, fact_id) and joined to fact_claim_evidence_live and evidence_lineage on the same triple. THIS IS THE ADJUDICATED CURRENT WORLDVIEW and the right starting point for any what-holds-now question; claim relations answer what a source said, never what the system believes. Both D41 clocks are applied at exactly one instant: the fact must have been believed by evaluated_at and not since invalidated, and its world-time interval must contain evaluated_at under a half-open convention where valid_from is inclusive and valid_until is exclusive, with a null endpoint meaning unbounded. Every reference to a current relation inside one SQL statement observes that same evaluated_at, which is emitted on every row. Membership additionally requires a surviving provenance lineage, so forgotten sources remove the fact rather than orphaning it. The counts are exact counts of distinct current-testimony lineages taken from evidence_lineage, and support_state is derived at read time from the open support_withdrawn review row: a zero count never manufactures a withdrawn state and deletion never infers one.",
+          "definition_ast": "(w:select w:h o:. w:deployment_id o:, w:h o:. w:fact_kind o:, w:h o:. w:fact_id o:, w:h o:. w:subject_entity_id o:, w:h o:. w:predicate o:, w:h o:. w:object_entity_id o:, w:h o:. w:statement o:, w:h o:. w:fact_label o:, w:h o:. w:valid_from o:, w:h o:. w:valid_until o:, w:h o:. w:ingested_at o:, w:h o:. w:contradiction_group o:, w:h o:. w:confidence o:, w:h o:. w:evidence_count_current w:as w:evidence_count o:, w:h o:. w:contradict_count_current w:as w:contradict_count o:, w:h o:. w:support_state_current w:as w:support_state o:, w:clock o:. w:evaluated_at w:from (w:select w:statement_timestamp () w:as w:evaluated_at) w:clock w:cross w:join w:memory_v1 o:. w:facts_visible_history w:h w:where w:h o:. w:ingested_at o:<= w:clock o:. w:evaluated_at w:and w:h o:. w:invalidated_at w:is w:null w:and (w:h o:. w:valid_from w:is w:null w:or w:h o:. w:valid_from o:<= w:clock o:. w:evaluated_at) w:and (w:h o:. w:valid_until w:is w:null w:or w:h o:. w:valid_until o:> w:clock o:. w:evaluated_at) o:;)",
+          "grain": "one currently valid relation or observation",
+          "grain_tag": "fact_current",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "subject_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "object_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "fact_kind",
+                "fact_id"
+              ],
+              "target": "memory_v1.fact_claim_evidence_live"
+            }
+          ],
+          "name": "facts_current",
+          "qualified_name": "memory_v1.facts_current",
+          "row_key": [
+            "deployment_id",
+            "fact_kind",
+            "fact_id"
+          ]
+        },
+        {
+          "clock_semantics": "bitemporal_raw",
+          "columns": [
+            {
+              "comment": "The deployment that owns the fact.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which fact layer this row belongs to, either relation or observation.",
+              "enum_values": [
+                "relation",
+                "observation"
+              ],
+              "name": "fact_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable identity of the adjudicated fact.",
+              "enum_values": null,
+              "name": "fact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Survivor identity of the subject entity, with merge redirects resolved.",
+              "enum_values": null,
+              "name": "subject_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The governed predicate of a relation, null for an observation.",
+              "enum_values": null,
+              "name": "predicate",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Survivor identity of the object entity of a relation, null for an observation.",
+              "enum_values": null,
+              "name": "object_entity_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "The canonical statement of an observation, null for a relation.",
+              "enum_values": null,
+              "name": "statement",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Human-readable sentence for the fact, null when no label has been generated.",
+              "enum_values": null,
+              "name": "fact_label",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Raw world-time start of the fact, null for unknown or always.",
+              "enum_values": null,
+              "name": "valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Raw world-time end of the fact, null while the fact has not been capped; the interval is half-open so a fact does not hold at valid_until.",
+              "enum_values": null,
+              "name": "valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Raw transaction-time start: when the system first believed the fact.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Raw transaction-time end: when the system learned the fact was superseded, null while it is still believed.",
+              "enum_values": null,
+              "name": "invalidated_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Shared identifier of an unadjudicated contradiction, null when the fact is in no contradiction group.",
+              "enum_values": null,
+              "name": "contradiction_group",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Aggregate confidence over the fact's evidence, null when never scored.",
+              "enum_values": null,
+              "name": "confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "LIVE count of distinct current-testimony lineages supporting the fact, read now and never a historical reconstruction.",
+              "enum_values": null,
+              "name": "evidence_count_current",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "LIVE count of distinct current-testimony lineages contradicting the fact, read now and never a historical reconstruction.",
+              "enum_values": null,
+              "name": "contradict_count_current",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "LIVE support state, exactly current or withdrawn, derived now from the open review queue and never a stored column.",
+              "enum_values": [
+                "current",
+                "withdrawn"
+              ],
+              "name": "support_state_current",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "comment": "One row per historically visible relation or observation, keyed by (deployment_id, fact_kind, fact_id) and joined to fact_claim_evidence_live and evidence_lineage on the same triple. Membership requires SURVIVING HISTORICAL PROVENANCE rather than current support: a fact stays visible while at least one of its evidence lineages is still live, so a fact whose current testimony was processed away remains here with zero current support and a withdrawn support state, while a fact whose every source has been forgotten disappears. Both clocks are RAW: valid_from and valid_until are world time with a half-open interval, ingested_at and invalidated_at are transaction time, a null endpoint is unbounded or unknown, and membership here is not a claim that the fact currently holds. The three columns suffixed _current are LIVE CURRENT-TESTIMONY VALUES READ NOW and are explicitly not historical reconstructions: they never assert that those counts or that support state held at any historical instant. The counts are exact counts of distinct current-testimony lineages taken from evidence_lineage, and support_state_current is derived at read time from the open support_withdrawn review row rather than from any stored column. Entity endpoints are survivor identities.",
+          "definition_ast": "(w:select w:f o:. w:deployment_id o:, w:f o:. w:fact_kind o:, w:f o:. w:fact_id o:, w:f o:. w:subject_entity_id o:, w:f o:. w:predicate o:, w:f o:. w:object_entity_id o:, w:f o:. w:statement o:, w:f o:. w:fact_label o:, w:f o:. w:valid_from o:, w:f o:. w:valid_until o:, w:f o:. w:ingested_at o:, w:f o:. w:invalidated_at o:, w:f o:. w:contradiction_group o:, w:f o:. w:confidence o:, w:counts o:. w:supports w:as w:evidence_count_current o:, w:counts o:. w:contradicts w:as w:contradict_count_current o:, w:case w:when (w:exists (w:select n:1 w:from w:review_queue w:q w:where w:q o:. w:deployment_id o:= w:f o:. w:deployment_id w:and w:q o:. w:item_kind o:= s:support_withdrawn o::: w:review_item_kind w:and (w:q o:. w:status o:= w:any (w:array o:[ s:pending o::: w:review_status o:, s:deferred o::: w:review_status o:])) w:and (w:q o:. w:candidate o:->> s:fact_id o::: w:text) o:= w:f o:. w:fact_id o::: w:text)) w:then s:withdrawn o::: w:text w:else s:current o::: w:text w:end w:as w:support_state_current w:from (w:select w:r o:. w:deployment_id o:, s:relation o::: w:text w:as w:fact_kind o:, w:r o:. w:relation_id w:as w:fact_id o:, w:s1 o:. w:survivor_entity_id w:as w:subject_entity_id o:, w:r o:. w:predicate o:, w:s2 o:. w:survivor_entity_id w:as w:object_entity_id o:, w:null o::: w:text w:as w:statement o:, w:r o:. w:fact_label o:, w:r o:. w:valid_from o:, w:r o:. w:valid_until o:, w:r o:. w:ingested_at o:, w:r o:. w:invalidated_at o:, w:r o:. w:contradiction_group o:, w:r o:. w:confidence w:from w:relations w:r w:join w:v_memory_entity_survivor w:s1 w:on w:s1 o:. w:deployment_id o:= w:r o:. w:deployment_id w:and w:s1 o:. w:entity_id o:= w:r o:. w:subject_entity_id w:join w:v_memory_entity_survivor w:s2 w:on w:s2 o:. w:deployment_id o:= w:r o:. w:deployment_id w:and w:s2 o:. w:entity_id o:= w:r o:. w:object_entity_id w:where (w:exists (w:select n:1 w:from w:relation_evidence w:re w:join w:documents w:d w:on w:d o:. w:deployment_id o:= w:re o:. w:deployment_id w:and w:d o:. w:doc_id o:= w:re o:. w:doc_id w:and w:d o:. w:deleted_at w:is w:null w:where w:re o:. w:deployment_id o:= w:r o:. w:deployment_id w:and w:re o:. w:relation_id o:= w:r o:. w:relation_id)) w:union w:all w:select w:o o:. w:deployment_id o:, s:observation o::: w:text w:as w:fact_kind o:, w:o o:. w:observation_id w:as w:fact_id o:, w:s1 o:. w:survivor_entity_id w:as w:subject_entity_id o:, w:null o::: w:text w:as w:predicate o:, w:null o::: w:uuid w:as w:object_entity_id o:, w:o o:. w:statement o:, w:o o:. w:obs_label o:, w:o o:. w:valid_from o:, w:o o:. w:valid_until o:, w:o o:. w:ingested_at o:, w:o o:. w:invalidated_at o:, w:o o:. w:contradiction_group o:, w:o o:. w:confidence w:from w:observations w:o w:join w:v_memory_entity_survivor w:s1 w:on w:s1 o:. w:deployment_id o:= w:o o:. w:deployment_id w:and w:s1 o:. w:entity_id o:= w:o o:. w:subject_entity_id w:where (w:exists (w:select n:1 w:from w:observation_evidence w:oe w:join w:documents w:d w:on w:d o:. w:deployment_id o:= w:oe o:. w:deployment_id w:and w:d o:. w:doc_id o:= w:oe o:. w:doc_id w:and w:d o:. w:deleted_at w:is w:null w:where w:oe o:. w:deployment_id o:= w:o o:. w:deployment_id w:and w:oe o:. w:observation_id o:= w:o o:. w:observation_id))) w:f w:cross w:join w:lateral (w:select w:count (o:*) w:filter (w:where w:el o:. w:stance o:= s:supports o::: w:text) w:as w:supports o:, w:count (o:*) w:filter (w:where w:el o:. w:stance o:= s:contradicts o::: w:text) w:as w:contradicts w:from w:memory_v1 o:. w:evidence_lineage w:el w:where w:el o:. w:deployment_id o:= w:f o:. w:deployment_id w:and w:el o:. w:fact_kind o:= w:f o:. w:fact_kind w:and w:el o:. w:fact_id o:= w:f o:. w:fact_id) w:counts o:;)",
+          "grain": "one historically visible relation or observation",
+          "grain_tag": "fact_visible_history",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "subject_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "object_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "fact_kind",
+                "fact_id"
+              ],
+              "target": "memory_v1.evidence_lineage"
+            }
+          ],
+          "name": "facts_visible_history",
+          "qualified_name": "memory_v1.facts_visible_history",
+          "row_key": [
+            "deployment_id",
+            "fact_kind",
+            "fact_id"
+          ]
+        },
+        {
+          "clock_semantics": "bitemporal_current_at_evaluated_at",
+          "columns": [
+            {
+              "comment": "The deployment that owns the edge.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of the relation this edge projects.",
+              "enum_values": null,
+              "name": "relation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Survivor identity of the edge's source entity, guaranteed present in entities_current.",
+              "enum_values": null,
+              "name": "subject_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Survivor identity of the edge's target entity, guaranteed present in entities_current.",
+              "enum_values": null,
+              "name": "object_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The governed predicate carried by the edge.",
+              "enum_values": null,
+              "name": "predicate",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Human-readable sentence for the relation, null when no label has been generated.",
+              "enum_values": null,
+              "name": "fact_label",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "World-time start of the relation, null for unknown or always.",
+              "enum_values": null,
+              "name": "valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "World-time end of the relation, null while it is open; the interval is half-open.",
+              "enum_values": null,
+              "name": "valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Transaction-time start: when the system first believed the relation.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Shared identifier of an unadjudicated contradiction, null when the edge is in no contradiction group.",
+              "enum_values": null,
+              "name": "contradiction_group",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Aggregate confidence over the relation's evidence, null when never scored.",
+              "enum_values": null,
+              "name": "confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "Exact count of distinct current-testimony lineages supporting the relation.",
+              "enum_values": null,
+              "name": "evidence_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exact count of distinct current-testimony lineages contradicting the relation.",
+              "enum_values": null,
+              "name": "contradict_count",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "Exactly current or withdrawn, derived at read time from the open review queue.",
+              "enum_values": [
+                "current",
+                "withdrawn"
+              ],
+              "name": "support_state",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The single statement instant at which both clocks were applied, shared with every other current relation in the statement.",
+              "enum_values": null,
+              "name": "evaluated_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per current relation edge, keyed by (deployment_id, relation_id) and joined to entities_current on (deployment_id, subject_entity_id) and (deployment_id, object_entity_id). This is the LIVE graph surface, evaluated in PostgreSQL rather than read from a projection: it inherits the facts_current membership rule, the same half-open world-time interval, and the same shared evaluation instant, which is emitted on every row. Both endpoints are survivor identities and both are required to be visible entities, so an edge is dropped as a unit rather than dangling into an entity that has no surviving provenance. The counts are exact counts of distinct current-testimony lineages, and support state is derived at read time from the open review queue. Observations never project here, because they are entity-anchored facts rather than edges.",
+          "definition_ast": "(w:select w:f o:. w:deployment_id o:, w:f o:. w:fact_id w:as w:relation_id o:, w:f o:. w:subject_entity_id o:, w:f o:. w:object_entity_id o:, w:f o:. w:predicate o:, w:f o:. w:fact_label o:, w:f o:. w:valid_from o:, w:f o:. w:valid_until o:, w:f o:. w:ingested_at o:, w:f o:. w:contradiction_group o:, w:f o:. w:confidence o:, w:f o:. w:evidence_count o:, w:f o:. w:contradict_count o:, w:f o:. w:support_state o:, w:f o:. w:evaluated_at w:from w:memory_v1 o:. w:facts_current w:f w:join w:memory_v1 o:. w:entities_current w:subject w:on w:subject o:. w:deployment_id o:= w:f o:. w:deployment_id w:and w:subject o:. w:entity_id o:= w:f o:. w:subject_entity_id w:join w:memory_v1 o:. w:entities_current w:object w:on w:object o:. w:deployment_id o:= w:f o:. w:deployment_id w:and w:object o:. w:entity_id o:= w:f o:. w:object_entity_id w:where w:f o:. w:fact_kind o:= s:relation o::: w:text o:;)",
+          "grain": "one current relation edge",
+          "grain_tag": "graph_edge_current",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "subject_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "object_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            }
+          ],
+          "name": "graph_edges_current",
+          "qualified_name": "memory_v1.graph_edges_current",
+          "row_key": [
+            "deployment_id",
+            "relation_id"
+          ]
+        },
+        {
+          "clock_semantics": "bitemporal_raw",
+          "columns": [
+            {
+              "comment": "The deployment that owns the edge.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of the relation this edge projects.",
+              "enum_values": null,
+              "name": "relation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Survivor identity of the edge's source entity, guaranteed present in entities_current.",
+              "enum_values": null,
+              "name": "subject_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Survivor identity of the edge's target entity, guaranteed present in entities_current.",
+              "enum_values": null,
+              "name": "object_entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The governed predicate carried by the edge.",
+              "enum_values": null,
+              "name": "predicate",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Human-readable sentence for the relation, null when no label has been generated.",
+              "enum_values": null,
+              "name": "fact_label",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Raw world-time start of the relation, null for unknown or always.",
+              "enum_values": null,
+              "name": "valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Raw world-time end of the relation, null while it has not been capped; the interval is half-open.",
+              "enum_values": null,
+              "name": "valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Raw transaction-time start: when the system first believed the relation.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Raw transaction-time end: when the system learned the relation was superseded, null while it is still believed.",
+              "enum_values": null,
+              "name": "invalidated_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Shared identifier of an unadjudicated contradiction, null when the edge is in no contradiction group.",
+              "enum_values": null,
+              "name": "contradiction_group",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Aggregate confidence over the relation's evidence, null when never scored.",
+              "enum_values": null,
+              "name": "confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "LIVE count of distinct current-testimony lineages supporting the relation, read now and never a historical reconstruction.",
+              "enum_values": null,
+              "name": "evidence_count_current",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "LIVE count of distinct current-testimony lineages contradicting the relation, read now and never a historical reconstruction.",
+              "enum_values": null,
+              "name": "contradict_count_current",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "LIVE support state, exactly current or withdrawn, read now and never a historical reconstruction.",
+              "enum_values": [
+                "current",
+                "withdrawn"
+              ],
+              "name": "support_state_current",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "comment": "One row per historically visible relation edge, keyed by (deployment_id, relation_id) and joined to entities_current on both endpoint columns. Membership requires surviving historical provenance and two visible survivor endpoints, so a relation whose sources have all been forgotten disappears and an edge is never left dangling. Both clocks are RAW: world time is half-open, transaction time is bounded by ingested_at and invalidated_at, a null endpoint is unbounded or unknown, and membership here is not a claim that the edge currently holds. The three columns suffixed _current are LIVE CURRENT-TESTIMONY VALUES READ NOW and never assert that those counts or that support state held at any historical instant; they come from evidence_lineage and from the open support_withdrawn review row respectively.",
+          "definition_ast": "(w:select w:h o:. w:deployment_id o:, w:h o:. w:fact_id w:as w:relation_id o:, w:h o:. w:subject_entity_id o:, w:h o:. w:object_entity_id o:, w:h o:. w:predicate o:, w:h o:. w:fact_label o:, w:h o:. w:valid_from o:, w:h o:. w:valid_until o:, w:h o:. w:ingested_at o:, w:h o:. w:invalidated_at o:, w:h o:. w:contradiction_group o:, w:h o:. w:confidence o:, w:h o:. w:evidence_count_current o:, w:h o:. w:contradict_count_current o:, w:h o:. w:support_state_current w:from w:memory_v1 o:. w:facts_visible_history w:h w:join w:memory_v1 o:. w:entities_current w:subject w:on w:subject o:. w:deployment_id o:= w:h o:. w:deployment_id w:and w:subject o:. w:entity_id o:= w:h o:. w:subject_entity_id w:join w:memory_v1 o:. w:entities_current w:object w:on w:object o:. w:deployment_id o:= w:h o:. w:deployment_id w:and w:object o:. w:entity_id o:= w:h o:. w:object_entity_id w:where w:h o:. w:fact_kind o:= s:relation o::: w:text o:;)",
+          "grain": "one historically visible relation edge",
+          "grain_tag": "graph_edge_visible_history",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "subject_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "object_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            }
+          ],
+          "name": "graph_edges_visible_history",
+          "qualified_name": "memory_v1.graph_edges_visible_history",
+          "row_key": [
+            "deployment_id",
+            "relation_id"
+          ]
+        },
+        {
+          "clock_semantics": "transaction_time_event",
+          "columns": [
+            {
+              "comment": "The deployment that owns the event.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which append-only log the event comes from, either resolution_decision or merge_event.",
+              "enum_values": [
+                "resolution_decision",
+                "merge_event"
+              ],
+              "name": "object_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Identity of the event within its own log, unique together with object_kind.",
+              "enum_values": null,
+              "name": "event_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The survivor entity the event is about, joinable to entities_current.",
+              "enum_values": null,
+              "name": "entity_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The counterpart entity of a merge or unmerge, null for a resolution event.",
+              "enum_values": null,
+              "name": "related_entity_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "The mention a resolution event decided, null for a merge event.",
+              "enum_values": null,
+              "name": "mention_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "What the event did, one of linked, new_entity, merge, or unmerge.",
+              "enum_values": [
+                "linked",
+                "new_entity",
+                "merge",
+                "unmerge"
+              ],
+              "name": "outcome",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Which mechanism produced the event, such as a resolution tier or merge_event.",
+              "enum_values": [
+                "T0",
+                "T3",
+                "T4_small",
+                "T4_frontier",
+                "human",
+                "merge_event"
+              ],
+              "name": "method",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Confidence recorded for the decision, null when the log records none.",
+              "enum_values": null,
+              "name": "confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "Whether the decision was automatic or human.",
+              "enum_values": [
+                "auto",
+                "human"
+              ],
+              "name": "decided_by",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "When the decision was made, which is a transaction-time instant.",
+              "enum_values": null,
+              "name": "decided_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "True once a later decision replaced this one, or a later un-merge reversed it.",
+              "enum_values": null,
+              "name": "is_superseded",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "comment": "One row per visible identity event, keyed by the synthetic pair (deployment_id, object_kind, event_id): each union arm names its own log in object_kind and supplies that log's own identifier, so the two identifier spaces cannot collide. Resolution events carry a mention and an outcome of linked or new_entity; merge events carry a counterpart entity and an outcome of merge or unmerge, where a split is recorded as the un-merge that reversed a merge. Source-only forgotten events are absent: a resolution event appears only while its mention still resolves to a non-tombstoned version of a live lineage, and every event requires its survivor entity to pass the entities_current provenance gate. Decision clocks are transaction time and carry no world-validity meaning; the view carries no counts and asserts no facts.",
+          "definition_ast": "(w:select w:rd o:. w:deployment_id o:, s:resolution_decision o::: w:text w:as w:object_kind o:, w:rd o:. w:decision_id w:as w:event_id o:, w:ec o:. w:entity_id o:, w:null o::: w:uuid w:as w:related_entity_id o:, w:rd o:. w:mention_id o:, w:case w:when w:rd o:. w:is_new_entity w:then s:new_entity o::: w:text w:else s:linked o::: w:text w:end w:as w:outcome o:, w:rd o:. w:method o::: w:text w:as w:method o:, w:rd o:. w:confidence o:, w:rd o:. w:decided_by o::: w:text w:as w:decided_by o:, w:rd o:. w:decided_at o:, w:rd o:. w:superseded_by w:is w:not w:null w:as w:is_superseded w:from w:resolution_decisions w:rd w:join w:v_memory_entity_survivor w:s w:on w:s o:. w:deployment_id o:= w:rd o:. w:deployment_id w:and w:s o:. w:entity_id o:= w:rd o:. w:entity_id w:join w:memory_v1 o:. w:entities_current w:ec w:on w:ec o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:ec o:. w:entity_id o:= w:s o:. w:survivor_entity_id w:where (w:exists (w:select n:1 w:from w:mentions w:m w:join w:chunks w:ch w:on w:ch o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:ch o:. w:chunk_id o:= w:m o:. w:chunk_id w:join w:memory_v1 o:. w:document_versions_visible w:vv w:on w:vv o:. w:deployment_id o:= w:ch o:. w:deployment_id w:and w:vv o:. w:version_id o:= w:ch o:. w:version_id w:and w:vv o:. w:doc_id o:= w:m o:. w:doc_id w:where w:m o:. w:deployment_id o:= w:rd o:. w:deployment_id w:and w:m o:. w:mention_id o:= w:rd o:. w:mention_id)) w:union w:all w:select w:me o:. w:deployment_id o:, s:merge_event o::: w:text w:as w:object_kind o:, w:me o:. w:merge_id w:as w:event_id o:, w:ec o:. w:entity_id o:, w:me o:. w:absorbed_id w:as w:related_entity_id o:, w:null o::: w:uuid w:as w:mention_id o:, w:case w:when w:me o:. w:reversed_by w:is w:not w:null w:then s:unmerge o::: w:text w:else s:merge o::: w:text w:end w:as w:outcome o:, s:merge_event o::: w:text w:as w:method o:, w:null o::: w:real w:as w:confidence o:, w:me o:. w:decided_by o::: w:text w:as w:decided_by o:, w:me o:. w:decided_at o:, w:me o:. w:reversed_by w:is w:not w:null w:as w:is_superseded w:from w:merge_events w:me w:join w:v_memory_entity_survivor w:s w:on w:s o:. w:deployment_id o:= w:me o:. w:deployment_id w:and w:s o:. w:entity_id o:= w:me o:. w:survivor_id w:join w:memory_v1 o:. w:entities_current w:ec w:on w:ec o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:ec o:. w:entity_id o:= w:s o:. w:survivor_entity_id o:;)",
+          "grain": "one visible resolution/merge/split event",
+          "grain_tag": "identity_event_visible",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "mention_id"
+              ],
+              "target": "memory_v1.mentions_live"
+            }
+          ],
+          "name": "identity_events_visible",
+          "qualified_name": "memory_v1.identity_events_visible",
+          "row_key": [
+            "deployment_id",
+            "object_kind",
+            "event_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns the mention.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this mention in the immutable mention transcript.",
+              "enum_values": null,
+              "name": "mention_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage the mention occurs in.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The lineage's current version the mention occurs in.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current ready reading whose offsets the mention anchors use.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current-content chunk the mention occurs in.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The section containing the mention, null when the chunk has no section in the current structure generation.",
+              "enum_values": null,
+              "name": "section_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "The claim the mention occurs in, exposed only while that claim is itself visible and null otherwise.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "The mention exactly as it appeared in the source.",
+              "enum_values": null,
+              "name": "surface_form",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Accent-folded lower-case form of the surface form.",
+              "enum_values": null,
+              "name": "normalized_lemma",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The nominative or canonical form the extractor emitted, null when it emitted none.",
+              "enum_values": null,
+              "name": "canonical_name_form",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The entity type the extractor emitted for this mention, null when it emitted none.",
+              "enum_values": null,
+              "name": "emitted_type",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Extractor confidence in that emitted type, null when unscored.",
+              "enum_values": null,
+              "name": "type_confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "Language of the mention, null when undetected.",
+              "enum_values": null,
+              "name": "language",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Start character offset of the mention within the named representation's markdown, null when unrecorded.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of the mention within the named representation's markdown, null when unrecorded.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "When the mention was recorded, which is a processing instant.",
+              "enum_values": null,
+              "name": "created_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The survivor entity this mention currently resolves to, null while the mention is unresolved.",
+              "enum_values": null,
+              "name": "resolved_entity_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Which decision tier produced the live resolution, null while the mention is unresolved.",
+              "enum_values": [
+                "T0",
+                "T3",
+                "T4_small",
+                "T4_frontier",
+                "human"
+              ],
+              "name": "resolution_method",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Confidence of that live resolution, null while the mention is unresolved.",
+              "enum_values": null,
+              "name": "resolution_confidence",
+              "nullable": true,
+              "type": "real"
+            },
+            {
+              "comment": "True when the live resolution minted a new entity, null while the mention is unresolved.",
+              "enum_values": null,
+              "name": "resolution_is_new_entity",
+              "nullable": true,
+              "type": "boolean"
+            },
+            {
+              "comment": "When the live resolution was decided, null while the mention is unresolved.",
+              "enum_values": null,
+              "name": "resolved_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Mentions in superseded versions, non-ready readings, and forgotten lineages are absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the resolution columns are populated only from the mention's single live, unsuperseded decision and only when the resolved survivor itself passes the entities_current provenance gate, so they are null rather than dangling. The claim coordinate is gated the same way and is null unless that claim is itself visible. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks.",
+          "definition_ast": "(w:select w:m o:. w:deployment_id o:, w:m o:. w:mention_id o:, w:cl o:. w:doc_id o:, w:cl o:. w:version_id o:, w:cl o:. w:representation_id o:, w:cl o:. w:chunk_id o:, w:cl o:. w:section_id o:, w:mc o:. w:claim_id o:, w:m o:. w:surface_form o:, w:m o:. w:normalized_lemma o:, w:m o:. w:canonical_name_form o:, w:m o:. w:emitted_type o:, w:m o:. w:type_confidence o:, w:m o:. w:language o:, w:m o:. w:char_start o:, w:m o:. w:char_end o:, w:m o:. w:created_at o:, w:ec o:. w:entity_id w:as w:resolved_entity_id o:, w:live o:. w:method o::: w:text w:as w:resolution_method o:, w:live o:. w:confidence w:as w:resolution_confidence o:, w:live o:. w:is_new_entity w:as w:resolution_is_new_entity o:, w:live o:. w:decided_at w:as w:resolved_at w:from w:mentions w:m w:join w:memory_v1 o:. w:chunks_live w:cl w:on w:cl o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:cl o:. w:chunk_id o:= w:m o:. w:chunk_id w:left w:join w:memory_v1 o:. w:claims_visible_history w:mc w:on w:mc o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:mc o:. w:claim_id o:= w:m o:. w:claim_id w:left w:join w:lateral (w:select w:rd o:. w:entity_id o:, w:rd o:. w:method o:, w:rd o:. w:confidence o:, w:rd o:. w:is_new_entity o:, w:rd o:. w:decided_at w:from w:resolution_decisions w:rd w:where w:rd o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:rd o:. w:mention_id o:= w:m o:. w:mention_id w:and w:rd o:. w:superseded_by w:is w:null w:order w:by w:rd o:. w:decided_at w:desc o:, w:rd o:. w:decision_id w:desc w:limit n:1) w:live w:on w:true w:left w:join w:v_memory_entity_survivor w:s w:on w:s o:. w:deployment_id o:= w:m o:. w:deployment_id w:and w:s o:. w:entity_id o:= w:live o:. w:entity_id w:left w:join w:memory_v1 o:. w:entities_current w:ec w:on w:ec o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:ec o:. w:entity_id o:= w:s o:. w:survivor_entity_id o:;)",
+          "grain": "one mention in current content",
+          "grain_tag": "mention_current_content",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "chunk_id"
+              ],
+              "target": "memory_v1.chunks_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "resolved_entity_id"
+              ],
+              "target": "memory_v1.entities_current"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "claim_id"
+              ],
+              "target": "memory_v1.claims_visible_history"
+            }
+          ],
+          "name": "mentions_live",
+          "qualified_name": "memory_v1.mentions_live",
+          "row_key": [
+            "deployment_id",
+            "mention_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns the association.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The visible knowledge artifact that carries the citation.",
+              "enum_values": null,
+              "name": "artifact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "What the citation does, one of supports, contradicts, or cites.",
+              "enum_values": [
+                "supports",
+                "contradicts",
+                "cites"
+              ],
+              "name": "role",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "What is cited, one of claim, relation, or document.",
+              "enum_values": [
+                "claim",
+                "relation",
+                "document"
+              ],
+              "name": "target_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The cited target: the asserting lineage for a claim citation, the relation for a relation citation, or the lineage for a document citation.",
+              "enum_values": null,
+              "name": "target_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Sorted chunk-content hashes locating the cited claims inside the lineage, null for non-claim targets; these are locators only and never authorize a read.",
+              "enum_values": null,
+              "name": "claim_chunk_content_hashes",
+              "nullable": true,
+              "type": "text[]"
+            },
+            {
+              "comment": "Exact number of underlying citation links collapsed into this association.",
+              "enum_values": null,
+              "name": "link_count",
+              "nullable": false,
+              "type": "bigint"
+            }
+          ],
+          "comment": "One row per visible artifact-to-target citation, keyed by (deployment_id, artifact_id, role, target_kind, target_id) and joined to pages_live on (deployment_id, artifact_id), documents_live on target_id for claim and document targets, and the fact relations on target_id for relation targets. EACH TARGET PASSES ITS OWN VISIBILITY GATE: a citation appears only while its cited lineage is live or its cited relation still has surviving provenance, so forgetting a source removes the link rather than leaving a reference to vanished content. A claim citation is a stable coordinate on the asserting LINEAGE, and its chunk content hashes are exposed only as locators inside that already authorized lineage: the hash never authorizes a read and cannot be used to bypass the lineage gate. Because several chunk coordinates in one lineage collapse into one association, link_count reports exactly how many underlying links were collapsed. The view carries no clocks.",
+          "definition_ast": "(w:select w:deployment_id o:, w:artifact_id o:, w:role o:, w:target_kind o:, w:target_id o:, w:array_agg (w:distinct w:claim_chunk_content_hash w:order w:by w:claim_chunk_content_hash) w:filter (w:where w:claim_chunk_content_hash w:is w:not w:null) w:as w:claim_chunk_content_hashes o:, w:count (o:*) w:as w:link_count w:from (w:select w:e o:. w:deployment_id o:, w:e o:. w:artifact_id o:, w:e o:. w:role o::: w:text w:as w:role o:, w:case w:when w:e o:. w:claim_lineage_id w:is w:not w:null w:then s:claim o::: w:text w:when w:e o:. w:relation_id w:is w:not w:null w:then s:relation o::: w:text w:else s:document o::: w:text w:end w:as w:target_kind o:, w:coalesce (w:e o:. w:claim_lineage_id o:, w:e o:. w:relation_id o:, w:e o:. w:doc_id) w:as w:target_id o:, w:e o:. w:claim_chunk_content_hash w:from w:knowledge_artifact_evidence w:e w:join w:memory_v1 o:. w:pages_live w:p w:on w:p o:. w:deployment_id o:= w:e o:. w:deployment_id w:and w:p o:. w:artifact_id o:= w:e o:. w:artifact_id) w:l w:where (w:target_kind o:= w:any (w:array o:[ s:claim o::: w:text o:, s:document o::: w:text o:])) w:and (w:exists (w:select n:1 w:from w:memory_v1 o:. w:documents_live w:d w:where w:d o:. w:deployment_id o:= w:l o:. w:deployment_id w:and w:d o:. w:doc_id o:= w:l o:. w:target_id)) w:or w:target_kind o:= s:relation o::: w:text w:and (w:exists (w:select n:1 w:from w:memory_v1 o:. w:facts_visible_history w:f w:where w:f o:. w:deployment_id o:= w:l o:. w:deployment_id w:and w:f o:. w:fact_kind o:= s:relation o::: w:text w:and w:f o:. w:fact_id o:= w:l o:. w:target_id)) w:group w:by w:deployment_id o:, w:artifact_id o:, w:role o:, w:target_kind o:, w:target_id o:;)",
+          "grain": "one visible K artifact-to-target association",
+          "grain_tag": "k_artifact_evidence_visible",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "artifact_id"
+              ],
+              "target": "memory_v1.pages_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "target_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "target_id"
+              ],
+              "target": "memory_v1.facts_visible_history"
+            }
+          ],
+          "name": "page_evidence_visible",
+          "qualified_name": "memory_v1.page_evidence_visible",
+          "row_key": [
+            "deployment_id",
+            "artifact_id",
+            "role",
+            "target_kind",
+            "target_id"
+          ]
+        },
+        {
+          "clock_semantics": "compilation_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns the artifact.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this knowledge artifact.",
+              "enum_values": null,
+              "name": "artifact_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Content tier of the artifact, one of K1, K2, or K3.",
+              "enum_values": [
+                "K1",
+                "K2",
+                "K3"
+              ],
+              "name": "layer",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Ownership contract of the body, either compiled when machine-owned or authored when human-owned.",
+              "enum_values": [
+                "compiled",
+                "authored"
+              ],
+              "name": "page_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Path of the artifact's file in the knowledge repository.",
+              "enum_values": null,
+              "name": "git_path",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Free-form editorial kind such as summary or profile, null when unset.",
+              "enum_values": null,
+              "name": "kind",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Parent artifact in the compile tree, exposed only while that parent is itself visible and null otherwise.",
+              "enum_values": null,
+              "name": "parent_artifact_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Writer-emitted abstract of the page; it is compiled orientation prose and is never asserted evidence.",
+              "enum_values": null,
+              "name": "page_summary",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Lifecycle status of the artifact, one of active, stale, or quarantined.",
+              "enum_values": [
+                "active",
+                "stale",
+                "quarantined"
+              ],
+              "name": "status",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "When the artifact was last compiled, null when it has never been compiled.",
+              "enum_values": null,
+              "name": "last_compiled_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "True when a compiled artifact is known to lag its inputs, either by status or by an unprocessed refresh.",
+              "enum_values": null,
+              "name": "is_stale",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "Exact count of unprocessed authored-review flags on the artifact, always zero for a compiled page.",
+              "enum_values": null,
+              "name": "open_review_flags",
+              "nullable": false,
+              "type": "bigint"
+            },
+            {
+              "comment": "True when an open authored-review flag asks the author to redact content.",
+              "enum_values": null,
+              "name": "redaction_required",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "comment": "One row per visible knowledge artifact, keyed by (deployment_id, artifact_id) and joined to page_evidence_visible on the same pair. A tombstoned artifact is absent and a tombstoned parent is reported as null rather than dangling. Everything textual here is COMPILED ORIENTATION PROSE AT COMPILED GRAIN: page_summary is a writer's abstract of cited evidence and can never be promoted to a live fact, and the artifact body itself lives in the knowledge repository rather than in this schema. Forgetting a source scrubs the summary and marks affected compiled pages stale as part of the purge, which is why this relation's own gate is visibility rather than citation provenance; the per-link gate lives in page_evidence_visible. The review-flag count is exact over unprocessed flags, is_stale means the compiled page is known to lag its inputs, and last_compiled_at is a processing instant rather than a validity clock.",
+          "definition_ast": "(w:select w:a o:. w:deployment_id o:, w:a o:. w:artifact_id o:, w:a o:. w:layer o::: w:text w:as w:layer o:, w:a o:. w:page_kind o::: w:text w:as w:page_kind o:, w:a o:. w:git_path o:, w:a o:. w:kind o:, w:parent o:. w:artifact_id w:as w:parent_artifact_id o:, w:a o:. w:page_summary o:, w:a o:. w:status o::: w:text w:as w:status o:, w:a o:. w:last_compiled_at o:, w:a o:. w:page_kind o:= s:compiled o::: w:knowledge_page_kind w:and (w:a o:. w:status o:= s:stale o::: w:knowledge_artifact_status w:or (w:exists (w:select n:1 w:from w:knowledge_refresh_queue w:q w:where w:q o:. w:deployment_id o:= w:a o:. w:deployment_id w:and w:q o:. w:artifact_id o:= w:a o:. w:artifact_id w:and w:q o:. w:processed_at w:is w:null))) w:as w:is_stale o:, w:flags o:. w:open_review_flags o:, w:flags o:. w:redaction_required w:from w:knowledge_artifacts w:a w:left w:join w:knowledge_artifacts w:parent w:on w:parent o:. w:deployment_id o:= w:a o:. w:deployment_id w:and w:parent o:. w:artifact_id o:= w:a o:. w:parent_artifact_id w:and w:parent o:. w:status o:<> s:tombstoned o::: w:knowledge_artifact_status w:cross w:join w:lateral (w:select w:count (o:*) w:as w:open_review_flags o:, w:coalesce (w:bool_or (w:coalesce ((w:q o:. w:payload o:->> s:redaction_required o::: w:text) o::: w:boolean o:, w:false)) o:, w:false) w:as w:redaction_required w:from w:knowledge_refresh_queue w:q w:where w:q o:. w:deployment_id o:= w:a o:. w:deployment_id w:and w:q o:. w:artifact_id o:= w:a o:. w:artifact_id w:and w:q o:. w:trigger o:= s:authored_review o::: w:knowledge_trigger w:and w:q o:. w:processed_at w:is w:null w:and w:a o:. w:page_kind o:= s:authored o::: w:knowledge_page_kind) w:flags w:where w:a o:. w:status o:<> s:tombstoned o::: w:knowledge_artifact_status o:;)",
+          "grain": "one visible K artifact",
+          "grain_tag": "k_artifact_compiled_grain",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "parent_artifact_id"
+              ],
+              "target": "memory_v1.pages_live"
+            }
+          ],
+          "name": "pages_live",
+          "qualified_name": "memory_v1.pages_live",
+          "row_key": [
+            "deployment_id",
+            "artifact_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns the section.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this section node.",
+              "enum_values": null,
+              "name": "section_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage the section belongs to.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The lineage's current version, whose bytes this section indexes.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The current ready reading whose character offsets this section uses.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The D79 structure generation that produced this tree, always the representation's current generation.",
+              "enum_values": null,
+              "name": "structure_generation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The parent node in the section tree, null for the root section.",
+              "enum_values": null,
+              "name": "parent_section_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Materialized path such as 0.2.1, unique within the structure generation.",
+              "enum_values": null,
+              "name": "node_path",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Source heading depth from one to six, null when the section carries no heading.",
+              "enum_values": null,
+              "name": "heading_level",
+              "nullable": true,
+              "type": "smallint"
+            },
+            {
+              "comment": "Section title as read from the source, null when the section has none.",
+              "enum_values": null,
+              "name": "title",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Case-folded and trimmed title used for stable matching, empty when there is no title.",
+              "enum_values": null,
+              "name": "normalized_title",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Structural role of the section, such as body, references, or boilerplate.",
+              "enum_values": [
+                "body",
+                "abstract",
+                "introduction",
+                "results",
+                "methods",
+                "discussion",
+                "conclusion",
+                "references",
+                "appendix",
+                "table",
+                "figure_caption",
+                "nav",
+                "boilerplate",
+                "legal"
+              ],
+              "name": "role",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Position of the section among its siblings.",
+              "enum_values": null,
+              "name": "ordinal",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "First block ordinal of the section on the deterministic block grid.",
+              "enum_values": null,
+              "name": "block_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Last block ordinal of the section, inclusive.",
+              "enum_values": null,
+              "name": "block_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Start character offset of the section within this representation's markdown.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of the section within this representation's markdown.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "First source page of the section, null when the source is not paginated.",
+              "enum_values": null,
+              "name": "page_start",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "Last source page of the section, null when the source is not paginated.",
+              "enum_values": null,
+              "name": "page_end",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "Section summary generated for navigation and context; it is labeled orientation text and is never asserted evidence.",
+              "enum_values": null,
+              "name": "summary",
+              "nullable": true,
+              "type": "text"
+            }
+          ],
+          "comment": "One row per section of the current ready representation of a live lineage, keyed by (deployment_id, section_id) and joined to documents_live on (deployment_id, doc_id). Sections of a superseded version, of a non-ready reading, of a superseded D79 structure generation, and of a forgotten lineage are all absent, so a node_path resolves to exactly one live tree. Character and block offsets are meaningful only against the named representation. The summary column is orientation text, not evidence, and the view carries no counts and no validity clocks.",
+          "definition_ast": "(w:select w:s o:. w:deployment_id o:, w:s o:. w:section_id o:, w:s o:. w:doc_id o:, w:s o:. w:version_id o:, w:s o:. w:representation_id o:, w:s o:. w:structure_generation_id o:, w:s o:. w:parent_section_id o:, w:s o:. w:node_path o:, w:s o:. w:heading_level o:, w:s o:. w:title o:, w:s o:. w:normalized_title o:, w:s o:. w:role o::: w:text w:as w:role o:, w:s o:. w:ordinal o:, w:s o:. w:block_start o:, w:s o:. w:block_end o:, w:s o:. w:char_start o:, w:s o:. w:char_end o:, w:s o:. w:page_start o:, w:s o:. w:page_end o:, w:s o:. w:summary w:from w:document_sections w:s w:join w:memory_v1 o:. w:documents_live w:dl w:on w:dl o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:dl o:. w:doc_id o:= w:s o:. w:doc_id w:and w:dl o:. w:current_version_id o:= w:s o:. w:version_id w:and w:dl o:. w:current_representation_id o:= w:s o:. w:representation_id w:and w:dl o:. w:has_current_ready_content w:join w:document_representations w:r w:on w:r o:. w:deployment_id o:= w:s o:. w:deployment_id w:and w:r o:. w:representation_id o:= w:s o:. w:representation_id w:and w:r o:. w:current_structure_generation_id o:= w:s o:. w:structure_generation_id o:;)",
+          "grain": "one section in a current ready representation",
+          "grain_tag": "section_current_content",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "sections_live",
+          "qualified_name": "memory_v1.sections_live",
+          "row_key": [
+            "deployment_id",
+            "section_id"
+          ]
+        },
+        {
+          "clock_semantics": "transaction_time_event",
+          "columns": [
+            {
+              "comment": "The deployment that owns the transition.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this append-only transition record.",
+              "enum_values": null,
+              "name": "event_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The claim whose testimony currency changed.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage whose basis change drove the transition.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The single reconciliation run that emitted the transition, so a retried run is recognizable as one run.",
+              "enum_values": null,
+              "name": "reconciliation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "True when the claim regained currency and false when it lost currency.",
+              "enum_values": null,
+              "name": "became_current",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "Why currency changed, one of reextracted, version_superseded, version_deleted, or review_restored.",
+              "enum_values": [
+                "reextracted",
+                "version_superseded",
+                "version_deleted",
+                "review_restored"
+              ],
+              "name": "reason",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The superseded extractor generation for a re-extraction, null for the other reasons.",
+              "enum_values": null,
+              "name": "from_extractor_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The superseded document version, exposed only while that version is itself visible and null otherwise.",
+              "enum_values": null,
+              "name": "from_version_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "When the transition occurred, which is a transaction-time instant and never a validity clock.",
+              "enum_values": null,
+              "name": "occurred_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per visible D54 testimony-currency transition, keyed by (deployment_id, event_id) and joined to claims_visible_history on (deployment_id, claim_id) and to documents_live on (deployment_id, doc_id). A currency transition is BOOKKEEPING and never validity: nothing about the claim changes and no fact is adjudicated by it. Transitions of forgotten lineages and of claims whose source version is tombstoned are absent, and from_version_id is null rather than dangling whenever the superseded version is itself no longer visible, so this relation cannot be read as a tombstone side channel. The occurrence instant is transaction time; the view carries no counts and no world-validity clocks.",
+          "definition_ast": "(w:select w:e o:. w:deployment_id o:, w:e o:. w:event_id o:, w:e o:. w:claim_id o:, w:e o:. w:doc_id o:, w:e o:. w:reconciliation_id o:, w:e o:. w:became_current o:, w:e o:. w:reason o::: w:text w:as w:reason o:, w:e o:. w:from_extractor_version o:, w:fv o:. w:version_id w:as w:from_version_id o:, w:e o:. w:occurred_at w:from w:testimony_currency_events w:e w:join w:memory_v1 o:. w:documents_live w:dl w:on w:dl o:. w:deployment_id o:= w:e o:. w:deployment_id w:and w:dl o:. w:doc_id o:= w:e o:. w:doc_id w:join w:memory_v1 o:. w:claims_visible_history w:ch w:on w:ch o:. w:deployment_id o:= w:e o:. w:deployment_id w:and w:ch o:. w:claim_id o:= w:e o:. w:claim_id w:left w:join w:memory_v1 o:. w:document_versions_visible w:fv w:on w:fv o:. w:deployment_id o:= w:e o:. w:deployment_id w:and w:fv o:. w:version_id o:= w:e o:. w:from_version_id o:;)",
+          "grain": "one visible D54 transition",
+          "grain_tag": "testimony_currency_event_visible",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "claim_id"
+              ],
+              "target": "memory_v1.claims_visible_history"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "from_version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "testimony_currency_events_visible",
+          "qualified_name": "memory_v1.testimony_currency_events_visible",
+          "row_key": [
+            "deployment_id",
+            "event_id"
+          ]
+        }
+      ]
+    }
+  },
+  "manifest_contract": "memory_v1.manifest/1",
+  "surface_manifest_hash": "fb9fd229064f5cb44f62ed996742a207fe41e9808fc47e15ed302cc8f530dfff"
+}

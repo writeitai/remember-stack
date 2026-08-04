@@ -7,6 +7,10 @@ from alembic import op
 
 _TABLE_START = re.compile(r"^CREATE TABLE (?P<table>[a-z_][a-z0-9_]*) \($")
 _COLUMN_START = re.compile(r"^(?P<column>[a-z_][a-z0-9_]*)\s+")
+_VIEW_START = re.compile(
+    r"^CREATE VIEW (?P<view>[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?) \($"
+)
+_VIEW_COLUMN = re.compile(r"^(?P<column>[a-z_][a-z0-9_]*),?\s*--\s*(?P<comment>.+)$")
 
 
 def apply_ddl(*, sql: str) -> None:
@@ -16,6 +20,27 @@ def apply_ddl(*, sql: str) -> None:
     for table, column, comment in _column_comments(sql=sql):
         escaped_comment = comment.replace("'", "''")
         op.execute(f"COMMENT ON COLUMN {table}.{column} IS '{escaped_comment}'")
+
+
+def apply_view_ddl(*, sql: str) -> None:
+    """Execute view DDL and materialize inline output-column descriptions.
+
+    A view's column list is written as ``CREATE VIEW name (col, -- sentence``
+    lines terminated by ``) AS``, so the public column order and each column's
+    documented meaning live beside the definition instead of in a separate
+    block of ``COMMENT ON COLUMN`` statements.
+    """
+    for statement in _split_sql(sql=sql):
+        op.execute(statement)
+    for view, column, comment in _view_column_comments(sql=sql):
+        escaped_comment = comment.replace("'", "''")
+        op.execute(f"COMMENT ON COLUMN {view}.{column} IS '{escaped_comment}'")
+
+
+def drop_views(*, view_names: Iterable[str]) -> None:
+    """Drop only the named views, dependents first."""
+    for view_name in view_names:
+        op.execute(f"DROP VIEW IF EXISTS {view_name}")
 
 
 def drop_tables(*, table_names: Iterable[str]) -> None:
@@ -28,6 +53,34 @@ def drop_types(*, type_names: Iterable[str]) -> None:
     """Drop only the named UGM enum types after their tables are gone."""
     for type_name in type_names:
         op.execute(f"DROP TYPE IF EXISTS {type_name}")
+
+
+def _view_column_comments(*, sql: str) -> tuple[tuple[str, str, str], ...]:
+    """Extract every inline output-column description from CREATE VIEW DDL."""
+    result: list[tuple[str, str, str]] = []
+    current_view: str | None = None
+
+    for raw_line in sql.splitlines():
+        view_match = _VIEW_START.match(raw_line)
+        if view_match is not None:
+            current_view = view_match.group("view")
+            continue
+        if current_view is None:
+            continue
+        if raw_line.startswith(") AS"):
+            current_view = None
+            continue
+        column_match = _VIEW_COLUMN.match(raw_line.strip())
+        if column_match is not None:
+            result.append(
+                (
+                    current_view,
+                    column_match.group("column"),
+                    column_match.group("comment").strip(),
+                )
+            )
+
+    return tuple(dict.fromkeys(result))
 
 
 def _column_comments(*, sql: str) -> tuple[tuple[str, str, str], ...]:

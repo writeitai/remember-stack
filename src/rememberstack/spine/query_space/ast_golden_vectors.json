@@ -1,0 +1,85 @@
+{
+  "note": "Golden vectors pinning the canonical AST serializer named by 'serializer'. Every view definition reaches surface_manifest_hash through this serializer, so a change to how a token is spelled would silently move every hash. 'vectors' pin the exact output; 'equivalences' assert that formatting and comments cannot change it; 'distinctions' assert that a semantic difference always does. Regenerate this file only together with a new serializer version.",
+  "serializer": "memory_v1.ast/1",
+  "vectors": [
+    {
+      "name": "keyword_case_and_whitespace",
+      "printed_definition": "SELECT   a,\n   B\nFROM   T",
+      "serialization": "(w:select w:a o:, w:b w:from w:t)"
+    },
+    {
+      "name": "line_and_block_comments_removed",
+      "printed_definition": "SELECT a -- trailing\n, /* mid /* nested */ */ b FROM t",
+      "serialization": "(w:select w:a o:, w:b w:from w:t)"
+    },
+    {
+      "name": "string_literal_with_quote_space_and_parens",
+      "printed_definition": "SELECT 'it''s (x) y'::text",
+      "serialization": "(w:select s:it's\\s\\(x\\)\\sy o::: w:text)"
+    },
+    {
+      "name": "quoted_identifier_preserves_case",
+      "printed_definition": "SELECT \"From\" AS \"X y\" FROM t",
+      "serialization": "(w:select q:From w:as q:X\\sy w:from w:t)"
+    },
+    {
+      "name": "nested_grouping",
+      "printed_definition": "SELECT ((a + b) * (c - d)) FROM t",
+      "serialization": "(w:select ((w:a o:+ w:b) o:* (w:c o:- w:d)) w:from w:t)"
+    },
+    {
+      "name": "operator_maximal_munch",
+      "printed_definition": "SELECT a::text, j ->> 'k', j #>> '{a,b}' FROM t WHERE x <= 1 AND y <> 2",
+      "serialization": "(w:select w:a o::: w:text o:, w:j o:->> s:k o:, w:j o:#>> s:{a,b} w:from w:t w:where w:x o:<= n:1 w:and w:y o:<> n:2)"
+    },
+    {
+      "name": "numeric_literals",
+      "printed_definition": "SELECT 1, 2.5, 1e6, 3.0e-2",
+      "serialization": "(w:select n:1 o:, n:2.5 o:, n:1e6 o:, n:3.0e-2)"
+    },
+    {
+      "name": "dollar_quoted_literal",
+      "printed_definition": "SELECT $tag$body 'with' quotes$tag$",
+      "serialization": "(w:select s:body\\s'with'\\squotes)"
+    },
+    {
+      "name": "array_subscript_and_punctuation",
+      "printed_definition": "SELECT (a)[1], b.c FROM t",
+      "serialization": "(w:select (w:a) o:[ n:1 o:] o:, w:b o:. w:c w:from w:t)"
+    },
+    {
+      "name": "half_open_fact_predicate",
+      "printed_definition": "SELECT f.fact_id FROM facts f WHERE (f.valid_from IS NULL OR f.valid_from <= now()) AND (f.valid_until IS NULL OR f.valid_until > now())",
+      "serialization": "(w:select w:f o:. w:fact_id w:from w:facts w:f w:where (w:f o:. w:valid_from w:is w:null w:or w:f o:. w:valid_from o:<= w:now ()) w:and (w:f o:. w:valid_until w:is w:null w:or w:f o:. w:valid_until o:> w:now ()))"
+    }
+  ],
+  "equivalences": [
+    {
+      "name": "formatting_is_irrelevant",
+      "left": "SELECT a FROM t WHERE b = 1",
+      "right": "select\n  A\nfrom T\nwhere B = 1 -- note"
+    },
+    {
+      "name": "comments_are_irrelevant",
+      "left": "SELECT a FROM t",
+      "right": "SELECT /* c */ a FROM t -- x"
+    }
+  ],
+  "distinctions": [
+    {
+      "name": "half_open_vs_closed_upper_bound",
+      "left": "SELECT a FROM t WHERE v > x",
+      "right": "SELECT a FROM t WHERE v >= x"
+    },
+    {
+      "name": "inner_join_vs_left_join",
+      "left": "SELECT a FROM t JOIN d ON d.id = t.id",
+      "right": "SELECT a FROM t LEFT JOIN d ON d.id = t.id"
+    },
+    {
+      "name": "quoted_identifier_case_matters",
+      "left": "SELECT \"Ab\" FROM t",
+      "right": "SELECT \"aB\" FROM t"
+    }
+  ]
+}
