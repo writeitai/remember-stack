@@ -811,3 +811,24 @@ def test_a_bound_like_pattern_matches(migrated: str) -> None:
     )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows == ((True,),)
+
+
+def test_a_plain_cte_cannot_reference_itself() -> None:
+    """Without RECURSIVE the name is not in scope; say so at parse time."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(
+            "WITH w AS (SELECT 0 AS depth UNION ALL SELECT depth + 1 FROM w"
+            " WHERE depth < 4) SELECT * FROM w"
+        )
+    assert caught.value.code == QueryErrorCode.RELATION_NOT_ALLOWED
+
+
+def test_the_recursive_template_has_no_cycle_or_search_clause() -> None:
+    """One documented shape means one shape."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(
+            "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+            " SELECT depth + 1 FROM w WHERE depth < 4)"
+            " CYCLE depth SET is_cycle USING path SELECT * FROM w"
+        )
+    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION

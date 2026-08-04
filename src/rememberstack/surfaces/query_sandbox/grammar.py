@@ -474,6 +474,30 @@ def _is_integer_literal(node: Node | None, value: int) -> bool:
     )
 
 
+def _reject_self_reference_without_recursive(statement: SelectStmt) -> None:
+    """A plain `WITH` name is not in scope inside its own body.
+
+    PostgreSQL would reject it too, but as an opaque execution error; the
+    public surface owes the caller a stable parse-phase code.
+    """
+
+    class _Scan(Visitor):
+        def visit_WithClause(self, ancestors, node):  # noqa: ANN001, ANN201
+            if getattr(node, "recursive", False):
+                return None
+            for cte in getattr(node, "ctes", None) or ():
+                if isinstance(cte, CommonTableExpr) and _cte_is_self_referencing(cte):
+                    raise _reject(
+                        QueryErrorCode.RELATION_NOT_ALLOWED,
+                        f"CTE {cte.ctename} is not in scope inside its own body;"
+                        " WITH RECURSIVE is required to reference it",
+                    )
+            return None
+
+    scan = _Scan()
+    scan(statement)
+
+
 def _recursive_with_clauses(statement: SelectStmt):  # noqa: ANN201
     """Every `WITH RECURSIVE` clause in the statement, at any nesting level."""
     found: list[tuple[object, object]] = []
@@ -510,6 +534,11 @@ def _validate_recursive_template(clause, owner=None) -> None:  # noqa: ANN001
             "WITH RECURSIVE allows exactly one recursive CTE",
         )
     cte = recursive[0]
+    if cte.cycle_clause is not None or cte.search_clause is not None:
+        raise _reject(
+            QueryErrorCode.UNBOUNDED_RECURSION,
+            "the recursive template has no CYCLE or SEARCH clause",
+        )
     body = cte.ctequery
     assert isinstance(body, SelectStmt)
     if body.op != SetOperation.SETOP_UNION:
@@ -917,6 +946,7 @@ def validate_sql(
     # nested inside another CTE body or a subquery is exactly as capable of
     # running forever as a top-level one. The §4.3 cap is one per statement,
     # so the clauses are collected once and counted.
+    _reject_self_reference_without_recursive(statement)
     recursive_clauses = _recursive_with_clauses(statement)
     if len(recursive_clauses) > 1:
         raise _reject(
