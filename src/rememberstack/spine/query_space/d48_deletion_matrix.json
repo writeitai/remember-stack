@@ -1,5 +1,5 @@
 {
-  "cell_count": 225,
+  "cell_count": 243,
   "cells": [
     {
       "basis": null,
@@ -171,9 +171,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is a private helper: it is outside memory_v1, carries no grant, and is never on a query role's search_path, so it is not a caller-reachable surface; the gate proves that non-reachability, and the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_mention_current_content before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "lineage"
     },
     {
@@ -346,9 +360,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is a private helper: it is outside memory_v1, carries no grant, and is never on a query role's search_path, so it is not a caller-reachable surface; the gate proves that non-reachability, and the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_page_citation_visible publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "version"
     },
     {
@@ -521,9 +549,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is a private helper: it is outside memory_v1, carries no grant, and is never on a query role's search_path, so it is not a caller-reachable surface; the gate proves that non-reachability, and the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_page_citation_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "representation"
     },
     {
@@ -696,9 +738,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is a private helper: it is outside memory_v1, carries no grant, and is never on a query role's search_path, so it is not a caller-reachable surface; the gate proves that non-reachability, and the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through public.v_memory_mention_current_content before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_page_citation_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "claim"
     },
     {
@@ -871,9 +927,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is a private helper: it is outside memory_v1, carries no grant, and is never on a query role's search_path, so it is not a caller-reachable surface; the gate proves that non-reachability, and the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "fact_provenance"
     },
     {
@@ -1046,9 +1116,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is a private helper: it is outside memory_v1, carries no grant, and is never on a query role's search_path, so it is not a caller-reachable surface; the gate proves that non-reachability, and the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "k_target"
     },
     {
@@ -1228,6 +1312,20 @@
     },
     {
       "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
       "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.changes_visible",
@@ -1403,6 +1501,20 @@
     },
     {
       "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.changes_visible",
@@ -1574,117 +1686,166 @@
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_page_citation_visible",
       "target_id": "corpus_body"
     }
   ],
   "contract": "memory_v1.d48_deletion_matrix/2",
   "schema": "memory_v1",
   "status_counts": {
-    "applicable": 56,
-    "deferred": 75,
-    "not_applicable": 94
+    "applicable": 61,
+    "deferred": 81,
+    "not_applicable": 101
   },
-  "surface_count": 25,
+  "surface_count": 27,
   "surfaces": [
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.changes_visible"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.chunks_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.claim_occurrences_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.claims_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.claims_visible_history"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.contradiction_members_current"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.document_crossrefs_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.document_versions_visible"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.documents_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.entities_current"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.entity_aliases_current"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.entity_document_mentions"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.evidence_lineage"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.fact_claim_evidence_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.facts_current"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.facts_visible_history"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.graph_edges_current"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.graph_edges_visible_history"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.identity_events_visible"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.mentions_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.page_evidence_visible"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.pages_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.sections_live"
     },
     {
       "caller_reachable": true,
+      "compiles_deletion": true,
       "name": "memory_v1.testimony_currency_events_visible"
     },
     {
       "caller_reachable": false,
+      "compiles_deletion": false,
       "name": "public.v_memory_entity_survivor"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": true,
+      "name": "public.v_memory_mention_current_content"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": true,
+      "name": "public.v_memory_page_citation_visible"
     }
   ],
   "target_count": 9,
@@ -1713,7 +1874,9 @@
         "memory_v1.mentions_live",
         "memory_v1.page_evidence_visible",
         "memory_v1.sections_live",
-        "memory_v1.testimony_currency_events_visible"
+        "memory_v1.testimony_currency_events_visible",
+        "public.v_memory_mention_current_content",
+        "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
       "forbidden_identifiers": "The lineage id and every identifier derived from it: its versions, representations, sections, chunks, claims, mentions, cross-references, testimony-currency events, the entity whose only provenance it was, and the fact whose only evidence lineage it was.",
@@ -1788,7 +1951,8 @@
         "memory_v1.claims_visible_history",
         "memory_v1.evidence_lineage",
         "memory_v1.fact_claim_evidence_live",
-        "memory_v1.mentions_live"
+        "memory_v1.mentions_live",
+        "public.v_memory_mention_current_content"
       ],
       "executed_in": "A",
       "forbidden_identifiers": "The claim id. The fact it evidenced keeps its association row and stays visible with a reduced count, which is the D54 behaviour rather than a leak.",
@@ -1808,7 +1972,8 @@
         "memory_v1.facts_visible_history",
         "memory_v1.graph_edges_current",
         "memory_v1.graph_edges_visible_history",
-        "memory_v1.page_evidence_visible"
+        "memory_v1.page_evidence_visible",
+        "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
       "forbidden_identifiers": "The fact id, which must disappear from the fact relations, the evidence bridge, the contradiction and graph projections, and the change feed.",
@@ -1829,7 +1994,8 @@
         "memory_v1.document_versions_visible",
         "memory_v1.documents_live",
         "memory_v1.page_evidence_visible",
-        "memory_v1.sections_live"
+        "memory_v1.sections_live",
+        "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
       "forbidden_identifiers": "The cited lineage id, its derived identifiers, and the chunk content hashes that locate the cited claims. The citing page keeps its other citations and stays visible; only the citation of the forgotten lineage leaves, which is what proves a chunk-content hash locator cannot authorize a read on its own.",

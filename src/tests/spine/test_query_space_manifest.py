@@ -265,15 +265,24 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     surfaces = matrix["surfaces"]
     assert isinstance(surfaces, list)
     names = {str(surface["name"]) for surface in surfaces if isinstance(surface, dict)}
+    # Every private helper is a surface, not just the survivor helper: the
+    # mention and citation helpers are where two deletion rules are defined,
+    # so their cells execute like a public relation's.
     assert names == {f"memory_v1.{contract.name}" for contract in VIEW_CONTRACTS} | {
-        "public.v_memory_entity_survivor"
+        "public.v_memory_entity_survivor",
+        "public.v_memory_mention_current_content",
+        "public.v_memory_page_citation_visible",
     }
     private = [
         surface
         for surface in surfaces
         if isinstance(surface, dict) and not surface["caller_reachable"]
     ]
-    assert len(private) == 1
+    # All three helpers are unreachable to a caller; two of them additionally
+    # compile a deletion rule, so their cells execute rather than resting on
+    # non-reachability alone.
+    assert len(private) == 3
+    assert sum(1 for surface in private if surface["compiles_deletion"]) == 2
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
     assert {target.target_id for target in deferred} == {

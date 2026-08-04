@@ -700,8 +700,8 @@ CREATE VIEW memory_v1.entities_current (
   normalized_name,      -- Accent-folded lower-case form of the canonical name, used for matching.
   type_confidence,      -- Confidence in the type vote, null when never scored.
   profile_summary,      -- Registry-maintained blurb about the entity; it is labeled orientation text and is never asserted evidence.
-  live_mention_count,   -- Exact count of distinct live mentions of this entity across live lineages.
-  live_document_count,  -- Exact count of live document lineages that mention this entity.
+  live_mention_count,   -- Exact count of the mentions of this entity in the CURRENT content of live lineages, which is zero when every mention of it survives only in a superseded version.
+  live_document_count,  -- Exact count of the live document lineages whose CURRENT content mentions this entity, which is zero for the same reason.
   graph_degree,         -- Relation degree cached from the latest published graph snapshot, which is orientation and can lag live state.
   created_at,           -- When the entity was minted.
   updated_at            -- When the entity registry row was last maintained.
@@ -728,21 +728,51 @@ CROSS JOIN LATERAL (
     AND edm.entity_id = e.entity_id
 ) AS live
 WHERE e.status = 'active'
-  AND (
-    live.document_count > 0
-    OR EXISTS (
-      SELECT 1
+  AND EXISTS (
+    -- The D48 membership floor is an explicit association to at least one
+    -- SURVIVING LINEAGE, which is a weaker requirement than the counting rule
+    -- above: a mention in a non-tombstoned version of a live lineage is such an
+    -- association even after a newer version superseded it. The counts stay
+    -- current-content-only and may therefore both be zero on a published row.
+    -- One arm per association class rather than an OR of two EXISTS: a
+    -- disjunction of subqueries cannot be planned as a semi-join, while this
+    -- shape can (the same reason the K citation helper is written as arms).
+    SELECT 1
+    FROM (
+      SELECT m.deployment_id, s.survivor_entity_id AS entity_id
+      FROM mentions AS m
+      JOIN chunks AS ch
+        ON ch.deployment_id = m.deployment_id
+       AND ch.chunk_id = m.chunk_id
+      JOIN memory_v1.document_versions_visible AS vv
+        ON vv.deployment_id = ch.deployment_id
+       AND vv.version_id = ch.version_id
+       AND vv.doc_id = m.doc_id
+      CROSS JOIN LATERAL (
+        SELECT rd.entity_id
+        FROM resolution_decisions AS rd
+        WHERE rd.deployment_id = m.deployment_id
+          AND rd.mention_id = m.mention_id
+          AND rd.superseded_by IS NULL
+        ORDER BY rd.decided_at DESC, rd.decision_id DESC
+        LIMIT 1
+      ) AS decided
+      JOIN v_memory_entity_survivor AS s
+        ON s.deployment_id = m.deployment_id
+       AND s.entity_id = decided.entity_id
+      UNION ALL
+      SELECT d.deployment_id, s.survivor_entity_id
       FROM documents AS d
       JOIN v_memory_entity_survivor AS s
         ON s.deployment_id = d.deployment_id
        AND s.entity_id = d.document_entity_id
-      WHERE d.deployment_id = e.deployment_id
-        AND d.deleted_at IS NULL
-        AND s.survivor_entity_id = e.entity_id
-    )
+      WHERE d.deleted_at IS NULL
+    ) AS provenance
+    WHERE provenance.deployment_id = e.deployment_id
+      AND provenance.entity_id = e.entity_id
   );
 COMMENT ON VIEW memory_v1.entities_current IS
-  'One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires surviving provenance: an entity appears only while at least one live document lineage still mentions it or is bridged to it, so an entity whose every source has been forgotten is absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. The mention and document counts are exact over live lineages; graph_degree is copied from the latest published graph snapshot and is therefore orientation that can lag live state. profile_summary is orientation text, never evidence. The clocks are registry maintenance instants and carry no world-validity meaning.';
+  'One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires SURVIVING PROVENANCE, which is an explicit association to at least one live document lineage: a mention of this survivor in any non-tombstoned version of a live lineage, or a live document-entity bridge. An entity whose every source has been forgotten is therefore absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. MEMBERSHIP AND THE COUNTS ANSWER DIFFERENT QUESTIONS, and the difference is deliberate: the two counts are exact over CURRENT content only — they equal this entity''s rows in mentions_live and entity_document_mentions — so an entity whose only mention sits in a superseded version of a live lineage is published here with both counts at zero and has no row in entity_document_mentions at all. A zero count is not an absence of provenance. graph_degree is copied from the latest published graph snapshot and is therefore orientation that can lag live state; profile_summary is orientation text, never evidence; and the clocks are registry maintenance instants that carry no world-validity meaning.';
 
 CREATE VIEW memory_v1.entity_aliases_current (
   deployment_id,        -- The deployment that owns the alias.

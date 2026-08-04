@@ -22,6 +22,22 @@ with the checked-in manifest. That is what makes the check meaningful: the two
 sides come from independent places, so a wrong declaration fails rather than
 being compared with itself.
 
+**Shape is not enough, and the second comparison is why.** Names, columns,
+types, and comments describe the *interface* of a view, not what it returns.
+`CREATE OR REPLACE VIEW` can keep every one of them identical while replacing
+the body — the extreme case being a definition with `WHERE false`, which
+publishes the declared contract and no rows, and which a shape check reports as
+clean. The manifest hash cannot see it either, by design: it is taken over the
+*authored* DDL in the repository, so it says what the checkout intends and
+nothing about what a particular server is actually running. So
+`live_schema_differences()` also compares definitions, in the one way that is
+sound: the same repository is migrated into a scratch database **on the same
+server**, every `memory_v1` view and every private helper is deparsed with
+`pg_get_viewdef()` in both databases, and the two are compared pairwise. Same
+server means the same printer on both sides, so the comparison is exact without
+the deparser ever becoming a hash input — the drift is caught, and
+`surface_manifest_hash` stays reproducible from source with no server at all.
+
 The file has two halves, and the split is deliberate.
 
 - ``hash_members`` is exactly the four members the binding design hashes:

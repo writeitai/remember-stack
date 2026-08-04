@@ -168,27 +168,32 @@ _PROBES: Final = (
     _Probe(
         category="entity_without_surviving_provenance",
         explanation=(
-            "An active entity is mentioned nowhere in current content and is bridged "
-            "to no live document, so it has no surviving provenance and is absent "
-            "from the entity relation. A mention that survives only in a superseded "
-            "version counts as no provenance, exactly as the entity relation reads it."
+            "An active survivor entity is mentioned in no visible version of any "
+            "live lineage and is bridged to no live document, so it has no "
+            "surviving provenance and is absent from the entity relation. A "
+            "mention that survives only in a superseded version of a live lineage "
+            "is still provenance — the D48 floor is a surviving lineage, not "
+            "current content — so an entity is counted here only when every "
+            "source that named it is gone."
         ),
         repair=(
             "Expected after a forget or a re-extraction that dropped the mention; "
             "retire the entity, or re-ingest a source that mentions it."
         ),
+        # Counted as the complement of the public relation itself, so the report
+        # cannot describe a different set from the one the surface omits. The
+        # survivor clause keeps the two entity categories disjoint: an entity
+        # absent because its merge chain never terminates is the next probe's
+        # subject, not this one's.
         sql=(
             "SELECT count(*) FROM entities e WHERE "
             + _DEPLOYMENT_FILTER.format(alias="e")
             + " AND e.status = 'active'"
-            " AND NOT EXISTS (SELECT 1 FROM v_memory_mention_current_content h"
-            " WHERE h.deployment_id = e.deployment_id"
-            " AND h.survivor_entity_id = e.entity_id)"
-            " AND NOT EXISTS (SELECT 1 FROM documents d"
-            " JOIN v_memory_entity_survivor s ON s.deployment_id = d.deployment_id"
-            " AND s.entity_id = d.document_entity_id"
-            " WHERE d.deployment_id = e.deployment_id AND d.deleted_at IS NULL"
+            " AND EXISTS (SELECT 1 FROM v_memory_entity_survivor s"
+            " WHERE s.deployment_id = e.deployment_id AND s.entity_id = e.entity_id"
             " AND s.survivor_entity_id = e.entity_id)"
+            " AND NOT EXISTS (SELECT 1 FROM memory_v1.entities_current c"
+            " WHERE c.deployment_id = e.deployment_id AND c.entity_id = e.entity_id)"
         ),
     ),
     _Probe(

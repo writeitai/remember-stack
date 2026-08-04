@@ -8,7 +8,7 @@ the repository as a reviewable artifact and executed in full by the schema gate.
 **Every cell states what it proves, and none of them can pass vacuously.** A
 cell that simply asserted "no forbidden identifier is present after the
 mutation" would pass trivially wherever the identifier could never have been
-present in the first place — which is most of a 6 × 24 grid. So each cell
+present in the first place — which is most of the grid. So each cell
 carries its own status, and the gate holds each status to a different, explicit
 obligation:
 
@@ -22,15 +22,22 @@ obligation:
   nothing here to leak. The gate does not take that on trust: it asserts the
   reachable set really is empty, before *and* after, so a wrong declaration
   fails loudly instead of hiding a leak.
-- ``not_applicable`` with basis ``not_caller_reachable`` — the surface is a
-  private helper view: outside `memory_v1`, carrying no grant, and (Batch B)
-  never on a query role's `search_path`. It is included as a surface because
-  §9.2 enumerates helpers, and its D48 obligation is discharged by
-  non-reachability rather than by omission: the gate asserts the schema and the
-  zero grants, and the public relations that read it carry their own cells. The
-  merge-redirect helper deliberately still resolves an entity whose provenance
-  is gone, because `entities_current` computes that provenance *from* it; what
-  a caller sees is decided by the public relations above.
+- ``not_applicable`` with basis ``not_caller_reachable`` — the surface is the
+  merge-redirect helper, which is the one surface here that deliberately does
+  *not* drop rows on a deletion: `entities_current` computes surviving
+  provenance *from* it, so it must keep resolving an entity whose provenance is
+  gone, and an "absent afterwards" obligation would be false of it. Its D48
+  obligation is discharged the other way, by non-reachability — outside
+  `memory_v1`, no grant, and (Batch B) never on a query role's `search_path` —
+  which the gate asserts from `pg_class.relacl` and `information_schema`, while
+  the public relations that read it carry their own cells.
+
+The other two private helpers are *not* discharged that way. `memory_v1` is
+where a caller reads, but the mention helper and the K citation helper are
+where two of the deletion rules are actually *defined* — the public relations
+project them — so their cells are executed exactly like a public relation's:
+reachable before the mutation, absent after. Non-reachability is proven for
+all three helpers on top of that, by the gate that reads their grants.
 - ``deferred`` — the target names an object class this batch does not build (a
   P1 nomination candidate, a P2 snapshot edge, a corpus body). The cell is
   recorded rather than omitted, with the batch that will execute it, so the
@@ -51,6 +58,9 @@ from typing import Final
 from pydantic import BaseModel
 from pydantic import ConfigDict
 
+from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
+    PRIVATE_HELPER_VIEWS,
+)
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
 from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS
@@ -63,8 +73,18 @@ MATRIX_CONTRACT: Final = "memory_v1.d48_deletion_matrix/2"
 #: The checked-in coverage artifact the schema gate executes cell by cell.
 MATRIX_PATH: Final = Path(__file__).with_name("d48_deletion_matrix.json")
 
-#: The private merge-redirect helper, included because §9.2 enumerates helpers.
+#: The private merge-redirect helper, whose cells are discharged by
+#: non-reachability because it deliberately keeps resolving an entity whose
+#: provenance is gone.
 SURVIVOR_HELPER: Final = "public.v_memory_entity_survivor"
+
+#: The private helpers that *do* compile a deletion rule — they are where the
+#: rule is defined and the public relations project it — so their cells are
+#: executed like a public relation's, before and after the mutation.
+GATED_HELPERS: Final = (
+    "public.v_memory_mention_current_content",
+    "public.v_memory_page_citation_visible",
+)
 
 
 class CellStatus(StrEnum):
@@ -92,6 +112,12 @@ class MatrixSurface(BaseModel):
 
     caller_reachable: bool
     """False for a private helper, which no query role can read."""
+
+    compiles_deletion: bool = True
+    """True when this surface itself drops rows on a deletion, and its cells are
+    therefore executed before and after the mutation. False only for the
+    merge-redirect helper, which must keep resolving an entity whose provenance
+    is gone because `entities_current` computes that provenance from it."""
 
 
 class DeletionTarget(BaseModel):
@@ -128,11 +154,26 @@ _PUBLIC_SURFACES: Final = tuple(
     for contract in sorted(VIEW_CONTRACTS, key=lambda contract: contract.name)
 )
 
-#: Every surface, public relations first and the private helper last.
-MATRIX_SURFACES: Final = (
-    *_PUBLIC_SURFACES,
-    MatrixSurface(name=SURVIVOR_HELPER, caller_reachable=False),
+_HELPER_SURFACES: Final = (
+    MatrixSurface(
+        name=SURVIVOR_HELPER, caller_reachable=False, compiles_deletion=False
+    ),
+    *(
+        MatrixSurface(name=helper, caller_reachable=False)
+        for helper in sorted(GATED_HELPERS)
+    ),
 )
+
+if {surface.name for surface in _HELPER_SURFACES} != {
+    f"public.{name}" for name in PRIVATE_HELPER_VIEWS
+}:  # pragma: no cover -- a new helper must be classified before it can ship
+    raise RuntimeError(
+        "the deletion matrix does not enumerate every private helper the "
+        "migration creates; classify the new one as gated or non-reachable"
+    )
+
+#: Every surface, public relations first and the private helpers last.
+MATRIX_SURFACES: Final = (*_PUBLIC_SURFACES, *_HELPER_SURFACES)
 
 _LINEAGE_DERIVED: Final = (
     "lineage",
@@ -190,6 +231,8 @@ DELETION_TARGETS: Final = (
             "memory_v1.page_evidence_visible",
             "memory_v1.sections_live",
             "memory_v1.testimony_currency_events_visible",
+            "public.v_memory_mention_current_content",
+            "public.v_memory_page_citation_visible",
         ),
     ),
     DeletionTarget(
@@ -265,6 +308,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.evidence_lineage",
             "memory_v1.fact_claim_evidence_live",
             "memory_v1.mentions_live",
+            "public.v_memory_mention_current_content",
         ),
     ),
     DeletionTarget(
@@ -286,6 +330,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.graph_edges_current",
             "memory_v1.graph_edges_visible_history",
             "memory_v1.page_evidence_visible",
+            "public.v_memory_page_citation_visible",
         ),
     ),
     DeletionTarget(
@@ -311,6 +356,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.documents_live",
             "memory_v1.page_evidence_visible",
             "memory_v1.sections_live",
+            "public.v_memory_page_citation_visible",
         ),
     ),
     DeletionTarget(
@@ -388,25 +434,36 @@ def cell_expectation(*, target: DeletionTarget, surface: MatrixSurface) -> str:
             "this cell is recorded here with the batch that will execute it rather "
             "than left out of the enumeration."
         )
-    if not surface.caller_reachable:
+    if not surface.compiles_deletion:
         return (
-            f"{surface.name} is a private helper: it is outside "
-            f"{QUERY_SPACE_SCHEMA}, carries no grant, and is never on a query "
-            "role's search_path, so it is not a caller-reachable surface; the gate "
-            "proves that non-reachability, and the public relations that read it "
-            "carry their own cells for this target."
+            f"{surface.name} is the merge-redirect helper: it deliberately keeps "
+            "resolving an entity whose provenance is gone, because entities_current "
+            "computes that provenance from it, so its obligation is "
+            f"non-reachability rather than absence — outside {QUERY_SPACE_SCHEMA}, "
+            "no grant, and never on a query role's search_path — which the gate "
+            "proves, while the public relations that read it carry their own cells "
+            "for this target."
         )
+    private = (
+        ""
+        if surface.caller_reachable
+        else (
+            " It is a private helper rather than a public relation, so this cell "
+            "proves the rule where it is defined and the relations that project it "
+            "prove it again where a caller reads."
+        )
+    )
     if surface.name in target.applicable_surfaces:
         return (
             f"The {target.target_id} target's forbidden identifiers are reachable "
             f"through {surface.name} before the mutation, and no column of any row "
-            "carries one of them after it."
+            f"carries one of them after it.{private}"
         )
     return (
         f"{surface.name} publishes none of the identifier classes this target "
         f"forbids ({', '.join(target.identifier_classes)}); the gate proves that "
         "nothing from the forbidden set is reachable here, before or after the "
-        "mutation, rather than assuming it."
+        f"mutation, rather than assuming it.{private}"
     )
 
 
@@ -416,7 +473,7 @@ def cell_status(
     """Classify one cell and, when it is not applicable, say on what basis."""
     if target.deferred:
         return CellStatus.DEFERRED, None
-    if not surface.caller_reachable:
+    if not surface.compiles_deletion:
         return CellStatus.NOT_APPLICABLE, NotApplicableBasis.NOT_CALLER_REACHABLE
     if surface.name in target.applicable_surfaces:
         return CellStatus.APPLICABLE, None
@@ -460,7 +517,11 @@ def build_matrix() -> dict[str, CanonicalValue]:
             for target in DELETION_TARGETS
         ],
         "surfaces": [
-            {"name": surface.name, "caller_reachable": surface.caller_reachable}
+            {
+                "name": surface.name,
+                "caller_reachable": surface.caller_reachable,
+                "compiles_deletion": surface.compiles_deletion,
+            }
             for surface in MATRIX_SURFACES
         ],
         "cells": cells,
