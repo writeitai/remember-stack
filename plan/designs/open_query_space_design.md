@@ -707,7 +707,7 @@ the applicable default/hard class and cites this table.
 | Semantic chunk source text | 512 KiB/invocation | 4 MiB/statement | 4 MiB/statement |
 | Neighborhood depth / edges | 2 / 100 | 4 / 500 | 4 / 500 |
 | Path depth / paths / edges | 4 / 3 / 100 | 6 / 10 / 500 | 6 / 10 / 500 |
-| Cypher variable-length upper bound | 30 | 30 | 30 |
+| Cypher variable-length upper bound (engine-native, not an executor add-on) | 30 | 30 | 30 |
 | Concurrent SQL + Cypher statements per principal | 2 | 4 | 1 |
 | Concurrent SQL + Cypher statements per deployment | 8 | 16 | 4 |
 | Principal SQL + Cypher statement-seconds / rolling 60 s | 30 | 60 | 60 |
@@ -1018,14 +1018,15 @@ starts or waits for a P2 rebuild in response to a query.
 Incident controls include per-principal/deployment open-SQL and open-Cypher kill
 switches, per-function bridge disablement, graph-worker drain, saved-query fleet
 disablement, role revocation, pool drain, manifest-version quarantine, and
-projection-generation quarantine. Three engine process crashes or
-overflow-class engine faults attributed to one P2 generation in a rolling five
-minutes automatically quarantine that generation. The triggering request fails
-`p2_unavailable`; subsequent requests select the latest older published,
-non-quarantined generation with its own age disclosed, or fail `p2_unavailable`
-when none exists. An operator or a newly validated generation clears service;
-query text cannot clear quarantine. Recovery never grants raw tables, bypasses
-snapshot provenance, or returns partial confirmation output.
+operator-invoked projection-generation quarantine. Engine faults fail the
+request `p2_unavailable` with zero partial rows and are counted in telemetry;
+acting on repeated faults (quarantine, generation rollback, engine pinning or
+replacement) is an operator decision informed by that telemetry — automatic
+quarantine state machines are deliberately not built in v1 (operator
+measure-first directive, 2026-08-04; the engine remains replaceable behind the
+adapter boundary, so evidence of unusability triggers replacement, not
+hardening investment). Recovery never grants raw tables, bypasses snapshot
+provenance, or returns partial confirmation output.
 
 | Failure/disagreement | Binding behavior |
 |---|---|
@@ -1165,31 +1166,27 @@ pass before default cutover.
    PG-confirmed units with zero partial paths. P2 snapshot queries equal the
    complete generated graph at their recorded `built_at`, without a live-state
    claim.
-9. **Full Cypher read surface.** A dialect-parser fuzz corpus of at least 10,000
-   patterns covers every allowed and rejected §3.5 construct, nested/unioned
-   forms, comments, Unicode whitespace, delimiters, parameters, and mutation-
-   smuggling attempts. Every accepted query runs against the real pinned engine;
-   before/after database-file hashes, catalog/schema inventory, node/edge
-   counts, and property fixtures prove zero state change, and
-   `explain_cypher` proves zero query execution. Snapshot-consistency fixtures
-   prove: an edge deleted after build remains in Cypher with the old `built_at`
-   and disappears after rebuild; an edge created after build is absent from
-   Cypher and present in live SQL; every result discloses the correct generation
-   and age. `confirm=true` fixtures prove the confirmed projected-ID set and
-   `nominated`/`confirmed`/`dropped_stale` counts equal the shared PostgreSQL
-   D48/D41 confirmation machinery at `pg_confirmed_at`, while snapshot
-   aggregates remain byte-for-byte unchanged; coverage negatives prove
-   `Document`, `MENTIONED_IN`, and `DOC_CROSSREF` projections pass through
-   unconfirmed. Worker-posture fixtures prove the engine handle is
-   `read_only=True`, that a parser bypass of a `COPY TO`/`EXPORT`/`LOAD`/
-   `INSTALL`/`ANALYZE`/`CHECKPOINT` construct reaching the engine is a gate
-   FAILURE (never a tolerated fallback), and that the worker cannot write
-   outside its confined scratch area. Text, parameter, timeout,
-   rows/bytes, recursion, concurrency, and rolling-quota caps enforce at both
-   tiers. Real-engine `SHORTEST` traversal fuzz includes the historically
-   observed `INT128` arithmetic-overflow class; every overflow/fault/timeout
-   returns `p2_unavailable` with zero partial rows, and the three-fault
-   generation quarantine trips exactly at §7's bound.
+9. **Full Cypher read surface (essentials).** Per the operator's
+   measure-first directive (2026-08-04), this gate covers correctness and
+   read-only safety, not speculative hardening. Reject-list tests cover every
+   §3.5 mutation/procedure/file/extension/maintenance construct, including
+   constructs hidden in `UNION` arms, subqueries, and comments; a modest
+   accept-list conformance suite proves each allowed clause and recursive mode
+   executes on the pinned engine. A read-only smoke proves accepted queries
+   change no database file and that `explain_cypher` executes nothing; the
+   engine handle is verified `read_only=True`. Snapshot-consistency fixtures
+   prove: an edge deleted after build remains in Cypher with the old
+   `built_at` and disappears after rebuild; an edge created after build is
+   absent from Cypher and present in live SQL; every result discloses the
+   correct generation and age. `confirm=true` fixtures prove the confirmed
+   projected-ID set and `nominated`/`confirmed`/`dropped_stale` counts equal
+   the shared PostgreSQL D48/D41 confirmation machinery at `pg_confirmed_at`,
+   while snapshot aggregates remain byte-for-byte unchanged; coverage
+   negatives prove `Document`, `MENTIONED_IN`, and `DOC_CROSSREF` projections
+   pass through unconfirmed. An engine fault or timeout returns
+   `p2_unavailable` with zero partial rows. The adversarial hardening suite
+   (large fuzz corpora, overflow-class traversal fuzz, quarantine automation)
+   is the §10 deferral below — adopted on evidence, not in advance.
 10. **Result contracts.** Every success, empty, truncation, rejection, timeout,
    cancellation, and store failure contains the complete QueryResult header and
    correct grade, snapshot provenance, confirmation block, and non-guarantee
@@ -1234,6 +1231,7 @@ pass before default cutover.
 |---|---|---|
 | Complete removal of the three-operation recipe layer | One-call typed defaults remain measured product value; this design does not decide their deletion | A future v10 open-only arm shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%; the full API/SDK/CLI/MCP deprecation schedule for all three names is also complete. Removal then requires a separate major-version binding decision. |
 | Automatic P2 rebuild/refresh on query-time staleness | Query latency and admission are not rebuild-control-plane authority; v1 serves the pinned snapshot with exact age and never starts or waits for a rebuild on a query | Reconsider only after at least 1% of Cypher requests across three deployments observe `p2_snapshot_age_seconds > 5,400` for 30 consecutive days despite the scheduled rebuild service meeting its assigned resources. Adoption requires a separate design for authenticated trigger authority, per-deployment deduplication, backpressure, budget isolation, failure storms, no query waiting, and proof that query-triggered work cannot replace or starve the scheduled rebuild path. |
+| Cypher adversarial hardening suite (large fuzz corpora, overflow-class traversal fuzz against the real engine, automatic generation-quarantine state machine, engine-specific abuse caps) | Operator measure-first directive (2026-08-04): no speculative constraints on graph queries or the engine; benchmarking and production telemetry locate real issues first, and an unusable engine is replaced rather than hardened around | Adopt (or replace the engine instead) when telemetry shows engine faults/timeouts on >0.1% of Cypher requests over any 7-day window, any single fault class recurs across three deployments, or a benchmarking campaign reproduces a fault; the §7 fault telemetry and kill switches ship in v1 either way, so the evidence arrives without the machinery |
 | Migration from Lance to pgvector | SQL ergonomics alone does not justify vector relocation or dual-write risk | Evaluate when bridge-caused semantic p95 exceeds 750 ms or availability falls below 99.9% for three consecutive 30-day windows, or measured total bridge operations cost exceeds a pgvector projection by 2× at representative scale. Adopt only with recall@k loss ≤1 point, p95 ≤80% of the bridge, ingest p95 ≤120% of current, storage ≤150%, full multi-target/generation/D80-filter support, equivalent RPO/RTO and tenancy, and zero D48 failures. The required cutover is per-generation hash-verified backfill → idempotent outbox dual-write → 30-day shadow-read parity → reversible read switch → 30-day rollback window → Lance retirement after audit. |
 | Media-segment public views/SRF | The binding media row/embedding contract is not yet part of this schema | First production corpus requiring SQL composition over D65 media segments; a separate design adds typed locators/derivation and rolls the schema/hash. |
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |
