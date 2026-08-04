@@ -10,12 +10,14 @@ Content never enters the trail — hashes, identifiers, counts, and codes only
 """
 
 from collections import defaultdict
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 import queue
 import threading
+import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -107,6 +109,13 @@ class KillSwitches:
     _blocked_principals: set[str] = field(default_factory=set)
     _by_principal: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     _by_deployment: dict[UUID, int] = field(default_factory=lambda: defaultdict(int))
+    # Rolling 60-second statement-seconds, as (finished_at, seconds) pairs.
+    _spend_principal: dict[str, deque] = field(
+        default_factory=lambda: defaultdict(deque)
+    )
+    _spend_deployment: dict[UUID, deque] = field(
+        default_factory=lambda: defaultdict(deque)
+    )
 
     def block_deployment(self, deployment_id: UUID) -> None:
         with self._lock:
@@ -131,6 +140,20 @@ class KillSwitches:
                 or principal in self._blocked_principals
             )
 
+    def record_spend(
+        self, *, deployment_id: UUID, principal: str, seconds: float
+    ) -> None:
+        """Charge a finished statement's wall-clock to the rolling windows."""
+        now = time.monotonic()
+        with self._lock:
+            self._spend_principal[principal].append((now, seconds))
+            self._spend_deployment[deployment_id].append((now, seconds))
+
+    def _rolling(self, window: deque, *, now: float) -> float:
+        while window and now - window[0][0] > 60.0:
+            window.popleft()
+        return sum(seconds for _, seconds in window)
+
     def admit(
         self,
         *,
@@ -138,9 +161,22 @@ class KillSwitches:
         principal: str,
         per_principal: int,
         per_deployment: int,
+        principal_seconds_per_minute: float | None = None,
+        deployment_seconds_per_minute: float | None = None,
     ) -> str | None:
         """None when admitted (and counted); a caller-safe reason otherwise."""
         with self._lock:
+            now = time.monotonic()
+            if principal_seconds_per_minute is not None and (
+                self._rolling(self._spend_principal[principal], now=now)
+                >= principal_seconds_per_minute
+            ):
+                return "the principal's rolling statement-second quota is spent"
+            if deployment_seconds_per_minute is not None and (
+                self._rolling(self._spend_deployment[deployment_id], now=now)
+                >= deployment_seconds_per_minute
+            ):
+                return "the deployment's rolling statement-second quota is spent"
             if self._by_principal[principal] >= per_principal:
                 return "the principal's concurrent-statement cap is reached"
             if self._by_deployment[deployment_id] >= per_deployment:

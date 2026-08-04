@@ -200,9 +200,18 @@ class QuerySandboxExecutor:
             principal=principal,
             per_principal=limits.concurrent_per_principal,
             per_deployment=limits.concurrent_per_deployment,
+            principal_seconds_per_minute=limits.principal_statement_seconds_per_minute,
+            deployment_seconds_per_minute=(
+                limits.deployment_statement_seconds_per_minute
+            ),
         )
         if admission is not None:
-            return failed(QueryErrorCode.CONCURRENCY_EXCEEDED, admission)
+            code = (
+                QueryErrorCode.QUOTA_EXCEEDED
+                if "quota" in admission
+                else QueryErrorCode.CONCURRENCY_EXCEEDED
+            )
+            return failed(code, admission)
 
         try:
             return self._execute(
@@ -219,6 +228,11 @@ class QuerySandboxExecutor:
                 principal=principal,
             )
         finally:
+            self._kills.record_spend(
+                deployment_id=self._deployment_id,
+                principal=principal,
+                seconds=time.monotonic() - clock,
+            )
             self._kills.release(deployment_id=self._deployment_id, principal=principal)
 
     def _execute(
@@ -385,8 +399,22 @@ class QuerySandboxExecutor:
     def _transaction(self, *, limits_ms):  # noqa: ANN001, ANN202
         connection = self._connect()
         try:
+            # A pooled connection may carry state from an earlier request —
+            # prepared statements, cursors, temp objects, LISTEN registrations,
+            # session GUCs. Discard all of it before this request begins.
+            # DISCARD ALL cannot run inside a transaction block, so it runs in
+            # autocommit before the request transaction opens.
+            previous_autocommit = connection.autocommit
+            connection.autocommit = True
+            connection.execute("DISCARD ALL")
+            connection.autocommit = previous_autocommit
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    # Only GUCs a non-superuser may set belong here: the
+                    # deployment role is deliberately unprivileged, so
+                    # temp_file_limit (superuser-only) is pinned on the role
+                    # itself by migration p9_02_0023 instead. Parallel query is
+                    # off so one statement cannot fan out across workers.
                     cursor.execute(
                         pgsql.SQL(
                             "SET LOCAL search_path = memory_v1, pg_catalog;"
@@ -395,13 +423,12 @@ class QuerySandboxExecutor:
                             " SET LOCAL lock_timeout = {};"
                             " SET LOCAL idle_in_transaction_session_timeout = {};"
                             " SET LOCAL work_mem = {};"
-                            " SET LOCAL temp_file_limit = {}"
+                            " SET LOCAL max_parallel_workers_per_gather = 0"
                         ).format(
                             pgsql.Literal(limits_ms.statement_timeout_ms_default),
                             pgsql.Literal(limits_ms.lock_timeout_ms),
                             pgsql.Literal(limits_ms.idle_transaction_ms),
                             pgsql.Literal(f"{limits_ms.work_mem_kib}kB"),
-                            pgsql.Literal(f"{limits_ms.temp_file_kib}kB"),
                         )
                     )
                     yield cursor

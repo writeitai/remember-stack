@@ -71,7 +71,17 @@ def upgrade() -> None:
     op.execute(f"GRANT USAGE ON SCHEMA memory_v1 TO {_QUERY_ROLE}")
     for view_name in sorted(VIEW_CONTRACTS_BY_NAME):
         op.execute(f"GRANT SELECT ON memory_v1.{view_name} TO {_QUERY_ROLE}")
+    # Durable role settings: the query role may not set superuser-only GUCs
+    # per request, so the caps that require privilege are pinned here by the
+    # migration (which runs as owner). The executor re-applies the
+    # per-request, non-privileged ones with SET LOCAL.
     op.execute(f"ALTER ROLE {_QUERY_ROLE} SET search_path = memory_v1, pg_catalog")
+    op.execute(f"ALTER ROLE {_QUERY_ROLE} SET temp_file_limit = '65536kB'")
+    op.execute(f"ALTER ROLE {_QUERY_ROLE} SET max_parallel_workers_per_gather = 0")
+    op.execute(f"ALTER ROLE {_QUERY_ROLE} SET default_transaction_read_only = on")
+    op.execute(
+        f"ALTER ROLE {_QUERY_ROLE} SET idle_in_transaction_session_timeout = 5000"
+    )
 
     # The private helpers are never public: no PUBLIC grants, no query-role
     # grants, and the view owner reaches them only through ownership of the
@@ -85,7 +95,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     for helper in _PRIVATE_HELPERS:
         op.execute(f"ALTER VIEW public.{helper} OWNER TO CURRENT_USER")
-    op.execute(f"ALTER ROLE {_QUERY_ROLE} RESET search_path")
+    op.execute(f"ALTER ROLE {_QUERY_ROLE} RESET ALL")
     for view_name in sorted(VIEW_CONTRACTS_BY_NAME):
         op.execute(f"REVOKE ALL ON memory_v1.{view_name} FROM {_QUERY_ROLE}")
         op.execute(f"ALTER VIEW memory_v1.{view_name} OWNER TO CURRENT_USER")

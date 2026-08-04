@@ -298,6 +298,33 @@ class _AllowlistVisitor(Visitor):
             QueryErrorCode.STATEMENT_NOT_ALLOWED, "TABLESAMPLE is not allowed"
         )
 
+    def visit_RangeTableFunc(self, ancestors, node):  # noqa: ANN001, ANN201
+        # XMLTABLE and JSON_TABLE produce relations without ever passing
+        # through FuncCall, so the function allowlist cannot see them.
+        raise _reject(
+            QueryErrorCode.FUNCTION_NOT_ALLOWED,
+            "table functions are not part of the public surface",
+        )
+
+    def visit_SQLValueFunction(self, ancestors, node):  # noqa: ANN001, ANN201
+        # CURRENT_USER, CURRENT_SCHEMA, CURRENT_CATALOG and friends parse as
+        # keywords rather than calls; they disclose session and catalog
+        # identity, which the public surface never exposes.
+        raise _reject(
+            QueryErrorCode.FUNCTION_NOT_ALLOWED,
+            "session value keywords are not allowed",
+        )
+
+    def visit_XmlExpr(self, ancestors, node):  # noqa: ANN001, ANN201
+        raise _reject(
+            QueryErrorCode.FUNCTION_NOT_ALLOWED, "XML expressions are not allowed"
+        )
+
+    def visit_XmlSerialize(self, ancestors, node):  # noqa: ANN001, ANN201
+        raise _reject(
+            QueryErrorCode.FUNCTION_NOT_ALLOWED, "XML expressions are not allowed"
+        )
+
     def visit_LockingClause(self, ancestors, node):  # noqa: ANN001, ANN201
         raise _reject(QueryErrorCode.STATEMENT_NOT_ALLOWED, "row locks are not allowed")
 
@@ -330,12 +357,43 @@ def _assert_single_readonly_statement(sql: str) -> SelectStmt:
     return statement
 
 
+_SRF_CTE_PREFIX: Final = "__srf_"
+
+
 def _collect_ctes(statement: SelectStmt) -> tuple[frozenset[str], bool]:
-    """CTE names plus whether the statement is WITH RECURSIVE."""
+    """Every CTE name in the statement, plus whether the top level recurses.
+
+    Nested `WITH` clauses (inside a CTE body or a subquery) define names the
+    relation allowlist must recognize too, or legitimate composition is
+    rejected as an unknown relation.
+    """
+
+    class _AllWith(Visitor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.clauses: list[object] = []
+
+        def visit_WithClause(self, ancestors, node):  # noqa: ANN001, ANN201
+            self.clauses.append(node)
+            return None
+
+    scan = _AllWith()
+    scan(statement)
+    names: set[str] = set()
+    for nested in scan.clauses:
+        for cte in getattr(nested, "ctes", None) or ():
+            if isinstance(cte, CommonTableExpr):
+                nested_name = str(cte.ctename or "").lower()
+                if nested_name.startswith(_SRF_CTE_PREFIX):
+                    raise _reject(
+                        QueryErrorCode.RELATION_NOT_ALLOWED,
+                        f"CTE names beginning with {_SRF_CTE_PREFIX} are reserved",
+                    )
+                names.add(nested_name)
+
     clause = statement.withClause
     if clause is None:
-        return frozenset(), False
-    names: set[str] = set()
+        return frozenset(names), False
     for cte in clause.ctes or ():
         assert isinstance(cte, CommonTableExpr)
         name = str(cte.ctename or "").lower()

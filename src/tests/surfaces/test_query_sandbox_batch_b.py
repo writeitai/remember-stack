@@ -267,10 +267,33 @@ def test_query_role_search_path_defaults_to_memory_v1(migrated: str) -> None:
 
 
 def test_query_role_cannot_write(migrated: str) -> None:
+    """Writes die twice over: the role holds no privilege, and its sessions
+    default to read-only transactions (migration-pinned)."""
     with _as_query_role(migrated) as connection:
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with pytest.raises(
+            (
+                psycopg.errors.InsufficientPrivilege,
+                psycopg.errors.ReadOnlySqlTransaction,
+            )
+        ):
             connection.execute("CREATE TABLE smuggled (x int)")
         connection.rollback()
+
+
+def test_query_role_settings_are_pinned_by_the_migration(migrated: str) -> None:
+    """The privileged caps live on the role, not in per-request SET LOCAL."""
+    with _as_query_role(migrated) as connection:
+        settings = {
+            name: connection.execute(f"SHOW {name}").fetchone()[0]  # type: ignore[index]
+            for name in (
+                "temp_file_limit",
+                "max_parallel_workers_per_gather",
+                "default_transaction_read_only",
+            )
+        }
+    assert settings["temp_file_limit"] == "64MB"
+    assert settings["max_parallel_workers_per_gather"] == "0"
+    assert settings["default_transaction_read_only"] == "on"
 
 
 # --- executor behavior (DB + mapped fakes) ----------------------------------
@@ -339,6 +362,12 @@ class _FailingConnection:
 
     def __init__(self, error: Exception) -> None:
         self._error = error
+
+    autocommit = False
+
+    def execute(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        """DISCARD ALL and friends succeed; only the request statement fails."""
+        return None
 
     def transaction(self):  # noqa: ANN201
         from contextlib import nullcontext
@@ -512,3 +541,55 @@ def test_ten_thousand_ast_fuzz_is_total_and_fail_closed() -> None:
     # rejected only when the fragment references a column absent from the
     # gate's static knowledge (it has none) — so all allowed draws pass.
     assert outcomes["rejected"] >= 3_333
+
+
+def test_rolling_statement_second_quota_admits_then_refuses() -> None:
+    """A spent rolling budget refuses new work with the quota code."""
+    switches = KillSwitches()
+    assert (
+        switches.admit(
+            deployment_id=_DEPLOYMENT,
+            principal="spender",
+            per_principal=4,
+            per_deployment=8,
+            principal_seconds_per_minute=1.0,
+        )
+        is None
+    )
+    switches.release(deployment_id=_DEPLOYMENT, principal="spender")
+    switches.record_spend(deployment_id=_DEPLOYMENT, principal="spender", seconds=2.0)
+    refusal = switches.admit(
+        deployment_id=_DEPLOYMENT,
+        principal="spender",
+        per_principal=4,
+        per_deployment=8,
+        principal_seconds_per_minute=1.0,
+    )
+    assert refusal is not None and "quota" in refusal
+
+
+def test_xml_and_session_keyword_forms_are_rejected() -> None:
+    """Constructs that bypass FuncCall must still meet the allowlist."""
+    for sql in (
+        "SELECT * FROM XMLTABLE('/a' PASSING '<a>x</a>' COLUMNS c text PATH '.')",
+        "SELECT CURRENT_USER",
+        "SELECT current_schema",
+        "SELECT CURRENT_CATALOG",
+        "SELECT xmlelement(name foo)",
+    ):
+        with pytest.raises(SandboxRejection) as caught:
+            validate_sql(sql)
+        assert caught.value.code == QueryErrorCode.FUNCTION_NOT_ALLOWED
+
+
+def test_nested_with_names_resolve_and_the_rewrite_prefix_is_reserved() -> None:
+    """Nested CTE scopes compose; the rewrite namespace is not caller-writable."""
+    nested = validate_sql(
+        "WITH outer_q AS ("
+        " WITH inner_q AS (SELECT claim_id FROM claims_live)"
+        " SELECT * FROM inner_q) SELECT * FROM outer_q"
+    )
+    assert nested.referenced_views == ("claims_live",)
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql("WITH __srf_0 AS (SELECT 1) SELECT * FROM __srf_0")
+    assert caught.value.code == QueryErrorCode.RELATION_NOT_ALLOWED
