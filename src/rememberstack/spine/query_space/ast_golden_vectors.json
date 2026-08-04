@@ -1,0 +1,1672 @@
+{
+  "serializer": "memory_v1.pglast_ast/1",
+  "note": "Golden vectors for the pinned canonical AST serialization. `vectors` pin the exact serialization of one statement each; `equivalences` prove that layout, comments, and keyword case cannot move a hash; `distinctions` prove that a semantic change must. A pglast upgrade that changes the parse tree fails here before it can silently roll the surface hash.",
+  "vectors": [
+    {
+      "name": "projection_and_cast",
+      "definition": "CREATE VIEW memory_v1.example (a, b) AS SELECT f.fact_id, count(*)::bigint FROM facts AS f GROUP BY f.fact_id;",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          },
+          {
+            "@": "String",
+            "sval": "b"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "f"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "fact_id"
+                  }
+                ]
+              }
+            },
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "TypeCast",
+                "arg": {
+                  "@": "FuncCall",
+                  "funcname": [
+                    {
+                      "@": "String",
+                      "sval": "count"
+                    }
+                  ],
+                  "agg_within_group": false,
+                  "agg_star": true,
+                  "agg_distinct": false,
+                  "func_variadic": false,
+                  "funcformat": {
+                    "#": "CoercionForm",
+                    "name": "COERCE_EXPLICIT_CALL"
+                  }
+                },
+                "typeName": {
+                  "@": "TypeName",
+                  "names": [
+                    {
+                      "@": "String",
+                      "sval": "pg_catalog"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "int8"
+                    }
+                  ],
+                  "setof": false,
+                  "pct_type": false,
+                  "typemod": -1
+                }
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "RangeVar",
+              "relname": "facts",
+              "inh": true,
+              "relpersistence": "p",
+              "alias": {
+                "@": "Alias",
+                "aliasname": "f"
+              }
+            }
+          ],
+          "groupClause": [
+            {
+              "@": "ColumnRef",
+              "fields": [
+                {
+                  "@": "String",
+                  "sval": "f"
+                },
+                {
+                  "@": "String",
+                  "sval": "fact_id"
+                }
+              ]
+            }
+          ],
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "inner_join_authorization_chain",
+      "definition": "CREATE VIEW memory_v1.example (a) AS SELECT c.chunk_id FROM chunks AS c JOIN documents AS d ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id AND d.deleted_at IS NULL;",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "c"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "chunk_id"
+                  }
+                ]
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "JoinExpr",
+              "jointype": {
+                "#": "JoinType",
+                "name": "JOIN_INNER"
+              },
+              "isNatural": false,
+              "larg": {
+                "@": "RangeVar",
+                "relname": "chunks",
+                "inh": true,
+                "relpersistence": "p",
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "c"
+                }
+              },
+              "rarg": {
+                "@": "RangeVar",
+                "relname": "documents",
+                "inh": true,
+                "relpersistence": "p",
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "d"
+                }
+              },
+              "quals": {
+                "@": "BoolExpr",
+                "boolop": {
+                  "#": "BoolExprType",
+                  "name": "AND_EXPR"
+                },
+                "args": [
+                  {
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "name": [
+                      {
+                        "@": "String",
+                        "sval": "="
+                      }
+                    ],
+                    "lexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "d"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "deployment_id"
+                        }
+                      ]
+                    },
+                    "rexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "deployment_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "name": [
+                      {
+                        "@": "String",
+                        "sval": "="
+                      }
+                    ],
+                    "lexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "d"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "doc_id"
+                        }
+                      ]
+                    },
+                    "rexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "doc_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "NullTest",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "d"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "deleted_at"
+                        }
+                      ]
+                    },
+                    "nulltesttype": {
+                      "#": "NullTestType",
+                      "name": "IS_NULL"
+                    },
+                    "argisrow": false
+                  }
+                ]
+              },
+              "rtindex": 0
+            }
+          ],
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "exists_provenance_gate",
+      "definition": "CREATE VIEW memory_v1.example (a) AS SELECT r.relation_id FROM relations AS r WHERE EXISTS (SELECT 1 FROM relation_evidence AS e WHERE e.relation_id = r.relation_id);",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "r"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "relation_id"
+                  }
+                ]
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "RangeVar",
+              "relname": "relations",
+              "inh": true,
+              "relpersistence": "p",
+              "alias": {
+                "@": "Alias",
+                "aliasname": "r"
+              }
+            }
+          ],
+          "whereClause": {
+            "@": "SubLink",
+            "subLinkType": {
+              "#": "SubLinkType",
+              "name": "EXISTS_SUBLINK"
+            },
+            "subLinkId": 0,
+            "subselect": {
+              "@": "SelectStmt",
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "A_Const",
+                    "isnull": false,
+                    "val": {
+                      "@": "Integer",
+                      "ival": 1
+                    }
+                  }
+                }
+              ],
+              "fromClause": [
+                {
+                  "@": "RangeVar",
+                  "relname": "relation_evidence",
+                  "inh": true,
+                  "relpersistence": "p",
+                  "alias": {
+                    "@": "Alias",
+                    "aliasname": "e"
+                  }
+                }
+              ],
+              "whereClause": {
+                "@": "A_Expr",
+                "kind": {
+                  "#": "A_Expr_Kind",
+                  "name": "AEXPR_OP"
+                },
+                "name": [
+                  {
+                    "@": "String",
+                    "sval": "="
+                  }
+                ],
+                "lexpr": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "e"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "relation_id"
+                    }
+                  ]
+                },
+                "rexpr": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "r"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "relation_id"
+                    }
+                  ]
+                }
+              },
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "all": false
+            }
+          },
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "lateral_aggregate_with_filter",
+      "definition": "CREATE VIEW memory_v1.example (a, b) AS SELECT f.fact_id, counts.supports FROM facts AS f CROSS JOIN LATERAL (SELECT count(*) FILTER (WHERE e.stance = 'supports')::bigint AS supports FROM evidence AS e WHERE e.fact_id = f.fact_id) AS counts;",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          },
+          {
+            "@": "String",
+            "sval": "b"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "f"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "fact_id"
+                  }
+                ]
+              }
+            },
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "counts"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "supports"
+                  }
+                ]
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "JoinExpr",
+              "jointype": {
+                "#": "JoinType",
+                "name": "JOIN_INNER"
+              },
+              "isNatural": false,
+              "larg": {
+                "@": "RangeVar",
+                "relname": "facts",
+                "inh": true,
+                "relpersistence": "p",
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "f"
+                }
+              },
+              "rarg": {
+                "@": "RangeSubselect",
+                "lateral": true,
+                "subquery": {
+                  "@": "SelectStmt",
+                  "targetList": [
+                    {
+                      "@": "ResTarget",
+                      "name": "supports",
+                      "val": {
+                        "@": "TypeCast",
+                        "arg": {
+                          "@": "FuncCall",
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "count"
+                            }
+                          ],
+                          "agg_filter": {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "e"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "stance"
+                                }
+                              ]
+                            },
+                            "rexpr": {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "supports"
+                              }
+                            }
+                          },
+                          "agg_within_group": false,
+                          "agg_star": true,
+                          "agg_distinct": false,
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_EXPLICIT_CALL"
+                          }
+                        },
+                        "typeName": {
+                          "@": "TypeName",
+                          "names": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "int8"
+                            }
+                          ],
+                          "setof": false,
+                          "pct_type": false,
+                          "typemod": -1
+                        }
+                      }
+                    }
+                  ],
+                  "fromClause": [
+                    {
+                      "@": "RangeVar",
+                      "relname": "evidence",
+                      "inh": true,
+                      "relpersistence": "p",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "e"
+                      }
+                    }
+                  ],
+                  "whereClause": {
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "name": [
+                      {
+                        "@": "String",
+                        "sval": "="
+                      }
+                    ],
+                    "lexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "e"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "fact_id"
+                        }
+                      ]
+                    },
+                    "rexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "f"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "fact_id"
+                        }
+                      ]
+                    }
+                  },
+                  "groupDistinct": false,
+                  "limitOption": {
+                    "#": "LimitOption",
+                    "name": "LIMIT_OPTION_DEFAULT"
+                  },
+                  "op": {
+                    "#": "SetOperation",
+                    "name": "SETOP_NONE"
+                  },
+                  "all": false
+                },
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "counts"
+                }
+              },
+              "rtindex": 0
+            }
+          ],
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "recursive_chain_with_depth_guard",
+      "definition": "CREATE VIEW example (a, b) AS WITH RECURSIVE chain(entity_id, cur, depth) AS (SELECT entity_id, entity_id, 0 FROM entities UNION ALL SELECT c.entity_id, e.merged_into, c.depth + 1 FROM chain AS c JOIN entities AS e ON e.entity_id = c.cur WHERE e.merged_into IS NOT NULL AND c.depth < 64) SELECT c.entity_id, c.cur FROM chain AS c;",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          },
+          {
+            "@": "String",
+            "sval": "b"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "c"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "entity_id"
+                  }
+                ]
+              }
+            },
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "c"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "cur"
+                  }
+                ]
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "RangeVar",
+              "relname": "chain",
+              "inh": true,
+              "relpersistence": "p",
+              "alias": {
+                "@": "Alias",
+                "aliasname": "c"
+              }
+            }
+          ],
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "withClause": {
+            "@": "WithClause",
+            "ctes": [
+              {
+                "@": "CommonTableExpr",
+                "ctename": "chain",
+                "aliascolnames": [
+                  {
+                    "@": "String",
+                    "sval": "entity_id"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "cur"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "depth"
+                  }
+                ],
+                "ctematerialized": {
+                  "#": "CTEMaterialize",
+                  "name": "CTEMaterializeDefault"
+                },
+                "ctequery": {
+                  "@": "SelectStmt",
+                  "groupDistinct": false,
+                  "limitOption": {
+                    "#": "LimitOption",
+                    "name": "LIMIT_OPTION_DEFAULT"
+                  },
+                  "op": {
+                    "#": "SetOperation",
+                    "name": "SETOP_UNION"
+                  },
+                  "all": true,
+                  "larg": {
+                    "@": "SelectStmt",
+                    "targetList": [
+                      {
+                        "@": "ResTarget",
+                        "val": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "entity_id"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "ResTarget",
+                        "val": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "entity_id"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "ResTarget",
+                        "val": {
+                          "@": "A_Const",
+                          "isnull": false,
+                          "val": {
+                            "@": "Integer",
+                            "ival": 0
+                          }
+                        }
+                      }
+                    ],
+                    "fromClause": [
+                      {
+                        "@": "RangeVar",
+                        "relname": "entities",
+                        "inh": true,
+                        "relpersistence": "p"
+                      }
+                    ],
+                    "groupDistinct": false,
+                    "limitOption": {
+                      "#": "LimitOption",
+                      "name": "LIMIT_OPTION_DEFAULT"
+                    },
+                    "op": {
+                      "#": "SetOperation",
+                      "name": "SETOP_NONE"
+                    },
+                    "all": false
+                  },
+                  "rarg": {
+                    "@": "SelectStmt",
+                    "targetList": [
+                      {
+                        "@": "ResTarget",
+                        "val": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "entity_id"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "ResTarget",
+                        "val": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "e"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "merged_into"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "ResTarget",
+                        "val": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "+"
+                            }
+                          ],
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "depth"
+                              }
+                            ]
+                          },
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "Integer",
+                              "ival": 1
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "fromClause": [
+                      {
+                        "@": "JoinExpr",
+                        "jointype": {
+                          "#": "JoinType",
+                          "name": "JOIN_INNER"
+                        },
+                        "isNatural": false,
+                        "larg": {
+                          "@": "RangeVar",
+                          "relname": "chain",
+                          "inh": true,
+                          "relpersistence": "p",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "c"
+                          }
+                        },
+                        "rarg": {
+                          "@": "RangeVar",
+                          "relname": "entities",
+                          "inh": true,
+                          "relpersistence": "p",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "e"
+                          }
+                        },
+                        "quals": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "e"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "entity_id"
+                              }
+                            ]
+                          },
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "cur"
+                              }
+                            ]
+                          }
+                        },
+                        "rtindex": 0
+                      }
+                    ],
+                    "whereClause": {
+                      "@": "BoolExpr",
+                      "boolop": {
+                        "#": "BoolExprType",
+                        "name": "AND_EXPR"
+                      },
+                      "args": [
+                        {
+                          "@": "NullTest",
+                          "arg": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "e"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "merged_into"
+                              }
+                            ]
+                          },
+                          "nulltesttype": {
+                            "#": "NullTestType",
+                            "name": "IS_NOT_NULL"
+                          },
+                          "argisrow": false
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "<"
+                            }
+                          ],
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "depth"
+                              }
+                            ]
+                          },
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "Integer",
+                              "ival": 64
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "groupDistinct": false,
+                    "limitOption": {
+                      "#": "LimitOption",
+                      "name": "LIMIT_OPTION_DEFAULT"
+                    },
+                    "op": {
+                      "#": "SetOperation",
+                      "name": "SETOP_NONE"
+                    },
+                    "all": false
+                  }
+                },
+                "cterecursive": false,
+                "cterefcount": 0
+              }
+            ],
+            "recursive": true
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "union_arms_with_literal_tags",
+      "definition": "CREATE VIEW memory_v1.example (a, b) AS SELECT 'relation_ingest', h.fact_id FROM history AS h WHERE h.kind = 'relation' UNION ALL SELECT 'claim_ingest', c.claim_id FROM claims AS c;",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          },
+          {
+            "@": "String",
+            "sval": "b"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_UNION"
+          },
+          "all": true,
+          "larg": {
+            "@": "SelectStmt",
+            "targetList": [
+              {
+                "@": "ResTarget",
+                "val": {
+                  "@": "A_Const",
+                  "isnull": false,
+                  "val": {
+                    "@": "String",
+                    "sval": "relation_ingest"
+                  }
+                }
+              },
+              {
+                "@": "ResTarget",
+                "val": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "h"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "fact_id"
+                    }
+                  ]
+                }
+              }
+            ],
+            "fromClause": [
+              {
+                "@": "RangeVar",
+                "relname": "history",
+                "inh": true,
+                "relpersistence": "p",
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "h"
+                }
+              }
+            ],
+            "whereClause": {
+              "@": "A_Expr",
+              "kind": {
+                "#": "A_Expr_Kind",
+                "name": "AEXPR_OP"
+              },
+              "name": [
+                {
+                  "@": "String",
+                  "sval": "="
+                }
+              ],
+              "lexpr": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "h"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "kind"
+                  }
+                ]
+              },
+              "rexpr": {
+                "@": "A_Const",
+                "isnull": false,
+                "val": {
+                  "@": "String",
+                  "sval": "relation"
+                }
+              }
+            },
+            "groupDistinct": false,
+            "limitOption": {
+              "#": "LimitOption",
+              "name": "LIMIT_OPTION_DEFAULT"
+            },
+            "op": {
+              "#": "SetOperation",
+              "name": "SETOP_NONE"
+            },
+            "all": false
+          },
+          "rarg": {
+            "@": "SelectStmt",
+            "targetList": [
+              {
+                "@": "ResTarget",
+                "val": {
+                  "@": "A_Const",
+                  "isnull": false,
+                  "val": {
+                    "@": "String",
+                    "sval": "claim_ingest"
+                  }
+                }
+              },
+              {
+                "@": "ResTarget",
+                "val": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "c"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "claim_id"
+                    }
+                  ]
+                }
+              }
+            ],
+            "fromClause": [
+              {
+                "@": "RangeVar",
+                "relname": "claims",
+                "inh": true,
+                "relpersistence": "p",
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "c"
+                }
+              }
+            ],
+            "groupDistinct": false,
+            "limitOption": {
+              "#": "LimitOption",
+              "name": "LIMIT_OPTION_DEFAULT"
+            },
+            "op": {
+              "#": "SetOperation",
+              "name": "SETOP_NONE"
+            },
+            "all": false
+          }
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "quoted_identifier_and_escaped_literal",
+      "definition": "CREATE VIEW memory_v1.example (a) AS SELECT \"MixedCase\".x FROM t AS \"MixedCase\" WHERE x = 'it''s';",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "MixedCase"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "x"
+                  }
+                ]
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "RangeVar",
+              "relname": "t",
+              "inh": true,
+              "relpersistence": "p",
+              "alias": {
+                "@": "Alias",
+                "aliasname": "MixedCase"
+              }
+            }
+          ],
+          "whereClause": {
+            "@": "A_Expr",
+            "kind": {
+              "#": "A_Expr_Kind",
+              "name": "AEXPR_OP"
+            },
+            "name": [
+              {
+                "@": "String",
+                "sval": "="
+              }
+            ],
+            "lexpr": {
+              "@": "ColumnRef",
+              "fields": [
+                {
+                  "@": "String",
+                  "sval": "x"
+                }
+              ]
+            },
+            "rexpr": {
+              "@": "A_Const",
+              "isnull": false,
+              "val": {
+                "@": "String",
+                "sval": "it's"
+              }
+            }
+          },
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    },
+    {
+      "name": "statement_timestamp_clock",
+      "definition": "CREATE VIEW memory_v1.example (a, b) AS SELECT clock.evaluated_at, h.fact_id FROM (SELECT statement_timestamp() AS evaluated_at) AS clock CROSS JOIN history AS h WHERE h.valid_until IS NULL OR h.valid_until > clock.evaluated_at;",
+      "ast": {
+        "@": "ViewStmt",
+        "view": {
+          "@": "RangeVar",
+          "schemaname": "memory_v1",
+          "relname": "example",
+          "inh": true,
+          "relpersistence": "p"
+        },
+        "aliases": [
+          {
+            "@": "String",
+            "sval": "a"
+          },
+          {
+            "@": "String",
+            "sval": "b"
+          }
+        ],
+        "query": {
+          "@": "SelectStmt",
+          "targetList": [
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "clock"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "evaluated_at"
+                  }
+                ]
+              }
+            },
+            {
+              "@": "ResTarget",
+              "val": {
+                "@": "ColumnRef",
+                "fields": [
+                  {
+                    "@": "String",
+                    "sval": "h"
+                  },
+                  {
+                    "@": "String",
+                    "sval": "fact_id"
+                  }
+                ]
+              }
+            }
+          ],
+          "fromClause": [
+            {
+              "@": "JoinExpr",
+              "jointype": {
+                "#": "JoinType",
+                "name": "JOIN_INNER"
+              },
+              "isNatural": false,
+              "larg": {
+                "@": "RangeSubselect",
+                "lateral": false,
+                "subquery": {
+                  "@": "SelectStmt",
+                  "targetList": [
+                    {
+                      "@": "ResTarget",
+                      "name": "evaluated_at",
+                      "val": {
+                        "@": "FuncCall",
+                        "funcname": [
+                          {
+                            "@": "String",
+                            "sval": "statement_timestamp"
+                          }
+                        ],
+                        "agg_within_group": false,
+                        "agg_star": false,
+                        "agg_distinct": false,
+                        "func_variadic": false,
+                        "funcformat": {
+                          "#": "CoercionForm",
+                          "name": "COERCE_EXPLICIT_CALL"
+                        }
+                      }
+                    }
+                  ],
+                  "groupDistinct": false,
+                  "limitOption": {
+                    "#": "LimitOption",
+                    "name": "LIMIT_OPTION_DEFAULT"
+                  },
+                  "op": {
+                    "#": "SetOperation",
+                    "name": "SETOP_NONE"
+                  },
+                  "all": false
+                },
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "clock"
+                }
+              },
+              "rarg": {
+                "@": "RangeVar",
+                "relname": "history",
+                "inh": true,
+                "relpersistence": "p",
+                "alias": {
+                  "@": "Alias",
+                  "aliasname": "h"
+                }
+              },
+              "rtindex": 0
+            }
+          ],
+          "whereClause": {
+            "@": "BoolExpr",
+            "boolop": {
+              "#": "BoolExprType",
+              "name": "OR_EXPR"
+            },
+            "args": [
+              {
+                "@": "NullTest",
+                "arg": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "h"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "valid_until"
+                    }
+                  ]
+                },
+                "nulltesttype": {
+                  "#": "NullTestType",
+                  "name": "IS_NULL"
+                },
+                "argisrow": false
+              },
+              {
+                "@": "A_Expr",
+                "kind": {
+                  "#": "A_Expr_Kind",
+                  "name": "AEXPR_OP"
+                },
+                "name": [
+                  {
+                    "@": "String",
+                    "sval": ">"
+                  }
+                ],
+                "lexpr": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "h"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "valid_until"
+                    }
+                  ]
+                },
+                "rexpr": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "clock"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "evaluated_at"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "groupDistinct": false,
+          "limitOption": {
+            "#": "LimitOption",
+            "name": "LIMIT_OPTION_DEFAULT"
+          },
+          "op": {
+            "#": "SetOperation",
+            "name": "SETOP_NONE"
+          },
+          "all": false
+        },
+        "replace": false,
+        "withCheckOption": {
+          "#": "ViewCheckOption",
+          "name": "NO_CHECK_OPTION"
+        }
+      }
+    }
+  ],
+  "equivalences": [
+    {
+      "name": "layout_and_comments_are_not_semantics",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x WHERE x.q = 1;",
+      "right": "-- the authored form carries documentation and layout\nCREATE VIEW memory_v1.example (\n  a  -- the identifier this relation publishes\n) AS\nSELECT\n  x.id\nFROM t AS x\n/* a block comment the parser discards */\nWHERE x.q = 1;"
+    },
+    {
+      "name": "unquoted_identifier_case_is_folded",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT X.ID FROM T AS X;",
+      "right": "create view memory_v1.example (a) as select x.id from t as x;"
+    },
+    {
+      "name": "explicit_inner_join_keyword_is_the_same_join",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x JOIN u ON u.id = x.id;",
+      "right": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x INNER JOIN u ON u.id = x.id;"
+    }
+  ],
+  "distinctions": [
+    {
+      "name": "a_changed_comparison_operator",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x WHERE x.at > now();",
+      "right": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x WHERE x.at >= now();"
+    },
+    {
+      "name": "an_inner_join_weakened_to_a_left_join",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x JOIN u ON u.id = x.id;",
+      "right": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x LEFT JOIN u ON u.id = x.id;"
+    },
+    {
+      "name": "the_legacy_permissive_orphan_branch",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x JOIN documents AS d ON d.doc_id = x.doc_id AND d.deleted_at IS NULL;",
+      "right": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x LEFT JOIN documents AS d ON d.doc_id = x.doc_id WHERE d.doc_id IS NULL OR d.deleted_at IS NULL;"
+    },
+    {
+      "name": "a_quoted_identifier_changing_case",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT \"Mixed\".x FROM t AS \"Mixed\";",
+      "right": "CREATE VIEW memory_v1.example (a) AS SELECT \"mixed\".x FROM t AS \"mixed\";"
+    },
+    {
+      "name": "a_reordered_output_column_list",
+      "left": "CREATE VIEW memory_v1.example (a, b) AS SELECT x.id, x.at FROM t AS x;",
+      "right": "CREATE VIEW memory_v1.example (b, a) AS SELECT x.id, x.at FROM t AS x;"
+    },
+    {
+      "name": "a_renamed_published_column",
+      "left": "CREATE VIEW memory_v1.example (a) AS SELECT x.id FROM t AS x;",
+      "right": "CREATE VIEW memory_v1.example (doc_id) AS SELECT x.id FROM t AS x;"
+    }
+  ]
+}

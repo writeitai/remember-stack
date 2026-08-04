@@ -298,7 +298,15 @@ EXPECTED_VIEWS: Final = (
     "v_graph_mentioned_in",
     "v_graph_relates",
     "v_graph_survivor",
+    "v_memory_entity_survivor",
+    "v_memory_mention_current_content",
+    "v_memory_page_citation_visible",
 )
+QUERY_SPACE_SCHEMA: Final = "memory_v1"
+"""The versioned public query space. Its relation set is owned by the checked-in
+`memory_v1` manifest (`rememberstack.spine.query_space`); this module only
+proves the schema exists at head and is gone after a downgrade, so a stray
+leftover schema cannot masquerade as the query surface."""
 EMPTY_AT_HEAD: Final = (
     "deployments",
     "entity_types",
@@ -347,6 +355,7 @@ class CatalogInventory(BaseModel):
     hash_parents: tuple[str, ...]
     hash_child_counts: dict[str, int]
     views: tuple[str, ...]
+    query_space_views: tuple[str, ...]
     constraint_counts: dict[str, int]
     commented_tables: int
     commented_columns: int
@@ -380,6 +389,16 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         names=EXPECTED_INDEXES,
     )
     views = _named_relations(connection=connection, names=EXPECTED_VIEWS, kinds=("v",))
+    query_space_views = _string_values(
+        connection=connection,
+        query=(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname=:schema AND c.relkind='v' ORDER BY 1"
+        ),
+        schema=QUERY_SPACE_SCHEMA,
+    )
+    if not query_space_views:
+        problems.append(f"{QUERY_SPACE_SCHEMA} query space is missing at head")
     _compare(
         label="extensions",
         actual=extensions,
@@ -640,6 +659,7 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         hash_parents=EXPECTED_HASH_PARENTS,
         hash_child_counts=hash_child_counts,
         views=views,
+        query_space_views=query_space_views,
         constraint_counts=constraint_counts,
         commented_tables=commented_tables,
         commented_columns=commented_columns,
@@ -703,8 +723,16 @@ def verify_schema_absent(connection: Connection) -> None:
             )
         ).scalar_one()
     )
+    query_space_present = bool(
+        connection.execute(
+            statement=text("SELECT count(*) FROM pg_namespace WHERE nspname = :schema"),
+            parameters={"schema": QUERY_SPACE_SCHEMA},
+        ).scalar_one()
+    )
     if relations:
         problems.append(f"UGM relations remain: {relations}")
+    if query_space_present:
+        problems.append(f"UGM {QUERY_SPACE_SCHEMA} query space remains")
     if enums:
         problems.append(f"UGM enum types remain: {enums}")
     if partman_count:
@@ -741,6 +769,7 @@ def _string_values(
     query: str,
     names: Iterable[str] | None = None,
     kinds: Iterable[str] | None = None,
+    schema: str | None = None,
 ) -> tuple[str, ...]:
     """Execute a one-column catalog query and return stable strings."""
     parameters: dict[str, object] = {}
@@ -748,6 +777,8 @@ def _string_values(
         parameters["names"] = list(names)
     if kinds is not None:
         parameters["kinds"] = list(kinds)
+    if schema is not None:
+        parameters["schema"] = schema
     return tuple(
         str(value)
         for value in connection.execute(

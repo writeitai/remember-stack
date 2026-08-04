@@ -1,0 +1,2055 @@
+{
+  "cell_count": 243,
+  "cells": [
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.chunks_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.claim_occurrences_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.claims_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.claims_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.contradiction_members_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.document_crossrefs_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.document_versions_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.documents_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.documents_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.entities_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.entities_current",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.entity_aliases_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.entity_document_mentions before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.evidence_lineage before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.fact_claim_evidence_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.facts_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.facts_current",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.facts_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.graph_edges_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.graph_edges_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.identity_events_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.mentions_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.page_evidence_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, mention, resolution_decision, currency_event, crossref, fact, entity, alias); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.pages_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.sections_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.sections_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.testimony_currency_events_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_mention_current_content before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claim_occurrences_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claims_live",
+      "target_id": "version"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.claims_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "version"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.document_versions_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.documents_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.documents_live",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entities_current",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.evidence_lineage publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.fact_claim_evidence_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_current publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_current",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_visible_history publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_current publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_visible_history publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "version"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.identity_events_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.mentions_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.page_evidence_visible publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.pages_live",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.sections_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.sections_live",
+      "target_id": "version"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.testimony_currency_events_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "version"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_page_citation_visible publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.changes_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "representation"
+    },
+    {
+      "basis": null,
+      "expectation": "The representation target's forbidden identifiers are reachable through memory_v1.chunks_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claim_occurrences_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claims_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_visible_history publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": null,
+      "expectation": "The representation target's forbidden identifiers are reachable through memory_v1.document_versions_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "representation"
+    },
+    {
+      "basis": null,
+      "expectation": "The representation target's forbidden identifiers are reachable through memory_v1.documents_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.documents_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entities_current",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.evidence_lineage publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.fact_claim_evidence_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_current publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_current",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_visible_history publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_current publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_visible_history publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.mentions_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.page_evidence_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.pages_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": null,
+      "expectation": "The representation target's forbidden identifiers are reachable through memory_v1.sections_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.sections_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.testimony_currency_events_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "representation"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_page_citation_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "representation"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.claim_occurrences_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.claims_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.claims_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_versions_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.documents_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.documents_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entities_current",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.evidence_lineage before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.fact_claim_evidence_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_current publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_current",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_visible_history publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_current publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_visible_history publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through memory_v1.mentions_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.page_evidence_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.pages_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.sections_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.sections_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.testimony_currency_events_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "claim"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through public.v_memory_mention_current_content before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_page_citation_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claim_occurrences_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claims_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_visible_history publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_versions_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.documents_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.documents_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entities_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.evidence_lineage before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.fact_claim_evidence_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.facts_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.facts_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.facts_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.graph_edges_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.graph_edges_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.mentions_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through memory_v1.page_evidence_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.pages_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.sections_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.sections_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.testimony_currency_events_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.chunks_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.claim_occurrences_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.claims_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.claims_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.document_versions_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.documents_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.documents_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entities_current",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.evidence_lineage publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.fact_claim_evidence_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_current publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_current",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.facts_visible_history publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_current publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.graph_edges_visible_history publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.mentions_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.page_evidence_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.pages_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.sections_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.sections_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.testimony_currency_events_visible publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claims_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.documents_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entities_current",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.facts_current",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.pages_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.sections_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claims_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.documents_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entities_current",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.facts_current",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.pages_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.sections_live",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.changes_visible",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.chunks_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claim_occurrences_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claims_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.claims_visible_history",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.contradiction_members_current",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_versions_visible",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.documents_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entities_current",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entity_aliases_current",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.entity_document_mentions",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.evidence_lineage",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.fact_claim_evidence_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.facts_current",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.facts_visible_history",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.graph_edges_current",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.graph_edges_visible_history",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.identity_events_visible",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.mentions_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.page_evidence_visible",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.pages_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.sections_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.testimony_currency_events_visible",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_entity_survivor",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_mention_current_content",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_page_citation_visible",
+      "target_id": "corpus_body"
+    }
+  ],
+  "contract": "memory_v1.d48_deletion_matrix/2",
+  "schema": "memory_v1",
+  "status_counts": {
+    "applicable": 61,
+    "deferred": 81,
+    "not_applicable": 101
+  },
+  "surface_count": 27,
+  "surfaces": [
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.changes_visible"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.chunks_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.claim_occurrences_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.claims_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.claims_visible_history"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.contradiction_members_current"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.document_crossrefs_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.document_versions_visible"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.documents_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.entities_current"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.entity_aliases_current"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.entity_document_mentions"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.evidence_lineage"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.fact_claim_evidence_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.facts_current"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.facts_visible_history"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.graph_edges_current"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.graph_edges_visible_history"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.identity_events_visible"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.mentions_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.page_evidence_visible"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.pages_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.sections_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.testimony_currency_events_visible"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": false,
+      "name": "public.v_memory_entity_survivor"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": true,
+      "name": "public.v_memory_mention_current_content"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": true,
+      "name": "public.v_memory_page_citation_visible"
+    }
+  ],
+  "target_count": 9,
+  "targets": [
+    {
+      "applicable_surfaces": [
+        "memory_v1.changes_visible",
+        "memory_v1.chunks_live",
+        "memory_v1.claim_occurrences_live",
+        "memory_v1.claims_live",
+        "memory_v1.claims_visible_history",
+        "memory_v1.contradiction_members_current",
+        "memory_v1.document_crossrefs_live",
+        "memory_v1.document_versions_visible",
+        "memory_v1.documents_live",
+        "memory_v1.entities_current",
+        "memory_v1.entity_aliases_current",
+        "memory_v1.entity_document_mentions",
+        "memory_v1.evidence_lineage",
+        "memory_v1.fact_claim_evidence_live",
+        "memory_v1.facts_current",
+        "memory_v1.facts_visible_history",
+        "memory_v1.graph_edges_current",
+        "memory_v1.graph_edges_visible_history",
+        "memory_v1.identity_events_visible",
+        "memory_v1.mentions_live",
+        "memory_v1.page_evidence_visible",
+        "memory_v1.sections_live",
+        "memory_v1.testimony_currency_events_visible",
+        "public.v_memory_mention_current_content",
+        "public.v_memory_page_citation_visible"
+      ],
+      "executed_in": "A",
+      "forbidden_identifiers": "The lineage id and every identifier derived from it: its versions, representations, sections, chunks, claims, mentions, cross-references, testimony-currency events, the entity whose only provenance it was, and the fact whose only evidence lineage it was.",
+      "identifier_classes": [
+        "lineage",
+        "version",
+        "representation",
+        "structure_generation",
+        "section",
+        "chunk",
+        "claim",
+        "mention",
+        "resolution_decision",
+        "currency_event",
+        "crossref",
+        "fact",
+        "entity",
+        "alias"
+      ],
+      "mutation": "Set documents.deleted_at on the fixture lineage.",
+      "summary": "A live document lineage is forgotten.",
+      "target_id": "lineage"
+    },
+    {
+      "applicable_surfaces": [
+        "memory_v1.changes_visible",
+        "memory_v1.claims_visible_history",
+        "memory_v1.document_versions_visible",
+        "memory_v1.identity_events_visible",
+        "memory_v1.testimony_currency_events_visible"
+      ],
+      "executed_in": "A",
+      "forbidden_identifiers": "The version id and every identifier derived from it: its representation, sections, chunks, claims, and mentions. The facts those claims evidenced keep their surviving historical provenance and are deliberately not forbidden.",
+      "identifier_classes": [
+        "version",
+        "representation",
+        "structure_generation",
+        "section",
+        "chunk",
+        "claim",
+        "mention",
+        "currency_event"
+      ],
+      "mutation": "Set document_versions.deleted_at on the fixture version.",
+      "summary": "One non-current version of a live lineage is tombstoned.",
+      "target_id": "version"
+    },
+    {
+      "applicable_surfaces": [
+        "memory_v1.chunks_live",
+        "memory_v1.document_versions_visible",
+        "memory_v1.documents_live",
+        "memory_v1.sections_live"
+      ],
+      "executed_in": "A",
+      "forbidden_identifiers": "The superseded representation id and the sections and chunks cut from it. The fixture lineage carries no claims, so no testimony legitimately outlives the reading and the forbidden set stays global.",
+      "identifier_classes": [
+        "representation",
+        "structure_generation",
+        "section",
+        "chunk"
+      ],
+      "mutation": "Insert a new ready representation, point the version's current representation at it, and leave the previous reading in place.",
+      "summary": "The current ready reading of a live version is superseded.",
+      "target_id": "representation"
+    },
+    {
+      "applicable_surfaces": [
+        "memory_v1.changes_visible",
+        "memory_v1.claim_occurrences_live",
+        "memory_v1.claims_live",
+        "memory_v1.claims_visible_history",
+        "memory_v1.evidence_lineage",
+        "memory_v1.fact_claim_evidence_live",
+        "memory_v1.mentions_live",
+        "public.v_memory_mention_current_content"
+      ],
+      "executed_in": "A",
+      "forbidden_identifiers": "The claim id. The fact it evidenced keeps its association row and stays visible with a reduced count, which is the D54 behaviour rather than a leak.",
+      "identifier_classes": [
+        "claim"
+      ],
+      "mutation": "Delete the claim row and its chunk occurrences.",
+      "summary": "One claim is purged from the testimony record.",
+      "target_id": "claim"
+    },
+    {
+      "applicable_surfaces": [
+        "memory_v1.changes_visible",
+        "memory_v1.evidence_lineage",
+        "memory_v1.fact_claim_evidence_live",
+        "memory_v1.facts_current",
+        "memory_v1.facts_visible_history",
+        "memory_v1.graph_edges_current",
+        "memory_v1.graph_edges_visible_history",
+        "memory_v1.page_evidence_visible",
+        "public.v_memory_page_citation_visible"
+      ],
+      "executed_in": "A",
+      "forbidden_identifiers": "The fact id, which must disappear from the fact relations, the evidence bridge, the contradiction and graph projections, and the change feed.",
+      "identifier_classes": [
+        "fact"
+      ],
+      "mutation": "Delete the fact's relation or observation evidence rows.",
+      "summary": "Every evidence lineage of one fact is removed.",
+      "target_id": "fact_provenance"
+    },
+    {
+      "applicable_surfaces": [
+        "memory_v1.changes_visible",
+        "memory_v1.chunks_live",
+        "memory_v1.claim_occurrences_live",
+        "memory_v1.claims_live",
+        "memory_v1.claims_visible_history",
+        "memory_v1.document_versions_visible",
+        "memory_v1.documents_live",
+        "memory_v1.page_evidence_visible",
+        "memory_v1.sections_live",
+        "public.v_memory_page_citation_visible"
+      ],
+      "executed_in": "A",
+      "forbidden_identifiers": "The cited lineage id, its derived identifiers, and the chunk content hashes that locate the cited claims. The citing page keeps its other citations and stays visible; only the citation of the forgotten lineage leaves, which is what proves a chunk-content hash locator cannot authorize a read on its own.",
+      "identifier_classes": [
+        "lineage",
+        "version",
+        "representation",
+        "structure_generation",
+        "section",
+        "chunk",
+        "claim",
+        "content_hash"
+      ],
+      "mutation": "Set documents.deleted_at on the cited lineage.",
+      "summary": "The lineage a knowledge page cites is forgotten.",
+      "target_id": "k_target"
+    },
+    {
+      "applicable_surfaces": [],
+      "executed_in": "C",
+      "forbidden_identifiers": "Every nominated identifier and body byte whose PostgreSQL coordinate no longer confirms, which the in-function confirmation must drop and count.",
+      "identifier_classes": [
+        "chunk",
+        "claim",
+        "entity",
+        "content_hash"
+      ],
+      "mutation": "Delete the nominated chunk, claim, or entity behind a frozen Lance candidate set, then run the semantic and lexical functions.",
+      "summary": "A stale P1 nomination candidate is deleted from PostgreSQL.",
+      "target_id": "p1_candidate"
+    },
+    {
+      "applicable_surfaces": [],
+      "executed_in": "D",
+      "forbidden_identifiers": "The edge and its endpoint identifiers in any generation built after the deletion; a generation built before it may still return them, but only with its own earlier built_at and the snapshot_graph grade.",
+      "identifier_classes": [
+        "fact",
+        "entity"
+      ],
+      "mutation": "Delete the relation behind a projected edge, then read the snapshot before and after the next rebuild.",
+      "summary": "A projected graph edge is deleted after a snapshot was built.",
+      "target_id": "p2_edge"
+    },
+    {
+      "applicable_surfaces": [],
+      "executed_in": "C",
+      "forbidden_identifiers": "Every byte of the forgotten body and every hash that would confirm it, across the id-addressed body fetch and the corpus filesystem.",
+      "identifier_classes": [
+        "chunk",
+        "content_hash"
+      ],
+      "mutation": "Hard-forget the content object behind a chunk, then fetch that chunk's body by id.",
+      "summary": "The body bytes behind a live chunk coordinate are forgotten.",
+      "target_id": "corpus_body"
+    }
+  ]
+}
