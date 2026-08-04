@@ -1,8 +1,9 @@
 # Open query space — binding design
 
 *2026-08-04. Binding once accepted. Replaces the growing default recipe
-catalog with a versioned, invariant-compiled PostgreSQL query space while
-preserving three platform-assured one-call operations. Rationale:
+catalog with a versioned, invariant-compiled PostgreSQL query space, a full
+read-only native P2 graph surface, and three platform-assured one-call
+operations. Rationale:
 `plan/analysis/open_query_space_codex.md` and
 `plan/analysis/open_query_space_grok.md`. This design refines the public
 surface bound by `agent_retrieval_surface_design.md`; D41, D48, D49, D54,
@@ -10,52 +11,70 @@ and D80 remain controlling.*
 
 ## 1. Principles (binding)
 
-1. **PostgreSQL authorizes every live result.** The public data language IS
+1. **PostgreSQL authorizes every live result.** The live public data language IS
    PostgreSQL 16 SQL over the versioned `memory_v1` schema. Physical tables,
    raw projection tables, and operator schemas are never public. PostgreSQL
-   views compile row-level invariants; Lance and P2 only nominate candidates.
+   views compile row-level invariants; Lance and P2 nominations that are
+   promoted to live or evidence-grade output receive PostgreSQL confirmation.
+   Full read-only Cypher over P2 is separately public as a disclosed
+   point-in-time snapshot surface.
 2. **The default assured surface has exactly three intent operations.**
    `resolve_entity`, `question_context`, and `current_context` are the complete
    shipped platform-operation set. They retain their full D49 `Envelope`
-   contracts. SQL execution, discovery, saved-query execution, and the
+   contracts. SQL/Cypher execution, discovery, saved-query execution, and the
    allowlisted SQL functions are query infrastructure, not additional intent
    operations.
-3. **Open SQL is exploratory by contract.** Every ad-hoc or saved SQL execution
-   returns `QueryResult/v1` with grade `exploratory_tabular`. A view's source
-   grain never becomes a claim about an arbitrary outer query's result grain.
+3. **Open computation is graded by contract.** Every ad-hoc or saved SQL
+   execution returns `QueryResult/v1` with grade `exploratory_tabular`; every
+   Cypher execution returns it with grade `snapshot_graph`. A SQL view's source
+   grain never becomes a claim about an arbitrary outer query's result grain,
+   and a graph row or aggregate never becomes a claim about state after the
+   disclosed snapshot instant.
 4. **D41 is compiled, not taught.** A relation named `current` applies world
    validity and transaction validity at one disclosed evaluation instant.
    Claim validity remains immutable source testimony and never answers what
    currently holds.
-5. **D48 is fail-closed at every boundary.** Each lineage-derived row has a
-   surviving live-document provenance path. P1 and P2 candidates receive
-   PostgreSQL confirmation before return; graph paths confirm as units; chunk
-   bodies confirm their current coordinate and hashes. Missing, orphaned,
-   mismatched, or incompletely forgotten state is absent or fails the call.
+5. **D48 is fail-closed at each stated time boundary.** Each live
+   lineage-derived row has a surviving live-document provenance path. The P2
+   rebuild applies the same visibility rule at its consistent export snapshot,
+   so no lineage tombstoned as of `built_at` enters that generation. P1 and P2
+   nominations that claim live confirmation receive PostgreSQL confirmation;
+   graph paths confirm as units; chunk bodies confirm their current coordinate
+   and hashes. Missing, orphaned, mismatched, or incompletely forgotten state is
+   absent from live output or fails the call. A later deletion can remain in an
+   older `snapshot_graph` result only with that older `built_at` disclosed.
 6. **D54 counting has one meaning.** `evidence_count` and
    `contradict_count` count distinct current-testimony document lineages per
    `supports` or `contradicts` stance. `support_state` is exactly `current` or
    `withdrawn`; `withdrawn` comes only from the open processing-driven
    `support_withdrawn` review state. A zero count MUST NOT manufacture it.
-7. **The graph remains a projection.** `memory_v1.graph_edges_*`, recursive
-   CTEs, `graph_path`, and `graph_neighborhood` are authoritative because they
-   execute against PostgreSQL. P2 remains an internal accelerator for
-   `question_context` and `current_context`; there is no public Cypher surface
-   in v1.
+7. **The graph is first-class in its native language.** Full read-only Cypher
+   over the P2 projection IS public in v1. Each immutable generation IS a
+   consistent point-in-time projection: the rebuild applies D48 visibility in
+   one repeatable-read export, `built_at` names that cut, and the snapshot does
+   not contain lineages tombstoned at that instant. It ages rather than lies. A
+   Cypher aggregate IS therefore a correct aggregate of memory as of `built_at`,
+   the same epistemic object as a read replica with disclosed lag. PostgreSQL
+   remains the live-truth authority; `memory_v1.graph_edges_*`, recursive CTEs,
+   `graph_path`, and `graph_neighborhood` remain the live traversal surface.
+   Honesty comes from the `snapshot_graph` grade and mandatory snapshot
+   provenance, not aggregate, absence, or projection bans.
 8. **Semantic SQL preserves D80 and D48.** `semantic_claims`,
    `semantic_chunks`, and `semantic_facts` pin one ready Lance projection,
    embedding-input-policy version, and embedder generation per invocation and
    perform in-function PostgreSQL confirmation before exposing rows.
-9. **Customer semantics stay customer-owned.** Saved queries inherit the
-   platform sandbox, tenancy, deletion, limits, and execution provenance. Their
-   filters, aggregates, labels, and interpretations are not platform-endorsed
-   fact semantics. Shipped examples live under the same rule.
-10. **Bounds are part of the public contract.** SQL work, results, recursive
-    traversal, semantic nomination, concurrency, and retained telemetry have
-    defaults and hard caps in §4. No cap is silent.
+9. **Customer semantics stay customer-owned.** Saved SQL and agent-authored
+   Cypher inherit the platform sandbox, tenancy, applicable time boundary,
+   limits, and execution provenance. Their filters, aggregates, labels, and
+   interpretations are not platform-endorsed fact semantics. Shipped examples
+   live under the same rule.
+10. **Bounds are part of the public contract.** SQL and Cypher work, results,
+    recursive traversal, semantic nomination, concurrency, and retained
+    telemetry have defaults and hard caps in §4. No cap is silent.
 11. **The schema is discoverable before use.** The same checked-in manifest
-    owns view/function comments, grains, keys, examples, compatibility, and
-    `surface_manifest_hash`. Raw `pg_catalog` discovery is not exposed.
+    owns SQL view/function and P2 graph-type/property comments, grains, keys,
+    examples, compatibility, and `surface_manifest_hash`. Raw `pg_catalog`
+    discovery is not exposed.
 12. **No benchmark-specific product behavior exists.** A future v10 protocol
     consumes the customer surface unchanged. Dataset names, question classes,
     benchmark-only views, prompts, functions, branches, or limits are forbidden
@@ -76,9 +95,10 @@ and D80 remain controlling.*
     - invariant, security, resource, and non-benchmark reviews pass. Passing
       these gates authorizes a separate binding design; it does not add the
       operation automatically.
-14. **The caller owns planning.** There is no product NL-to-SQL planner or LLM
-    on the query path. Raw-table SQL, DuckDB/exports as a live correctness
-    path, and content-level ACL emulation inside one deployment are non-goals.
+14. **The caller owns planning.** There is no product NL-to-SQL/Cypher planner
+    or LLM on the query path. Raw-table SQL, DuckDB/exports as a live
+    correctness path, and content-level ACL emulation inside one deployment are
+    non-goals.
 
 ## 2. Naming alignment with the existing corpus
 
@@ -133,6 +153,8 @@ The protocol entry points are:
 |---|---|
 | `query_sql(sql, parameters, max_rows?)` | One sandboxed statement; `QueryResult/v1` |
 | `explain_sql(sql, parameters)` | `EXPLAIN (FORMAT JSON)` without execution; the same parser, relation, function, and cost gates |
+| `query_cypher(cypher, parameters, max_rows?)` | One process-isolated, read-only LadybugDB statement; `QueryResult/v1` with grade `snapshot_graph`; the request execution option `confirm` defaults to `false` |
+| `explain_cypher(cypher, parameters)` | Engine plan without query execution; the same Cypher parser, read-only, tenancy, and cap gates |
 | `describe_query_space(pattern?, include_examples=false)` | Manifest-backed exact schema, functions, comments, examples, versions, hashes, and limits |
 | `search_query_space(query, k=10)` | Search over checked-in manifest text only; `k` range 1–25 |
 | `list_saved_queries(namespace?, status?)` | Registry metadata only |
@@ -149,10 +171,11 @@ The three assured operations are pinned in the manifest as:
 
 An implementation change that alters any descriptor, selection semantics,
 bound, field, negative, or association increments that operation's version and
-rolls `surface_manifest_hash`. P2 use is internal: eligible graph expansion in
-`question_context` and `current_context` uses P2 nomination, confirms every
-returned unit in PostgreSQL, and falls back to bounded PG traversal when P2 is
-unavailable. P2 never changes the Envelope guarantee.
+rolls `surface_manifest_hash`. P2 use inside an assured operation is an internal
+implementation path distinct from the public Cypher contract: eligible graph
+expansion in `question_context` and `current_context` uses P2 nomination,
+confirms every returned unit in PostgreSQL, and falls back to bounded PG
+traversal when P2 is unavailable. P2 never changes the Envelope guarantee.
 
 ### 3.2 `memory_v1` view catalog
 
@@ -240,6 +263,7 @@ and MUST NOT reintroduce the legacy LEFT JOIN orphan branch.
 | SQL helpers | Read only invariant-bearing public views or equivalent private subqueries covered by the same tests |
 | Lance SRFs | Nominate in Lance, confirm target-specific IDs and filters in PG, then expose rows; stale IDs drop |
 | P2 use in core operations | Confirm every node/edge and drop a path as one unit when any member fails |
+| Public P2 Cypher | Apply D48 during the repeatable-read rebuild; disclose the immutable generation and `built_at`; post-build changes wait for rebuild; apply post-hoc PG confirmation only when `confirm=true` |
 | Saved queries and legacy adapters | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
 | Counts | Aggregate from `evidence_lineage` after liveness/current-testimony filtering, never from cached claim counts |
 | K artifacts | Expose links only when each target is visible; K prose stays compiled and cannot be promoted to live fact |
@@ -366,11 +390,125 @@ depth, edge, and path bounds are defined only by the §4.3 limits table. Reachin
 a cap is disclosed in QueryResult. Raw recursive CTEs remain available only
 under §4.1's template linter and the PG snapshot.
 
-## 4. SQL sandbox, tenancy, limits, and result contract
+### 3.5 Full P2 Cypher read surface
+
+The v1 dialect IS the read portion implemented by the repository-pinned
+`ladybug==0.18.2` engine and the P2 adapter's verified recursive-pattern
+syntax. It is not a promise of every clause in another openCypher
+implementation. An engine upgrade or dialect change rolls
+`surface_manifest_hash` and reruns the §9 dialect gate.
+
+One accepted statement consists of one read query, including `UNION` or `UNION
+ALL` arms. The allowed clauses are `MATCH`, `OPTIONAL MATCH`, `WHERE`, `WITH`,
+`RETURN`, and `UNWIND`; `RETURN DISTINCT`, arbitrary projections and
+expressions, aliases, `ORDER BY`, `SKIP`, and `LIMIT` are allowed. Expressions
+include parameters, property access, arithmetic/boolean/string/list operators,
+read-only built-in scalar/list/path functions, simple and searched `CASE`, bare
+pattern predicates, and `EXISTS { MATCH ... }` or `COUNT { MATCH ... }`
+subqueries. Aggregation is unrestricted by result meaning: `count`, `collect`,
+`min`, `max`, `avg`, `sum`, grouping projections, and engine-supported
+read-only aggregates are allowed.
+
+Patterns allow directed or undirected relationships, labels/types, inline
+property predicates, named paths, and variable-length relationships. The
+engine's recursive modes `SHORTEST`, `ALL SHORTEST`, `WSHORTEST(property)`,
+`ALL WSHORTEST(property)`, `TRAIL`, and `ACYCLIC`, including the
+adapter-verified inline recursive predicate form `(r, n | WHERE ...)`, are
+allowed. The engine's v0.18.2
+recursive upper bound is 30 hops and is also an executor hard cap. Unsupported
+engine syntax, including list comprehensions over path elements, fails
+`cypher_parse_error`; the surface does not silently translate it into a
+different query.
+
+The parser rejects all mutation and external-action paths before the engine
+sees them: `CREATE`, `MERGE`, `SET`, `DELETE`, `DETACH DELETE`, and `REMOVE`;
+node/relationship/schema/type/sequence/graph/index DDL and every drop/alter
+form; standalone or in-query `CALL`/procedures; `LOAD FROM`, `LOAD CSV`, `COPY`,
+`IMPORT`, `EXPORT`, `ATTACH`, and every file or network source; extension
+install/load/update including `INSTALL`, `FORCE INSTALL`, `UPDATE` (extension
+update), and every function capable of file, network, attachment, or extension
+access; engine maintenance statements including `ANALYZE` and `CHECKPOINT`;
+macros, `COMMENT ON`, transactions, `USE`, `PROFILE`, and embedded `EXPLAIN`;
+and multi-statement scripts. Every such parsed construct, including a construct
+hidden in a `UNION` arm, comment boundary, subquery, or mixed read/write query,
+fails `cypher_not_allowed`. Invalid text or syntax not implemented by the
+pinned dialect fails `cypher_parse_error`.
+
+The parser reject list is the mandatory control, and the serving worker adds
+defense-in-depth beneath it: the worker opens the published generation with
+`Database(..., read_only=True)`, which blocks mutation but does NOT block
+`COPY TO`/`EXPORT`/`LOAD`/`INSTALL`-class file and extension actions — which is
+exactly why those constructs MUST die in the parser before the engine sees
+them. The worker process is filesystem-confined to the read-only snapshot
+directory and a bounded scratch area; it has no write path to host-visible
+locations and no outbound network capability. A parser bypass reaching the
+engine is a §9 gate failure, not a tolerated fallback.
+
+The P2 rebuild opens one PostgreSQL `REPEATABLE READ` export snapshot, applies
+D48 visibility inside it, and records that export cut as `built_at` — bound
+concretely as the export transaction's PostgreSQL `transaction_timestamp()`,
+captured once at export start and stored immutably with the published
+generation (never a wall clock read at publish or query time). The
+published LadybugDB generation is therefore one consistent projection of
+memory at that instant, not a partially refreshed graph. It excludes lineages
+tombstoned by `built_at`; later ingests, deletions, withdrawals, identity
+changes, and relation changes appear only after another rebuild. Snapshot
+aggregates and absence tests are correct for that disclosed cut. This is the
+same epistemic contract as arbitrary agent-authored SQL computation with
+provenance and caller-owned interpretation, except that the relevant authority
+instant is `built_at` rather than a live PostgreSQL statement snapshot.
+
+The initial exposed P2 property schema, versioned as projection contract
+`p2-rebuild-2026.07`, is exhaustive:
+
+| Graph type | Exposed snapshot properties |
+|---|---|
+| Node `Entity` | `id UUID`, `type STRING`, `name STRING`, `normalized_name STRING`, `summary STRING`, `created_at TIMESTAMP` |
+| Node `Document` | `id UUID`, `title STRING`, `source_uri STRING`, `published_at DATE` |
+| Edge `RELATES` | `relation_id UUID`, `subject_id UUID`, `object_id UUID`, `predicate STRING`, `fact STRING`, `evidence_count INT64`, `contradict_count INT64`, `confidence DOUBLE`, `contradiction_group UUID`, `valid_from TIMESTAMP`, `valid_until TIMESTAMP`, `ingested_at TIMESTAMP`, `invalidated_at TIMESTAMP` |
+| Edge `MENTIONED_IN` | `mention_count INT64`, `first_seen TIMESTAMP` |
+| Edge `DOC_CROSSREF` | `from_doc_id UUID`, `to_doc_id UUID`, `kind STRING`, `context STRING` |
+| Edge `IS_DOCUMENT` | no user properties |
+
+Rows carry exactly the values projected by `RETURN`, including scalar,
+aggregate, list, path, node, relationship, and exposed property values. Engine
+structural node/relationship/path values are serialized as typed QueryResult
+values; engine-local physical offsets are not stable identifiers. There is no
+identifier-only projection restriction, aggregate ban, absence ban, or generic
+Cypher-result-to-Envelope adapter.
+
+Agents compose the two public data languages by projecting entity or relation
+IDs from `query_cypher` and binding them as `query_sql` parameters, or by
+passing them to an assured operation, whenever the answer requires live
+confirmation or evidence-grade composition. The `confirm=true` request option
+asks the executor to identify top-level typed `Entity`/`RELATES` values and
+scalar projections derived by the parsed AST from `Entity.id` or
+`RELATES.relation_id`, then check those IDs in one PostgreSQL confirmation
+statement under D48/D41 at the confirmation instant. A row containing a
+recognized candidate that fails confirmation drops as a unit. Nested IDs
+inside an aggregate or collection are not rewritten. Confirmation covers ONLY
+`Entity` nodes and `RELATES` relationships: `Document` nodes, `MENTIONED_IN`,
+`DOC_CROSSREF`, and every other projected graph type are never confirmed by
+this option and pass through snapshot-scoped. The discovery resource and
+consumption skill state this in one line: "confirm=true checks live membership
+of projected entity/relation IDs; it does not make any other part of the
+result live."
+
+Confirmation reports `confirmation = {requested, pg_confirmed_at, nominated,
+confirmed, dropped_stale}`. These are unique confirmable-ID counts and
+`confirmed + dropped_stale = nominated`. Confirmation does not rerun the Cypher
+plan, change path selection, reconstruct absence, or re-ground any aggregate
+value. The result retains grade `snapshot_graph`, its aggregate values remain
+scoped to `built_at`, and an invocation with no confirmable top-level ID reports
+zero for all three counts. `confirm` is an executor option outside the Cypher
+text and bound parameter map; Cypher text and parameters cannot enable, weaken,
+or redirect confirmation.
+
+## 4. Query sandbox, tenancy, limits, and result contract
 
 ### 4.1 Grammar and rejection contract
 
-One request contains one `SELECT`, `VALUES`, or read-only `WITH [RECURSIVE]`
+One SQL request contains one `SELECT`, `VALUES`, or read-only `WITH [RECURSIVE]`
 statement. `UNION`, `INTERSECT`, `EXCEPT`, subqueries, `LATERAL`, joins,
 filters, grouping, `HAVING`, windows, ordering, `LIMIT`, and `OFFSET` are
 allowed. `explain_sql` alone accepts `EXPLAIN (FORMAT JSON)` and never
@@ -434,13 +572,19 @@ The public error codes are exhaustive:
 | Phase | Codes |
 |---|---|
 | Parse/validation | `parse_error`, `multiple_statements`, `statement_not_allowed`, `relation_not_allowed`, `function_not_allowed`, `function_placement_not_allowed`, `operator_not_allowed`, `invalid_parameter`, `schema_version_mismatch`, `unbounded_recursion` |
+| Cypher parse/validation | `cypher_parse_error`, `cypher_not_allowed` |
 | Admission | `estimated_cost_exceeded`, `quota_exceeded`, `concurrency_exceeded`, `saved_query_not_found`, `saved_query_disabled`, `saved_query_incompatible`, `saved_query_revalidation_pending` |
 | Execution | `statement_timeout`, `lock_timeout`, `cancelled`, `resource_limit`, `execution_error` |
-| Store/confirmation | `pg_unavailable`, `lance_unavailable`, `p2_unavailable` (core-operation-internal only; never returned by public SQL), `corpus_body_unavailable`, `generation_unavailable`, `confirmation_failed` |
+| Store/confirmation | `pg_unavailable`, `lance_unavailable`, `p2_unavailable`, `corpus_body_unavailable`, `generation_unavailable`, `confirmation_failed` |
 
-Zero rows is success with `empty_result = true`, never an error and never a
-D49 negative. The store codes and fallback behavior cross-reference the §7
-failure matrix.
+The two `cypher_*` codes are Cypher-phase codes emitted before engine
+execution: forbidden parsed constructs use `cypher_not_allowed`, while invalid
+or unsupported text uses `cypher_parse_error`. `p2_unavailable` is public for
+both Cypher entry points; an engine process fault or Cypher execution timeout
+maps to it with no partial rows. It remains internal to a core operation when
+that operation completes through its PostgreSQL fallback. Zero rows is success
+with `empty_result = true`, never an error and never a D49 negative. The store
+codes and fallback behavior cross-reference the §7 failure matrix.
 
 ### 4.2 Ownership, RLS, and trust boundaries
 
@@ -448,6 +592,15 @@ D68 physical database-/schema-per-deployment routing is the PRIMARY tenancy
 boundary. The gateway authenticates a principal, resolves exactly one
 deployment, and pool checkout selects that deployment's database and a
 deployment-bound login role. SQL text and parameters never choose deployment.
+
+P2 uses the same D68 posture: every deployment's snapshot files and local
+reader cache are physically separate. The bridge derives the deployment from
+the authenticated session identity and resolves that deployment's latest
+published, non-quarantined snapshot path server-side. Cypher text, parameters,
+labels, properties, engine functions, and execution options never select a
+snapshot path, snapshot ID, deployment, database attachment, file, or URI.
+Cypher execution occurs in a process-isolated graph worker behind the existing
+worker/RPC boundary; the agent process never opens snapshot files directly.
 
 The role split is fixed:
 
@@ -507,6 +660,12 @@ least 10,000 valid parsed ASTs per release. Acceptance is zero unauthorized
 rows/bytes/identifiers in results, errors, notices, or retained logs; zero base
 object access; and zero cross-checkout session contamination.
 
+The same suite MUST attempt cross-deployment P2 access through every graph RPC
+field, malformed worker message, snapshot identifier, path-like parameter,
+Cypher literal, and A→B→A worker reuse sequence. Acceptance is zero selection or
+disclosure of another deployment's snapshot bytes, schema, IDs, rows, errors,
+plans, age, or generation metadata.
+
 A deployment is one content trust domain. The engine enforces cross-deployment
 and operator-table isolation, read-only behavior, caps, audit, and mass-read
 metering. It does not infer whether an authorized within-deployment read was
@@ -520,21 +679,24 @@ saved-query filter is not an authorization boundary.
 The gateway clamps a requested value to the interactive hard cap or rejects it
 when clamping would change query semantics. The analytical tier requires an
 operator entitlement and a separate one-concurrent-query pool; it retains the
-same schema, grammar, RLS, D48 checks, QueryResult contract, and semantic/graph
-caps. The table below is the single normative source for every §3.4 function
+same language schemas, grammar, tenancy boundary, applicable D48 time boundary,
+QueryResult contract, and semantic/graph caps. The table below is the single
+normative source for every §3.4 function
 default and hard bound and every executor resource bound; prose elsewhere names
 the applicable default/hard class and cites this table.
 
 | Resource | Default | Interactive hard cap | Analytical hard cap |
 |---|---:|---:|---:|
 | SQL statements/request | 1 | 1 | 1 |
+| Cypher statements/request | 1 | 1 | 1 |
 | SQL text | — | 64 KiB | 64 KiB |
-| Bound parameters / encoded bytes | 64 / 256 KiB | 256 / 1 MiB | 256 / 1 MiB |
-| Statement timeout | 5 s | 15 s | 60 s |
+| Cypher text | — | 32 KiB | 32 KiB |
+| SQL or Cypher bound parameters / encoded bytes | 64 / 256 KiB | 256 / 1 MiB | 256 / 1 MiB |
+| SQL or Cypher statement timeout | 5 s | 15 s | 60 s |
 | Lock timeout | 250 ms | 1 s | 2 s |
 | Idle transaction | 5 s | 10 s | 15 s |
-| Returned rows | 200 | 1,000 | 10,000 |
-| Returned encoded bytes | 1 MiB | 8 MiB | 64 MiB |
+| SQL or Cypher returned rows | 200 | 1,000 | 10,000 |
+| SQL or Cypher returned encoded bytes | 1 MiB | 8 MiB | 64 MiB |
 | `work_mem` | 16 MiB | 32 MiB | 64 MiB |
 | Temporary files | 64 MiB | 256 MiB | 1 GiB |
 | Planner `total_cost` admission | 1,000,000 | 5,000,000 | 50,000,000 |
@@ -545,31 +707,40 @@ the applicable default/hard class and cites this table.
 | Semantic chunk source text | 512 KiB/invocation | 4 MiB/statement | 4 MiB/statement |
 | Neighborhood depth / edges | 2 / 100 | 4 / 500 | 4 / 500 |
 | Path depth / paths / edges | 4 / 3 / 100 | 6 / 10 / 500 | 6 / 10 / 500 |
-| Concurrent statements per principal | 2 | 4 | 1 |
-| Concurrent statements per deployment | 8 | 16 | 4 |
-| Principal statement-seconds / rolling 60 s | 30 | 60 | 60 |
-| Deployment statement-seconds / rolling 60 s | 120 | 240 | 240 |
+| Cypher variable-length upper bound | 30 | 30 | 30 |
+| Concurrent SQL + Cypher statements per principal | 2 | 4 | 1 |
+| Concurrent SQL + Cypher statements per deployment | 8 | 16 | 4 |
+| Principal SQL + Cypher statement-seconds / rolling 60 s | 30 | 60 | 60 |
+| Deployment SQL + Cypher statement-seconds / rolling 60 s | 120 | 240 | 240 |
 
-Parallel query is disabled for interactive roles. Client disconnect triggers PG
-and projection cancellation within one second. A wire row cap does not bound
-work below an aggregate or sort; timeout, cost admission, memory/temp limits,
-concurrency, and rolling quotas remain mandatory. Larger exports use the
-separate governed scan/export surface, not open interactive SQL.
+Parallel query is disabled for interactive roles. SQL and Cypher consume the
+same per-principal/deployment concurrency slots and rolling statement-second
+quotas; a caller cannot evade either quota by alternating languages. Cypher
+parameters are typed and bound through the engine API and are never
+interpolated into text. Client disconnect triggers PG and projection
+cancellation within one second. The graph supervisor terminates an unresponsive
+worker at that deadline; no buffered partial result crosses the RPC boundary. A
+wire row cap does not bound work below an aggregate or sort; timeout, cost
+admission where available, process isolation, memory/temp limits, concurrency,
+and rolling quotas remain mandatory. Larger exports use the separate governed
+scan/export surface, not either open interactive language.
 
 ### 4.4 `QueryResult/v1`
 
-Every successful, empty, truncated, rejected, or failed ad-hoc/saved query
-carries this provenance header before any rows:
+Every successful, empty, truncated, rejected, or failed SQL/Cypher query carries
+this provenance header before any rows:
 
 ```text
 contract = "QueryResult/v1"
-grade = "exploratory_tabular"
+query_language = "sql" | "cypher"
+grade = "exploratory_tabular" | "snapshot_graph"
 request_id, deployment_id
-surface_manifest_hash, query_space_schema = "memory_v1"
+surface_manifest_hash, query_space_schema = "memory_v1" | null
 query_hash
 saved_query = {query_id, namespace, name, version, query_hash} | null
 referenced_views[], referenced_functions[], source_grain_tags[]
-columns[{name, sql_type, nullable}], rows[]
+referenced_graph_types[], referenced_graph_properties[]
+columns[{name, type, nullable}], rows[]
 returned_row_count, returned_byte_count
 limits{row_cap, byte_cap, statement_timeout_ms, analytical_tier}
 truncated, truncation_reason
@@ -579,17 +750,33 @@ empty_result, negative_kind = null
 execution_started_at, evaluated_at, pg_snapshot_at, elapsed_ms
 termination_reason, error_code, warnings[]
 semantic_invocations[]
-p2_snapshot = null                         # public SQL never reads P2
+confirmation = {requested, pg_confirmed_at, nominated, confirmed,
+                dropped_stale} | null
+p2_snapshot = {snapshot_id, snapshot_version, built_at, age_seconds} | null
 ```
 
-`query_hash` is SHA-256 over the normalized AST plus parameter type vector, not
-parameter values. `exact_total_known` is true only for a completed, parser-
-recognized outer exact-count query; a cap probe establishes truncation but not
-an exact total. `source_grain_tags` describe referenced relations and do not
-grade the result. `evaluated_at` is non-null only when EVERY referenced public
-relation/function is a current-or-as-of fact/graph surface and those references
-supply one compatible applied instant. Any mix with evidence, history, or
-live-content views forces `evaluated_at = null`.
+`query_hash` is SHA-256 over the language-specific normalized AST plus parameter
+type vector, not parameter values. `columns[].type` uses canonical PostgreSQL
+types for SQL and pinned LadybugDB logical types for Cypher. SQL sets
+`query_space_schema = "memory_v1"`, grade `exploratory_tabular`, and
+`p2_snapshot = null`. Cypher sets `query_space_schema = null`, grade
+`snapshot_graph`, and a non-null `p2_snapshot` for both entry points. The
+gateway pins `snapshot_id`, `snapshot_version`, and `built_at` before dispatch;
+`age_seconds` is the non-negative difference between `execution_started_at` and
+`built_at` and appears on every Cypher result. `query_cypher` never returns a
+null `p2_snapshot`.
+
+`exact_total_known` is true only for a completed, parser-recognized outer
+exact-count query; a cap probe establishes truncation but not an exact total.
+`source_grain_tags` describe referenced SQL relations and do not grade the
+result. `referenced_graph_types` and `referenced_graph_properties` are the
+parsed Cypher equivalents. `evaluated_at` is non-null only when EVERY referenced
+SQL relation/function is a current-or-as-of fact/graph surface and those
+references supply one compatible applied instant. Any SQL mix with evidence,
+history, or live-content views forces `evaluated_at = null`; Cypher sets it to
+null and uses `p2_snapshot.built_at` as its sole authority instant. A
+`confirm=true` Cypher request additionally sets `pg_snapshot_at` and
+`confirmation.pg_confirmed_at` to its post-hoc confirmation instant.
 
 `exploratory_tabular` explicitly does **not** guarantee:
 
@@ -608,10 +795,30 @@ live-content views forces `evaluated_at = null`.
 - semantic completeness, exhaustive absence, or freedom from caller-authored
   filter/join/aggregation errors.
 
+`snapshot_graph` explicitly does **not** guarantee:
+
+- state after `p2_snapshot.built_at`; ingests, deletions, withdrawals, identity
+  changes, and relation changes after that instant are not reflected;
+- that an aggregate, shortest-path choice, pattern existence result, or absence
+  result describes live memory; each is correct only for the complete snapshot
+  cut at `built_at`;
+- D49 intent negatives, evidence completeness, contradiction-group
+  completeness, or a live fact/evidence grade;
+- live completeness after `built_at`, even when `confirm=true`; confirmation
+  can drop stale projected IDs but cannot add post-build graph state or
+  reconstruct the query;
+- freedom from caller-authored projection, filter, grouping, path, aggregate,
+  or interpretation errors.
+
+Live completeness and live evidence grade require the SQL surface or one of the
+three assured operations. Snapshot aggregates and absence claims remain
+snapshot-scoped under `confirm=true`; confirmation does not re-ground them.
+
 The three §3.1 core operations continue to return full D49 `Envelope`s with
 typed grain, negatives, contradiction handling, freshness, truncation,
 hydration drops, and explicit associations. A generic QueryResult-to-Envelope
-adapter is forbidden.
+adapter is forbidden for either grade; in particular, there is no generic
+Cypher-result-to-Envelope adapter.
 
 ## 5. Saved-query registry
 
@@ -690,28 +897,43 @@ the invariant views and no result cache exists.
 
 ## 6. Discovery, manifest, and benchmark identity
 
-Every view, column, and function has manifest-owned comments stating one-row-
-per grain, key/join path, current/history meaning, null-clock convention,
-deletion exclusions, count exactness, orientation/evidence status, limits, and
-failure behavior. Comments are complete sentences and avoid internal table
-names. Each view/function has a valid example; the compact first-call resource
-includes the three core operations, the query-space hash, hard limits, and
-worked examples for current facts, testimony, aggregation, graph traversal,
-and semantic-to-relational composition. It states that empty SQL is untyped and
-that claims do not answer current truth.
+Every view, column, SQL function, Cypher entry point, graph type, and graph
+property has manifest-owned comments stating its grain/type, key or identity
+meaning, current/history/snapshot meaning, null-clock convention, deletion
+boundary, count exactness, orientation/evidence status, limits, and failure
+behavior. Comments are complete sentences and avoid private PostgreSQL table
+names and snapshot paths. Each SQL function and Cypher entry point has a valid
+example.
+
+The compact first-call resource presents the three choices without a preferred
+language hidden in prose:
+
+- Cypher gives native graph power over a complete, point-in-time P2 snapshot
+  with mandatory `built_at` and age;
+- SQL gives live PostgreSQL state and direct evidence composition;
+- the three assured operations give one-call typed answers with D49 guarantees.
+
+It includes the query-space hash, hard limits, and worked examples for current
+facts, testimony, aggregation, native Cypher traversal/aggregation,
+Cypher-ID-to-live-SQL composition, and semantic-to-relational composition. It
+states that empty SQL is untyped, Cypher absence is snapshot-scoped, and claims
+do not answer current truth.
 
 `describe_query_space` reads the checked-in manifest and verified runtime
 introspection. `search_query_space` searches only names, comments, tags, and
 examples in that manifest. Neither reads tenant content or exposes arbitrary
 `pg_catalog`. A runtime/manifest mismatch disables open SQL for that deployment
-with `schema_version_mismatch`.
+with `schema_version_mismatch`; a P2 dialect/property-contract mismatch disables
+both Cypher entry points with the same code before worker execution.
 
-The consumption skill's default motion is the three assured operations for
-common question answering and SQL for aggregation, joins, graph composition,
-and the long tail. It includes the same five worked examples as discovery and
-warns that claim rows are testimony, empty SQL is not `known_empty`, outer
-queries can erase grain/contradiction/evidence context, and every cap requires
-inspection. It contains no benchmark name or benchmark-tuned hint.
+The consumption skill presents the same choice plainly: Cypher for native graph
+power with point-in-time semantics, SQL for live and evidence-composable reads,
+and assured operations for one-call typed answers. It includes the same worked
+examples as discovery and contains no steering language that hides or
+discourages the Cypher surface. It warns that claim rows are testimony, empty
+SQL is not `known_empty`, Cypher absence/aggregates are scoped to `built_at`,
+outer queries can erase grain/contradiction/evidence context, and every cap
+requires inspection. It contains no benchmark name or benchmark-tuned hint.
 
 `surface_manifest_hash` is the lowercase hexadecimal SHA-256 of UTF-8 RFC 8785
 canonical JSON with exactly these top-level members:
@@ -721,12 +943,19 @@ canonical JSON with exactly these top-level members:
    and a canonical AST serialization of each definition;
 2. `function_signatures`: functions sorted by qualified name with ordered
    argument names/types/defaults/bounds, ordered return columns/types,
-   volatility, parallel/security mode, contract version, and comments;
+   volatility, parallel/security mode, contract version, and comments, plus
+   the exact `query_cypher(cypher, parameters, max_rows?)` and
+   `explain_cypher(cypher, parameters)` entry-point signatures, parameter
+   schemas, the `confirm` execution option/default, result contract, and
+   comments;
 3. `core_operation_descriptors`: the three sorted descriptors with name,
    version, input schema, Envelope version, grain/intent, bounds, and
    implementation-chain hash;
-4. `limits`: the exact grammar/operator/function allowlists and all default,
-   interactive, analytical, semantic, graph, concurrency, and quota limits.
+4. `limits`: the exact SQL grammar/operator/function allowlists; the exact
+   Cypher allowed-clause and rejected-clause enumeration; the P2 projection
+   contract version and exhaustive node/edge property schema from §3.5; and all
+   default, interactive, analytical, semantic, graph, Cypher, concurrency, and
+   quota limits.
 
 The canonical AST serializer and version are pinned in the manifest generator;
 golden-vector fixtures for that pinned serializer are checked in and MUST pass.
@@ -740,54 +969,76 @@ declared PostgreSQL major remains a manifest field). Physical indexes, plans,
 statistics, data, projection contents, saved queries, and legacy adapters are
 excluded. Any semantic view change, even with unchanged columns, changes the
 definition AST and the hash. Any semantic function change requires a contract-
-version/signature change and therefore changes the hash.
+version/signature change and therefore changes the hash. Any Cypher entry-point
+signature, confirmation option, allowed/rejected construct, cap, P2 graph type,
+or exposed property-set change changes the hash; a property-set change also
+increments the P2 projection contract version.
 
 A future v10 protocol MUST pin `surface_manifest_hash` in place of the tool-
 catalog hash. v9 catalog-hash runs and v10 surface-manifest runs are explicitly
 noncomparable. Full v10 protocol design is outside this document. The migration
 measurements in §8 require legacy, hybrid-three-core, and open-only arms on the
 same store, model, prompt budget, time anchor, and resource budget; traces
-record manifest hash, core calls, SQL hashes, errors, caps, latency/cost, and
-projection-confirmation statistics. Raw SQL/parameters follow §7 retention.
-No arm receives product behavior unavailable to customers.
+record manifest hash, core calls, SQL/Cypher hashes, P2 snapshot provenance,
+errors, caps, latency/cost, and projection-confirmation statistics. Raw
+SQL/Cypher and parameters follow §7 retention. No arm receives product behavior
+unavailable to customers.
 
 ## 7. Observability, retention, and failure behavior
 
 Every attempt emits an audit event with request, deployment and principal IDs;
-surface/manifest/query/saved-query hashes; referenced public objects; admission
-decision; PG/Lance/P2/corpusfs generations and freshness when touched; timings;
-plan-cost estimate; rows/bytes/temp work; limits; cancellation/error code;
-semantic nomination/confirmation/drop counts; graph depth/rows/cap events; and
-core-operation name/version when applicable. Cost attribution charges PG
-statement time/temp work, query-embedding and Lance work, confirmation work,
-and returned bytes to principal and deployment. The cost ledger is operator-
-only.
+query language; surface/manifest/query/saved-query hashes; referenced public
+objects or graph types/properties; admission decision; PG/Lance/P2/corpusfs
+generations and freshness when touched; P2 `built_at` and `age_seconds`;
+timings; plan-cost estimate where available; rows/bytes/temp work; limits;
+cancellation/error code; semantic and Cypher nomination/confirmation/drop
+counts; graph depth/rows/cap events; worker exit/fault class; and core-operation
+name/version when applicable. Cost attribution charges PG statement time/temp
+work, query-embedding and Lance work, graph-worker time, confirmation work, and
+returned bytes to principal and deployment. The cost ledger is operator-only.
 
-Default telemetry never persists raw ad-hoc SQL, parameter values, result rows,
-chunk bodies, or PG error text. It retains audit metadata for 30 days and
-non-content aggregate cost/reliability metrics for 13 months. Saved SQL follows
-registry retention. An operator-enabled debug capture is deployment-scoped,
-encrypted under a separate key, access-audited, excludes results/bodies,
-redacts parameters by schema, lasts at most seven days, and auto-purges. Legal
-hold is an operator policy outside the library and cannot make forgotten corpus
-content reappear through the query surface.
+Default telemetry never persists raw ad-hoc SQL or Cypher, parameter values,
+result rows, chunk bodies, or raw PG/LadybugDB error text. It retains audit
+metadata for 30 days and non-content aggregate cost/reliability metrics for 13
+months. Saved SQL follows registry retention. An operator-enabled debug capture
+is deployment-scoped, encrypted under a separate key, access-audited, excludes
+results/bodies, redacts parameters by schema, lasts at most seven days, and
+auto-purges. Legal hold is an operator policy outside the library and cannot
+make forgotten corpus content reappear through a live query surface.
 
-Incident controls include per-principal/deployment open-SQL kill switches,
-per-function bridge disablement, saved-query fleet disablement, role revocation,
-pool drain, manifest-version quarantine, and projection-generation quarantine.
-Recovery never grants raw tables or returns unconfirmed projection rows.
+The monitored freshness metric IS `p2_snapshot_age_seconds` for the latest
+published non-quarantined generation of each deployment. The operational
+target IS at most 3,600 seconds at query dispatch. The operator alert threshold
+IS age greater than 5,400 seconds for five continuous minutes; rebuild duration,
+publish failures, and the count/rate of Cypher results above target accompany
+the alert. Crossing either threshold does not relabel, reject, or silently
+refresh a snapshot query: every result still discloses its exact age. V1 never
+starts or waits for a P2 rebuild in response to a query.
+
+Incident controls include per-principal/deployment open-SQL and open-Cypher kill
+switches, per-function bridge disablement, graph-worker drain, saved-query fleet
+disablement, role revocation, pool drain, manifest-version quarantine, and
+projection-generation quarantine. Three engine process crashes or
+overflow-class engine faults attributed to one P2 generation in a rolling five
+minutes automatically quarantine that generation. The triggering request fails
+`p2_unavailable`; subsequent requests select the latest older published,
+non-quarantined generation with its own age disclosed, or fail `p2_unavailable`
+when none exists. An operator or a newly validated generation clears service;
+query text cannot clear quarantine. Recovery never grants raw tables, bypasses
+snapshot provenance, or returns partial confirmation output.
 
 | Failure/disagreement | Binding behavior |
 |---|---|
-| PostgreSQL unavailable | All query and core paths fail `pg_unavailable`; no projection result escapes |
+| PostgreSQL unavailable | SQL, saved-query, and core paths fail `pg_unavailable`; unconfirmed Cypher remains available at grade `snapshot_graph`; `confirm=true` fails the entire request `pg_unavailable` with no rows |
 | Lance unavailable | Plain PG SQL/graph remains available; semantic SRFs fail `lance_unavailable`; a core operation can return only a descriptor-permitted PG channel with a D49 `boundary`, otherwise it fails |
-| P2 unavailable/stale | Public PG graph remains authoritative; core operations use bounded PG traversal and disclose P2 freshness/boundary; stale P2 units drop after PG confirmation |
+| P2 absent/quarantined, graph worker faults, or Cypher execution times out | `query_cypher` and `explain_cypher` fail `p2_unavailable` with no partial results; SQL remains available; core operations use bounded PG traversal and disclose the P2 boundary |
+| P2 age exceeds target or alert threshold | Cypher remains available with exact `built_at`, `age_seconds`, and a freshness warning; live SQL remains authoritative; the request never triggers a rebuild |
 | Corpusfs/P1 body unavailable | Metadata SQL remains available; body-bearing candidates drop and are counted; a body-required invocation with no valid body fails `corpus_body_unavailable` |
 | PG and Lance disagree | PG wins; stale candidates drop; mixed generation or authorization uncertainty fails the semantic invocation |
-| PG and P2 disagree | PG wins; a failing edge drops the complete nominated path; P2 aggregates never become final answers |
+| PG and P2 differ after `built_at` | Unconfirmed Cypher remains the correct snapshot result; `confirm=true` drops failing projected ID rows and counts them, while paths, aggregates, existence, and absence remain snapshot-scoped; live SQL and assured-operation output follow PG |
 | Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch quarantines the projection generation |
-| Manifest/runtime disagrees | Open SQL and saved queries fail `schema_version_mismatch`; the three core operations remain available only if their own descriptors/invariants verify |
-| Forget is pending or incomplete | Every affected lineage path fails closed under D48/D74; absence is indistinguishable from never existed |
+| Manifest/runtime disagrees | The affected open SQL, saved-query, or Cypher surface fails `schema_version_mismatch`; the three core operations remain available only if their own descriptors/invariants verify |
+| Forget is pending or incomplete | Live SQL/core lineage paths fail closed under D48/D74; an older P2 generation can reflect the lineage only as of its disclosed pre-forget `built_at`, and the first post-forget rebuild removes it from all later generations |
 
 ## 8. Dual-surface migration and terminal criteria
 
@@ -797,16 +1048,21 @@ Migration is a protocol deprecation, not a catalog deletion:
 invariant fixes, and tenancy fixes are REQUIRED throughout the window. New
 parameters, new grains, and new behavior are forbidden.
 
-1. **Introduction.** Ship `memory_v1`, QueryResult, discovery, semantic/graph
-   functions, registry, and examples alongside all 20 frozen legacy adapters.
-   HTTP `/recipes` and `/recipe/{name}`, SDK `recipes()`/`run_recipe()`, CLI
-   `remember query list/run`, MCP recipe tools, and existing Envelope parsing
-   remain unchanged. New entry points are additive.
+1. **Introduction.** Ship `memory_v1`, QueryResult, both full read-only Cypher
+   entry points, discovery, semantic/graph functions, registry, and examples
+   alongside all 20 frozen legacy adapters. The discovery/first-call resource
+   and consumption skill present Cypher as native graph power with point-in-time
+   semantics, SQL as live/evidence-composable, and assured operations as typed
+   one-call answers. HTTP `/recipes` and `/recipe/{name}`, SDK
+   `recipes()`/`run_recipe()`, CLI `remember query list/run`, MCP recipe tools,
+   and existing Envelope parsing remain unchanged. New entry points are
+   additive.
 2. **Default cutover.** After §9 gates and the same-condition hybrid arm meet
    the noninferiority gates below, default MCP/prompt discovery contains the
-   three core operations plus query/discovery/registry infrastructure. The
-   other 17 adapters remain callable but acquire deprecation metadata; their
-   `examples.*` replacements and migration guides ship in the same release.
+   three core operations plus SQL, full Cypher, discovery, and registry
+   infrastructure without language-hiding steering. The other 17 adapters
+   remain callable but acquire deprecation metadata; their `examples.*`
+   replacements and migration guides ship in the same release.
 3. **Deprecation window.** Each of the 17 names remains supported for at least
    two minor releases and 180 days after its published deprecation date.
    HTTP emits `Deprecation` and dated `Sunset` headers; SDKs emit typed warnings;
@@ -829,8 +1085,9 @@ The hybrid noninferiority gate for default cutover is: overall end-task success
 lower 95% confidence bound no worse than -2 absolute points versus the legacy
 arm; no critical question category worse than -5 points; zero D41/D48/D54 or
 cross-deployment violations; p95 latency and metered cost no more than 25%
-higher; invalid/repaired SQL rate at most 5%; and every cap/drop visible in the
-contract. Failing a gate keeps the dual surface active and requires redesign.
+higher; invalid/repaired SQL and Cypher rate at most 5% in each language; and
+every cap/drop visible in the contract. Failing a gate keeps the dual surface
+active and requires redesign.
 
 Exactly three platform operations remain after noncore removal. Removing the
 final one-call recipe layer is not decided here; it is the explicit deferral in
@@ -844,18 +1101,24 @@ pass before default cutover.
 
 1. **DDL/manifest identity.** Runtime introspection equals the checked-in
    manifest exactly; all 24 view keys are unique on fixtures; all comments and
-   examples validate; pinned-AST-serializer golden vectors pass; two independent
-   builds produce the same manifest hash, including across supported PostgreSQL
-   minor versions.
+   SQL/Cypher examples validate; Cypher entry-point signatures, dialect lists,
+   caps, P2 projection-contract version, graph types, and property schema match
+   the adapter and worker exactly; pinned-AST-serializer golden vectors pass;
+   two independent builds produce the same manifest hash, including across
+   supported PostgreSQL minor versions.
 2. **D48 deletion matrix.** Deleting each fixture lineage, version,
    representation, claim, fact provenance, K target, P1 candidate, P2 edge, and
-   corpus body yields zero leaked rows/bytes across every view, helper, semantic
-   target, core operation, legacy adapter, saved query, count, and artifact
-   fetch. A path with one invalid edge returns no partial path. The enumerated
-   targets × surfaces coverage-matrix artifact is generated, reviewed,
-   versioned, and checked into the repository. `100%` means that exact artifact
-   passes; no implicit or sampled cells count. Fixtures use the D48 INNER JOIN/
-   `EXISTS` template and contain no legacy LEFT JOIN orphan branch.
+   corpus body yields zero leaked rows/bytes across every live view, helper,
+   semantic target, core operation, legacy adapter, saved query, count, and
+   artifact fetch. A path with one invalid edge returns no partial live path.
+   The snapshot cells assert the different, explicit boundary: a generation
+   built after the deletion contains zero affected node/edge/property values,
+   while a generation built before it can return them only with its earlier
+   `built_at` and grade `snapshot_graph`. The enumerated targets × surfaces
+   coverage-matrix artifact is generated, reviewed, versioned, and checked into
+   the repository. `100%` means that exact artifact passes; no implicit or
+   sampled cells count. Fixtures use the D48 INNER JOIN/`EXISTS` template and
+   contain no legacy LEFT JOIN orphan branch.
 3. **D41 clocks.** Tests cover equality at `valid_from`, exclusion at
    `valid_until`, null endpoints, future ingestion, invalidation equality,
    distinct `valid_at`/`believed_at`, one shared statement instant, and current
@@ -877,7 +1140,10 @@ pass before default cutover.
    DEFINER` function, that a NULL `ops.tenant_role_map` lookup returns zero rows
    and performs no RPC, and that all properties survive A→B→A pool reuse. The
    SRF fuzz corpus also proves that post-rewrite invocation count equals exactly
-   the count of accepted top-level syntactic forms.
+   the count of accepted top-level syntactic forms. Cross-deployment graph RPC,
+   snapshot selector, worker-reuse, path/URI, and malformed-message attempts
+   expose zero snapshot bytes, data, schema, plan, identifier, generation, or
+   freshness metadata from the other deployment.
 6. **Resource enforcement.** Cartesian, recursive, sort, aggregate, sleep-
    attempt, semantic-fanout, disconnect, and concurrency probes terminate at
    or before the configured hard cap plus one-second cancellation grace. Rows,
@@ -896,21 +1162,50 @@ pass before default cutover.
 8. **Graph authority.** PG helpers equal exhaustive ground truth on generated
    graphs through their caps, use deterministic ordering, prevent cycles, obey
    both clocks, and report all caps. P2-accelerated core outputs equal their
-   PG-confirmed units with zero partial paths.
-9. **Result contracts.** Every success, empty, truncation, rejection, timeout,
+   PG-confirmed units with zero partial paths. P2 snapshot queries equal the
+   complete generated graph at their recorded `built_at`, without a live-state
+   claim.
+9. **Full Cypher read surface.** A dialect-parser fuzz corpus of at least 10,000
+   patterns covers every allowed and rejected §3.5 construct, nested/unioned
+   forms, comments, Unicode whitespace, delimiters, parameters, and mutation-
+   smuggling attempts. Every accepted query runs against the real pinned engine;
+   before/after database-file hashes, catalog/schema inventory, node/edge
+   counts, and property fixtures prove zero state change, and
+   `explain_cypher` proves zero query execution. Snapshot-consistency fixtures
+   prove: an edge deleted after build remains in Cypher with the old `built_at`
+   and disappears after rebuild; an edge created after build is absent from
+   Cypher and present in live SQL; every result discloses the correct generation
+   and age. `confirm=true` fixtures prove the confirmed projected-ID set and
+   `nominated`/`confirmed`/`dropped_stale` counts equal the shared PostgreSQL
+   D48/D41 confirmation machinery at `pg_confirmed_at`, while snapshot
+   aggregates remain byte-for-byte unchanged; coverage negatives prove
+   `Document`, `MENTIONED_IN`, and `DOC_CROSSREF` projections pass through
+   unconfirmed. Worker-posture fixtures prove the engine handle is
+   `read_only=True`, that a parser bypass of a `COPY TO`/`EXPORT`/`LOAD`/
+   `INSTALL`/`ANALYZE`/`CHECKPOINT` construct reaching the engine is a gate
+   FAILURE (never a tolerated fallback), and that the worker cannot write
+   outside its confined scratch area. Text, parameter, timeout,
+   rows/bytes, recursion, concurrency, and rolling-quota caps enforce at both
+   tiers. Real-engine `SHORTEST` traversal fuzz includes the historically
+   observed `INT128` arithmetic-overflow class; every overflow/fault/timeout
+   returns `p2_unavailable` with zero partial rows, and the three-fault
+   generation quarantine trips exactly at §7's bound.
+10. **Result contracts.** Every success, empty, truncation, rejection, timeout,
    cancellation, and store failure contains the complete QueryResult header and
-   correct non-guarantee state. The three core operations pass the existing D49
-   Envelope suite without weakened grain, negative, contradiction, freshness,
-   or association guarantees. Named honesty fixtures reproduce the reviewer's
-   queries (b) and (d) across `facts_visible_history`, `facts_as_of`, and
+   correct grade, snapshot provenance, confirmation block, and non-guarantee
+   state. The three core operations pass the existing D49 Envelope suite without
+   weakened grain, negative, contradiction, freshness, or association
+   guarantees. Named honesty fixtures reproduce the reviewer's queries (b) and
+   (d) across `facts_visible_history`, `facts_as_of`, and
    `graph_edges_visible_history`: after current testimony changes, historical/
    as-of membership stays correct while `evidence_count_current`,
    `contradict_count_current`, and `support_state_current` reflect the live read
    state and never claim to be historical values. The consumption skill and
-   discovery warnings against claim-to-current laundering are gate-tested; the
-   five worked examples include one negative example showing the wrong claim-
-   window query and its correct `facts_current` replacement.
-10. **Registry/governance.** Mutation attempts cannot alter versions; agents
+   discovery warnings against claim-to-current and snapshot-to-live laundering
+   are gate-tested; worked examples include the wrong claim-window query with
+   its correct `facts_current` replacement and a snapshot-ID-to-live-SQL
+   composition.
+11. **Registry/governance.** Mutation attempts cannot alter versions; agents
     cannot activate drafts; quota boundaries return `quota_exceeded`; deletion
     disables admission immediately; every `examples.*` query parses, executes
     within caps, and passes its documented fixture without being exposed as an
@@ -922,21 +1217,23 @@ pass before default cutover.
     A barrier test changes the hash during a running validation and proves its
     stale compare-and-swap cannot activate the version; it remains pending until
     validation against the new hash succeeds.
-11. **Migration parity.** Each frozen legacy adapter passes its existing
+12. **Migration parity.** Each frozen legacy adapter passes its existing
     contract suite throughout the window; every surface emits the same
     deprecation date/replacement; the §8 hybrid noninferiority gate passes
     before default cutover.
-12. **Telemetry/retention.** Cost totals reconcile to PG/Lance counters within
+13. **Telemetry/retention.** Cost totals reconcile to PG/Lance/graph-worker
+    counters within
     1%; kill switches stop new work within five seconds; default logs contain
-    zero raw SQL, parameter values, rows, bodies, or private PG errors; debug
-    captures expire within seven days.
+    zero raw SQL/Cypher, parameter values, rows, bodies, or private PG/engine
+    errors; snapshot-age target/alerts and quarantine transitions emit their
+    exact metrics; debug captures expire within seven days.
 
 ## 10. Recorded deferrals (each with its trigger)
 
 | Deferred | Bound reason | Adoption trigger and required decision gate |
 |---|---|---|
 | Complete removal of the three-operation recipe layer | One-call typed defaults remain measured product value; this design does not decide their deletion | A future v10 open-only arm shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%; the full API/SDK/CLI/MCP deprecation schedule for all three names is also complete. Removal then requires a separate major-version binding decision. |
-| Public P2-snapshot Cypher subset | Snapshot aggregates/absence/path choice cannot be repaired by ID hydration; PG is authoritative | Begin a follow-on design only after either PG graph helper p95 exceeds 250 ms at bound on three representative deployments for three consecutive 30-day windows, or at least 5% of retrieval-bearing production requests require graph patterns not expressible in one SQL/helper call. Adoption additionally requires a finite ID/path-nomination-only subset, exhaustive syntax list, no final aggregate/absence claim, D48 unit confirmation, current limits, and §9 security tests. Until then the supported public subset is empty. |
+| Automatic P2 rebuild/refresh on query-time staleness | Query latency and admission are not rebuild-control-plane authority; v1 serves the pinned snapshot with exact age and never starts or waits for a rebuild on a query | Reconsider only after at least 1% of Cypher requests across three deployments observe `p2_snapshot_age_seconds > 5,400` for 30 consecutive days despite the scheduled rebuild service meeting its assigned resources. Adoption requires a separate design for authenticated trigger authority, per-deployment deduplication, backpressure, budget isolation, failure storms, no query waiting, and proof that query-triggered work cannot replace or starve the scheduled rebuild path. |
 | Migration from Lance to pgvector | SQL ergonomics alone does not justify vector relocation or dual-write risk | Evaluate when bridge-caused semantic p95 exceeds 750 ms or availability falls below 99.9% for three consecutive 30-day windows, or measured total bridge operations cost exceeds a pgvector projection by 2× at representative scale. Adopt only with recall@k loss ≤1 point, p95 ≤80% of the bridge, ingest p95 ≤120% of current, storage ≤150%, full multi-target/generation/D80-filter support, equivalent RPO/RTO and tenancy, and zero D48 failures. The required cutover is per-generation hash-verified backfill → idempotent outbox dual-write → 30-day shadow-read parity → reversible read switch → 30-day rollback window → Lance retirement after audit. |
 | Media-segment public views/SRF | The binding media row/embedding contract is not yet part of this schema | First production corpus requiring SQL composition over D65 media segments; a separate design adds typed locators/derivation and rolls the schema/hash. |
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |
@@ -950,8 +1247,14 @@ pass before default cutover.
    QueryResult, discovery, audit/cost controls, adversarial suite.
 3. **Batch C — semantic bridge:** three Lance SRFs, D80 generation pinning,
    in-function PG confirmation, body verification, cancellation/telemetry.
-4. **Batch D — graph:** PG edge views, bounded helpers, recursive-CTE linter,
-   P2-confirmed acceleration and PG fallback inside the two context operations.
+4. **Batch D — graph: PG views + helpers + full Cypher read surface:** PG edge
+   views, bounded helpers, recursive-CTE linter, both Cypher entry points, pinned
+   dialect parser, snapshot schema/provenance, process-isolated worker/RPC,
+   shared caps/quotas, optional confirmation, quarantine/observability, and
+   P2-confirmed acceleration with PG fallback inside the two context operations.
+   Its merge gates are §9.1–§9.3, §9.5–§9.6, and §9.8–§9.10, including the
+   dialect/read-only, snapshot-consistency, confirmation-equivalence, tenancy,
+   fault-containment, and cap proofs.
 5. **Batch E — customer space:** immutable registry, governance, all 17
    `examples.*` mappings, drift and deletion behavior.
 6. **Batch F — dual surface:** API/SDK/CLI/MCP additions, frozen adapters,
@@ -960,3 +1263,8 @@ pass before default cutover.
 A later batch cannot merge around a failed dependency gate. Each behavioral
 change ships with same-change documentation, manifest/version updates, and the
 relevant §9 evidence.
+
+Batch D's unconfirmed Cypher path depends on Batches A and B and has no Batch C
+dependency. Only its `confirm=true` slice depends on Batch C, because it reuses
+the same PostgreSQL D48/D41 confirmation machinery; that slice cannot merge
+around a failed Batch C confirmation gate.
