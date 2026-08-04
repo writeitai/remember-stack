@@ -68,7 +68,11 @@ def _encoded_size(value: object) -> int:
     `str(value)` lies for binary payloads — a memoryview of a megabyte prints
     as a short repr — so buffers are measured as buffers.
     """
-    if isinstance(value, (bytes, bytearray, memoryview)):
+    if isinstance(value, memoryview):
+        # `len()` counts ELEMENTS: a four-byte-format view of 256 KiB reports a
+        # quarter of its size. `nbytes` is the wire size.
+        return value.nbytes
+    if isinstance(value, (bytes, bytearray)):
         return len(value)
     if isinstance(value, str):
         return len(value.encode())
@@ -83,8 +87,32 @@ def _hash_with_parameter_types(base: str, parameters: Sequence[object]) -> str:
     """
     if not parameters:
         return base
-    vector = ",".join(type(value).__name__ for value in parameters)
+    vector = ",".join(_sql_type_family(value) for value in parameters)
     return hashlib.sha256(f"{base}|types={vector}".encode()).hexdigest()
+
+
+def _sql_type_family(value: object) -> str:
+    """The canonical SQL type a bound value adapts to.
+
+    Python class names are the wrong vector: `bytes` and `memoryview` both
+    bind as `bytea` and must hash alike, while the width PostgreSQL picks for
+    an integer is a wire detail, not a different query.
+    """
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return "bytea"
+    if isinstance(value, str):
+        return "text"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "double precision"
+    if isinstance(value, (list, tuple)):
+        return "array"
+    if value is None:
+        return "unknown"
+    return type(value).__name__.lower()
 
 
 class QuerySandboxExecutor:

@@ -542,16 +542,12 @@ def _validate_recursive_template(clause, owner=None) -> None:  # noqa: ANN001
             "the recursive term may join only public relations, not subqueries",
         )
     self_alias = _self_reference_alias(recursive_arm, name=cte_name)
-    from_items = _from_item_count(recursive_arm)
-    sole_source = from_items == 1
-    if from_items > 2:
-        # One self-reference plus at most one joined relation. Beyond that the
-        # frontier multiplies every round, which the depth bound does not
-        # constrain — a bounded walk is the template's whole purpose.
-        raise _reject(
-            QueryErrorCode.UNBOUNDED_RECURSION,
-            "the recursive term may join the CTE to at most one relation",
-        )
+    # Frontier width is bounded by the §4.3 resource controls (statement
+    # timeout, work_mem, temp files), not by a relation count: a count is both
+    # stricter than §4.1 — it would reject a traversal that joins an edge view
+    # and a filter view — and ineffective, since a Cartesian product hidden in
+    # an outer CTE reads as one relation here.
+    sole_source = _from_item_count(recursive_arm) == 1
     emitted = _target_value(recursive_arm, anchor_position)
     if not _is_depth_plus_one(emitted, qualifier=None if sole_source else self_alias):
         raise _reject(
@@ -919,9 +915,17 @@ def validate_sql(
     cte_names, is_recursive = _collect_ctes(statement)
     # Every recursive WITH is validated, wherever it sits: a recursive CTE
     # nested inside another CTE body or a subquery is exactly as capable of
-    # running forever as a top-level one.
-    for clause, owner in _recursive_with_clauses(statement):
+    # running forever as a top-level one. The §4.3 cap is one per statement,
+    # so the clauses are collected once and counted.
+    recursive_clauses = _recursive_with_clauses(statement)
+    if len(recursive_clauses) > 1:
+        raise _reject(
+            QueryErrorCode.UNBOUNDED_RECURSION,
+            "one statement may contain at most one recursive CTE",
+        )
+    for clause, owner in recursive_clauses:
         _validate_recursive_template(clause, owner=owner)
+    is_recursive = bool(recursive_clauses)
 
     gate = _AllowlistVisitor(cte_names=cte_names)
     gate(statement)

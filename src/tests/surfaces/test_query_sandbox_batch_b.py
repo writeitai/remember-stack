@@ -725,19 +725,6 @@ def test_recursion_is_validated_at_every_nesting_level(sql: str) -> None:
     assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
 
 
-def test_recursive_fan_out_is_bounded() -> None:
-    """The frontier may not multiply: the CTE joins at most one relation."""
-    with pytest.raises(SandboxRejection) as caught:
-        validate_sql(
-            "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
-            " SELECT w.depth + 1 FROM w, facts_current f, claims_live c"
-            " WHERE w.depth < 4) SELECT * FROM w"
-        )
-    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
-    # The ordinary bounded traversal is still expressible.
-    assert validate_sql(_RECURSIVE_OK).is_recursive
-
-
 def test_binary_parameters_are_measured_as_buffers(migrated: str) -> None:
     """`str(value)` lies for a memoryview; the cap must see real bytes."""
     for payload in (memoryview(b"x" * 400_000), b"y" * 400_000):
@@ -745,3 +732,82 @@ def test_binary_parameters_are_measured_as_buffers(migrated: str) -> None:
             sql="SELECT length($1::text) AS n", parameters=[payload]
         )
         assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_one_recursive_clause_per_statement() -> None:
+    """Two separately valid recursive CTEs are still two recursive CTEs."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(
+            "SELECT a.depth, b.depth FROM"
+            " (WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+            "  SELECT depth + 1 FROM w WHERE depth < 2) SELECT * FROM w) a,"
+            " (WITH RECURSIVE v AS (SELECT 0 AS depth UNION ALL"
+            "  SELECT depth + 1 FROM v WHERE depth < 2) SELECT * FROM v) b"
+        )
+    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
+
+
+def test_is_recursive_sees_nested_clauses() -> None:
+    """The disclosure flag reflects the whole statement, not its top level."""
+    nested = validate_sql(
+        "SELECT * FROM (WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT depth + 1 FROM w WHERE depth < 3) SELECT * FROM w) y"
+    )
+    assert nested.is_recursive
+
+
+def test_a_traversal_may_join_more_than_one_relation() -> None:
+    """Frontier width is bounded by the resource caps, not a relation count."""
+    validated = validate_sql(
+        "WITH RECURSIVE walk AS ("
+        " SELECT subject_entity_id AS entity_id, 0 AS depth FROM graph_edges_current"
+        " UNION ALL"
+        " SELECT g.object_entity_id, w.depth + 1 FROM walk w"
+        " JOIN graph_edges_current g ON g.subject_entity_id = w.entity_id"
+        " JOIN entities_current e ON e.entity_id = g.object_entity_id"
+        " WHERE w.depth < 4) SELECT * FROM walk"
+    )
+    assert validated.is_recursive
+
+
+def test_a_cast_memoryview_is_measured_in_bytes(migrated: str) -> None:
+    """`len()` counts elements; a four-byte-format view must not slip the cap."""
+    view = memoryview(bytearray(262_148)).cast("I")
+    outcome = _executor(migrated).query_sql(
+        sql="SELECT length($1::text) AS n", parameters=[view]
+    )
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_the_type_vector_is_the_sql_family_not_the_python_class(migrated: str) -> None:
+    """`bytes` and `memoryview` both bind as bytea; integer widths are one type."""
+    executor = _executor(migrated)
+    as_bytes = executor.query_sql(sql="SELECT $1::text AS v", parameters=[b"x"])
+    as_view = executor.query_sql(
+        sql="SELECT $1::text AS v", parameters=[memoryview(b"x")]
+    )
+    assert as_bytes.query_hash == as_view.query_hash
+    small = executor.query_sql(sql="SELECT $1::text AS v", parameters=[7])
+    large = executor.query_sql(sql="SELECT $1::text AS v", parameters=[70_000])
+    assert small.query_hash == large.query_hash
+    assert small.termination_reason == "completed"
+    text_bound = executor.query_sql(sql="SELECT $1::text AS v", parameters=["7"])
+    assert text_bound.termination_reason == "completed"
+    assert text_bound.query_hash != small.query_hash
+
+
+def test_values_do_not_enter_the_hash(migrated: str) -> None:
+    """Same types, different values: one hash — the vector is types only."""
+    executor = _executor(migrated)
+    alpha = executor.query_sql(sql="SELECT $1::text AS v", parameters=["alpha"])
+    omega = executor.query_sql(sql="SELECT $1::text AS v", parameters=["omega"])
+    assert alpha.query_hash == omega.query_hash
+
+
+def test_a_bound_like_pattern_matches(migrated: str) -> None:
+    """A genuinely parameterized LIKE, not a literal that hides the binding."""
+    outcome = _executor(migrated).query_sql(
+        sql="SELECT ('alpha' LIKE $1) AS matched", parameters=["%pha%"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((True,),)
