@@ -62,6 +62,19 @@ _TYPE_NAMES: Final = {
 }
 
 
+def _encoded_size(value: object) -> int:
+    """The real wire size of one bound value.
+
+    `str(value)` lies for binary payloads — a memoryview of a megabyte prints
+    as a short repr — so buffers are measured as buffers.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return len(value)
+    if isinstance(value, str):
+        return len(value.encode())
+    return len(str(value).encode())
+
+
 def _hash_with_parameter_types(base: str, parameters: Sequence[object]) -> str:
     """Fold the bound parameter TYPE vector into the statement hash (§4.4).
 
@@ -207,7 +220,7 @@ class QuerySandboxExecutor:
             )
         if len(parameters) > limits.parameters_max:
             return failed(QueryErrorCode.INVALID_PARAMETER, "too many parameters")
-        encoded_parameter_bytes = sum(len(str(value).encode()) for value in parameters)
+        encoded_parameter_bytes = sum(_encoded_size(value) for value in parameters)
         if encoded_parameter_bytes > limits.parameters_bytes:
             return failed(
                 QueryErrorCode.INVALID_PARAMETER,

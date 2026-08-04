@@ -704,3 +704,44 @@ def test_query_hash_separates_parameter_types(migrated: str) -> None:
     as_text = executor.query_sql(sql="SELECT $1::text AS v", parameters=["7"])
     assert as_integer.termination_reason == "completed"
     assert as_integer.query_hash != as_text.query_hash
+
+
+@pytest.mark.parametrize(
+    "sql",
+    (
+        # A recursive CTE nested inside another CTE body.
+        "WITH outer_q AS (WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT w.depth + 1 FROM w CROSS JOIN (SELECT 0 AS depth) x"
+        " WHERE x.depth < 4) SELECT * FROM w) SELECT * FROM outer_q",
+        # And one inside a subquery.
+        "SELECT * FROM (WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT depth + 1 FROM w) SELECT * FROM w) y",
+    ),
+)
+def test_recursion_is_validated_at_every_nesting_level(sql: str) -> None:
+    """A nested recursive CTE runs just as long as a top-level one."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(sql)
+    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
+
+
+def test_recursive_fan_out_is_bounded() -> None:
+    """The frontier may not multiply: the CTE joins at most one relation."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(
+            "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+            " SELECT w.depth + 1 FROM w, facts_current f, claims_live c"
+            " WHERE w.depth < 4) SELECT * FROM w"
+        )
+    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
+    # The ordinary bounded traversal is still expressible.
+    assert validate_sql(_RECURSIVE_OK).is_recursive
+
+
+def test_binary_parameters_are_measured_as_buffers(migrated: str) -> None:
+    """`str(value)` lies for a memoryview; the cap must see real bytes."""
+    for payload in (memoryview(b"x" * 400_000), b"y" * 400_000):
+        outcome = _executor(migrated).query_sql(
+            sql="SELECT length($1::text) AS n", parameters=[payload]
+        )
+        assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER

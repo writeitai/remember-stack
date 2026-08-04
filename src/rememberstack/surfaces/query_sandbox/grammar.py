@@ -474,7 +474,22 @@ def _is_integer_literal(node: Node | None, value: int) -> bool:
     )
 
 
-def _validate_recursive_template(statement: SelectStmt) -> None:
+def _recursive_with_clauses(statement: SelectStmt):  # noqa: ANN201
+    """Every `WITH RECURSIVE` clause in the statement, at any nesting level."""
+    found: list[tuple[object, object]] = []
+
+    class _Scan(Visitor):
+        def visit_WithClause(self, ancestors, node):  # noqa: ANN001, ANN201
+            if getattr(node, "recursive", False):
+                found.append((node, None))
+            return None
+
+    scan = _Scan()
+    scan(statement)
+    return found
+
+
+def _validate_recursive_template(clause, owner=None) -> None:  # noqa: ANN001
     """Enforce the single §4.1 WITH RECURSIVE template, structurally.
 
     The template is narrow on purpose: one recursive CTE, one self-reference,
@@ -484,14 +499,12 @@ def _validate_recursive_template(statement: SelectStmt) -> None:
     can carry a decorative `depth + 1` while emitting an unchanged or
     oscillating depth, which recurses without bound.
     """
-    clause = statement.withClause
-    assert clause is not None
     recursive = [
         cte
-        for cte in clause.ctes or ()
+        for cte in getattr(clause, "ctes", None) or ()
         if isinstance(cte, CommonTableExpr) and _cte_is_self_referencing(cte)
     ]
-    if len(clause.ctes or ()) != 1 or len(recursive) != 1:
+    if len(getattr(clause, "ctes", None) or ()) != 1 or len(recursive) != 1:
         raise _reject(
             QueryErrorCode.UNBOUNDED_RECURSION,
             "WITH RECURSIVE allows exactly one recursive CTE",
@@ -529,7 +542,16 @@ def _validate_recursive_template(statement: SelectStmt) -> None:
             "the recursive term may join only public relations, not subqueries",
         )
     self_alias = _self_reference_alias(recursive_arm, name=cte_name)
-    sole_source = _from_item_count(recursive_arm) == 1
+    from_items = _from_item_count(recursive_arm)
+    sole_source = from_items == 1
+    if from_items > 2:
+        # One self-reference plus at most one joined relation. Beyond that the
+        # frontier multiplies every round, which the depth bound does not
+        # constrain — a bounded walk is the template's whole purpose.
+        raise _reject(
+            QueryErrorCode.UNBOUNDED_RECURSION,
+            "the recursive term may join the CTE to at most one relation",
+        )
     emitted = _target_value(recursive_arm, anchor_position)
     if not _is_depth_plus_one(emitted, qualifier=None if sole_source else self_alias):
         raise _reject(
@@ -895,8 +917,11 @@ def validate_sql(
     """
     statement = _assert_single_readonly_statement(sql)
     cte_names, is_recursive = _collect_ctes(statement)
-    if is_recursive:
-        _validate_recursive_template(statement)
+    # Every recursive WITH is validated, wherever it sits: a recursive CTE
+    # nested inside another CTE body or a subquery is exactly as capable of
+    # running forever as a top-level one.
+    for clause, owner in _recursive_with_clauses(statement):
+        _validate_recursive_template(clause, owner=owner)
 
     gate = _AllowlistVisitor(cte_names=cte_names)
     gate(statement)
