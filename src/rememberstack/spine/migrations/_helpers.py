@@ -32,7 +32,7 @@ def apply_view_ddl(*, sql: str) -> None:
     """
     for statement in _split_sql(sql=sql):
         op.execute(statement)
-    for view, column, comment in _view_column_comments(sql=sql):
+    for view, column, comment in view_column_comments(sql=sql):
         escaped_comment = comment.replace("'", "''")
         op.execute(f"COMMENT ON COLUMN {view}.{column} IS '{escaped_comment}'")
 
@@ -55,8 +55,14 @@ def drop_types(*, type_names: Iterable[str]) -> None:
         op.execute(f"DROP TYPE IF EXISTS {type_name}")
 
 
-def _view_column_comments(*, sql: str) -> tuple[tuple[str, str, str], ...]:
-    """Extract every inline output-column description from CREATE VIEW DDL."""
+def view_column_comments(*, sql: str) -> tuple[tuple[str, str, str], ...]:
+    """Extract every inline output-column description from CREATE VIEW DDL.
+
+    Public because the authored DDL is the canonical source of the query
+    space's documentation as well as of its shape: the manifest generator reads
+    the same annotations this helper materializes into ``COMMENT ON COLUMN``,
+    so a column's documented meaning cannot differ between the two.
+    """
     result: list[tuple[str, str, str]] = []
     current_view: str | None = None
 

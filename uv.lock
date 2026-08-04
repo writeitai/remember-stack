@@ -1007,6 +1007,37 @@ wheels = [
 ]
 
 [[package]]
+name = "pglast"
+version = "6.16"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b5/7a/345858155f2513f635068a5c925d4ce0538879870f67be2410a00de1110a/pglast-6.16.tar.gz", hash = "sha256:4bb8548ca4469d07e658663d67bad780fee67c65090431ff69659f94d9f6ff28", size = 3216545 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/8c/ca3fe09025e57e9a01fd89653aeac94b35e23a6858d4ea39b17afcac2d1b/pglast-6.16-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:159f321a1265fecd09723ae3268107fe2e043a86d798157a5ae349978edbd612", size = 1082816 },
+    { url = "https://files.pythonhosted.org/packages/de/f1/0f1cf795fe2cb595b52a7d1df6c831699ac586e587dcf3ed1f2686d45067/pglast-6.16-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:9743fd19c250787a00c8e5d78b56ac36e849cb0cb07771829ce66ea446a96dec", size = 1024045 },
+    { url = "https://files.pythonhosted.org/packages/b2/52/e8979bfa6ccbdc0e125fdec755d35490e6312431714515e98c477c9a1b0d/pglast-6.16-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4a98bdabf4452981c756bdf89ee733c8ed25899578bae50147e4dbafc7864d83", size = 5205432 },
+    { url = "https://files.pythonhosted.org/packages/77/db/72c9f4c80bd00bb580548f5f79578d71c959b7dbdc2f7d1fc95132c56672/pglast-6.16-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:44663ccb6b06bdf78b859f7bc23bff68647fcaa9f40f881b87a34cd6c4772794", size = 5283395 },
+    { url = "https://files.pythonhosted.org/packages/8f/a7/efa11893405de2663f015f28e0490af1970cdc63c8f2fd8b2bf01a3f9e0d/pglast-6.16-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:c56d9ba860f3043786fca52c6eca6fac990ea13b5d048beba53b8e7add14e20d", size = 5084535 },
+    { url = "https://files.pythonhosted.org/packages/39/cf/84898d3fe714bf1b61f6ff52315fb227d1f210a2e6bc65e622eda24f7e63/pglast-6.16-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:4ba5d9034958e985d39b30c89fc73a600d1f8b5b25a358b301dfa391d3c17cda", size = 4993859 },
+    { url = "https://files.pythonhosted.org/packages/c0/0f/80211920fd4e3315507d8a337d12208bc12db5abb31f272e3389477e7ed7/pglast-6.16-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:a9cc448c395d1f95e14a9dadc1ca7d78604dc17eaadb0abee321070f39ffb8ed", size = 4927872 },
+    { url = "https://files.pythonhosted.org/packages/36/58/e8714574e0750ecd2bc68ec52c97e403b8ba18f7f95e7d94c1f44e22a40b/pglast-6.16-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:ad30068429285acf726709d5ba3aec73bacbb6a50d597a86c07c64f4672e139e", size = 5099921 },
+    { url = "https://files.pythonhosted.org/packages/60/f4/49902c058d07720156a7ad1d9b670b73a404b23aba53b206e0279c019a68/pglast-6.16-cp312-cp312-win32.whl", hash = "sha256:6f5fa4109b8404c904817bcade652951ad9ba801fae54b33ad73548ca281e8c5", size = 971977 },
+    { url = "https://files.pythonhosted.org/packages/5c/07/0de59ce81f7e51a8fa968a705b3919a02de1b77b6c4a58402c1f3909eca1/pglast-6.16-cp312-cp312-win_amd64.whl", hash = "sha256:193a1ddfb29b2235b5648144aeb779916c6996b41a3c43dce3babb2cbb996461", size = 1031751 },
+    { url = "https://files.pythonhosted.org/packages/f0/f2/38abbb1cfb1afac273801c86221dd812e700b2339dec219c53ca050bda1a/pglast-6.16-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:606e2815bbeb2791af27f152d04c3b6475a48758490dc66f00125c3fd0d68c73", size = 1079480 },
+    { url = "https://files.pythonhosted.org/packages/54/ba/6e71eda19669a04dcd6b72984fc184f83f88efe4302397670d4e76a76fa9/pglast-6.16-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e4eb97f131ab5e5a9a09d554462ecc438004fe9176c804f4f44a675bc31d904f", size = 1020804 },
+    { url = "https://files.pythonhosted.org/packages/ec/9f/a225628830bebab765ddfe9fddbe586372ed45a6098d0f621a2dff26b108/pglast-6.16-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7426fe9fbe6258a9b02bdaa0c72d2b0abc612629c55b7ff7d77c4c3516c744f7", size = 5204915 },
+    { url = "https://files.pythonhosted.org/packages/ed/d8/97cdde658539524255fb7dd5126b548bb078803636fd270b1786956eb0b6/pglast-6.16-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:62c160440339b80a924b83c5745c9cee6e73a2a1c167048a338997f086688527", size = 5283085 },
+    { url = "https://files.pythonhosted.org/packages/fd/ec/14fb8a4dc85b141f8c9a7956d438284fa27c0ef5fc8aa1fb3727194b0622/pglast-6.16-cp313-cp313-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:597211ecbc9177553550a028f696dcc4d7e01eb5fc4fdabad787b6db568d1e22", size = 5082760 },
+    { url = "https://files.pythonhosted.org/packages/b1/fd/3877562890d253edd1910807cb466f42ff9ea4462e2a7aceb010d8ae1996/pglast-6.16-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:6fb8e2472af503fd6ea8c6a5d8af01ce376c8c1d868a6059a63ff95da6817137", size = 4998155 },
+    { url = "https://files.pythonhosted.org/packages/80/b5/046f27241cac3bda6beffcd4d786fd5cb11a5c219385063407bc8b5b377b/pglast-6.16-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:b9837b8f5824cb64664e0401443923c33890ade94a47c31988b6757c2f7e5425", size = 4930611 },
+    { url = "https://files.pythonhosted.org/packages/0a/9a/64876b015227f27f242c6c768c2eb2a44a96cfd2bd2c70ce4005ca0c2399/pglast-6.16-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:188559389bae3295bf2a33f1785e708c1923a80632d45af5aaf579eceacbb05e", size = 5103640 },
+    { url = "https://files.pythonhosted.org/packages/a1/69/691fdf384cbbffb23e37c7ec25666f35749430960a20437fd00e820c1c00/pglast-6.16-cp313-cp313-win32.whl", hash = "sha256:bdcdc5ae9d425d2f04c695b212c505e4aaca8cc407723118359e8a8d4f6435f3", size = 970944 },
+    { url = "https://files.pythonhosted.org/packages/97/e3/34dfa0bbe5f2d5ef38fcbaed877220d4602dd8ee8fde95b6c225b30db8ab/pglast-6.16-cp313-cp313-win_amd64.whl", hash = "sha256:ee1d3477dc1283efa96b672fdc5fe9e644845b942ee6afa89dc0598e8a07795f", size = 1026857 },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1434,6 +1465,7 @@ server = [
     { name = "markdown-it-py" },
     { name = "markitdown" },
     { name = "onnxruntime", marker = "python_full_version >= '3.14'" },
+    { name = "pglast" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
@@ -1451,6 +1483,7 @@ dev = [
     { name = "markitdown" },
     { name = "nltk" },
     { name = "onnxruntime", marker = "python_full_version >= '3.14'" },
+    { name = "pglast" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyright" },
     { name = "pytest" },
@@ -1475,6 +1508,7 @@ requires-dist = [
     { name = "markitdown", marker = "extra == 'server'", specifier = ">=0.1.6" },
     { name = "nltk", marker = "extra == 'benchmark'", specifier = ">=3.9" },
     { name = "onnxruntime", marker = "python_full_version >= '3.14' and extra == 'server'", specifier = ">=1.24.1" },
+    { name = "pglast", marker = "extra == 'server'", specifier = ">=6.16,<7" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pydantic-settings", specifier = ">=2.10" },
@@ -1496,6 +1530,7 @@ dev = [
     { name = "markitdown", specifier = ">=0.1.6" },
     { name = "nltk", specifier = ">=3.9" },
     { name = "onnxruntime", marker = "python_full_version >= '3.14'", specifier = ">=1.24.1" },
+    { name = "pglast", specifier = ">=6.16,<7" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8.3" },
@@ -1583,6 +1618,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7f/6f/d59cad0889d15fde85254cf58e701484de3f3f0406003b3197746910b19b/sentry_sdk-2.66.1.tar.gz", hash = "sha256:f882fb08710c5f8bfc603aafa3e901b384009a19cc3f76a572b863392ee81cdc", size = 940543 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/89/d3/726bd88f0eece09ddf431bea4c9191c18e7a8d070b854eb0014d447712ee/sentry_sdk-2.66.1-py3-none-any.whl", hash = "sha256:86002793161d9a95ef04bdd8d442e9bfece5d989b755f05d6360215094a7aff6", size = 505555 },
+]
+
+[[package]]
+name = "setuptools"
+version = "83.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/26/f5d29e25ffdb535afef2d35cdb55b325298f96debd670da4c325e08d70f4/setuptools-83.0.0.tar.gz", hash = "sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef", size = 1154254 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl", hash = "sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3", size = 1008090 },
 ]
 
 [[package]]

@@ -1,256 +1,104 @@
 """The pinned canonical AST serialization of a `memory_v1` view definition.
 
-**What is serialized, and why not the SQL text.** PostgreSQL does not store the
-SQL a migration typed. It parses a `CREATE VIEW` statement into a rewrite rule
-and stores that parse tree; `pg_get_viewdef` prints the tree back out. The
-printed form therefore already has every accident of authorship removed —
-comments are gone, whitespace is normalized, implicit casts are made explicit,
-type names are the canonical names `pg_catalog.format_type` produces, and
-`SELECT *` is expanded to the columns it meant at creation time. That printed
-parse tree, not the migration source, is this module's input, which is what
-makes the rule "raw SQL text is never a hash input" true rather than aspirational.
+**What is serialized.** PostgreSQL's own SQL parser is run over the *authored*
+`CREATE VIEW` statement — the DDL string the migration executes, which is the
+canonical source of the public surface — and the resulting parse tree is
+canonicalized into JSON. The parser is not a re-implementation: `pglast` is a
+binding to `libpg_query`, which is PostgreSQL's real grammar and parser
+compiled as a library, so what this module hashes is the same tree the server
+builds when it creates the view.
 
-**What this module adds.** A printed parse tree is still a string, and a string
-comparison would be sensitive to the printer's line-breaking. So the printed
-tree is lexed into a token tree and written back out as one canonical
-s-expression: every token becomes ``kind:value``, every parenthesized group
-becomes a bracketed list, and single spaces separate siblings. Two definitions
-serialize identically exactly when they are the same tree of tokens, which
-makes the serialization insensitive to line breaks, indentation, keyword case,
-and comments, and sensitive to every semantic difference — a changed predicate,
-a changed join, a changed cast, a reordered column.
+**Why not the deparsed text.** The obvious alternative — asking a running
+server for `pg_get_viewdef()` and hashing that — is forbidden by the binding
+design, and for a good reason: that string is the output of PostgreSQL's *view
+printer*, an implementation detail that has changed spelling between releases
+(how it parenthesizes, when it qualifies a name, how it renders a cast). A hash
+taken over printer output would move when the printer changes even though the
+view did not, and it would need a database to compute at all. Hashing the parse
+tree of the authored statement has neither problem: the same source produces
+the same tree on any machine with no server running, which is what makes
+`surface_manifest_hash` reproducible and PostgreSQL-minor-version independent.
 
-**Why it is versioned.** The serialization is a hash input, so changing how a
-token is spelled would silently move every hash. `SERIALIZER_VERSION` is
+**What canonicalization removes.** Two things in the raw parse tree are not
+semantics and must not reach the hash:
+
+- ``location`` fields, which are byte offsets into the input text — inserting a
+  space or a comment would move every one of them;
+- the numeric ``value`` of an enumerated node field, which is an ordinal in a C
+  header rather than a meaning; the enum's ``name`` is kept, so a change of
+  meaning still changes the hash while a renumbering upstream does not.
+
+Everything else is kept exactly as the parser produced it. Comments and
+whitespace never appear at all — the parser discards them before a tree exists,
+which is why reformatting a definition or rewriting its comments cannot roll
+the hash, while changing a predicate, a join kind, a cast, or a column order
+must.
+
+**Why it is versioned.** The serialization is a hash input, so a change in how
+a node is canonicalized would silently move every hash. `SERIALIZER_VERSION` is
 therefore pinned, recorded in the manifest, and pinned again by checked-in
-golden vectors that must keep producing byte-identical output.
-
-Token kinds:
-
-- ``w`` — an unquoted word (keyword or identifier), folded to lower case
-  because PostgreSQL folds unquoted identifiers that way;
-- ``q`` — a double-quoted identifier, with its case preserved because
-  PostgreSQL preserves it;
-- ``n`` — a numeric literal, kept exactly as printed;
-- ``s`` — a string literal, with doubled quotes decoded to one quote so that
-  two spellings of the same literal agree;
-- ``o`` — an operator or punctuation token, munched maximally so that ``::``,
-  ``->>``, and ``<=`` are single tokens rather than character pairs.
-
-A token's value is escaped so that the s-expression stays unambiguous: a
-backslash, space, parenthesis, or control character in a string literal or a
-quoted identifier is written as an escape rather than as itself, which is what
-lets a reader split the serialization on spaces without ever splitting a value.
+golden vectors that must keep producing byte-identical output — which is also
+what catches a `pglast` upgrade that changes the tree.
 """
 
 from pathlib import Path
 from typing import Final
 
+from pglast import parse_sql
+
+from rememberstack.spine.query_space.canonical import CanonicalValue
+
 #: Identifier of this serialization. A change here rolls every manifest hash.
-SERIALIZER_VERSION: Final = "memory_v1.ast/1"
+SERIALIZER_VERSION: Final = "memory_v1.pglast_ast/1"
 
 #: Checked-in vectors pinning the serializer's exact output.
 GOLDEN_VECTORS_PATH: Final = Path(__file__).with_name("ast_golden_vectors.json")
 
-_WORD_START: Final = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
-_WORD_BODY: Final = _WORD_START | frozenset("0123456789$")
-_DIGITS: Final = frozenset("0123456789")
-#: Characters PostgreSQL allows inside a multi-character operator name.
-_OPERATOR_CHARS: Final = frozenset("+-*/<>=~!@#%^&|`?")
-_PUNCTUATION: Final = frozenset(",;.[]")
+#: Parse-tree fields that carry a position in the input rather than meaning.
+_POSITION_FIELDS: Final = frozenset({"location", "stmt_location", "stmt_len"})
 
-#: Value characters that would otherwise be structural in the s-expression.
-_VALUE_ESCAPES: Final = {
-    "\\": "\\\\",
-    " ": "\\s",
-    "(": "\\(",
-    ")": "\\)",
-    "\n": "\\n",
-    "\r": "\\r",
-    "\t": "\\t",
-}
-
-type _Node = list["str | _Node"]
+#: Key `pglast` uses for an enumerated field's own type name.
+_ENUM_TAG: Final = "#"
 
 
 class AstSerializationError(ValueError):
-    """Raised when a printed definition cannot be lexed deterministically."""
+    """Raised when a statement cannot be parsed or canonicalized."""
 
 
-def serialize_definition(*, printed_definition: str) -> str:
-    """Serialize one printed view definition into its canonical s-expression."""
-    return _render(node=tokenize_definition(printed_definition=printed_definition))
+def serialize_definition(*, authored_definition: str) -> CanonicalValue:
+    """Canonicalize one authored SQL statement into its hashable parse tree.
 
-
-def tokenize_definition(*, printed_definition: str) -> _Node:
-    """Lex one printed view definition into its canonical token tree."""
-    tokens, position = _read_group(text=printed_definition, position=0, depth=0)
-    if position != len(printed_definition):
+    The argument is a single complete statement — for the manifest, one
+    ``CREATE VIEW`` including its output-column list, because the public column
+    names are part of the contract the hash pins.
+    """
+    try:
+        statements = parse_sql(authored_definition)
+    except Exception as error:  # noqa: BLE001 -- any parse failure is one failure
         raise AstSerializationError(
-            f"unbalanced parenthesis at offset {position} of the printed definition"
+            f"could not parse the definition: {error}"
+        ) from error
+    if len(statements) != 1:
+        raise AstSerializationError(
+            f"expected exactly one statement, parsed {len(statements)}"
         )
-    return tokens
+    return canonicalize_node(node=statements[0].stmt(skip_none=True))
 
 
-def _render(*, node: _Node) -> str:
-    """Render one token-tree node as a bracketed, space-separated group."""
-    parts = [item if isinstance(item, str) else _render(node=item) for item in node]
-    return "(" + " ".join(parts) + ")"
-
-
-def _token(*, kind: str, value: str) -> str:
-    """Render one token, escaping the characters that carry structure."""
-    escaped = "".join(
-        _VALUE_ESCAPES.get(character)
-        or (f"\\u{ord(character):04x}" if character < " " else character)
-        for character in value
-    )
-    return f"{kind}:{escaped}"
-
-
-def _read_group(*, text: str, position: int, depth: int) -> tuple[_Node, int]:
-    """Lex tokens until the end of the input or the group's closing paren."""
-    tokens: _Node = []
-    while position < len(text):
-        position = _skip_ignorable(text=text, position=position)
-        if position >= len(text):
-            break
-        character = text[position]
-        if character == "(":
-            nested, position = _read_group(
-                text=text, position=position + 1, depth=depth + 1
-            )
-            tokens.append(nested)
-            continue
-        if character == ")":
-            if depth == 0:
-                raise AstSerializationError(
-                    f"unmatched closing parenthesis at offset {position}"
-                )
-            return tokens, position + 1
-        token, position = _read_token(text=text, position=position)
-        tokens.append(token)
-    if depth != 0:
-        raise AstSerializationError("unterminated parenthesised group")
-    return tokens, position
-
-
-def _read_token(*, text: str, position: int) -> tuple[str, int]:
-    """Lex exactly one token starting at a non-ignorable character."""
-    character = text[position]
-    if character in _WORD_START:
-        end = position + 1
-        while end < len(text) and text[end] in _WORD_BODY:
-            end += 1
-        return _token(kind="w", value=text[position:end].lower()), end
-    if character in _DIGITS:
-        end = position + 1
-        while end < len(text) and (text[end] in _DIGITS or text[end] in ".eE+-"):
-            # an exponent sign only continues the number directly after e/E
-            if text[end] in "+-" and text[end - 1] not in "eE":
-                break
-            end += 1
-        return _token(kind="n", value=text[position:end]), end
-    if character == "'":
-        return _read_string(text=text, position=position)
-    if character == '"':
-        return _read_quoted_identifier(text=text, position=position)
-    if character == "$":
-        return _read_dollar_quoted(text=text, position=position)
-    if character == ":":
-        if text.startswith("::", position):
-            return _token(kind="o", value="::"), position + 2
-        return _token(kind="o", value=":"), position + 1
-    if character in _OPERATOR_CHARS:
-        end = position + 1
-        while end < len(text) and text[end] in _OPERATOR_CHARS:
-            end += 1
-        return _token(kind="o", value=text[position:end]), end
-    if character in _PUNCTUATION:
-        return _token(kind="o", value=character), position + 1
+def canonicalize_node(*, node: object) -> CanonicalValue:
+    """Strip positions and enum ordinals from one parse-tree value."""
+    if node is None or isinstance(node, bool | int | str):
+        return node
+    if isinstance(node, list | tuple):
+        return [canonicalize_node(node=item) for item in node]
+    if isinstance(node, dict):
+        if _ENUM_TAG in node:
+            return {_ENUM_TAG: str(node[_ENUM_TAG]), "name": str(node["name"])}
+        return {
+            str(key): canonicalize_node(node=value)
+            for key, value in node.items()
+            if key not in _POSITION_FIELDS
+        }
     raise AstSerializationError(
-        f"unexpected character {character!r} at offset {position}"
+        f"{type(node).__name__} is not a canonicalizable parse-tree value"
     )
-
-
-def _read_string(*, text: str, position: int) -> tuple[str, int]:
-    """Lex a single-quoted literal, decoding doubled quotes to one quote."""
-    index = position + 1
-    value: list[str] = []
-    while index < len(text):
-        character = text[index]
-        if character == "'":
-            if text.startswith("''", index):
-                value.append("'")
-                index += 2
-                continue
-            return _token(kind="s", value="".join(value)), index + 1
-        value.append(character)
-        index += 1
-    raise AstSerializationError(f"unterminated string literal at offset {position}")
-
-
-def _read_quoted_identifier(*, text: str, position: int) -> tuple[str, int]:
-    """Lex a double-quoted identifier, preserving the case it declares."""
-    index = position + 1
-    value: list[str] = []
-    while index < len(text):
-        character = text[index]
-        if character == '"':
-            if text.startswith('""', index):
-                value.append('"')
-                index += 2
-                continue
-            return _token(kind="q", value="".join(value)), index + 1
-        value.append(character)
-        index += 1
-    raise AstSerializationError(f"unterminated quoted identifier at offset {position}")
-
-
-def _read_dollar_quoted(*, text: str, position: int) -> tuple[str, int]:
-    """Lex a dollar-quoted literal, keeping its body exactly as written."""
-    tag_end = text.find("$", position + 1)
-    if tag_end < 0:
-        raise AstSerializationError(f"unterminated dollar quote at offset {position}")
-    tag = text[position : tag_end + 1]
-    body_end = text.find(tag, tag_end + 1)
-    if body_end < 0:
-        raise AstSerializationError(f"unterminated dollar quote at offset {position}")
-    return _token(kind="s", value=text[tag_end + 1 : body_end]), body_end + len(tag)
-
-
-def _skip_ignorable(*, text: str, position: int) -> int:
-    """Advance past whitespace and comments, which never reach the output."""
-    while position < len(text):
-        character = text[position]
-        if character.isspace():
-            position += 1
-            continue
-        if text.startswith("--", position):
-            newline = text.find("\n", position)
-            position = len(text) if newline < 0 else newline + 1
-            continue
-        if text.startswith("/*", position):
-            position = _skip_block_comment(text=text, position=position)
-            continue
-        return position
-    return position
-
-
-def _skip_block_comment(*, text: str, position: int) -> int:
-    """Advance past one block comment, honouring PostgreSQL's nesting rule."""
-    depth = 0
-    index = position
-    while index < len(text):
-        if text.startswith("/*", index):
-            depth += 1
-            index += 2
-            continue
-        if text.startswith("*/", index):
-            depth -= 1
-            index += 2
-            if depth == 0:
-                return index
-            continue
-        index += 1
-    raise AstSerializationError(f"unterminated block comment at offset {position}")

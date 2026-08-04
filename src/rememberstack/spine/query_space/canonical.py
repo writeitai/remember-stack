@@ -1,13 +1,30 @@
-"""RFC 8785 canonical JSON and the `surface_manifest_hash` it feeds.
+"""A restricted JCS subset, and the `surface_manifest_hash` it feeds.
 
 The query space publishes one hash that identifies the exact public surface a
 result was produced against. For that hash to be usable — pinned by a saved
 query, compared across two builds, quoted in a benchmark trace — two
 independent generator runs on two machines must produce the same bytes, and a
-formatting change must not move it. That is exactly what RFC 8785 (JSON
+formatting change must not move it. That is what RFC 8785 (JSON
 Canonicalization Scheme) specifies: object members are emitted in ascending
 order of their UTF-16 code units, no insignificant whitespace is produced, and
 strings use the shortest legal escaping.
+
+**This module implements a deliberately restricted subset of that scheme, not
+the whole of it.** The admitted types are exactly those the manifest contains:
+objects, arrays, strings, integers within the exactly representable range,
+booleans, and null. RFC 8785's number rule — the shortest ECMAScript
+round-trip form of an IEEE-754 double — is *not* implemented: a non-integer
+float raises `CanonicalizationError` instead. That is the honest trade. A
+partial implementation of the number rule would produce bytes that agree with
+the RFC on the values we happen to test and disagree on some value we do not,
+which is the worst possible property for a hash; refusing the type instead
+means the manifest can never contain a value this module would canonicalize
+differently from a conforming implementation. Admitting floats later means
+implementing the full number rule and rolling the hash deliberately, not
+discovering a silent divergence.
+
+Within the admitted types the output is RFC 8785 conformant, so a conforming
+canonicalizer in another language reproduces these bytes exactly.
 
 Python's `json` module is deliberately not used for the hashed bytes.
 `json.dumps(sort_keys=True)` sorts by Unicode code point rather than UTF-16
@@ -15,11 +32,6 @@ code unit — the two orders disagree for keys outside the Basic Multilingual
 Plane — and its escaping and separator defaults are configuration rather than
 contract. Serializing here keeps the canonical form pinned in one readable
 place.
-
-Only JSON values the manifest actually contains are accepted: objects, arrays,
-strings, integers, booleans, and null. A non-integer float raises rather than
-being rounded, because RFC 8785's number rule is the shortest ECMAScript
-round-trip form and silently approximating it would make the hash a guess.
 """
 
 import hashlib
@@ -46,11 +58,11 @@ type CanonicalValue = (
 
 
 class CanonicalizationError(ValueError):
-    """Raised when a value has no pinned RFC 8785 representation."""
+    """Raised when a value is outside the admitted canonicalization subset."""
 
 
 def canonical_json(value: CanonicalValue) -> str:
-    """Serialize a JSON value to its RFC 8785 canonical form."""
+    """Serialize an admitted JSON value to its canonical form."""
     parts: list[str] = []
     _write(value=value, parts=parts)
     return "".join(parts)
@@ -115,7 +127,7 @@ def _write(*, value: object, parts: list[str]) -> None:
         parts.append("}")
         return
     raise CanonicalizationError(
-        f"{type(value).__name__} has no pinned RFC 8785 representation"
+        f"{type(value).__name__} is outside the admitted canonicalization subset"
     )
 
 

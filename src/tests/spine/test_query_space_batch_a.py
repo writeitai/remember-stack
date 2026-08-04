@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -29,17 +30,26 @@ from alembic.config import Config
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy import make_url
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
+    PRIVATE_HELPER_VIEWS,
+)
 from rememberstack.spine.query_space import build_manifest
 from rememberstack.spine.query_space import DELETION_TARGETS
+from rememberstack.spine.query_space import EXECUTED_TARGETS
+from rememberstack.spine.query_space import introspect_live_schema
+from rememberstack.spine.query_space import live_schema_differences
 from rememberstack.spine.query_space import load_manifest
 from rememberstack.spine.query_space import load_matrix
+from rememberstack.spine.query_space import MATRIX_SURFACES
 from rememberstack.spine.query_space import orphan_quarantine_report
+from rememberstack.spine.query_space import POSTGRESQL_MAJOR
 from rememberstack.spine.query_space import QUARANTINE_CATEGORIES
 from rememberstack.spine.query_space import render_manifest
 from rememberstack.spine.query_space import VIEW_CONTRACTS
@@ -61,12 +71,17 @@ _ORPHAN_BRANCH_MARKERS = ("doc_id is null or", "version_id is null or")
 
 
 @pytest.fixture(scope="module")
-def database_engine() -> Iterator[Engine]:
-    """Apply the real structural head so the query space is the shipped one."""
+def database_url() -> str:
+    """The configured database, or a skip when the schema gates cannot run."""
     try:
-        database_url = load_database_settings().sqlalchemy_url()
+        return load_database_settings().sqlalchemy_url()
     except ValidationError:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for the schema gates")
+
+
+@pytest.fixture(scope="module")
+def database_engine(database_url: str) -> Iterator[Engine]:
+    """Apply the real structural head so the query space is the shipped one."""
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
     command.downgrade(config=config, revision="base")
@@ -76,6 +91,31 @@ def database_engine() -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
+
+
+def _build_in_scratch_database(*, database_url: str, name: str) -> dict[str, Any]:
+    """Create one throwaway database, migrate it to head, and read it back."""
+    admin = create_engine(database_url, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as connection:
+            # the identifier is a literal from this module, never caller input
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+            connection.execute(text(f'CREATE DATABASE "{name}"'))
+        scratch_url = make_url(database_url).set(database=name)
+        rendered = scratch_url.render_as_string(hide_password=False)
+        config = Config(str(_ROOT / "alembic.ini"))
+        config.set_main_option("sqlalchemy.url", rendered)
+        command.upgrade(config=config, revision="head")
+        engine = create_engine(rendered)
+        try:
+            with engine.connect() as connection:
+                return introspect_live_schema(connection).model_dump(mode="json")
+        finally:
+            engine.dispose()
+    finally:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+        admin.dispose()
 
 
 class _Corpus:
@@ -102,6 +142,7 @@ class _Corpus:
         self.adjudication: dict[str, UUID] = {}
         self.compilation_id = uuid4()
         self.contradiction_group = uuid4()
+        self.lonely_contradiction_group = uuid4()
         with engine.begin() as connection:
             self._seed_entities(connection=connection)
             self._seed_documents(connection=connection)
@@ -549,11 +590,22 @@ class _Corpus:
         self._claim(connection=connection, key="kcited_b", chunk_key="kcited.v1b")
         self._claim(connection=connection, key="erased", chunk_key="erased.v1")
 
+        # every claim is attached to the chunk it was extracted from, so a
+        # deletion cell that must be proven on claim_occurrences_live has a row
+        # to lose; claim "a" is attached twice to exercise the DISTINCT ON
+        # collapse the declared key depends on
         for claim_key, chunk_key, derivation, at in (
             ("a", "primary.v2", "passthrough", _PAST),
             ("a", "primary.v2", "passthrough", _MID),
             ("b", "primary.v2", None, _PAST),
+            ("instant", "primary.v2", "passthrough", _PAST),
+            ("c", "second.v1", "passthrough", _PAST),
+            ("contra", "second.v1", "passthrough", _PAST),
             ("old", "primary.v1", "passthrough", _ANCIENT),
+            ("forgotten", "forgotten.v1", "passthrough", _PAST),
+            ("kcited", "kcited.v1", "passthrough", _PAST),
+            ("kcited_b", "kcited.v1b", "passthrough", _PAST),
+            ("erased", "erased.v1", "passthrough", _PAST),
         ):
             connection.execute(
                 text(
@@ -852,6 +904,9 @@ class _Corpus:
             valid_until=None,
             ingested_at=_PAST,
         )
+        # the fact whose only source is about to be forgotten is contradicted by
+        # a second one, so the lineage deletion cell can be proven on the
+        # contradiction projection instead of passing there vacuously
         self._relation(
             connection=connection,
             key="lonely",
@@ -860,6 +915,17 @@ class _Corpus:
             valid_from=_PAST,
             valid_until=None,
             ingested_at=_PAST,
+            contradiction_group=self.lonely_contradiction_group,
+        )
+        connection.execute(
+            text(
+                "UPDATE relations SET contradiction_group = :group"
+                " WHERE relation_id = :relation"
+            ),
+            {
+                "group": self.lonely_contradiction_group,
+                "relation": self.fact["open_ended"],
+            },
         )
 
         observation_id = uuid4()
@@ -932,10 +998,17 @@ class _Corpus:
             )
 
     def _seed_knowledge(self, *, connection: Connection) -> None:
-        """Create a compiled page, an authored page, and a tombstoned parent."""
+        """Create cited pages, an uncited page, and a tombstoned parent.
+
+        The uncited page is the D46 anomaly the query space is fail-closed
+        about: it is active and not tombstoned, but it cites nothing, so it can
+        show no provenance for its prose and is absent from `pages_live` and
+        counted in the operator quarantine report instead.
+        """
         for key, page_kind, status in (
             ("compiled", "compiled", "active"),
             ("authored", "authored", "active"),
+            ("uncited", "authored", "active"),
             ("tombstoned", "compiled", "tombstoned"),
         ):
             artifact_id = uuid4()
@@ -999,12 +1072,15 @@ class _Corpus:
                 "at": _MID,
             },
         )
-        for lineage, chunk_hash, relation_key, role in (
-            ("kcited", "chunk-hash-kcited.v1", None, "supports"),
-            ("kcited", "chunk-hash-kcited.v1b", None, "supports"),
-            (None, None, "current", "cites"),
-            ("forgotten", None, None, "cites"),
-            ("erased", None, None, "cites"),
+        for artifact_key, lineage, chunk_hash, relation_key, role in (
+            ("compiled", "kcited", "chunk-hash-kcited.v1", None, "supports"),
+            ("compiled", "kcited", "chunk-hash-kcited.v1b", None, "supports"),
+            ("compiled", None, None, "current", "cites"),
+            ("compiled", "forgotten", None, None, "cites"),
+            ("compiled", "erased", None, None, "cites"),
+            # the authored page cites one live lineage, so it is published and
+            # its review flags are exercised; the uncited page cites nothing
+            ("authored", "primary", None, None, "cites"),
         ):
             connection.execute(
                 text(
@@ -1017,7 +1093,7 @@ class _Corpus:
                 {
                     "link": uuid4(),
                     "deployment": _DEPLOYMENT_ID,
-                    "artifact": self.artifact["compiled"],
+                    "artifact": self.artifact[artifact_key],
                     "lineage": None if chunk_hash is None else self.doc[str(lineage)],
                     "hash": chunk_hash,
                     "relation": (
@@ -1157,8 +1233,10 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             f" {schema}.testimony_currency_events_visible WHERE event_id = :event)",
             {"event": corpus.currency_event["erased"]},
         ),
-        "entity_document_mentions.exact_live_count_present": (
-            f"SELECT mention_count = 2 FROM {schema}.entity_document_mentions"
+        # the lineage has two mentions of this survivor, one in the current
+        # version and one in a superseded version; only current content counts
+        "entity_document_mentions.exact_current_content_count_present": (
+            f"SELECT mention_count = 1 FROM {schema}.entity_document_mentions"
             " WHERE entity_id = :entity AND doc_id = :doc",
             {"entity": corpus.entity["alice"], "doc": corpus.doc["primary"]},
         ),
@@ -1299,10 +1377,15 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             " AND NOT is_stale)",
             {"artifact": corpus.artifact["compiled"]},
         ),
-        "pages_live.tombstoned_page_absent": (
+        # a page is published only while it is not tombstoned AND still cites
+        # something visible; both omissions are proven by one read
+        "pages_live.tombstoned_and_uncited_pages_absent": (
             f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.pages_live"
-            " WHERE artifact_id = :artifact)",
-            {"artifact": corpus.artifact["tombstoned"]},
+            " WHERE artifact_id IN (:tombstoned, :uncited))",
+            {
+                "tombstoned": corpus.artifact["tombstoned"],
+                "uncited": corpus.artifact["uncited"],
+            },
         ),
         "page_evidence_visible.claim_coordinate_link_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.page_evidence_visible"
@@ -1332,26 +1415,68 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
 # ── §9.1 DDL / manifest identity ─────────────────────────────────────────
 
 
-def test_runtime_introspection_equals_the_checked_in_manifest(corpus: _Corpus) -> None:
-    """The published contract is exactly what the running database exposes."""
-    with corpus.engine.connect() as connection:
-        generated = build_manifest(connection)
+def test_live_introspection_equals_the_checked_in_manifest(corpus: _Corpus) -> None:
+    """What the running database exposes is exactly what the manifest publishes.
 
+    The two sides of this comparison come from different places on purpose: the
+    manifest is built from the authored DDL and the declared contract, and the
+    live side is read from `pg_catalog` alone. A declared column type or comment
+    that the database does not agree with fails here rather than being compared
+    with itself.
+    """
+    with corpus.engine.connect() as connection:
+        differences = live_schema_differences(connection=connection)
+        live = introspect_live_schema(connection)
+
+    assert differences == ()
+    assert live.postgresql_major == POSTGRESQL_MAJOR
+    assert len(live.views) == len(VIEW_CONTRACTS)
+
+
+def test_the_checked_in_manifest_is_the_generated_one(corpus: _Corpus) -> None:
+    """The published file is the generator's output, hash and rendering alike."""
+    generated = build_manifest()
     checked_in = load_manifest()
     assert generated["hash_members"] == checked_in["hash_members"]
     assert generated["surface_manifest_hash"] == checked_in["surface_manifest_hash"]
     assert MANIFEST_PATH.read_text(encoding="utf-8") == render_manifest(generated)
 
 
-def test_two_independent_generator_runs_agree_byte_for_byte(corpus: _Corpus) -> None:
-    """The hash is a property of the schema, not of when it was generated."""
-    with corpus.engine.connect() as first:
-        one = build_manifest(first)
-    with corpus.engine.connect() as second:
-        other = build_manifest(second)
+def test_two_independent_builds_deploy_the_same_schema(database_url: str) -> None:
+    """Two separate databases, built from scratch, deploy one identical surface.
 
-    assert one["surface_manifest_hash"] == other["surface_manifest_hash"]
-    assert render_manifest(one) == render_manifest(other)
+    Each build gets its own database and its own migration run, so nothing is
+    shared but the repository: the object identifiers, the creation order, and
+    the timing all differ. What must not differ is a single column, type, or
+    comment — and each build must also equal the checked-in manifest, which is
+    what makes "two independent builds agree" a statement about the contract
+    rather than about one machine.
+    """
+    first = _build_in_scratch_database(
+        database_url=database_url, name="rememberstack_qs_build_a"
+    )
+    second = _build_in_scratch_database(
+        database_url=database_url, name="rememberstack_qs_build_b"
+    )
+
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    manifest = load_manifest()
+    views = manifest["hash_members"]["views_schema"]["views"]
+    published = {
+        str(view["name"]): [
+            (str(column["name"]), str(column["type"]), str(column["comment"]))
+            for column in view["columns"]
+        ]
+        for view in views
+    }
+    deployed = {
+        str(view["name"]): [
+            (str(column["name"]), str(column["type"]), str(column["comment"]))
+            for column in view["columns"]
+        ]
+        for view in first["views"]
+    }
+    assert deployed == published
 
 
 def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
@@ -1663,57 +1788,143 @@ def _apply_deletion(*, connection: Connection, corpus: _Corpus, target_id: str) 
     raise AssertionError(f"unenumerated deletion target {target_id!r}")
 
 
-def _leaked_values(
-    *, connection: Connection, view: str, forbidden: set[str]
+def _reachable_values(
+    *, connection: Connection, relation: str, forbidden: set[str]
 ) -> set[str]:
-    """Return every forbidden identifier still reachable through one relation."""
-    leaked: set[str] = set()
-    for row in _rows(connection=connection, sql=f"SELECT * FROM memory_v1.{view}"):  # noqa: S608 -- names come from the checked-in contract
+    """Return every forbidden identifier reachable through one relation.
+
+    The relation is named in full, because the matrix crosses every deletion
+    target with the private helper as well as with the public relations.
+    """
+    reachable: set[str] = set()
+    for row in _rows(connection=connection, sql=f"SELECT * FROM {relation}"):  # noqa: S608 -- names come from the checked-in matrix
         for value in row.values():
             if isinstance(value, list):
-                leaked |= {str(item) for item in value} & forbidden
+                reachable |= {str(item) for item in value} & forbidden
             elif value is not None and str(value) in forbidden:
-                leaked.add(str(value))
-    return leaked
+                reachable.add(str(value))
+    return reachable
 
 
-def test_d48_deletion_matrix_passes_every_enumerated_cell(corpus: _Corpus) -> None:
-    """Every checked-in target × surface cell leaks nothing, with none skipped."""
-    matrix = load_matrix()
-    cells = matrix["cells"]
+def _matrix_cells() -> Mapping[tuple[str, str], Mapping[str, Any]]:
+    """Index the checked-in matrix by its (target, surface) coordinate."""
+    cells = load_matrix()["cells"]
     assert isinstance(cells, list)
+    indexed = {
+        (str(cell["target_id"]), str(cell["surface"])): cell
+        for cell in cells
+        if isinstance(cell, dict)
+    }
+    assert len(indexed) == len(cells), "the matrix repeats a coordinate"
+    return indexed
+
+
+def test_d48_deletion_matrix_proves_every_executed_cell(corpus: _Corpus) -> None:
+    """Every executed cell proves its own status: no target, no cell, is vacuous.
+
+    An `applicable` cell must be reachable *before* its mutation and empty
+    after; a `not_applicable` cell must be empty on both sides, which is what
+    turns "this relation cannot carry that identifier" from a claim into a
+    check; a `not_caller_reachable` cell must name a relation that is outside
+    the query space and carries no grant at all.
+    """
+    cells = _matrix_cells()
     executed: set[tuple[str, str]] = set()
 
-    for target in DELETION_TARGETS:
+    for target in EXECUTED_TARGETS:
         forbidden = _forbidden_identifiers(corpus=corpus, target_id=target.target_id)
         assert forbidden, target.target_id
         with corpus.engine.begin() as connection:
-            reachable_before = {
-                contract.name: _leaked_values(
-                    connection=connection, view=contract.name, forbidden=forbidden
+            before = {
+                surface.name: _reachable_values(
+                    connection=connection, relation=surface.name, forbidden=forbidden
                 )
-                for contract in VIEW_CONTRACTS
+                for surface in MATRIX_SURFACES
             }
             _apply_deletion(
                 connection=connection, corpus=corpus, target_id=target.target_id
             )
-            for contract in VIEW_CONTRACTS:
-                leaked = _leaked_values(
-                    connection=connection, view=contract.name, forbidden=forbidden
+            for surface in MATRIX_SURFACES:
+                cell = cells[(target.target_id, surface.name)]
+                after = _reachable_values(
+                    connection=connection, relation=surface.name, forbidden=forbidden
                 )
-                assert leaked == set(), f"{target.target_id} -> {contract.name}"
-                executed.add((target.target_id, f"memory_v1.{contract.name}"))
+                coordinate = f"{target.target_id} -> {surface.name}"
+                if cell["status"] == "applicable":
+                    assert before[surface.name], f"{coordinate} is vacuous"
+                    assert after == set(), f"{coordinate} leaks {sorted(after)}"
+                elif cell["basis"] == "no_identifier_of_this_class":
+                    assert before[surface.name] == set(), (
+                        f"{coordinate} is declared not applicable but reachable"
+                    )
+                    assert after == set(), coordinate
+                else:
+                    assert cell["basis"] == "not_caller_reachable", coordinate
+                    assert not surface.caller_reachable, coordinate
+                executed.add((target.target_id, surface.name))
             connection.rollback()
 
-        # the matrix would be vacuous if nothing had been reachable beforehand
-        assert any(reachable_before.values()), target.target_id
-
     assert executed == {
-        (str(cell["target_id"]), str(cell["surface"]))
-        for cell in cells
-        if isinstance(cell, dict)
+        coordinate for coordinate, cell in cells.items() if cell["status"] != "deferred"
     }
-    assert len(executed) == matrix["cell_count"]
+
+
+def test_the_private_helper_cells_prove_their_own_non_reachability(
+    corpus: _Corpus,
+) -> None:
+    """A `not_caller_reachable` cell names a relation a caller cannot read.
+
+    Every private helper is checked, not only the one the matrix crosses with
+    each target: all three carry rules the public relations depend on, and all
+    three would be a way around those rules if a grant ever appeared on them.
+    """
+    helpers = {
+        surface.name for surface in MATRIX_SURFACES if not surface.caller_reachable
+    } | {f"public.{name}" for name in PRIVATE_HELPER_VIEWS}
+    assert len(helpers) == len(PRIVATE_HELPER_VIEWS)
+    with corpus.engine.connect() as connection:
+        for helper in sorted(helpers):
+            schema, _, relation = helper.partition(".")
+            assert schema != "memory_v1"
+            acl = _scalar(
+                connection=connection,
+                sql=(
+                    "SELECT c.relacl IS NULL FROM pg_class c"
+                    " JOIN pg_namespace n ON n.oid = c.relnamespace"
+                    " WHERE n.nspname = :schema AND c.relname = :relation"
+                ),
+                schema=schema,
+                relation=relation,
+            )
+            assert acl is True, f"{helper} carries a grant"
+            grants = _rows(
+                connection=connection,
+                sql=(
+                    "SELECT grantee, privilege_type FROM"
+                    " information_schema.role_table_grants"
+                    " WHERE table_schema = :schema AND table_name = :relation"
+                    " AND grantee <> current_user"
+                ),
+                schema=schema,
+                relation=relation,
+            )
+            assert grants == [], f"{helper} is granted to {grants}"
+
+
+def test_deferred_matrix_cells_name_the_batch_that_will_execute_them(
+    corpus: _Corpus,
+) -> None:
+    """A target this batch cannot build is recorded, not silently omitted."""
+    cells = _matrix_cells()
+    deferred = {target.target_id for target in DELETION_TARGETS if target.deferred}
+    assert deferred == {"p1_candidate", "p2_edge", "corpus_body"}
+    for (target_id, _surface), cell in cells.items():
+        if target_id in deferred:
+            assert cell["status"] == "deferred"
+            assert "Deferred to Batch " in str(cell["expectation"])
+    for target in DELETION_TARGETS:
+        if target.deferred:
+            assert target.executed_in in {"C", "D"}, target.target_id
 
 
 def test_a_path_with_one_invalid_edge_returns_no_partial_row(corpus: _Corpus) -> None:
@@ -1748,6 +1959,344 @@ def test_a_path_with_one_invalid_edge_returns_no_partial_row(corpus: _Corpus) ->
         connection.rollback()
 
     assert after == 0
+
+
+# ── D48 coordinate binding and fail-closed resolution ────────────────────
+
+_MENTION_ROW = (
+    "SELECT doc_id, resolved_entity_id, resolution_method, resolution_confidence,"
+    " resolution_is_new_entity, resolved_at FROM memory_v1.mentions_live"
+    " WHERE mention_id = :mention"
+)
+
+
+def test_a_mention_cannot_borrow_a_live_lineage_from_its_chunk(corpus: _Corpus) -> None:
+    """Repointing a mention's own lineage at a tombstone removes the mention.
+
+    The mention's association names two coordinates — a chunk and a lineage —
+    and both are authorized. Without the lineage half, a row whose recorded
+    lineage has been forgotten would still be published under the *chunk's*
+    live lineage, which is precisely the identifier the forget was supposed to
+    remove.
+    """
+    with corpus.engine.begin() as connection:
+        before = _rows(
+            connection=connection, sql=_MENTION_ROW, mention=corpus.mention["alice"]
+        )
+        counted_before = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT mention_count FROM memory_v1.entity_document_mentions"
+                " WHERE entity_id = :entity AND doc_id = :doc"
+            ),
+            entity=corpus.entity["alice"],
+            doc=corpus.doc["primary"],
+        )
+        connection.execute(
+            text("UPDATE mentions SET doc_id = :doc WHERE mention_id = :mention"),
+            {"doc": corpus.doc["erased"], "mention": corpus.mention["alice"]},
+        )
+        after = _rows(
+            connection=connection, sql=_MENTION_ROW, mention=corpus.mention["alice"]
+        )
+        counted_after = _rows(
+            connection=connection,
+            sql=(
+                "SELECT mention_count FROM memory_v1.entity_document_mentions"
+                " WHERE entity_id = :entity AND doc_id = :doc"
+            ),
+            entity=corpus.entity["alice"],
+            doc=corpus.doc["primary"],
+        )
+        connection.rollback()
+
+    assert len(before) == 1
+    assert before[0]["doc_id"] == corpus.doc["primary"]
+    assert counted_before == 1
+    assert after == [], "the mention is exposed through its chunk's lineage"
+    assert counted_after == [], "the count still includes the removed mention"
+
+
+def test_a_resolution_to_an_absent_entity_nulls_the_whole_resolution(
+    corpus: _Corpus,
+) -> None:
+    """Resolution metadata is published together with its survivor or not at all.
+
+    Retiring the entity a live decision names leaves the decision in place. The
+    mention stays visible — an unresolved mention is still testimony — but every
+    resolution column goes null together, so the schema never describes a
+    decision about an identity it will not show.
+    """
+    with corpus.engine.begin() as connection:
+        before = _rows(
+            connection=connection, sql=_MENTION_ROW, mention=corpus.mention["acme"]
+        )
+        connection.execute(
+            text("UPDATE entities SET status = 'retired' WHERE entity_id = :entity"),
+            {"entity": corpus.entity["acme"]},
+        )
+        after = _rows(
+            connection=connection, sql=_MENTION_ROW, mention=corpus.mention["acme"]
+        )
+        pairs = _rows(
+            connection=connection,
+            sql=(
+                "SELECT 1 FROM memory_v1.entity_document_mentions"
+                " WHERE entity_id = :entity"
+            ),
+            entity=corpus.entity["acme"],
+        )
+        connection.rollback()
+
+    assert before[0]["resolved_entity_id"] == corpus.entity["acme"]
+    assert before[0]["resolution_method"] == "T0"
+    assert len(after) == 1, "an unresolved mention stays visible"
+    assert after[0]["resolved_entity_id"] is None
+    assert after[0]["resolution_method"] is None
+    assert after[0]["resolution_confidence"] is None
+    assert after[0]["resolution_is_new_entity"] is None
+    assert after[0]["resolved_at"] is None
+    assert pairs == []
+
+
+def test_every_mention_count_equals_the_mentions_it_can_show(corpus: _Corpus) -> None:
+    """The count is the number of transcript rows, on every pair, exactly."""
+    with corpus.engine.connect() as connection:
+        rows = _rows(
+            connection=connection,
+            sql=(
+                "SELECT edm.entity_id, edm.doc_id, edm.mention_count,"
+                " (SELECT count(*) FROM memory_v1.mentions_live AS m"
+                "  WHERE m.deployment_id = edm.deployment_id"
+                "    AND m.resolved_entity_id = edm.entity_id"
+                "    AND m.doc_id = edm.doc_id) AS transcript_rows"
+                " FROM memory_v1.entity_document_mentions AS edm"
+            ),
+        )
+        superseded_mentions = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM mentions m JOIN chunks c"
+                " ON c.deployment_id = m.deployment_id AND c.chunk_id = m.chunk_id"
+                " WHERE c.version_id = :version"
+            ),
+            version=corpus.version["primary.v1"],
+        )
+
+    assert rows, "the corpus must have counted pairs for this to prove anything"
+    for row in rows:
+        assert row["mention_count"] == row["transcript_rows"], row
+    assert superseded_mentions > 0, (
+        "the corpus must contain a mention of superseded content, or the "
+        "current-content restriction is untested"
+    )
+
+
+def test_a_page_whose_last_visible_citation_is_forgotten_leaves_with_it(
+    corpus: _Corpus,
+) -> None:
+    """A page is published only while it can still show where its prose came from.
+
+    §3.3's general rule puts K rows among the rows that need an `EXISTS`
+    through provenance, and D46 records that both page kinds carry citations.
+    So a page with no visible citation is not an ordinary uncited page: it is
+    an anomaly, and the fail-closed reading keeps it out of the public surface
+    and in the operator's report instead.
+    """
+    with corpus.engine.begin() as connection:
+        published_before = _scalar(
+            connection=connection,
+            sql="SELECT count(*) FROM memory_v1.pages_live WHERE artifact_id = :page",
+            page=corpus.artifact["authored"],
+        )
+        connection.execute(
+            text("UPDATE documents SET deleted_at = now() WHERE doc_id = :doc"),
+            {"doc": corpus.doc["primary"]},
+        )
+        published_after = _scalar(
+            connection=connection,
+            sql="SELECT count(*) FROM memory_v1.pages_live WHERE artifact_id = :page",
+            page=corpus.artifact["authored"],
+        )
+        links_after = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.page_evidence_visible"
+                " WHERE artifact_id = :page"
+            ),
+            page=corpus.artifact["authored"],
+        )
+        still_cited = _scalar(
+            connection=connection,
+            sql="SELECT count(*) FROM memory_v1.pages_live WHERE artifact_id = :page",
+            page=corpus.artifact["compiled"],
+        )
+        connection.rollback()
+
+    assert published_before == 1
+    assert published_after == 0, "a page with no visible citation is not published"
+    assert links_after == 0, "no link outlives the page that carried it"
+    assert still_cited == 1, "a page keeping one visible citation stays published"
+
+
+def test_the_uncited_page_is_absent_but_countable(corpus: _Corpus) -> None:
+    """What the public surface omits, the operator report makes visible."""
+    with corpus.engine.connect() as connection:
+        published = _scalar(
+            connection=connection,
+            sql="SELECT count(*) FROM memory_v1.pages_live WHERE artifact_id = :page",
+            page=corpus.artifact["uncited"],
+        )
+        exists_in_base = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM knowledge_artifacts"
+                " WHERE artifact_id = :page AND status = 'active'"
+            ),
+            page=corpus.artifact["uncited"],
+        )
+        report = orphan_quarantine_report(
+            connection=connection, deployment_id=str(_DEPLOYMENT_ID)
+        )
+
+    counts = {category.category: category.row_count for category in report.categories}
+    assert exists_in_base == 1, "the page really exists and is really active"
+    assert published == 0
+    assert counts["page_without_visible_citation"] == 1
+
+
+def test_a_merge_cycle_resolves_to_no_survivor_at_all(corpus: _Corpus) -> None:
+    """A chain that never terminates yields no survivor, not two of them.
+
+    Two entities each recorded as merged into the other is corrupt state that
+    no schema constraint can prevent. Resolving it by "the furthest row
+    reached" would make each entity its own survivor and republish both as if
+    no merge had happened; resolving it fail-closed drops both from every
+    survivor-joined relation and reports them to the operator instead.
+    """
+    first, second = uuid4(), uuid4()
+    with corpus.engine.begin() as connection:
+        for entity_id, name in ((first, "Cycle One"), (second, "Cycle Two")):
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    " canonical_name, normalized_name, mention_count, graph_degree)"
+                    " VALUES (:entity, :deployment, 'Person', :name, lower(:name), 0, 0)"
+                ),
+                {"entity": entity_id, "deployment": _DEPLOYMENT_ID, "name": name},
+            )
+        for entity_id, other in ((first, second), (second, first)):
+            # the schema records a merge as a redirect plus the merged status;
+            # what it cannot enforce is that the redirects are acyclic
+            connection.execute(
+                text(
+                    "UPDATE entities SET merged_into = :other, status = 'merged'"
+                    " WHERE entity_id = :entity"
+                ),
+                {"other": other, "entity": entity_id},
+            )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET entity_id = :entity"
+                " WHERE decision_id = :decision"
+            ),
+            {"entity": first, "decision": corpus.decision["acme"]},
+        )
+        connection.execute(
+            text(
+                "UPDATE relations SET subject_entity_id = :entity"
+                " WHERE relation_id = :relation"
+            ),
+            {"entity": first, "relation": corpus.fact["current"]},
+        )
+        survivors = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM v_memory_entity_survivor"
+                " WHERE entity_id IN (:first, :second)"
+            ),
+            first=first,
+            second=second,
+        )
+        current = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.entities_current"
+                " WHERE entity_id IN (:first, :second)"
+            ),
+            first=first,
+            second=second,
+        )
+        mention = _rows(
+            connection=connection, sql=_MENTION_ROW, mention=corpus.mention["acme"]
+        )
+        endpoint_fact = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.facts_visible_history"
+                " WHERE fact_id = :fact"
+            ),
+            fact=corpus.fact["current"],
+        )
+        quarantined = orphan_quarantine_report(
+            connection=connection, deployment_id=str(_DEPLOYMENT_ID)
+        )
+        connection.rollback()
+
+    assert survivors == 0, "a cycle must resolve to nothing"
+    assert current == 0
+    assert len(mention) == 1 and mention[0]["resolved_entity_id"] is None
+    assert endpoint_fact == 0, "a fact with an unresolvable endpoint drops as a unit"
+    counts = {
+        category.category: category.row_count for category in quarantined.categories
+    }
+    assert counts["entity_merge_chain_unresolved"] == 2
+
+
+def test_a_merge_chain_past_the_depth_bound_resolves_to_no_survivor(
+    corpus: _Corpus,
+) -> None:
+    """Beyond the guard the answer is nothing, never a half-walked answer."""
+    chain = [uuid4() for _ in range(70)]
+    with corpus.engine.begin() as connection:
+        for position, entity_id in enumerate(chain):
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    " canonical_name, normalized_name, mention_count, graph_degree)"
+                    " VALUES (:entity, :deployment, 'Person', :name, lower(:name), 0, 0)"
+                ),
+                {
+                    "entity": entity_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "name": f"Chain {position}",
+                },
+            )
+        for position, entity_id in enumerate(chain[:-1]):
+            connection.execute(
+                text(
+                    "UPDATE entities SET merged_into = :next, status = 'merged'"
+                    " WHERE entity_id = :entity"
+                ),
+                {"next": chain[position + 1], "entity": entity_id},
+            )
+        resolved = {
+            str(row["entity_id"]): str(row["survivor_entity_id"])
+            for row in _rows(
+                connection=connection,
+                sql=(
+                    "SELECT entity_id, survivor_entity_id FROM"
+                    " v_memory_entity_survivor WHERE entity_id = ANY(:ids)"
+                ),
+                ids=chain,
+            )
+        }
+        connection.rollback()
+
+    terminal = str(chain[-1])
+    assert str(chain[0]) not in resolved, "a chain past the guard resolves to nothing"
+    assert resolved[str(chain[-5])] == terminal, "a short chain still resolves"
+    assert resolved[terminal] == terminal
 
 
 # ── §9.3 D41 clocks ──────────────────────────────────────────────────────
@@ -2230,9 +2779,13 @@ def test_quarantine_report_counts_what_the_public_views_omit(corpus: _Corpus) ->
     assert counts["section_outside_current_generation"] >= 1
     assert counts["knowledge_citation_without_visible_target"] >= 1
     assert counts["currency_event_without_live_lineage"] >= 1
+    assert counts["page_without_visible_citation"] == 1
     assert counts["claim_without_chunk"] == 0
     assert counts["chunk_without_version"] == 0
     assert counts["evidence_lineage_mismatch"] == 0
+    assert counts["entity_merge_chain_unresolved"] == 0, (
+        "the seeded merge chain terminates, so nothing is unresolvable here"
+    )
     assert report.total_rows == sum(counts.values())
     # the report is counts and repair guidance only: no corpus content leaves it
     for category in report.categories:

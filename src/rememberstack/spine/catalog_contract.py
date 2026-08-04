@@ -299,6 +299,8 @@ EXPECTED_VIEWS: Final = (
     "v_graph_relates",
     "v_graph_survivor",
     "v_memory_entity_survivor",
+    "v_memory_mention_current_content",
+    "v_memory_page_citation_visible",
 )
 QUERY_SPACE_SCHEMA: Final = "memory_v1"
 """The versioned public query space. Its relation set is owned by the checked-in

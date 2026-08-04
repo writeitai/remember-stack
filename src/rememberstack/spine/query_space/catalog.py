@@ -1,13 +1,21 @@
 """The declared half of the `memory_v1` schema contract.
 
-Three facts about a public view cannot be read out of `pg_catalog` and must
+Four facts about a public view cannot be derived from the authored DDL and must
 therefore be declared here, next to each other, where a reviewer can see them:
 
+- **Column types.** Resolving the type of a view's output expression needs a
+  PostgreSQL type system, and the manifest must be computable without a running
+  server. The types are therefore declared below in the published column order
+  and *proven* by the schema gate, which reads the deployed types from
+  `pg_catalog.format_type` alone and compares them to these declarations. The
+  live side of that comparison never reads this module, so the check cannot
+  pass by comparing a declaration with itself.
 - **Nullability.** PostgreSQL does not track whether a view column can be null;
   `pg_attribute.attnotnull` is false for every view column regardless of the
-  expression behind it. The contract's nullability is declared below and proven
-  by execution: the schema gate asserts that no column declared non-null is
-  ever null across the fixture corpus.
+  expression behind it. There is no catalog source to compare against, so the
+  contract's nullability is declared below and proven by execution: the schema
+  gate asserts that no column declared non-null is ever null across the fixture
+  corpus.
 - **Row key and join keys.** A view has no primary key. The declared row key is
   the tuple a caller may assume identifies one row, and the gate proves it is
   unique on fixtures; the join keys name where each foreign column resolves.
@@ -17,9 +25,10 @@ therefore be declared here, next to each other, where a reviewer can see them:
   finite vocabularies as `text` rather than leaking private PostgreSQL enum
   type names into the public surface.
 
-Everything else in the manifest — ordered columns, canonical type names,
-comments, and the canonical definition AST — is read from the running database,
-so it cannot drift from what a caller actually queries.
+The rest of the manifest — the ordered column names, the relation and column
+comments, and the canonical definition AST — is read from the authored DDL in
+the migration (`source_definitions.py`), which is what the deployed schema is
+built from, and is likewise compared against live introspection by the gate.
 """
 
 from typing import Final
@@ -30,6 +39,12 @@ from pydantic import ConfigDict
 #: Major version of the query space this module describes.
 QUERY_SPACE_SCHEMA: Final = "memory_v1"
 QUERY_SPACE_SCHEMA_MAJOR: Final = 1
+
+#: The PostgreSQL major this contract is written against and deployed on. It is
+#: a manifest field and therefore a hash input; the minor version deliberately
+#: is not, because the surface must not change when the server is patched. The
+#: schema gate asserts the running server reports this major.
+POSTGRESQL_MAJOR: Final = 16
 
 #: Finite vocabularies shared by several views, bound once.
 _DOCUMENT_STATUS: Final = (
@@ -112,6 +127,9 @@ class ViewContract(BaseModel):
 
     row_key: tuple[str, ...]
     join_keys: tuple[JoinKey, ...]
+    column_types: dict[str, str]
+    """Each published column's canonical `format_type` name, in column order."""
+
     not_null: frozenset[str]
     """Columns a caller may rely on never being null."""
 
@@ -152,6 +170,26 @@ VIEW_CONTRACTS: Final = (
             "origin": ("external", "system_generated"),
             "current_version_status": _DOCUMENT_STATUS,
         },
+        column_types={
+            "deployment_id": "uuid",
+            "doc_id": "uuid",
+            "source_kind": "text",
+            "source_ref": "text",
+            "source_uri": "text",
+            "title": "text",
+            "versioning_mode": "text",
+            "origin": "text",
+            "first_seen_at": "timestamp with time zone",
+            "last_observed_at": "timestamp with time zone",
+            "current_version_id": "uuid",
+            "current_version_no": "integer",
+            "current_version_status": "text",
+            "current_representation_id": "uuid",
+            "has_current_ready_content": "boolean",
+            "source_modified_at": "timestamp with time zone",
+            "published_at": "timestamp with time zone",
+            "language": "text",
+        },
         indexes_used=("documents_pkey", "ix_documents_live", "document_versions_pkey"),
         positive_fixture="documents_live.live_lineage_present",
         negative_fixture="documents_live.tombstoned_lineage_absent",
@@ -180,6 +218,22 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"status": _DOCUMENT_STATUS},
+        column_types={
+            "deployment_id": "uuid",
+            "version_id": "uuid",
+            "doc_id": "uuid",
+            "version_no": "integer",
+            "content_hash": "text",
+            "source_version_ref": "text",
+            "status": "text",
+            "current_representation_id": "uuid",
+            "ingested_at": "timestamp with time zone",
+            "source_modified_at": "timestamp with time zone",
+            "published_at": "timestamp with time zone",
+            "language": "text",
+            "superseded_at": "timestamp with time zone",
+            "is_current_version": "boolean",
+        },
         indexes_used=("document_versions_pkey", "documents_pkey"),
         positive_fixture="document_versions_visible.live_version_present",
         negative_fixture="document_versions_visible.tombstoned_version_absent",
@@ -218,6 +272,28 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"role": _SECTION_ROLE},
+        column_types={
+            "deployment_id": "uuid",
+            "section_id": "uuid",
+            "doc_id": "uuid",
+            "version_id": "uuid",
+            "representation_id": "uuid",
+            "structure_generation_id": "uuid",
+            "parent_section_id": "uuid",
+            "node_path": "text",
+            "heading_level": "smallint",
+            "title": "text",
+            "normalized_title": "text",
+            "role": "text",
+            "ordinal": "integer",
+            "block_start": "integer",
+            "block_end": "integer",
+            "char_start": "integer",
+            "char_end": "integer",
+            "page_start": "integer",
+            "page_end": "integer",
+            "summary": "text",
+        },
         indexes_used=("ix_sections_doc", "uq_sections_generation_path"),
         positive_fixture="sections_live.current_representation_section_present",
         negative_fixture="sections_live.superseded_generation_section_absent",
@@ -259,6 +335,31 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={},
+        column_types={
+            "deployment_id": "uuid",
+            "chunk_id": "uuid",
+            "doc_id": "uuid",
+            "version_id": "uuid",
+            "representation_id": "uuid",
+            "section_id": "uuid",
+            "ordinal": "integer",
+            "block_start": "integer",
+            "block_end": "integer",
+            "char_start": "integer",
+            "char_end": "integer",
+            "token_count": "integer",
+            "chunk_content_hash": "text",
+            "extraction_input_hash": "text",
+            "embedding_text_hash": "text",
+            "location_facts": "jsonb",
+            "location_header": "text",
+            "embedding_input_policy_version": "text",
+            "policy_generation": "text",
+            "embedder_generation": "text",
+            "chunker_version": "text",
+            "prefixer_version": "text",
+            "created_at": "timestamp with time zone",
+        },
         indexes_used=("ix_chunks_doc", "ix_chunks_version", "ix_chunks_section"),
         positive_fixture="chunks_live.current_representation_chunk_present",
         negative_fixture="chunks_live.superseded_version_chunk_absent",
@@ -308,6 +409,33 @@ VIEW_CONTRACTS: Final = (
             "claim_valid_precision": _CLAIM_VALID_PRECISION,
             "claim_valid_kind": _CLAIM_VALID_KIND,
         },
+        column_types={
+            "deployment_id": "uuid",
+            "claim_id": "uuid",
+            "doc_id": "uuid",
+            "version_id": "uuid",
+            "representation_id": "uuid",
+            "chunk_id": "uuid",
+            "claim_text": "text",
+            "source_span": "text",
+            "char_start": "integer",
+            "char_end": "integer",
+            "added_context": "jsonb",
+            "temporal_class": "text",
+            "is_attributed": "boolean",
+            "audit_status": "text",
+            "kept_flagged": "boolean",
+            "extractor_version": "text",
+            "asserted_at": "timestamp with time zone",
+            "claim_valid_from": "timestamp with time zone",
+            "claim_valid_until": "timestamp with time zone",
+            "claim_valid_precision": "text",
+            "claim_valid_kind": "text",
+            "ingested_at": "timestamp with time zone",
+            "source_kind": "text",
+            "source_handle": "text",
+            "is_current_testimony": "boolean",
+        },
         indexes_used=("ix_claims_doc", "ix_claims_chunk", "ix_claims_valid_window"),
         positive_fixture="claims_visible_history.superseded_testimony_present",
         negative_fixture="claims_visible_history.forgotten_lineage_claim_absent",
@@ -356,6 +484,32 @@ VIEW_CONTRACTS: Final = (
             "claim_valid_precision": _CLAIM_VALID_PRECISION,
             "claim_valid_kind": _CLAIM_VALID_KIND,
         },
+        column_types={
+            "deployment_id": "uuid",
+            "claim_id": "uuid",
+            "doc_id": "uuid",
+            "version_id": "uuid",
+            "representation_id": "uuid",
+            "chunk_id": "uuid",
+            "claim_text": "text",
+            "source_span": "text",
+            "char_start": "integer",
+            "char_end": "integer",
+            "added_context": "jsonb",
+            "temporal_class": "text",
+            "is_attributed": "boolean",
+            "audit_status": "text",
+            "kept_flagged": "boolean",
+            "extractor_version": "text",
+            "asserted_at": "timestamp with time zone",
+            "claim_valid_from": "timestamp with time zone",
+            "claim_valid_until": "timestamp with time zone",
+            "claim_valid_precision": "text",
+            "claim_valid_kind": "text",
+            "ingested_at": "timestamp with time zone",
+            "source_kind": "text",
+            "source_handle": "text",
+        },
         indexes_used=("ix_claims_current", "ix_claims_doc", "ix_claims_chunk"),
         positive_fixture="claims_live.current_testimony_present",
         negative_fixture="claims_live.superseded_testimony_absent",
@@ -387,6 +541,19 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={},
+        column_types={
+            "deployment_id": "uuid",
+            "claim_id": "uuid",
+            "chunk_id": "uuid",
+            "derivation_kind": "text",
+            "doc_id": "uuid",
+            "version_id": "uuid",
+            "representation_id": "uuid",
+            "section_id": "uuid",
+            "evidence_mode": "text",
+            "source_locators": "jsonb",
+            "attached_at": "timestamp with time zone",
+        },
         indexes_used=("ix_chunkclaims_claim", "chunk_claims_pkey"),
         positive_fixture="claim_occurrences_live.current_chunk_occurrence_present",
         negative_fixture="claim_occurrences_live.repeated_attachment_collapsed",
@@ -430,6 +597,18 @@ VIEW_CONTRACTS: Final = (
                 "review_restored",
             )
         },
+        column_types={
+            "deployment_id": "uuid",
+            "event_id": "uuid",
+            "claim_id": "uuid",
+            "doc_id": "uuid",
+            "reconciliation_id": "uuid",
+            "became_current": "boolean",
+            "reason": "text",
+            "from_extractor_version": "text",
+            "from_version_id": "uuid",
+            "occurred_at": "timestamp with time zone",
+        },
         indexes_used=("ix_currency_claim", "ix_currency_doc"),
         positive_fixture="testimony_currency_events_visible.reextraction_transition_present",
         negative_fixture="testimony_currency_events_visible.forgotten_lineage_transition_absent",
@@ -460,13 +639,23 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={},
+        column_types={
+            "deployment_id": "uuid",
+            "entity_id": "uuid",
+            "doc_id": "uuid",
+            "mention_count": "bigint",
+            "first_mentioned_at": "timestamp with time zone",
+            "last_mentioned_at": "timestamp with time zone",
+        },
         indexes_used=(
             "ix_mentions_doc",
+            "ix_chunks_doc",
             "ix_chunks_version",
+            "ix_resdec_mention",
             "ix_resdec_live",
-            "ix_resdec_entity_live",
+            "entities_pkey",
         ),
-        positive_fixture="entity_document_mentions.exact_live_count_present",
+        positive_fixture="entity_document_mentions.exact_current_content_count_present",
         negative_fixture="entity_document_mentions.forgotten_lineage_pair_absent",
     ),
     ViewContract(
@@ -491,6 +680,20 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={},
+        column_types={
+            "deployment_id": "uuid",
+            "entity_id": "uuid",
+            "entity_type": "text",
+            "canonical_name": "text",
+            "normalized_name": "text",
+            "type_confidence": "real",
+            "profile_summary": "text",
+            "live_mention_count": "bigint",
+            "live_document_count": "bigint",
+            "graph_degree": "bigint",
+            "created_at": "timestamp with time zone",
+            "updated_at": "timestamp with time zone",
+        },
         indexes_used=("entities_pkey", "ix_entities_type"),
         positive_fixture="entities_current.survivor_with_live_provenance_present",
         negative_fixture="entities_current.merged_entity_absent",
@@ -521,6 +724,18 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"provenance": ("source", "llm_canonical")},
+        column_types={
+            "deployment_id": "uuid",
+            "alias_id": "uuid",
+            "source_entity_id": "uuid",
+            "entity_id": "uuid",
+            "alias_text": "text",
+            "normalized_lemma": "text",
+            "provenance": "text",
+            "confidence": "real",
+            "first_seen": "timestamp with time zone",
+            "last_seen": "timestamp with time zone",
+        },
         indexes_used=("ix_aliases_entity", "ix_aliases_lemma_exact"),
         positive_fixture="entity_aliases_current.alias_redirected_to_survivor",
         negative_fixture="entity_aliases_current.forgotten_entity_alias_absent",
@@ -561,7 +776,37 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"resolution_method": _DECISION_METHOD},
-        indexes_used=("ix_mentions_doc", "ix_resdec_mention", "ix_resdec_live"),
+        column_types={
+            "deployment_id": "uuid",
+            "mention_id": "uuid",
+            "doc_id": "uuid",
+            "version_id": "uuid",
+            "representation_id": "uuid",
+            "chunk_id": "uuid",
+            "section_id": "uuid",
+            "claim_id": "uuid",
+            "surface_form": "text",
+            "normalized_lemma": "text",
+            "canonical_name_form": "text",
+            "emitted_type": "text",
+            "type_confidence": "real",
+            "language": "text",
+            "char_start": "integer",
+            "char_end": "integer",
+            "created_at": "timestamp with time zone",
+            "resolved_entity_id": "uuid",
+            "resolution_method": "text",
+            "resolution_confidence": "real",
+            "resolution_is_new_entity": "boolean",
+            "resolved_at": "timestamp with time zone",
+        },
+        indexes_used=(
+            "ix_mentions_doc",
+            "ix_chunks_doc",
+            "ix_resdec_mention",
+            "ix_resdec_live",
+            "entities_pkey",
+        ),
         positive_fixture="mentions_live.unresolved_mention_present",
         negative_fixture="mentions_live.superseded_version_mention_absent",
     ),
@@ -599,6 +844,20 @@ VIEW_CONTRACTS: Final = (
             "outcome": ("linked", "new_entity", "merge", "unmerge"),
             "method": (*_DECISION_METHOD, "merge_event"),
             "decided_by": ("auto", "human"),
+        },
+        column_types={
+            "deployment_id": "uuid",
+            "object_kind": "text",
+            "event_id": "uuid",
+            "entity_id": "uuid",
+            "related_entity_id": "uuid",
+            "mention_id": "uuid",
+            "outcome": "text",
+            "method": "text",
+            "confidence": "real",
+            "decided_by": "text",
+            "decided_at": "timestamp with time zone",
+            "is_superseded": "boolean",
         },
         indexes_used=("ix_resdec_entity", "ix_merge_survivor", "ix_merge_absorbed"),
         positive_fixture="identity_events_visible.resolution_and_merge_arms_present",
@@ -642,6 +901,22 @@ VIEW_CONTRACTS: Final = (
             "claim_valid_precision": _CLAIM_VALID_PRECISION,
             "claim_valid_kind": _CLAIM_VALID_KIND,
         },
+        column_types={
+            "deployment_id": "uuid",
+            "fact_kind": "text",
+            "fact_id": "uuid",
+            "claim_id": "uuid",
+            "stance": "text",
+            "doc_id": "uuid",
+            "source_kind": "text",
+            "source_handle": "text",
+            "asserted_at": "timestamp with time zone",
+            "claim_valid_from": "timestamp with time zone",
+            "claim_valid_until": "timestamp with time zone",
+            "claim_valid_precision": "text",
+            "claim_valid_kind": "text",
+            "linked_at": "timestamp with time zone",
+        },
         indexes_used=(
             "relation_evidence_pkey",
             "observation_evidence_pkey",
@@ -684,6 +959,19 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"fact_kind": _FACT_KIND, "stance": _STANCE},
+        column_types={
+            "deployment_id": "uuid",
+            "fact_kind": "text",
+            "fact_id": "uuid",
+            "doc_id": "uuid",
+            "stance": "text",
+            "source_kind": "text",
+            "source_handle": "text",
+            "claim_count": "bigint",
+            "representative_claim_id": "uuid",
+            "asserted_from": "timestamp with time zone",
+            "asserted_to": "timestamp with time zone",
+        },
         indexes_used=("relation_evidence_pkey", "observation_evidence_pkey"),
         positive_fixture="evidence_lineage.repetition_does_not_add_a_lineage",
         negative_fixture="evidence_lineage.forgotten_lineage_evidence_absent",
@@ -721,6 +1009,25 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"fact_kind": _FACT_KIND, "support_state_current": _SUPPORT_STATE},
+        column_types={
+            "deployment_id": "uuid",
+            "fact_kind": "text",
+            "fact_id": "uuid",
+            "subject_entity_id": "uuid",
+            "predicate": "text",
+            "object_entity_id": "uuid",
+            "statement": "text",
+            "fact_label": "text",
+            "valid_from": "timestamp with time zone",
+            "valid_until": "timestamp with time zone",
+            "ingested_at": "timestamp with time zone",
+            "invalidated_at": "timestamp with time zone",
+            "contradiction_group": "uuid",
+            "confidence": "real",
+            "evidence_count_current": "bigint",
+            "contradict_count_current": "bigint",
+            "support_state_current": "text",
+        },
         indexes_used=(
             "relations_pkey",
             "observations_pkey",
@@ -765,6 +1072,25 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"fact_kind": _FACT_KIND, "support_state": _SUPPORT_STATE},
+        column_types={
+            "deployment_id": "uuid",
+            "fact_kind": "text",
+            "fact_id": "uuid",
+            "subject_entity_id": "uuid",
+            "predicate": "text",
+            "object_entity_id": "uuid",
+            "statement": "text",
+            "fact_label": "text",
+            "valid_from": "timestamp with time zone",
+            "valid_until": "timestamp with time zone",
+            "ingested_at": "timestamp with time zone",
+            "contradiction_group": "uuid",
+            "confidence": "real",
+            "evidence_count": "bigint",
+            "contradict_count": "bigint",
+            "support_state": "text",
+            "evaluated_at": "timestamp with time zone",
+        },
         indexes_used=("relations_pkey", "observations_pkey", "ix_review_pending"),
         positive_fixture="facts_current.open_window_fact_present",
         negative_fixture="facts_current.ended_window_fact_absent",
@@ -795,6 +1121,20 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"fact_kind": _FACT_KIND, "support_state": _SUPPORT_STATE},
+        column_types={
+            "deployment_id": "uuid",
+            "contradiction_group": "uuid",
+            "fact_kind": "text",
+            "fact_id": "uuid",
+            "fact_label": "text",
+            "valid_from": "timestamp with time zone",
+            "valid_until": "timestamp with time zone",
+            "ingested_at": "timestamp with time zone",
+            "evidence_count": "bigint",
+            "contradict_count": "bigint",
+            "support_state": "text",
+            "evaluated_at": "timestamp with time zone",
+        },
         indexes_used=("ix_relations_contradiction", "ix_observations_contradiction"),
         positive_fixture="contradiction_members_current.both_sides_present",
         negative_fixture="contradiction_members_current.ungrouped_fact_absent",
@@ -830,6 +1170,23 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"support_state": _SUPPORT_STATE},
+        column_types={
+            "deployment_id": "uuid",
+            "relation_id": "uuid",
+            "subject_entity_id": "uuid",
+            "object_entity_id": "uuid",
+            "predicate": "text",
+            "fact_label": "text",
+            "valid_from": "timestamp with time zone",
+            "valid_until": "timestamp with time zone",
+            "ingested_at": "timestamp with time zone",
+            "contradiction_group": "uuid",
+            "confidence": "real",
+            "evidence_count": "bigint",
+            "contradict_count": "bigint",
+            "support_state": "text",
+            "evaluated_at": "timestamp with time zone",
+        },
         indexes_used=(
             "ix_relations_block_subj",
             "ix_relations_block_obj",
@@ -868,6 +1225,23 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"support_state_current": _SUPPORT_STATE},
+        column_types={
+            "deployment_id": "uuid",
+            "relation_id": "uuid",
+            "subject_entity_id": "uuid",
+            "object_entity_id": "uuid",
+            "predicate": "text",
+            "fact_label": "text",
+            "valid_from": "timestamp with time zone",
+            "valid_until": "timestamp with time zone",
+            "ingested_at": "timestamp with time zone",
+            "invalidated_at": "timestamp with time zone",
+            "contradiction_group": "uuid",
+            "confidence": "real",
+            "evidence_count_current": "bigint",
+            "contradict_count_current": "bigint",
+            "support_state_current": "text",
+        },
         indexes_used=("ix_relations_block_subj", "ix_relations_predicate"),
         positive_fixture="graph_edges_visible_history.invalidated_edge_present",
         negative_fixture="graph_edges_visible_history.forgotten_provenance_edge_absent",
@@ -899,6 +1273,15 @@ VIEW_CONTRACTS: Final = (
             }
         ),
         enum_values={"kind": ("cites", "links_to", "attaches", "replies_to")},
+        column_types={
+            "deployment_id": "uuid",
+            "crossref_id": "uuid",
+            "from_doc_id": "uuid",
+            "to_doc_id": "uuid",
+            "kind": "text",
+            "context": "text",
+            "created_at": "timestamp with time zone",
+        },
         indexes_used=("ix_crossrefs_from", "ix_crossrefs_to"),
         positive_fixture="document_crossrefs_live.both_endpoints_live_present",
         negative_fixture="document_crossrefs_live.forgotten_target_absent",
@@ -933,13 +1316,31 @@ VIEW_CONTRACTS: Final = (
             "page_kind": ("compiled", "authored"),
             "status": ("active", "stale", "quarantined"),
         },
+        column_types={
+            "deployment_id": "uuid",
+            "artifact_id": "uuid",
+            "layer": "text",
+            "page_kind": "text",
+            "git_path": "text",
+            "kind": "text",
+            "parent_artifact_id": "uuid",
+            "page_summary": "text",
+            "status": "text",
+            "last_compiled_at": "timestamp with time zone",
+            "is_stale": "boolean",
+            "open_review_flags": "bigint",
+            "redaction_required": "boolean",
+        },
         indexes_used=(
             "knowledge_artifacts_pkey",
             "ix_kartifacts_stale",
             "ix_krefresh_runnable",
+            "ux_kae_link",
+            "ix_kae_doc",
+            "ix_kae_relation",
         ),
         positive_fixture="pages_live.compiled_page_present",
-        negative_fixture="pages_live.tombstoned_page_absent",
+        negative_fixture="pages_live.tombstoned_and_uncited_pages_absent",
     ),
     ViewContract(
         name="page_evidence_visible",
@@ -973,6 +1374,15 @@ VIEW_CONTRACTS: Final = (
         enum_values={
             "role": ("supports", "contradicts", "cites"),
             "target_kind": ("claim", "relation", "document"),
+        },
+        column_types={
+            "deployment_id": "uuid",
+            "artifact_id": "uuid",
+            "role": "text",
+            "target_kind": "text",
+            "target_id": "uuid",
+            "claim_chunk_content_hashes": "text[]",
+            "link_count": "bigint",
         },
         indexes_used=(
             "ux_kae_link",
@@ -1023,6 +1433,14 @@ VIEW_CONTRACTS: Final = (
                 "claim_ingest",
                 "knowledge_page_compilation",
             )
+        },
+        column_types={
+            "deployment_id": "uuid",
+            "object_kind": "text",
+            "event_id": "uuid",
+            "object_id": "uuid",
+            "occurred_at": "timestamp with time zone",
+            "label": "text",
         },
         indexes_used=(
             "ix_adjud_relation",

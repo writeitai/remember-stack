@@ -26,10 +26,16 @@ trustworthy.
   could drift from that queue.
 
 Base tables stay private: the schema contains exactly the relations the
-binding design enumerates, and nothing else. One private helper view
-(`v_memory_entity_survivor`, in `public`) resolves merge redirects, because a
-merge is a redirect rather than a rewrite and relations are not re-pointed in
-PostgreSQL.
+binding design enumerates, and nothing else. Three private helper views (in
+`public`, never granted) carry the logic two public relations would otherwise
+have to state twice: `v_memory_entity_survivor` resolves merge redirects,
+because a merge is a redirect rather than a rewrite and relations are not
+re-pointed in PostgreSQL; `v_memory_mention_current_content` is the one
+definition of "this mention occurs in current content and resolves here", so a
+mention count and the mention transcript cannot disagree; and
+`v_memory_page_citation_visible` is the one definition of "this citation's
+target is visible", so a page's membership gate and its per-link gate cannot
+disagree.
 """
 
 from collections.abc import Sequence
@@ -73,6 +79,49 @@ MEMORY_V1_VIEWS: tuple[str, ...] = (
     "changes_visible",
 )
 
+#: The private helper views this migration creates in `public`. They are never
+#: part of `memory_v1`, never granted, and (Batch B) never on a query role's
+#: search_path; they exist so two public relations cannot state one rule twice
+#: and drift.
+PRIVATE_HELPER_VIEWS: tuple[str, ...] = (
+    "v_memory_entity_survivor",
+    "v_memory_mention_current_content",
+    "v_memory_page_citation_visible",
+)
+
+#: Every view this migration creates, dependents first, for the downgrade. The
+#: helpers are interleaved because two of them read `memory_v1` relations and
+#: are read by others, so one reversed list per schema would not be safe.
+_DROP_ORDER: tuple[str, ...] = (
+    "memory_v1.changes_visible",
+    "memory_v1.page_evidence_visible",
+    "memory_v1.pages_live",
+    "v_memory_page_citation_visible",
+    "memory_v1.document_crossrefs_live",
+    "memory_v1.graph_edges_visible_history",
+    "memory_v1.graph_edges_current",
+    "memory_v1.contradiction_members_current",
+    "memory_v1.facts_current",
+    "memory_v1.facts_visible_history",
+    "memory_v1.evidence_lineage",
+    "memory_v1.fact_claim_evidence_live",
+    "memory_v1.identity_events_visible",
+    "memory_v1.mentions_live",
+    "memory_v1.entity_aliases_current",
+    "memory_v1.entities_current",
+    "memory_v1.entity_document_mentions",
+    "v_memory_mention_current_content",
+    "memory_v1.testimony_currency_events_visible",
+    "memory_v1.claim_occurrences_live",
+    "memory_v1.claims_live",
+    "memory_v1.claims_visible_history",
+    "memory_v1.chunks_live",
+    "memory_v1.sections_live",
+    "memory_v1.document_versions_visible",
+    "memory_v1.documents_live",
+    "v_memory_entity_survivor",
+)
+
 _SCHEMA_DDL = r"""CREATE SCHEMA memory_v1;
 COMMENT ON SCHEMA memory_v1 IS
   'Version 1 of the public PostgreSQL query space. Every relation in this schema compiles the D48 surviving-lineage rule, the D41 two-clock rule, and the D54 distinct-lineage counting rule, so an arbitrary caller query inherits them. Base tables, projection tables, and operator schemas are never public; adding a nullable trailing column, a relation, or an invariant correction rolls the surface manifest hash, while removing, renaming, reordering, narrowing, or weakening anything requires memory_v2.';
@@ -83,6 +132,17 @@ COMMENT ON SCHEMA memory_v1 IS
 # keep their original endpoint ids, so every entity reference must be resolved
 # to its terminal survivor before it is exposed or joined. This helper is NOT
 # part of memory_v1: it stays in the private schema and is never granted.
+#
+# The walk is FAIL-CLOSED. Acyclicity is not schema-enforced, so a chain can be
+# a cycle (A merged into B, B merged into A), can run longer than the depth
+# bound, or can point at an entity row that no longer exists. In every one of
+# those cases the walk never reaches a row with merged_into IS NULL, and the
+# final join to that terminal row therefore emits NOTHING: the entity resolves
+# to no survivor and disappears from entities_current and from every relation
+# that joins a survivor. The alternative — taking the deepest row reached — is
+# fail-open: a two-node cycle would make each entity its own "survivor" and
+# both would be exposed as if the merge had never happened. The operator
+# quarantine report counts entities in this state so the omission is visible.
 _HELPER_DDL = r"""CREATE VIEW v_memory_entity_survivor (
   deployment_id,
   entity_id,
@@ -98,11 +158,14 @@ WITH RECURSIVE chain(deployment_id, entity_id, cur, depth) AS (
    AND e.entity_id = c.cur
   WHERE e.merged_into IS NOT NULL AND c.depth < 64  -- cycle / runaway guard
 )
-SELECT DISTINCT ON (deployment_id, entity_id) deployment_id, entity_id, cur
-FROM chain
-ORDER BY deployment_id, entity_id, depth DESC;  -- the terminal row per chain
+SELECT c.deployment_id, c.entity_id, c.cur
+FROM chain AS c
+JOIN entities AS terminal
+  ON terminal.deployment_id = c.deployment_id
+ AND terminal.entity_id = c.cur
+ AND terminal.merged_into IS NULL;  -- only a terminated chain resolves
 COMMENT ON VIEW v_memory_entity_survivor IS
-  'Private merge-redirect resolution: maps every entity id to the terminal survivor of its merged_into chain, with a depth guard because acyclicity is not schema-enforced. Not part of memory_v1 and never granted to a query role.';
+  'Private merge-redirect resolution: maps an entity id to the terminal survivor of its merged_into chain. Resolution is fail-closed because acyclicity is not schema-enforced: a chain that does not reach an unmerged entity within the depth bound — a cycle, an over-long chain, or a redirect to a missing row — yields no row at all, so the entity is absent from every survivor-joined relation rather than being exposed as its own survivor. Not part of memory_v1 and never granted to a query role.';
 """
 
 # ── E0 content surface ────────────────────────────────────────────────────
@@ -523,43 +586,111 @@ COMMENT ON VIEW memory_v1.testimony_currency_events_visible IS
 """
 
 # ── entity and identity surface ───────────────────────────────────────────
-_ENTITY_DDL = r"""CREATE VIEW memory_v1.entity_document_mentions (
+# The private mention helper is the SINGLE definition of "this mention occurs
+# in current content, and this is the survivor it resolves to". Both the
+# mention transcript (mentions_live) and the mention count
+# (entity_document_mentions) are projections of it, so the count is exactly the
+# number of transcript rows for that survivor and lineage and the two cannot
+# drift. Every coordinate of the association is bound: the chunk must be a
+# current-content chunk, the mention's own doc_id must be the lineage that
+# chunk belongs to, and the claim coordinate must be a visible claim of that
+# same lineage. Binding the lineage matters — without it, a mention row whose
+# doc_id names a forgotten lineage would still be exposed through the live
+# lineage of its chunk.
+_ENTITY_DDL = r"""CREATE VIEW v_memory_mention_current_content (
+  deployment_id,
+  mention_id,
+  doc_id,
+  version_id,
+  representation_id,
+  chunk_id,
+  section_id,
+  claim_id,
+  surface_form,
+  normalized_lemma,
+  canonical_name_form,
+  emitted_type,
+  type_confidence,
+  language,
+  char_start,
+  char_end,
+  created_at,
+  survivor_entity_id,
+  resolution_method,
+  resolution_confidence,
+  resolution_is_new_entity,
+  resolved_at
+) AS
+SELECT
+  m.deployment_id,
+  m.mention_id,
+  cl.doc_id,
+  cl.version_id,
+  cl.representation_id,
+  cl.chunk_id,
+  cl.section_id,
+  mc.claim_id,
+  m.surface_form,
+  m.normalized_lemma,
+  m.canonical_name_form,
+  m.emitted_type,
+  m.type_confidence,
+  m.language,
+  m.char_start,
+  m.char_end,
+  m.created_at,
+  s.survivor_entity_id,
+  live.method::text,
+  live.confidence,
+  live.is_new_entity,
+  live.decided_at
+FROM mentions AS m
+JOIN memory_v1.chunks_live AS cl
+  ON cl.deployment_id = m.deployment_id
+ AND cl.chunk_id = m.chunk_id
+ AND cl.doc_id = m.doc_id
+LEFT JOIN memory_v1.claims_visible_history AS mc
+  ON mc.deployment_id = m.deployment_id
+ AND mc.claim_id = m.claim_id
+ AND mc.doc_id = cl.doc_id
+LEFT JOIN LATERAL (
+  SELECT rd.entity_id, rd.method, rd.confidence, rd.is_new_entity, rd.decided_at
+  FROM resolution_decisions AS rd
+  WHERE rd.deployment_id = m.deployment_id
+    AND rd.mention_id = m.mention_id
+    AND rd.superseded_by IS NULL
+  ORDER BY rd.decided_at DESC, rd.decision_id DESC
+  LIMIT 1
+) AS live ON true
+LEFT JOIN v_memory_entity_survivor AS s
+  ON s.deployment_id = m.deployment_id
+ AND s.entity_id = live.entity_id;
+COMMENT ON VIEW v_memory_mention_current_content IS
+  'Private single definition of a mention in current content: exactly one row per mention whose chunk is a current-content chunk of the lineage the mention itself names, carrying the mention''s coordinates and the survivor of its one live, unsuperseded resolution decision. Both mentions_live and entity_document_mentions are projections of this relation, so a count and the transcript it counts cannot disagree. Not part of memory_v1 and never granted to a query role.';
+
+CREATE VIEW memory_v1.entity_document_mentions (
   deployment_id,       -- The deployment that owns both the entity and the document.
   entity_id,           -- The survivor entity, with merge redirects already resolved.
   doc_id,              -- The live lineage the entity is mentioned in.
-  mention_count,       -- Exact count of distinct visible mentions of this survivor in this lineage.
+  mention_count,       -- Exact count of the mentions of this survivor in this lineage's current content.
   first_mentioned_at,  -- When the earliest counted mention was recorded.
   last_mentioned_at    -- When the latest counted mention was recorded.
 ) AS
 SELECT
-  m.deployment_id,
-  s.survivor_entity_id,
-  vv.doc_id,
-  count(DISTINCT m.mention_id)::bigint,
-  min(m.created_at),
-  max(m.created_at)
-FROM mentions AS m
-JOIN chunks AS ch
-  ON ch.deployment_id = m.deployment_id
- AND ch.chunk_id = m.chunk_id
-JOIN memory_v1.document_versions_visible AS vv
-  ON vv.deployment_id = ch.deployment_id
- AND vv.version_id = ch.version_id
- AND vv.doc_id = m.doc_id
-JOIN resolution_decisions AS rd
-  ON rd.deployment_id = m.deployment_id
- AND rd.mention_id = m.mention_id
- AND rd.superseded_by IS NULL
-JOIN v_memory_entity_survivor AS s
-  ON s.deployment_id = rd.deployment_id
- AND s.entity_id = rd.entity_id
+  h.deployment_id,
+  h.survivor_entity_id,
+  h.doc_id,
+  count(*)::bigint,
+  min(h.created_at),
+  max(h.created_at)
+FROM v_memory_mention_current_content AS h
 JOIN entities AS e
-  ON e.deployment_id = s.deployment_id
- AND e.entity_id = s.survivor_entity_id
+  ON e.deployment_id = h.deployment_id
+ AND e.entity_id = h.survivor_entity_id
  AND e.status = 'active'
-GROUP BY m.deployment_id, s.survivor_entity_id, vv.doc_id;
+GROUP BY h.deployment_id, h.survivor_entity_id, h.doc_id;
 COMMENT ON VIEW memory_v1.entity_document_mentions IS
-  'One row per survivor entity and live document lineage, keyed by (deployment_id, entity_id, doc_id) and joined to entities_current on (deployment_id, entity_id) and documents_live on (deployment_id, doc_id). The mention count is EXACT rather than sampled or capped, and it counts exactly the mentions that are themselves visible: a mention is counted only when its chunk resolves to a non-tombstoned version of a live lineage and its live resolution decision points at this survivor. Mentions of forgotten lineages, mentions of tombstoned versions, mentions with no chunk coordinate, and mentions whose resolution has been superseded are therefore counted nowhere. Merge redirects are resolved before counting, so a merged entity contributes to its survivor and never appears on its own. The clocks are mention-recording instants, not world-validity, and this relation carries no evidence and no fact semantics.';
+  'One row per survivor entity and live document lineage, keyed by (deployment_id, entity_id, doc_id) and joined to entities_current on (deployment_id, entity_id) and documents_live on (deployment_id, doc_id). The mention count is EXACT rather than sampled or capped, and it counts exactly the mentions this deployment can still show: one for every row of mentions_live in this lineage whose resolution names this survivor, and nothing else. Mentions of forgotten lineages, mentions of superseded versions and non-current readings, mentions with no chunk coordinate, mentions whose own lineage disagrees with their chunk''s, and mentions whose resolution has been superseded are therefore counted nowhere — a mention of superseded content is not live content and is not counted. Merge redirects are resolved before counting, so a merged entity contributes to its survivor and never appears on its own. The clocks are mention-recording instants, not world-validity, and this relation carries no evidence and no fact semantics.';
 
 CREATE VIEW memory_v1.entities_current (
   deployment_id,        -- The deployment that owns the entity.
@@ -664,59 +795,41 @@ CREATE VIEW memory_v1.mentions_live (
   char_start,              -- Start character offset of the mention within the named representation's markdown, null when unrecorded.
   char_end,                -- End character offset of the mention within the named representation's markdown, null when unrecorded.
   created_at,              -- When the mention was recorded, which is a processing instant.
-  resolved_entity_id,      -- The survivor entity this mention currently resolves to, null while the mention is unresolved.
-  resolution_method,       -- Which decision tier produced the live resolution, null while the mention is unresolved.
-  resolution_confidence,   -- Confidence of that live resolution, null while the mention is unresolved.
-  resolution_is_new_entity,-- True when the live resolution minted a new entity, null while the mention is unresolved.
-  resolved_at              -- When the live resolution was decided, null while the mention is unresolved.
+  resolved_entity_id,      -- The survivor entity this mention currently resolves to, null while the mention is unresolved or while the entity that decision names is not itself visible.
+  resolution_method,       -- Which decision tier produced the live resolution, null exactly when resolved_entity_id is null.
+  resolution_confidence,   -- Confidence of that live resolution, null exactly when resolved_entity_id is null.
+  resolution_is_new_entity,-- True when the live resolution minted a new entity, null exactly when resolved_entity_id is null.
+  resolved_at              -- When the live resolution was decided, null exactly when resolved_entity_id is null.
 ) AS
 SELECT
-  m.deployment_id,
-  m.mention_id,
-  cl.doc_id,
-  cl.version_id,
-  cl.representation_id,
-  cl.chunk_id,
-  cl.section_id,
-  mc.claim_id,
-  m.surface_form,
-  m.normalized_lemma,
-  m.canonical_name_form,
-  m.emitted_type,
-  m.type_confidence,
-  m.language,
-  m.char_start,
-  m.char_end,
-  m.created_at,
+  h.deployment_id,
+  h.mention_id,
+  h.doc_id,
+  h.version_id,
+  h.representation_id,
+  h.chunk_id,
+  h.section_id,
+  h.claim_id,
+  h.surface_form,
+  h.normalized_lemma,
+  h.canonical_name_form,
+  h.emitted_type,
+  h.type_confidence,
+  h.language,
+  h.char_start,
+  h.char_end,
+  h.created_at,
   ec.entity_id,
-  live.method::text,
-  live.confidence,
-  live.is_new_entity,
-  live.decided_at
-FROM mentions AS m
-JOIN memory_v1.chunks_live AS cl
-  ON cl.deployment_id = m.deployment_id
- AND cl.chunk_id = m.chunk_id
-LEFT JOIN memory_v1.claims_visible_history AS mc
-  ON mc.deployment_id = m.deployment_id
- AND mc.claim_id = m.claim_id
-LEFT JOIN LATERAL (
-  SELECT rd.entity_id, rd.method, rd.confidence, rd.is_new_entity, rd.decided_at
-  FROM resolution_decisions AS rd
-  WHERE rd.deployment_id = m.deployment_id
-    AND rd.mention_id = m.mention_id
-    AND rd.superseded_by IS NULL
-  ORDER BY rd.decided_at DESC, rd.decision_id DESC
-  LIMIT 1
-) AS live ON true
-LEFT JOIN v_memory_entity_survivor AS s
-  ON s.deployment_id = m.deployment_id
- AND s.entity_id = live.entity_id
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolution_method END,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolution_confidence END,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolution_is_new_entity END,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolved_at END
+FROM v_memory_mention_current_content AS h
 LEFT JOIN memory_v1.entities_current AS ec
-  ON ec.deployment_id = s.deployment_id
- AND ec.entity_id = s.survivor_entity_id;
+  ON ec.deployment_id = h.deployment_id
+ AND ec.entity_id = h.survivor_entity_id;
 COMMENT ON VIEW memory_v1.mentions_live IS
-  'One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Mentions in superseded versions, non-ready readings, and forgotten lineages are absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the resolution columns are populated only from the mention''s single live, unsuperseded decision and only when the resolved survivor itself passes the entities_current provenance gate, so they are null rather than dangling. The claim coordinate is gated the same way and is null unless that claim is itself visible. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks.';
+  'One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Membership binds every coordinate of the mention: the chunk must be a current-content chunk and the mention''s own lineage must be that chunk''s lineage, so mentions in superseded versions, in non-ready readings, in forgotten lineages, and mentions whose recorded lineage disagrees with their chunk''s are all absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the five resolution columns are populated together or not at all, from the mention''s single live, unsuperseded decision and only when the survivor that decision names passes the entities_current provenance gate, so a decision pointing at a retired, merged-away, or provenance-free identity leaves the whole resolution null rather than describing a decision whose subject this schema will not show. The claim coordinate is gated the same way and is null unless that claim is itself a visible claim of this lineage. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks.';
 
 CREATE VIEW memory_v1.identity_events_visible (
   deployment_id,       -- The deployment that owns the event.
@@ -1179,6 +1292,53 @@ JOIN memory_v1.documents_live AS target
 COMMENT ON VIEW memory_v1.document_crossrefs_live IS
   'One row per cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). A reference whose target was never ingested, or whose source or target lineage has been forgotten, is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.';
 
+CREATE VIEW v_memory_page_citation_visible (
+  deployment_id,
+  artifact_id,
+  role,
+  target_kind,
+  target_id,
+  claim_chunk_content_hash
+) AS
+-- one arm per target class, rather than one scan with an OR of two gates: an
+-- OR across two subqueries forces the planner to materialize each gate in
+-- full, while separate arms let each one be a semi-join against its own index
+SELECT
+  e.deployment_id,
+  e.artifact_id,
+  e.role::text,
+  CASE WHEN e.claim_lineage_id IS NOT NULL THEN 'claim' ELSE 'document' END,
+  coalesce(e.claim_lineage_id, e.doc_id),
+  e.claim_chunk_content_hash
+FROM knowledge_artifact_evidence AS e
+WHERE (e.claim_lineage_id IS NOT NULL OR e.relation_id IS NULL)
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.documents_live AS d
+    WHERE d.deployment_id = e.deployment_id
+      AND d.doc_id = coalesce(e.claim_lineage_id, e.doc_id)
+  )
+UNION ALL
+SELECT
+  e.deployment_id,
+  e.artifact_id,
+  e.role::text,
+  'relation',
+  e.relation_id,
+  e.claim_chunk_content_hash
+FROM knowledge_artifact_evidence AS e
+WHERE e.claim_lineage_id IS NULL
+  AND e.relation_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.facts_visible_history AS f
+    WHERE f.deployment_id = e.deployment_id
+      AND f.fact_kind = 'relation'
+      AND f.fact_id = e.relation_id
+  );
+COMMENT ON VIEW v_memory_page_citation_visible IS
+  'Private single definition of a knowledge citation whose target is still visible: one row per citation link whose cited lineage is live or whose cited relation still has surviving provenance. Both the membership gate of pages_live and the per-link projection of page_evidence_visible read it, so a page cannot be published with provenance its links cannot show. Not part of memory_v1 and never granted to a query role.';
+
 CREATE VIEW memory_v1.pages_live (
   deployment_id,        -- The deployment that owns the artifact.
   artifact_id,          -- Stable identity of this knowledge artifact.
@@ -1222,6 +1382,12 @@ LEFT JOIN knowledge_artifacts AS parent
   ON parent.deployment_id = a.deployment_id
  AND parent.artifact_id = a.parent_artifact_id
  AND parent.status <> 'tombstoned'
+ AND EXISTS (
+   SELECT 1
+   FROM v_memory_page_citation_visible AS pc
+   WHERE pc.deployment_id = parent.deployment_id
+     AND pc.artifact_id = parent.artifact_id
+ )
 CROSS JOIN LATERAL (
   -- an authored page carries review flags; the predicate on page_kind lives in
   -- the WHERE clause so a compiled page aggregates over an empty set
@@ -1237,9 +1403,15 @@ CROSS JOIN LATERAL (
     AND q.processed_at IS NULL
     AND a.page_kind = 'authored'
 ) AS flags
-WHERE a.status <> 'tombstoned';
+WHERE a.status <> 'tombstoned'
+  AND EXISTS (
+    SELECT 1
+    FROM v_memory_page_citation_visible AS c
+    WHERE c.deployment_id = a.deployment_id
+      AND c.artifact_id = a.artifact_id
+  );
 COMMENT ON VIEW memory_v1.pages_live IS
-  'One row per visible knowledge artifact, keyed by (deployment_id, artifact_id) and joined to page_evidence_visible on the same pair. A tombstoned artifact is absent and a tombstoned parent is reported as null rather than dangling. Everything textual here is COMPILED ORIENTATION PROSE AT COMPILED GRAIN: page_summary is a writer''s abstract of cited evidence and can never be promoted to a live fact, and the artifact body itself lives in the knowledge repository rather than in this schema. Forgetting a source scrubs the summary and marks affected compiled pages stale as part of the purge, which is why this relation''s own gate is visibility rather than citation provenance; the per-link gate lives in page_evidence_visible. The review-flag count is exact over unprocessed flags, is_stale means the compiled page is known to lag its inputs, and last_compiled_at is a processing instant rather than a validity clock.';
+  'One row per visible knowledge artifact, keyed by (deployment_id, artifact_id) and joined to page_evidence_visible on the same pair. Membership is FAIL-CLOSED ON PROVENANCE as well as on status: an artifact appears only while it is not tombstoned AND at least one of its citations still points at a visible target, so a page whose every cited source has been forgotten leaves with them instead of surviving as compiled prose about content this deployment can no longer show. Both page kinds carry citations, so an artifact with none is anomalous rather than ordinary: it is absent here and counted in the operator quarantine report, where it can be recompiled or retired. A tombstoned parent, and a parent that is itself absent for either reason, is reported as null rather than dangling. Everything textual here is COMPILED ORIENTATION PROSE AT COMPILED GRAIN: page_summary is a writer''s abstract of cited evidence and can never be promoted to a live fact, and the artifact body itself lives in the knowledge repository rather than in this schema. The review-flag count is exact over unprocessed flags, is_stale means the compiled page is known to lag its inputs, and last_compiled_at is a processing instant rather than a validity clock.';
 
 CREATE VIEW memory_v1.page_evidence_visible (
   deployment_id,               -- The deployment that owns the association.
@@ -1259,44 +1431,13 @@ SELECT
   array_agg(DISTINCT l.claim_chunk_content_hash ORDER BY l.claim_chunk_content_hash)
     FILTER (WHERE l.claim_chunk_content_hash IS NOT NULL),
   count(*)::bigint
-FROM (
-  SELECT
-    e.deployment_id,
-    e.artifact_id,
-    e.role::text AS role,
-    CASE
-      WHEN e.claim_lineage_id IS NOT NULL THEN 'claim'
-      WHEN e.relation_id IS NOT NULL THEN 'relation'
-      ELSE 'document'
-    END AS target_kind,
-    coalesce(e.claim_lineage_id, e.relation_id, e.doc_id) AS target_id,
-    e.claim_chunk_content_hash
-  FROM knowledge_artifact_evidence AS e
-  JOIN memory_v1.pages_live AS p
-    ON p.deployment_id = e.deployment_id
-   AND p.artifact_id = e.artifact_id
-) AS l
-WHERE (
-  l.target_kind IN ('claim', 'document')
-  AND EXISTS (
-    SELECT 1
-    FROM memory_v1.documents_live AS d
-    WHERE d.deployment_id = l.deployment_id
-      AND d.doc_id = l.target_id
-  )
-) OR (
-  l.target_kind = 'relation'
-  AND EXISTS (
-    SELECT 1
-    FROM memory_v1.facts_visible_history AS f
-    WHERE f.deployment_id = l.deployment_id
-      AND f.fact_kind = 'relation'
-      AND f.fact_id = l.target_id
-  )
-)
+FROM v_memory_page_citation_visible AS l
+JOIN memory_v1.pages_live AS p
+  ON p.deployment_id = l.deployment_id
+ AND p.artifact_id = l.artifact_id
 GROUP BY l.deployment_id, l.artifact_id, l.role, l.target_kind, l.target_id;
 COMMENT ON VIEW memory_v1.page_evidence_visible IS
-  'One row per visible artifact-to-target citation, keyed by (deployment_id, artifact_id, role, target_kind, target_id) and joined to pages_live on (deployment_id, artifact_id), documents_live on target_id for claim and document targets, and the fact relations on target_id for relation targets. EACH TARGET PASSES ITS OWN VISIBILITY GATE: a citation appears only while its cited lineage is live or its cited relation still has surviving provenance, so forgetting a source removes the link rather than leaving a reference to vanished content. A claim citation is a stable coordinate on the asserting LINEAGE, and its chunk content hashes are exposed only as locators inside that already authorized lineage: the hash never authorizes a read and cannot be used to bypass the lineage gate. Because several chunk coordinates in one lineage collapse into one association, link_count reports exactly how many underlying links were collapsed. The view carries no clocks.';
+  'One row per visible artifact-to-target citation, keyed by (deployment_id, artifact_id, role, target_kind, target_id) and joined to pages_live on (deployment_id, artifact_id), documents_live on target_id for claim and document targets, and the fact relations on target_id for relation targets. EACH TARGET PASSES ITS OWN VISIBILITY GATE: a citation appears only while its cited lineage is live or its cited relation still has surviving provenance, so forgetting a source removes the link rather than leaving a reference to vanished content. The same gate decides membership in pages_live, so a visible page always has at least one row here and a link never outlives the page that carries it. A claim citation is a stable coordinate on the asserting LINEAGE, and its chunk content hashes are exposed only as locators inside that already authorized lineage: the hash never authorizes a read and cannot be used to bypass the lineage gate. Because several chunk coordinates in one lineage collapse into one association, link_count reports exactly how many underlying links were collapsed. The view carries no clocks.';
 
 CREATE VIEW memory_v1.changes_visible (
   deployment_id,   -- The deployment that owns the change event.
@@ -1359,8 +1500,24 @@ COMMENT ON VIEW memory_v1.changes_visible IS
 """
 
 
+#: The authored DDL of the query space, in creation order. These strings are
+#: the CANONICAL SOURCE of the public surface: the migration executes exactly
+#: them, and the manifest's canonical AST is PostgreSQL's own parse of exactly
+#: them, so editing one here rolls `surface_manifest_hash` — while reformatting
+#: or re-commenting one cannot, because a parse tree has neither.
+MEMORY_V1_AUTHORED_DDL: tuple[str, ...] = (
+    _SCHEMA_DDL,
+    _HELPER_DDL,
+    _CONTENT_DDL,
+    _TESTIMONY_DDL,
+    _ENTITY_DDL,
+    _FACTS_DDL,
+    _SURROUND_DDL,
+)
+
+
 def upgrade() -> None:
-    """Create the memory_v1 query space and its private survivor helper."""
+    """Create the memory_v1 query space and its private helper views."""
     apply_ddl(sql=_SCHEMA_DDL)
     apply_view_ddl(sql=_HELPER_DDL)
     apply_view_ddl(sql=_CONTENT_DDL)
@@ -1371,7 +1528,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove the whole query space and the helper it depends on."""
-    drop_views(view_names=[f"memory_v1.{name}" for name in reversed(MEMORY_V1_VIEWS)])
+    """Remove the whole query space and the helpers it depends on."""
+    drop_views(view_names=_DROP_ORDER)
     op.execute("DROP SCHEMA IF EXISTS memory_v1")
-    drop_views(view_names=("v_memory_entity_survivor",))

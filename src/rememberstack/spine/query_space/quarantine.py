@@ -8,11 +8,17 @@ absence in a query surface looks exactly like absence in the corpus.
 
 This report closes that gap without weakening the surface. Each probe counts
 rows that exist in the base tables but can never reach `memory_v1`, and names
-the repair the count implies. It is deliberately operator-only: it exposes
-counts rather than content, it is not part of the query space, it is not
-reachable from any agent surface, and nothing in it can be joined back into a
-public result. Orphans stay omitted from every public path until they are
-repaired; the report only makes them countable.
+the repair the count implies. Two of the probes exist precisely because a
+fail-closed rule would otherwise be silent: an entity whose merge chain does
+not terminate resolves to no survivor, and a knowledge page whose every cited
+target has been forgotten is not published — in both cases the row is right to
+be absent and wrong to be invisible to an operator.
+
+It is deliberately operator-only: it exposes counts rather than content, it is
+not part of the query space, it is not reachable from any agent surface, and
+nothing in it can be joined back into a public result. Orphans stay omitted
+from every public path until they are repaired; the report only makes them
+countable.
 """
 
 from typing import Final
@@ -162,23 +168,45 @@ _PROBES: Final = (
     _Probe(
         category="entity_without_surviving_provenance",
         explanation=(
-            "An active entity has no live mention and no live document bridge, so "
-            "it has no surviving provenance and is absent from the entity relation."
+            "An active entity is mentioned nowhere in current content and is bridged "
+            "to no live document, so it has no surviving provenance and is absent "
+            "from the entity relation. A mention that survives only in a superseded "
+            "version counts as no provenance, exactly as the entity relation reads it."
         ),
-        repair="Retire the entity, or re-ingest a source that mentions it.",
+        repair=(
+            "Expected after a forget or a re-extraction that dropped the mention; "
+            "retire the entity, or re-ingest a source that mentions it."
+        ),
         sql=(
             "SELECT count(*) FROM entities e WHERE "
             + _DEPLOYMENT_FILTER.format(alias="e")
             + " AND e.status = 'active'"
-            " AND NOT EXISTS (SELECT 1 FROM resolution_decisions rd"
-            " JOIN mentions m ON m.deployment_id = rd.deployment_id"
-            " AND m.mention_id = rd.mention_id JOIN documents d"
-            " ON d.deployment_id = m.deployment_id AND d.doc_id = m.doc_id"
-            " AND d.deleted_at IS NULL WHERE rd.deployment_id = e.deployment_id"
-            " AND rd.entity_id = e.entity_id AND rd.superseded_by IS NULL)"
+            " AND NOT EXISTS (SELECT 1 FROM v_memory_mention_current_content h"
+            " WHERE h.deployment_id = e.deployment_id"
+            " AND h.survivor_entity_id = e.entity_id)"
             " AND NOT EXISTS (SELECT 1 FROM documents d"
-            " WHERE d.deployment_id = e.deployment_id"
-            " AND d.document_entity_id = e.entity_id AND d.deleted_at IS NULL)"
+            " JOIN v_memory_entity_survivor s ON s.deployment_id = d.deployment_id"
+            " AND s.entity_id = d.document_entity_id"
+            " WHERE d.deployment_id = e.deployment_id AND d.deleted_at IS NULL"
+            " AND s.survivor_entity_id = e.entity_id)"
+        ),
+    ),
+    _Probe(
+        category="entity_merge_chain_unresolved",
+        explanation=(
+            "An entity's merge redirect never reaches an unmerged entity — a "
+            "cycle, an over-long chain, or a redirect to a missing row — so it "
+            "resolves to no survivor and is absent from every entity relation."
+        ),
+        repair=(
+            "Repair the merged_into chain so it terminates at an unmerged entity; "
+            "a cycle means two merges were recorded in both directions."
+        ),
+        sql=(
+            "SELECT count(*) FROM entities e WHERE "
+            + _DEPLOYMENT_FILTER.format(alias="e")
+            + " AND NOT EXISTS (SELECT 1 FROM v_memory_entity_survivor s"
+            " WHERE s.deployment_id = e.deployment_id AND s.entity_id = e.entity_id)"
         ),
     ),
     _Probe(
@@ -223,6 +251,26 @@ _PROBES: Final = (
             "   AND d.deleted_at IS NULL WHERE re.deployment_id = e.deployment_id"
             "   AND re.relation_id = e.relation_id))"
             ")"
+        ),
+    ),
+    _Probe(
+        category="page_without_visible_citation",
+        explanation=(
+            "A live knowledge artifact cites nothing that is still visible, so "
+            "its compiled prose has no surviving provenance and the page is "
+            "absent from the knowledge relation."
+        ),
+        repair=(
+            "Expected after a forget; recompile the page against visible evidence, "
+            "or retire it. A page that never cited anything was compiled wrongly."
+        ),
+        sql=(
+            "SELECT count(*) FROM knowledge_artifacts a WHERE "
+            + _DEPLOYMENT_FILTER.format(alias="a")
+            + " AND a.status <> 'tombstoned'"
+            " AND NOT EXISTS (SELECT 1 FROM v_memory_page_citation_visible c"
+            " WHERE c.deployment_id = a.deployment_id"
+            " AND c.artifact_id = a.artifact_id)"
         ),
     ),
     _Probe(
