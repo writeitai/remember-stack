@@ -703,7 +703,7 @@ that operation completes through its PostgreSQL fallback. Zero rows is success
 with `empty_result = true`, never an error and never a D49 negative. The store
 codes and fallback behavior cross-reference the §7 failure matrix.
 
-### 4.2 Ownership, RLS, and trust boundaries
+### 4.2 Ownership, tenancy, and trust boundaries
 
 D68 physical database-/schema-per-deployment routing is the PRIMARY tenancy
 boundary. The gateway authenticates a principal, resolves exactly one
@@ -723,39 +723,31 @@ The role split is fixed:
 
 - a no-login migration/table owner owns base objects;
 - a distinct no-login view owner has the minimum base-table `SELECT` grants,
-  is neither superuser nor `BYPASSRLS`, and owns `security_barrier` views with
-  `security_invoker = false`;
-- a deployment-bound login role has `USAGE`/`SELECT` only on `memory_v1` and
-  `EXECUTE` only on §3.4 functions;
+  is not superuser, and owns the `memory_v1` views as PLAIN views —
+  `security_barrier` is deliberately not used (it blocks planner predicate
+  pushdown on every query; the view predicates are invariant filters, not
+  caller-facing security, so the caller-visible rows are already the caller's
+  entitlement — operator performance directive 2026-08-04);
+- a deployment-bound login role has `USAGE`/`SELECT` only on its deployment's
+  `memory_v1` and `EXECUTE` only on §3.4 functions;
 - bridge, gateway-admin, migration, and audit roles are absent from the agent
   pool.
 
-Every tenant-bearing base table has `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
-LEVEL SECURITY`. Its policy keys on `session_user`, which PostgreSQL preserves
-as the authenticated login role across owner-evaluated views and `SECURITY
-DEFINER` functions even though `current_user` changes in those contexts. The
-normative predicate is:
-
-```sql
-USING (
-  deployment_id = (
-    SELECT deployment_id
-    FROM ops.tenant_role_map
-    WHERE role_name = session_user
-  )
-)
-```
-
-`ops.tenant_role_map` is owner-maintained and is not visible to query roles;
-one login maps to one deployment. The view owner is not `BYPASSRLS`, and base
-tables use `FORCE ROW LEVEL SECURITY`, so the policy remains bound during
-owner-context expansion of the `security_barrier`, `security_invoker = false`
-views. Each §3.4 `SECURITY DEFINER` bridge function independently re-derives
-the deployment from `session_user` through the same map and passes that value
-explicitly to every Lance/P2 RPC filter it invokes. A NULL map lookup fails
-closed with zero rows and performs no projection RPC. These RLS rules are
-defense in depth behind D68 physical routing, not a shared-database tenancy
-alternative.
+**Row-level security is deliberately NOT used** (operator decision 2026-08-04:
+measured performance degradation and maintenance burden in prior systems;
+with physical isolation primary, per-row policies are redundant complexity).
+Tenancy is enforced entirely by: (a) D68 physical routing — the connection a
+query runs on belongs to exactly one deployment's database or schema; (b)
+grants — the login role can reference only its deployment's `memory_v1` views
+and public functions, and holds no privilege on any other deployment's
+objects or any base table; (c) pool discipline — checkout resets session
+state and binds one login to one deployment, and check-in discards the
+session on reset failure. Each §3.4 `SECURITY DEFINER` bridge function
+derives the deployment server-side from the connection's deployment binding
+(never from SQL text or parameters) and passes it explicitly to every
+Lance/P2 RPC filter it invokes; a missing binding fails closed with zero rows
+and performs no projection RPC. The §9.5 adversarial suite targets this
+model: routing, grants, pool reuse, and bridge-derivation — not policies.
 
 A client-writable custom GUC is not an authority; `SET` and `set_config` are
 unavailable. `PUBLIC` has no create, usage, table, function, or default
@@ -1352,13 +1344,14 @@ pass before default cutover.
    source deletion never does. Closing the queue row restores
    `support_state = 'current'` without updating a stored fact-state column.
    Acceptance is exact counts/state on every relation and observation fixture.
-5. **Sandbox/RLS.** The §4.2 adversarial suite and 10,000-AST fuzz run produce
+5. **Sandbox/tenancy.** The §4.2 adversarial suite and 10,000-AST fuzz run produce
    zero cross-deployment/operator/base-object disclosures, zero state changes,
    and zero pool contamination under production roles. The suite proves that
-   owner-context view expansion filters on the authenticated `session_user`,
-   that the same identity is preserved and enforced inside every `SECURITY
-   DEFINER` function, that a NULL `ops.tenant_role_map` lookup returns zero rows
-   and performs no RPC, and that all properties survive A→B→A pool reuse. The
+   the login role can reference no other deployment's objects and no base
+   table under any grant path, that every `SECURITY DEFINER` bridge function
+   derives the deployment only from the connection's server-side binding (a
+   missing binding returns zero rows and performs no RPC), and that all
+   properties survive A→B→A pool reuse. The
    SRF fuzz corpus also proves that post-rewrite invocation count equals exactly
    the count of accepted top-level syntactic forms. Cross-deployment graph RPC,
    snapshot selector, worker-reuse, path/URI, and malformed-message attempts
@@ -1485,7 +1478,7 @@ pass before default cutover.
 
 1. **Batch A — schema contract:** machine-readable manifest, full DDL note,
    invariant views, comments, canonicalizer/hash, D41/D48/D54 tests.
-2. **Batch B — safe execution:** roles/RLS, parser/allowlists, limits,
+2. **Batch B — safe execution:** roles/grants tenancy, parser/allowlists, limits,
    QueryResult, discovery, audit/cost controls, adversarial suite.
 3. **Batch C — complete Lance bridge:** `semantic_claims`,
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
