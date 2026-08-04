@@ -389,6 +389,14 @@ def _collect_ctes(statement: SelectStmt) -> tuple[frozenset[str], bool]:
                         QueryErrorCode.RELATION_NOT_ALLOWED,
                         f"CTE names beginning with {_SRF_CTE_PREFIX} are reserved",
                     )
+                if nested_name in MEMORY_V1_VIEW_NAMES:
+                    # The shadow rule is about what a reader believes a name
+                    # means, so it holds at every nesting level, not just the
+                    # top one.
+                    raise _reject(
+                        QueryErrorCode.RELATION_NOT_ALLOWED,
+                        f"CTE name {nested_name} shadows a {_PUBLIC_SCHEMA} relation",
+                    )
                 names.add(nested_name)
 
     clause = statement.withClause

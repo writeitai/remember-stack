@@ -646,3 +646,14 @@ def test_literal_percent_survives_parameter_binding(migrated: str) -> None:
         sql="SELECT count(*) AS n FROM claims_live WHERE claim_text LIKE '%a%'"
     )
     assert outcome.termination_reason == "completed", outcome.error_message
+
+
+def test_nested_cte_names_cannot_shadow_a_public_relation() -> None:
+    """The shadow rule holds at every nesting level, not only the top."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(
+            "WITH outer_q AS ("
+            " WITH facts_current AS (SELECT 1 AS x) SELECT * FROM facts_current)"
+            " SELECT * FROM outer_q"
+        )
+    assert caught.value.code == QueryErrorCode.RELATION_NOT_ALLOWED
