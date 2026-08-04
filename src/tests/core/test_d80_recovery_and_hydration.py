@@ -173,6 +173,11 @@ def test_e2_rejects_model_derived_and_unknown_kinds() -> None:
                 "text": "body",
                 "provenance": "source",
             },
+            {
+                "element_id": "bad4",
+                "kind": "section_title",
+                "text": "Missing provenance",
+            },
         ]
     )
     chunk = ChunkForEmbedding(
@@ -198,6 +203,7 @@ def test_e2_rejects_model_derived_and_unknown_kinds() -> None:
     assert "section_role" not in kinds
     assert "Model prose" not in texts
     assert "Invented summary" not in texts
+    assert "Missing provenance" not in texts
     assert LocationElementKind.DOCUMENT_TITLE.value in kinds
     assert "LEGACY FREEFORM PREFIX" not in _location_bundle_line(chunk=chunk)
     assert LocationProvenance.SOURCE.value  # touch enum for import stability

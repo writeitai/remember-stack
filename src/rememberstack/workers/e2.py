@@ -157,7 +157,7 @@ not already present in the TARGET CHUNK; in-chunk text needs no added_context
 entry). Tag each addition header|neighbour|prefix as a best-effort provenance
 pointer, but the tag is advisory: every addition must exist verbatim somewhere
 in the bundle's source-derived texts (TARGET CHUNK, DOCUMENT HEADER,
-same-section PREVIOUS/NEXT CHUNK, or stored CONTEXT PREFIX). SECTION SUMMARIES
+same-section PREVIOUS/NEXT CHUNK, or typed LOCATION elements). SECTION SUMMARIES
 are orientation only, never quotable and never an added_context source. Also
 return entailment_self_verdict (does chunk+bundle entail the claim) and
 is_attributed.
@@ -777,7 +777,9 @@ def _location_grounding_pairs(
                     # or unknown kinds as grounding sources.
                     if kind_s not in _LOCATION_ELEMENT_KINDS:
                         continue
-                    if provenance is not None and str(provenance) not in (
+                    # Provenance is required membership gate (§3.3); missing or
+                    # model_derived rows never enter the grounding union.
+                    if provenance is None or str(provenance) not in (
                         _LOCATION_ELEMENT_PROVENANCE
                     ):
                         continue

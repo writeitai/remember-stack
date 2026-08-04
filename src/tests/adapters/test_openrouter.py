@@ -523,7 +523,12 @@ def test_embedding_preserves_usage_when_the_vector_body_is_unusable(
 
     monkeypatch.setattr(provider, "_post", post)
     try:
-        with pytest.raises(OpenRouterProviderError) as raised:
+        # Empty/malformed vectors are content-shape failures (poison-eligible),
+        # not transport outages. OpenRouterInvalidResponseError is a
+        # ProviderInvalidResponseError subclass.
+        from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
+
+        with pytest.raises(OpenRouterInvalidResponseError) as raised:
             provider.embed(
                 request=EmbeddingRequest(
                     model="qwen/qwen3-embedding-8b", texts=("memory",)
