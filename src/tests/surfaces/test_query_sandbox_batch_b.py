@@ -657,3 +657,50 @@ def test_nested_cte_names_cannot_shadow_a_public_relation() -> None:
             " SELECT * FROM outer_q"
         )
     assert caught.value.code == QueryErrorCode.RELATION_NOT_ALLOWED
+
+
+@pytest.mark.parametrize(
+    "sql",
+    (
+        # The bound tests a decoy `depth` from a constant subquery, so it is
+        # always true and the walk never terminates.
+        "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT w.depth + 1 FROM w CROSS JOIN (SELECT 0 AS depth) x"
+        " WHERE x.depth < 4) SELECT * FROM w",
+        # The inverse: the emitted depth comes from the decoy, so it never
+        # advances past zero.
+        "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT x.depth + 1 FROM w CROSS JOIN (SELECT 0 AS depth) x"
+        " WHERE w.depth < 4) SELECT * FROM w",
+    ),
+)
+def test_recursion_requires_the_depth_column_to_be_the_ctes_own(sql: str) -> None:
+    """A decoy `depth` from another relation cannot satisfy the template."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(sql)
+    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
+
+
+def test_percent_literals_survive_a_parameterless_statement(migrated: str) -> None:
+    """With no mapping bound, psycopg interpolates nothing — so neither do we."""
+    modulo = _executor(migrated).query_sql(sql="SELECT 5 % 2 AS m")
+    assert modulo.termination_reason == "completed", modulo.error_message
+    assert modulo.rows == ((1,),)
+    literal = _executor(migrated).query_sql(sql="SELECT '%a%'::text AS v")
+    assert literal.rows == (("%a%",),)
+
+
+def test_encoded_parameter_bytes_are_capped(migrated: str) -> None:
+    outcome = _executor(migrated).query_sql(
+        sql="SELECT length($1::text) AS n", parameters=["x" * 300_000]
+    )
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_query_hash_separates_parameter_types(migrated: str) -> None:
+    """`$1` bound to an integer and to text are different queries."""
+    executor = _executor(migrated)
+    as_integer = executor.query_sql(sql="SELECT $1::text AS v", parameters=[7])
+    as_text = executor.query_sql(sql="SELECT $1::text AS v", parameters=["7"])
+    assert as_integer.termination_reason == "completed"
+    assert as_integer.query_hash != as_text.query_hash

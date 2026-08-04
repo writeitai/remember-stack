@@ -439,13 +439,28 @@ class _DepthAssignmentScan(Visitor):
         return None
 
 
-def _is_depth_column(node: Node | None) -> bool:
-    return (
-        isinstance(node, ColumnRef)
-        and bool(node.fields)
-        and isinstance(node.fields[-1], String)
-        and _sval(node.fields[-1]).lower() == "depth"
-    )
+def _is_depth_column(node: Node | None, *, qualifier: str | None = None) -> bool:
+    """True for a `depth` column reference, optionally pinned to one relation.
+
+    Pinning matters: a recursive term can cross-join a constant subquery that
+    also publishes `depth`, and bound or increment the WRONG one — the bound is
+    then always true, or the emitted depth never advances.
+    """
+    if (
+        not isinstance(node, ColumnRef)
+        or not node.fields
+        or not isinstance(node.fields[-1], String)
+        or _sval(node.fields[-1]).lower() != "depth"
+    ):
+        return False
+    if qualifier is None:
+        return True
+    parts = [_sval(field) for field in node.fields]
+    if len(parts) == 1:
+        # Unqualified is only unambiguous when the self-reference is the sole
+        # source of rows, which the caller checks separately.
+        return True
+    return parts[-2].lower() == qualifier.lower()
 
 
 def _is_integer_literal(node: Node | None, value: int) -> bool:
@@ -506,13 +521,24 @@ def _validate_recursive_template(statement: SelectStmt) -> None:
             QueryErrorCode.UNBOUNDED_RECURSION,
             "the recursive term must reference the CTE exactly once",
         )
+    if _has_subquery_from_item(recursive_arm):
+        # A constant subquery in the recursive FROM multiplies the frontier
+        # every round and can publish a decoy `depth` column.
+        raise _reject(
+            QueryErrorCode.UNBOUNDED_RECURSION,
+            "the recursive term may join only public relations, not subqueries",
+        )
+    self_alias = _self_reference_alias(recursive_arm, name=cte_name)
+    sole_source = _from_item_count(recursive_arm) == 1
     emitted = _target_value(recursive_arm, anchor_position)
-    if not _is_depth_plus_one(emitted):
+    if not _is_depth_plus_one(emitted, qualifier=None if sole_source else self_alias):
         raise _reject(
             QueryErrorCode.UNBOUNDED_RECURSION,
             "the recursive term must emit depth + 1 in the depth column",
         )
-    bound = _recursive_arm_depth_bound(recursive_arm)
+    bound = _recursive_arm_depth_bound(
+        recursive_arm, qualifier=None if sole_source else self_alias
+    )
     if bound is None or bound > _RECURSION_DEPTH_MAX:
         raise _reject(
             QueryErrorCode.UNBOUNDED_RECURSION,
@@ -544,16 +570,73 @@ def _target_value(select: SelectStmt, position: int):  # noqa: ANN202
     return getattr(target, "val", None)
 
 
-def _is_depth_plus_one(node: Node | None) -> bool:
+def _is_depth_plus_one(node: Node | None, *, qualifier: str | None = None) -> bool:
     """True only for the exact expression `depth + 1` (either operand order)."""
     if not isinstance(node, A_Expr):
         return False
     if "".join(_sval(part) for part in node.name or ()) != "+":
         return False
     left, right = node.lexpr, node.rexpr
-    return (_is_depth_column(left) and _is_integer_literal(right, 1)) or (
-        _is_depth_column(right) and _is_integer_literal(left, 1)
-    )
+    return (
+        _is_depth_column(left, qualifier=qualifier) and _is_integer_literal(right, 1)
+    ) or (_is_depth_column(right, qualifier=qualifier) and _is_integer_literal(left, 1))
+
+
+def _self_reference_alias(select: SelectStmt, *, name: str) -> str:
+    """The alias the recursive term binds to its own CTE (or the CTE name)."""
+    target = name.lower()
+
+    class _Alias(Visitor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.alias = name
+
+        def visit_RangeVar(self, ancestors, node: RangeVar):  # noqa: ANN001, ANN201
+            if node.schemaname is None and (node.relname or "").lower() == target:
+                aliasname = getattr(node.alias, "aliasname", None)
+                if isinstance(aliasname, str) and aliasname:
+                    self.alias = aliasname
+            return None
+
+    scan = _Alias()
+    scan(select)
+    return scan.alias
+
+
+def _has_subquery_from_item(select: SelectStmt) -> bool:
+    """True when any FROM item of the term is a subquery rather than a relation."""
+
+    class _Scan(Visitor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.found = False
+
+        def visit_RangeSubselect(self, ancestors, node):  # noqa: ANN001, ANN201
+            self.found = True
+            return None
+
+    scan = _Scan()
+    for item in select.fromClause or ():
+        scan(item)
+    return scan.found
+
+
+def _from_item_count(select: SelectStmt) -> int:
+    """How many relations the recursive term draws rows from."""
+
+    class _Count(Visitor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.total = 0
+
+        def visit_RangeVar(self, ancestors, node: RangeVar):  # noqa: ANN001, ANN201
+            self.total += 1
+            return None
+
+    counter = _Count()
+    for item in select.fromClause or ():
+        counter(item)
+    return counter.total
 
 
 def _self_reference_count(select: SelectStmt, *, name: str) -> int:
@@ -606,7 +689,9 @@ def _anchor_initializes_depth_zero(anchor: SelectStmt) -> bool:
     return False
 
 
-def _recursive_arm_depth_bound(arm: SelectStmt) -> int | None:
+def _recursive_arm_depth_bound(
+    arm: SelectStmt, *, qualifier: str | None = None
+) -> int | None:
     """The N of a top-level AND-conjunct `depth < N`; None when absent/OR-ed."""
     from pglast.ast import A_Const
     from pglast.ast import BoolExpr
@@ -626,7 +711,7 @@ def _recursive_arm_depth_bound(arm: SelectStmt) -> int | None:
             op = "".join(_sval(part) for part in conjunct.name or ())
             if (
                 op == "<"
-                and _is_depth_column(conjunct.lexpr)
+                and _is_depth_column(conjunct.lexpr, qualifier=qualifier)
                 and isinstance(conjunct.rexpr, A_Const)
                 and isinstance(conjunct.rexpr.val, Integer)
             ):
@@ -729,7 +814,10 @@ def _to_named_placeholders(sql: str, *, count: int) -> str:
     percent signs are escaped first so they survive that binding.
     """
     if count == 0:
-        return sql.replace("%", "%%") if "%" in sql else sql
+        # With no mapping bound, psycopg performs no placeholder interpolation,
+        # so a literal percent must survive untouched — escaping it here turned
+        # `5 % 2` into a syntax error and `'%a%'` into `'%%a%%'`.
+        return sql
     translated = sql.replace("%", "%%")
     # Longest index first, so $10 is not rewritten as $1 followed by "0".
     for index in range(count, 0, -1):

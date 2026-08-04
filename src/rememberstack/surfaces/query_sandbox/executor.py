@@ -12,6 +12,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime
+import hashlib
 import json
 import time
 from typing import Final
@@ -59,6 +60,18 @@ _TYPE_NAMES: Final = {
     2950: "uuid",
     3802: "jsonb",
 }
+
+
+def _hash_with_parameter_types(base: str, parameters: Sequence[object]) -> str:
+    """Fold the bound parameter TYPE vector into the statement hash (§4.4).
+
+    Values never enter the hash — only their types, so the same text bound to
+    an integer and to text are distinguishable without disclosing either.
+    """
+    if not parameters:
+        return base
+    vector = ",".join(type(value).__name__ for value in parameters)
+    return hashlib.sha256(f"{base}|types={vector}".encode()).hexdigest()
 
 
 class QuerySandboxExecutor:
@@ -194,6 +207,12 @@ class QuerySandboxExecutor:
             )
         if len(parameters) > limits.parameters_max:
             return failed(QueryErrorCode.INVALID_PARAMETER, "too many parameters")
+        encoded_parameter_bytes = sum(len(str(value).encode()) for value in parameters)
+        if encoded_parameter_bytes > limits.parameters_bytes:
+            return failed(
+                QueryErrorCode.INVALID_PARAMETER,
+                "the encoded parameters exceed the tier's byte cap",
+            )
 
         admission = self._kills.admit(
             deployment_id=self._deployment_id,
@@ -352,7 +371,7 @@ class QuerySandboxExecutor:
             request_id=request_id,
             deployment_id=self._deployment_id,
             surface_manifest_hash=self._manifest_hash,
-            query_hash=validated.query_hash,
+            query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             referenced_views=validated.referenced_views,
             referenced_functions=validated.referenced_functions,
             columns=columns,
