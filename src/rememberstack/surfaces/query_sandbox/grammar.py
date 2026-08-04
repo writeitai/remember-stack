@@ -452,7 +452,15 @@ def _is_integer_literal(node: Node | None, value: int) -> bool:
 
 
 def _validate_recursive_template(statement: SelectStmt) -> None:
-    """Enforces the single §4.1 WITH RECURSIVE template, mechanically."""
+    """Enforce the single §4.1 WITH RECURSIVE template, structurally.
+
+    The template is narrow on purpose: one recursive CTE, one self-reference,
+    an anchor that sets `depth` to 0, a recursive term whose OUTPUT `depth`
+    column IS `depth + 1`, and a top-level `depth < N` conjunct with N <= 6.
+    Checking only that the shapes appear *somewhere* is not enough — a term
+    can carry a decorative `depth + 1` while emitting an unchanged or
+    oscillating depth, which recurses without bound.
+    """
     clause = statement.withClause
     assert clause is not None
     recursive = [
@@ -476,10 +484,25 @@ def _validate_recursive_template(statement: SelectStmt) -> None:
     anchor, recursive_arm = body.larg, body.rarg
     if anchor is None or recursive_arm is None:
         raise _reject(QueryErrorCode.UNBOUNDED_RECURSION, "malformed recursive CTE")
-    if not _anchor_initializes_depth_zero(anchor):
+    cte_name = str(cte.ctename) if isinstance(cte.ctename, str) else ""
+    anchor_position = _depth_target_position(anchor, name=cte_name)
+    if anchor_position is None or not _is_integer_literal(
+        _target_value(anchor, anchor_position), 0
+    ):
         raise _reject(
             QueryErrorCode.UNBOUNDED_RECURSION,
             "the anchor term must initialize an integer column depth to 0",
+        )
+    if _self_reference_count(recursive_arm, name=cte_name) != 1:
+        raise _reject(
+            QueryErrorCode.UNBOUNDED_RECURSION,
+            "the recursive term must reference the CTE exactly once",
+        )
+    emitted = _target_value(recursive_arm, anchor_position)
+    if not _is_depth_plus_one(emitted):
+        raise _reject(
+            QueryErrorCode.UNBOUNDED_RECURSION,
+            "the recursive term must emit depth + 1 in the depth column",
         )
     bound = _recursive_arm_depth_bound(recursive_arm)
     if bound is None or bound > _RECURSION_DEPTH_MAX:
@@ -488,13 +511,60 @@ def _validate_recursive_template(statement: SelectStmt) -> None:
             "the recursive term must be bounded by the literal predicate"
             f" depth < N with N <= {_RECURSION_DEPTH_MAX}, with no OR around it",
         )
-    scan = _DepthAssignmentScan()
-    scan(recursive_arm)
-    if scan.increments != 1:
-        raise _reject(
-            QueryErrorCode.UNBOUNDED_RECURSION,
-            "the recursive term must increment depth by exactly 1, once",
-        )
+
+
+def _depth_target_position(select: SelectStmt, *, name: str) -> int | None:
+    """The position of the column named (or aliased) `depth`."""
+    from pglast.ast import ResTarget
+
+    for position, target in enumerate(select.targetList or ()):
+        if not isinstance(target, ResTarget):
+            continue
+        if str(target.name or "").lower() == "depth":
+            return position
+        if target.name is None and _is_depth_column(target.val):
+            return position
+    return None
+
+
+def _target_value(select: SelectStmt, position: int):  # noqa: ANN202
+    """The expression a select emits at one target position."""
+    targets = select.targetList or ()
+    if position >= len(targets):
+        return None
+    target = targets[position]
+    return getattr(target, "val", None)
+
+
+def _is_depth_plus_one(node: Node | None) -> bool:
+    """True only for the exact expression `depth + 1` (either operand order)."""
+    if not isinstance(node, A_Expr):
+        return False
+    if "".join(_sval(part) for part in node.name or ()) != "+":
+        return False
+    left, right = node.lexpr, node.rexpr
+    return (_is_depth_column(left) and _is_integer_literal(right, 1)) or (
+        _is_depth_column(right) and _is_integer_literal(left, 1)
+    )
+
+
+def _self_reference_count(select: SelectStmt, *, name: str) -> int:
+    """How many times the recursive term names its own CTE."""
+    target = name.lower()
+
+    class _Count(Visitor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.total = 0
+
+        def visit_RangeVar(self, ancestors, node: RangeVar):  # noqa: ANN001, ANN201
+            if node.schemaname is None and (node.relname or "").lower() == target:
+                self.total += 1
+            return None
+
+    counter = _Count()
+    counter(select)
+    return counter.total
 
 
 def _cte_is_self_referencing(cte: CommonTableExpr) -> bool:
@@ -633,11 +703,30 @@ class _ParamScan(Visitor):
     def __init__(self) -> None:
         super().__init__()
         self.max_index = 0
+        self.indices: set[int] = set()
 
     def visit_ParamRef(self, ancestors, node: ParamRef):  # noqa: ANN001, ANN201
         number = node.number if isinstance(node.number, int) else 0
+        if number > 0:
+            self.indices.add(number)
         self.max_index = max(self.max_index, number)
         return None
+
+
+def _to_named_placeholders(sql: str, *, count: int) -> str:
+    """Rewrite PostgreSQL `$n` placeholders into psycopg named placeholders.
+
+    psycopg binds `%(p1)s`-style names, so the deparsed statement is
+    translated once, here, and the executor binds a matching mapping. Literal
+    percent signs are escaped first so they survive that binding.
+    """
+    if count == 0:
+        return sql.replace("%", "%%") if "%" in sql else sql
+    translated = sql.replace("%", "%%")
+    # Longest index first, so $10 is not rewritten as $1 followed by "0".
+    for index in range(count, 0, -1):
+        translated = translated.replace(f"${index}", f"%(p{index})s")
+    return translated
 
 
 def _rewrite_srf_invocations(
@@ -743,7 +832,18 @@ def validate_sql(
         statement = _rewrite_srf_invocations(statement, gate.srf_calls)
         rewritten = True
 
-    normalized = RawStream()(statement)
+    deparsed = RawStream()(statement)
+    # Parameter indices must be contiguous from $1: a statement referencing
+    # $1 and $3 would silently bind the wrong values.
+    if params.indices and params.indices != set(range(1, params.max_index + 1)):
+        raise _reject(
+            QueryErrorCode.INVALID_PARAMETER,
+            "parameter placeholders must be contiguous starting at $1",
+        )
+    # The deparser emits PostgreSQL's `$n`; psycopg binds client-side named
+    # placeholders. Translating here (rather than in the executor) keeps one
+    # definition of the executable text — the same text that is hashed.
+    normalized = _to_named_placeholders(deparsed, count=params.max_index)
     digest = hashlib.sha256(
         f"{normalized}|params={params.max_index}".encode()
     ).hexdigest()

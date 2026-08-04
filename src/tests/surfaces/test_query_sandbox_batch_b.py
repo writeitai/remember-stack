@@ -300,10 +300,16 @@ def test_query_role_settings_are_pinned_by_the_migration(migrated: str) -> None:
 
 
 def _executor(migrated: str, **kwargs) -> QuerySandboxExecutor:  # noqa: ANN003
-    def connect() -> psycopg.Connection:
-        return psycopg.connect(_psycopg_url(migrated))
+    """An executor on the REAL deployment-scoped role.
 
-    return QuerySandboxExecutor(deployment_id=_DEPLOYMENT, connect=connect, **kwargs)
+    Production connections are `rememberstack_query`, so these proofs must be
+    too: a superuser connection hides privilege failures (a superuser-only
+    setting in the per-request block, a missing grant) that every real agent
+    request would hit.
+    """
+    return QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT, connect=lambda: _as_query_role(migrated), **kwargs
+    )
 
 
 def test_executor_completes_with_full_header(migrated: str) -> None:
@@ -593,3 +599,50 @@ def test_nested_with_names_resolve_and_the_rewrite_prefix_is_reserved() -> None:
     with pytest.raises(SandboxRejection) as caught:
         validate_sql("WITH __srf_0 AS (SELECT 1) SELECT * FROM __srf_0")
     assert caught.value.code == QueryErrorCode.RELATION_NOT_ALLOWED
+
+
+@pytest.mark.parametrize(
+    "sql",
+    (
+        # A decorative `depth + 1` in a predicate while the emitted depth
+        # never changes: recursion without bound.
+        "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT depth FROM w WHERE depth < 4 AND depth + 1 > 0) SELECT * FROM w",
+        # Oscillating depth never reaches the bound.
+        "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT CASE WHEN depth = 0 THEN depth - 1 ELSE depth + 1 END"
+        " FROM w WHERE depth < 4) SELECT * FROM w",
+        # Two self-references multiply the frontier each round.
+        "WITH RECURSIVE w AS (SELECT 0 AS depth UNION ALL"
+        " SELECT depth + 1 FROM w, w w2 WHERE depth < 4) SELECT * FROM w",
+    ),
+)
+def test_recursion_template_rejects_decorative_increments(sql: str) -> None:
+    """The emitted depth must BE the increment, not merely mention one."""
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql(sql)
+    assert caught.value.code == QueryErrorCode.UNBOUNDED_RECURSION
+
+
+def test_parameters_execute_end_to_end(migrated: str) -> None:
+    """A parameterized statement binds and runs (psycopg placeholder form)."""
+    outcome = _executor(migrated).query_sql(
+        sql="SELECT count(*) AS n FROM claims_live WHERE deployment_id = $1",
+        parameters=[_DEPLOYMENT],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.returned_row_count == 1
+
+
+def test_parameter_indices_must_be_contiguous() -> None:
+    with pytest.raises(SandboxRejection) as caught:
+        validate_sql("SELECT $1::text, $3::text")
+    assert caught.value.code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_literal_percent_survives_parameter_binding(migrated: str) -> None:
+    """A LIKE pattern containing % is not eaten by placeholder translation."""
+    outcome = _executor(migrated).query_sql(
+        sql="SELECT count(*) AS n FROM claims_live WHERE claim_text LIKE '%a%'"
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
