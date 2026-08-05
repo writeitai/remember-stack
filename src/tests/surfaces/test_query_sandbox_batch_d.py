@@ -813,6 +813,48 @@ def test_row_materialization_fault_returns_an_empty_execution_error() -> None:
     assert outcome.empty_result is True
 
 
+class _ConnectionCleanupFailure:
+    """A connection that faults only while releasing a successful request."""
+
+    def set_query_timeout(self, _timeout_ms: int) -> None:
+        """Accept the mandatory request timeout."""
+
+    def execute(self, _text: str, _parameters: object) -> object:
+        """Return one successful scalar result."""
+        return _ConcurrentAnswer(1)
+
+    def close(self) -> None:
+        """Model a native query-result or connection cleanup fault."""
+        raise RuntimeError("synthetic connection cleanup fault")
+
+
+class _ConnectionCleanupFailureSnapshot:
+    """A published generation whose request lease cannot be released cleanly."""
+
+    def pinned(self) -> tuple[object, UUID, str, datetime]:
+        """Lease one cleanup-failing connection with complete provenance."""
+        return _ConnectionCleanupFailure(), uuid4(), "cleanup-fault", _PAST
+
+
+def test_connection_cleanup_fault_returns_an_empty_execution_error() -> None:
+    """Native cleanup faults are audited failures, never raw exceptions."""
+    trail = AuditTrail(capacity=1)
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=_ConnectionCleanupFailureSnapshot(),
+        audit=trail,
+    )
+    outcome = executor.query_cypher(cypher="RETURN 1")
+    assert outcome.error_code == QueryErrorCode.EXECUTION_ERROR
+    assert outcome.termination_reason == "failed"
+    assert outcome.rows == ()
+    assert outcome.empty_result is True
+
+    events: list[AuditEvent] = []
+    assert trail.drain(sink=events.append) == 1
+    assert events[0].engine_fault_class == "ladybug_cleanup"
+
+
 class _ConcurrentAnswer:
     """One scalar row for the mixed-tier timeout regression."""
 

@@ -287,6 +287,7 @@ class CypherSandboxExecutor:
             admitted = True
 
             connection, snapshot = self._pinned_snapshot(started_at=started)
+            result_ready = False
             try:
                 text = f"EXPLAIN {statement.text}" if explain else statement.text
                 result = self._execute(
@@ -297,10 +298,22 @@ class CypherSandboxExecutor:
                     row_cap=row_cap,
                     byte_cap=limits.returned_bytes_default,
                 )
+                result_ready = True
             finally:
                 # `pinned()` leases a request-private connection because its
                 # timeout is mutable. Never return that state to another query.
-                connection.close()
+                try:
+                    connection.close()
+                except Exception as error:
+                    # Preserve an already-classified execution failure. When
+                    # execution succeeded, cleanup is still engine work and
+                    # must cross the same content-free public error boundary.
+                    if result_ready:
+                        raise SandboxRejection(
+                            code=QueryErrorCode.EXECUTION_ERROR,
+                            message="the graph engine could not release the request",
+                            engine_fault_class="ladybug_cleanup",
+                        ) from error
             columns = tuple(
                 ResultColumn(name=name, type=kind, nullable=True)
                 for name, kind in zip(
