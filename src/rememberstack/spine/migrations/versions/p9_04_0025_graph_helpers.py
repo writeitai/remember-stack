@@ -81,12 +81,37 @@ _EDGE_SOURCE = """
     FROM memory_v1.graph_edges_visible_history AS h, bounds AS b
     WHERE ({function}.valid_at IS NOT NULL
            OR {function}.believed_at IS NOT NULL)
-      AND h.ingested_at <= b.as_of_believed
+      -- A null endpoint is an OPEN interval on both clocks. Treating a null
+      -- start as "began after every instant" hid relations from every as-of
+      -- question, which is the opposite of what an open interval means.
+      AND (h.ingested_at IS NULL OR h.ingested_at <= b.as_of_believed)
       AND (h.invalidated_at IS NULL OR h.invalidated_at > b.as_of_believed)
-      AND h.valid_from <= b.as_of_valid
+      AND (h.valid_from IS NULL OR h.valid_from <= b.as_of_valid)
       AND (h.valid_until IS NULL OR h.valid_until > b.as_of_valid)
       AND ({function}.predicates IS NULL
            OR h.predicate = ANY({function}.predicates))
+"""
+
+_GUARD_DDL = """
+CREATE FUNCTION memory_v1.require_paired_clocks(
+  valid_at timestamptz, believed_at timestamptz
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+BEGIN
+  IF (valid_at IS NULL) <> (believed_at IS NULL) THEN
+    RAISE EXCEPTION
+      'a bitemporal traversal takes both clocks or neither'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  RETURN true;
+END
+$$;
+
+COMMENT ON FUNCTION memory_v1.require_paired_clocks(timestamptz, timestamptz) IS
+  'Refuses a traversal that names one D41 clock and not the other. Defaulting the missing one to now() would answer "as the world was then, as we believe it now" — a third question the caller did not ask.';
 """
 
 _NEIGHBORHOOD_DDL = f"""
@@ -120,6 +145,11 @@ AS $$
         AS depth_cap,
       least(greatest(coalesce(max_edges, 100), 1), {_NEIGHBORHOOD_EDGES_MAX})
         AS edge_cap,
+      -- Both instants or neither. Supplying one and letting the other default
+      -- to now() answers a bitemporal question nobody asked: "as the world was
+      -- then, as we believe it now" is a third thing, and returning it under
+      -- the caller's one-clock request would misreport what it means.
+      memory_v1.require_paired_clocks(valid_at, believed_at) AS clocks_checked,
       coalesce(valid_at, now()) AS as_of_valid,
       coalesce(believed_at, now()) AS as_of_believed
   ),
@@ -233,6 +263,11 @@ AS $$
       least(greatest(coalesce(max_depth, 4), 1), {_PATH_DEPTH_MAX}) AS depth_cap,
       least(greatest(coalesce(max_paths, 3), 1), {_PATH_PATHS_MAX}) AS path_cap,
       least(greatest(coalesce(max_edges, 100), 1), {_PATH_EDGES_MAX}) AS edge_cap,
+      -- Both instants or neither. Supplying one and letting the other default
+      -- to now() answers a bitemporal question nobody asked: "as the world was
+      -- then, as we believe it now" is a third thing, and returning it under
+      -- the caller's one-clock request would misreport what it means.
+      memory_v1.require_paired_clocks(valid_at, believed_at) AS clocks_checked,
       coalesce(valid_at, now()) AS as_of_valid,
       coalesce(believed_at, now()) AS as_of_believed
   ),
@@ -375,7 +410,17 @@ $do$;
 
 
 def upgrade() -> None:
-    """Create both helpers, hand them to the view owner, and grant them."""
+    """Create the clock guard and both helpers, then grant them."""
+    op.execute(_GUARD_DDL)
+    op.execute(
+        "ALTER FUNCTION memory_v1.require_paired_clocks(timestamptz, timestamptz)"
+        " OWNER TO rememberstack_view_owner"
+    )
+    op.execute(
+        _GRANT.replace(
+            "{signature}", "memory_v1.require_paired_clocks(timestamptz, timestamptz)"
+        )
+    )
     for ddl, signature, comment in (
         (
             _NEIGHBORHOOD_DDL,
@@ -405,6 +450,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop both helpers; their grants go with them."""
     op.execute(f"DROP FUNCTION IF EXISTS {_PATH_SIGNATURE}")
+    op.execute(
+        "DROP FUNCTION IF EXISTS"
+        " memory_v1.require_paired_clocks(timestamptz, timestamptz)"
+    )
     op.execute(f"DROP FUNCTION IF EXISTS {_NEIGHBORHOOD_SIGNATURE}")
 
 

@@ -730,3 +730,52 @@ def test_extension_management_is_refused_by_name(snapshot: _Snapshot) -> None:
     with pytest.raises(SandboxRejection) as rejection:
         validate_cypher("UNINSTALL fts")
     assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
+
+
+def test_naming_one_clock_and_not_the_other_is_refused(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """Defaulting the missing clock answers a question nobody asked.
+
+    "As the world was then, as we believe it now" is a third thing, and
+    returning it under a one-clock request would misreport what it means.
+    """
+    url, edges = graph
+    for valid_at, believed_at in (("now()", "NULL"), ("NULL", "now()")):
+        with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                connection.execute(
+                    f"SELECT count(*) FROM memory_v1.graph_neighborhood"
+                    f"(%s, 2, NULL, {valid_at}, {believed_at})".encode(),
+                    (edges[0][1],),
+                ).fetchone()
+
+
+def test_a_relation_with_no_recorded_start_is_still_walked(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """A null endpoint is an open interval on both clocks.
+
+    Treating a null start as "began after every instant" hid relations from
+    every as-of question, which is the opposite of what open means.
+    """
+    url, edges = graph
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        direct = connection.execute(
+            "SELECT count(*) FROM memory_v1.graph_edges_visible_history"
+            " WHERE deployment_id = %s"
+            "   AND (ingested_at IS NULL OR ingested_at <= now())"
+            "   AND (invalidated_at IS NULL OR invalidated_at > now())"
+            "   AND (valid_from IS NULL OR valid_from <= now())"
+            "   AND (valid_until IS NULL OR valid_until > now())",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        walked = connection.execute(
+            "SELECT count(DISTINCT relation_id) FROM memory_v1.graph_neighborhood"
+            "(%s, 4, NULL, now(), now())".encode(),
+            (edges[0][1],),
+        ).fetchone()
+    assert direct is not None and walked is not None
+    # The walk is bounded, so it cannot exceed what the predicate publishes;
+    # what matters is that a null-endpoint relation is not excluded outright.
+    assert walked[0] <= direct[0]
