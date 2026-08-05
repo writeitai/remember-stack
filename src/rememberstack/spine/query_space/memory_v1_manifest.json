@@ -21854,296 +21854,20 @@
           "comment": "One row per current relation edge, keyed by (deployment_id, relation_id) and joined to entities_current on (deployment_id, subject_entity_id) and (deployment_id, object_entity_id). This is the LIVE graph surface, evaluated in PostgreSQL rather than read from a projection: it inherits the facts_current membership rule, the same half-open world-time interval, and the same shared evaluation instant, which is emitted on every row. Both endpoints are survivor identities and both are required to be visible entities, so an edge is dropped as a unit rather than dangling into an entity that has no surviving provenance. The counts are exact counts of distinct current-testimony lineages, and support state is derived at read time from the open review queue. Observations never project here, because they are entity-anchored facts rather than edges.",
           "definition_ast": {
             "@": "ViewStmt",
-            "aliases": [
-              {
-                "@": "String",
-                "sval": "deployment_id"
-              },
-              {
-                "@": "String",
-                "sval": "relation_id"
-              },
-              {
-                "@": "String",
-                "sval": "subject_entity_id"
-              },
-              {
-                "@": "String",
-                "sval": "object_entity_id"
-              },
-              {
-                "@": "String",
-                "sval": "predicate"
-              },
-              {
-                "@": "String",
-                "sval": "fact_label"
-              },
-              {
-                "@": "String",
-                "sval": "valid_from"
-              },
-              {
-                "@": "String",
-                "sval": "valid_until"
-              },
-              {
-                "@": "String",
-                "sval": "ingested_at"
-              },
-              {
-                "@": "String",
-                "sval": "contradiction_group"
-              },
-              {
-                "@": "String",
-                "sval": "confidence"
-              },
-              {
-                "@": "String",
-                "sval": "evidence_count"
-              },
-              {
-                "@": "String",
-                "sval": "contradict_count"
-              },
-              {
-                "@": "String",
-                "sval": "support_state"
-              },
-              {
-                "@": "String",
-                "sval": "evaluated_at"
-              }
-            ],
             "query": {
               "@": "SelectStmt",
               "all": false,
               "fromClause": [
                 {
-                  "@": "JoinExpr",
-                  "isNatural": false,
-                  "jointype": {
-                    "#": "JoinType",
-                    "name": "JOIN_INNER"
+                  "@": "RangeVar",
+                  "alias": {
+                    "@": "Alias",
+                    "aliasname": "f"
                   },
-                  "larg": {
-                    "@": "JoinExpr",
-                    "isNatural": false,
-                    "jointype": {
-                      "#": "JoinType",
-                      "name": "JOIN_INNER"
-                    },
-                    "larg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "f"
-                      },
-                      "inh": true,
-                      "relname": "facts_current",
-                      "relpersistence": "p",
-                      "schemaname": "memory_v1"
-                    },
-                    "quals": {
-                      "@": "BoolExpr",
-                      "args": [
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "subject"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "f"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "subject"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "entity_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "f"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "subject_entity_id"
-                              }
-                            ]
-                          }
-                        }
-                      ],
-                      "boolop": {
-                        "#": "BoolExprType",
-                        "name": "AND_EXPR"
-                      }
-                    },
-                    "rarg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "subject"
-                      },
-                      "inh": true,
-                      "relname": "entities_current",
-                      "relpersistence": "p",
-                      "schemaname": "memory_v1"
-                    },
-                    "rtindex": 0
-                  },
-                  "quals": {
-                    "@": "BoolExpr",
-                    "args": [
-                      {
-                        "@": "A_Expr",
-                        "kind": {
-                          "#": "A_Expr_Kind",
-                          "name": "AEXPR_OP"
-                        },
-                        "lexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "object"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "deployment_id"
-                            }
-                          ]
-                        },
-                        "name": [
-                          {
-                            "@": "String",
-                            "sval": "="
-                          }
-                        ],
-                        "rexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "f"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "deployment_id"
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "@": "A_Expr",
-                        "kind": {
-                          "#": "A_Expr_Kind",
-                          "name": "AEXPR_OP"
-                        },
-                        "lexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "object"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "entity_id"
-                            }
-                          ]
-                        },
-                        "name": [
-                          {
-                            "@": "String",
-                            "sval": "="
-                          }
-                        ],
-                        "rexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "f"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "object_entity_id"
-                            }
-                          ]
-                        }
-                      }
-                    ],
-                    "boolop": {
-                      "#": "BoolExprType",
-                      "name": "AND_EXPR"
-                    }
-                  },
-                  "rarg": {
-                    "@": "RangeVar",
-                    "alias": {
-                      "@": "Alias",
-                      "aliasname": "object"
-                    },
-                    "inh": true,
-                    "relname": "entities_current",
-                    "relpersistence": "p",
-                    "schemaname": "memory_v1"
-                  },
-                  "rtindex": 0
+                  "inh": true,
+                  "relname": "facts_current",
+                  "relpersistence": "p",
+                  "schemaname": "memory_v1"
                 }
               ],
               "groupDistinct": false,
@@ -22174,6 +21898,7 @@
                 },
                 {
                   "@": "ResTarget",
+                  "name": "relation_id",
                   "val": {
                     "@": "ColumnRef",
                     "fields": [
@@ -22398,41 +22123,318 @@
                 }
               ],
               "whereClause": {
-                "@": "A_Expr",
-                "kind": {
-                  "#": "A_Expr_Kind",
-                  "name": "AEXPR_OP"
-                },
-                "lexpr": {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "f"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "fact_kind"
-                    }
-                  ]
-                },
-                "name": [
+                "@": "BoolExpr",
+                "args": [
                   {
-                    "@": "String",
-                    "sval": "="
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "lexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "f"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "fact_kind"
+                        }
+                      ]
+                    },
+                    "name": [
+                      {
+                        "@": "String",
+                        "sval": "="
+                      }
+                    ],
+                    "rexpr": {
+                      "@": "A_Const",
+                      "isnull": false,
+                      "val": {
+                        "@": "String",
+                        "sval": "relation"
+                      }
+                    }
+                  },
+                  {
+                    "@": "SubLink",
+                    "subLinkId": 0,
+                    "subLinkType": {
+                      "#": "SubLinkType",
+                      "name": "EXISTS_SUBLINK"
+                    },
+                    "subselect": {
+                      "@": "SelectStmt",
+                      "all": false,
+                      "fromClause": [
+                        {
+                          "@": "RangeVar",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "subject"
+                          },
+                          "inh": true,
+                          "relname": "entities_current",
+                          "relpersistence": "p",
+                          "schemaname": "memory_v1"
+                        }
+                      ],
+                      "groupDistinct": false,
+                      "limitOption": {
+                        "#": "LimitOption",
+                        "name": "LIMIT_OPTION_DEFAULT"
+                      },
+                      "op": {
+                        "#": "SetOperation",
+                        "name": "SETOP_NONE"
+                      },
+                      "targetList": [
+                        {
+                          "@": "ResTarget",
+                          "val": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "Integer",
+                              "ival": 1
+                            }
+                          }
+                        }
+                      ],
+                      "whereClause": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "subject"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "f"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "subject"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "entity_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "f"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "subject_entity_id"
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "@": "SubLink",
+                    "subLinkId": 0,
+                    "subLinkType": {
+                      "#": "SubLinkType",
+                      "name": "EXISTS_SUBLINK"
+                    },
+                    "subselect": {
+                      "@": "SelectStmt",
+                      "all": false,
+                      "fromClause": [
+                        {
+                          "@": "RangeVar",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "object"
+                          },
+                          "inh": true,
+                          "relname": "entities_current",
+                          "relpersistence": "p",
+                          "schemaname": "memory_v1"
+                        }
+                      ],
+                      "groupDistinct": false,
+                      "limitOption": {
+                        "#": "LimitOption",
+                        "name": "LIMIT_OPTION_DEFAULT"
+                      },
+                      "op": {
+                        "#": "SetOperation",
+                        "name": "SETOP_NONE"
+                      },
+                      "targetList": [
+                        {
+                          "@": "ResTarget",
+                          "val": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "Integer",
+                              "ival": 1
+                            }
+                          }
+                        }
+                      ],
+                      "whereClause": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "object"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "f"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "object"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "entity_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "f"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "object_entity_id"
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      }
+                    }
                   }
                 ],
-                "rexpr": {
-                  "@": "A_Const",
-                  "isnull": false,
-                  "val": {
-                    "@": "String",
-                    "sval": "relation"
-                  }
+                "boolop": {
+                  "#": "BoolExprType",
+                  "name": "AND_EXPR"
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -22585,296 +22587,20 @@
           "comment": "One row per historically visible relation edge, keyed by (deployment_id, relation_id) and joined to entities_current on both endpoint columns. Membership requires surviving historical provenance and two visible survivor endpoints, so a relation whose sources have all been forgotten disappears and an edge is never left dangling. Both clocks are RAW: world time is half-open, transaction time is bounded by ingested_at and invalidated_at, a null endpoint is unbounded or unknown, and membership here is not a claim that the edge currently holds. The three columns suffixed _current are LIVE CURRENT-TESTIMONY VALUES READ NOW and never assert that those counts or that support state held at any historical instant; they come from evidence_lineage and from the open support_withdrawn review row respectively.",
           "definition_ast": {
             "@": "ViewStmt",
-            "aliases": [
-              {
-                "@": "String",
-                "sval": "deployment_id"
-              },
-              {
-                "@": "String",
-                "sval": "relation_id"
-              },
-              {
-                "@": "String",
-                "sval": "subject_entity_id"
-              },
-              {
-                "@": "String",
-                "sval": "object_entity_id"
-              },
-              {
-                "@": "String",
-                "sval": "predicate"
-              },
-              {
-                "@": "String",
-                "sval": "fact_label"
-              },
-              {
-                "@": "String",
-                "sval": "valid_from"
-              },
-              {
-                "@": "String",
-                "sval": "valid_until"
-              },
-              {
-                "@": "String",
-                "sval": "ingested_at"
-              },
-              {
-                "@": "String",
-                "sval": "invalidated_at"
-              },
-              {
-                "@": "String",
-                "sval": "contradiction_group"
-              },
-              {
-                "@": "String",
-                "sval": "confidence"
-              },
-              {
-                "@": "String",
-                "sval": "evidence_count_current"
-              },
-              {
-                "@": "String",
-                "sval": "contradict_count_current"
-              },
-              {
-                "@": "String",
-                "sval": "support_state_current"
-              }
-            ],
             "query": {
               "@": "SelectStmt",
               "all": false,
               "fromClause": [
                 {
-                  "@": "JoinExpr",
-                  "isNatural": false,
-                  "jointype": {
-                    "#": "JoinType",
-                    "name": "JOIN_INNER"
+                  "@": "RangeVar",
+                  "alias": {
+                    "@": "Alias",
+                    "aliasname": "h"
                   },
-                  "larg": {
-                    "@": "JoinExpr",
-                    "isNatural": false,
-                    "jointype": {
-                      "#": "JoinType",
-                      "name": "JOIN_INNER"
-                    },
-                    "larg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "h"
-                      },
-                      "inh": true,
-                      "relname": "facts_visible_history",
-                      "relpersistence": "p",
-                      "schemaname": "memory_v1"
-                    },
-                    "quals": {
-                      "@": "BoolExpr",
-                      "args": [
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "subject"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "h"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "subject"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "entity_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "h"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "subject_entity_id"
-                              }
-                            ]
-                          }
-                        }
-                      ],
-                      "boolop": {
-                        "#": "BoolExprType",
-                        "name": "AND_EXPR"
-                      }
-                    },
-                    "rarg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "subject"
-                      },
-                      "inh": true,
-                      "relname": "entities_current",
-                      "relpersistence": "p",
-                      "schemaname": "memory_v1"
-                    },
-                    "rtindex": 0
-                  },
-                  "quals": {
-                    "@": "BoolExpr",
-                    "args": [
-                      {
-                        "@": "A_Expr",
-                        "kind": {
-                          "#": "A_Expr_Kind",
-                          "name": "AEXPR_OP"
-                        },
-                        "lexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "object"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "deployment_id"
-                            }
-                          ]
-                        },
-                        "name": [
-                          {
-                            "@": "String",
-                            "sval": "="
-                          }
-                        ],
-                        "rexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "h"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "deployment_id"
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "@": "A_Expr",
-                        "kind": {
-                          "#": "A_Expr_Kind",
-                          "name": "AEXPR_OP"
-                        },
-                        "lexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "object"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "entity_id"
-                            }
-                          ]
-                        },
-                        "name": [
-                          {
-                            "@": "String",
-                            "sval": "="
-                          }
-                        ],
-                        "rexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "h"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "object_entity_id"
-                            }
-                          ]
-                        }
-                      }
-                    ],
-                    "boolop": {
-                      "#": "BoolExprType",
-                      "name": "AND_EXPR"
-                    }
-                  },
-                  "rarg": {
-                    "@": "RangeVar",
-                    "alias": {
-                      "@": "Alias",
-                      "aliasname": "object"
-                    },
-                    "inh": true,
-                    "relname": "entities_current",
-                    "relpersistence": "p",
-                    "schemaname": "memory_v1"
-                  },
-                  "rtindex": 0
+                  "inh": true,
+                  "relname": "facts_visible_history",
+                  "relpersistence": "p",
+                  "schemaname": "memory_v1"
                 }
               ],
               "groupDistinct": false,
@@ -22905,6 +22631,7 @@
                 },
                 {
                   "@": "ResTarget",
+                  "name": "relation_id",
                   "val": {
                     "@": "ColumnRef",
                     "fields": [
@@ -23129,41 +22856,318 @@
                 }
               ],
               "whereClause": {
-                "@": "A_Expr",
-                "kind": {
-                  "#": "A_Expr_Kind",
-                  "name": "AEXPR_OP"
-                },
-                "lexpr": {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "h"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "fact_kind"
-                    }
-                  ]
-                },
-                "name": [
+                "@": "BoolExpr",
+                "args": [
                   {
-                    "@": "String",
-                    "sval": "="
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "lexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "h"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "fact_kind"
+                        }
+                      ]
+                    },
+                    "name": [
+                      {
+                        "@": "String",
+                        "sval": "="
+                      }
+                    ],
+                    "rexpr": {
+                      "@": "A_Const",
+                      "isnull": false,
+                      "val": {
+                        "@": "String",
+                        "sval": "relation"
+                      }
+                    }
+                  },
+                  {
+                    "@": "SubLink",
+                    "subLinkId": 0,
+                    "subLinkType": {
+                      "#": "SubLinkType",
+                      "name": "EXISTS_SUBLINK"
+                    },
+                    "subselect": {
+                      "@": "SelectStmt",
+                      "all": false,
+                      "fromClause": [
+                        {
+                          "@": "RangeVar",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "subject"
+                          },
+                          "inh": true,
+                          "relname": "entities_current",
+                          "relpersistence": "p",
+                          "schemaname": "memory_v1"
+                        }
+                      ],
+                      "groupDistinct": false,
+                      "limitOption": {
+                        "#": "LimitOption",
+                        "name": "LIMIT_OPTION_DEFAULT"
+                      },
+                      "op": {
+                        "#": "SetOperation",
+                        "name": "SETOP_NONE"
+                      },
+                      "targetList": [
+                        {
+                          "@": "ResTarget",
+                          "val": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "Integer",
+                              "ival": 1
+                            }
+                          }
+                        }
+                      ],
+                      "whereClause": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "subject"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "subject"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "entity_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "subject_entity_id"
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "@": "SubLink",
+                    "subLinkId": 0,
+                    "subLinkType": {
+                      "#": "SubLinkType",
+                      "name": "EXISTS_SUBLINK"
+                    },
+                    "subselect": {
+                      "@": "SelectStmt",
+                      "all": false,
+                      "fromClause": [
+                        {
+                          "@": "RangeVar",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "object"
+                          },
+                          "inh": true,
+                          "relname": "entities_current",
+                          "relpersistence": "p",
+                          "schemaname": "memory_v1"
+                        }
+                      ],
+                      "groupDistinct": false,
+                      "limitOption": {
+                        "#": "LimitOption",
+                        "name": "LIMIT_OPTION_DEFAULT"
+                      },
+                      "op": {
+                        "#": "SetOperation",
+                        "name": "SETOP_NONE"
+                      },
+                      "targetList": [
+                        {
+                          "@": "ResTarget",
+                          "val": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "Integer",
+                              "ival": 1
+                            }
+                          }
+                        }
+                      ],
+                      "whereClause": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "object"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "object"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "entity_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "object_entity_id"
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      }
+                    }
                   }
                 ],
-                "rexpr": {
-                  "@": "A_Const",
-                  "isnull": false,
-                  "val": {
-                    "@": "String",
-                    "sval": "relation"
-                  }
+                "boolop": {
+                  "#": "BoolExprType",
+                  "name": "AND_EXPR"
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -29635,5 +29639,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "7dc1762ac9d6a8ef323ef1242760acbbdafae811a2d40ba3b3d516a8b67638c6"
+  "surface_manifest_hash": "eed7eb50c7ff59e52fb627d54484616816680c5da7c5343314575a5e924b936b"
 }

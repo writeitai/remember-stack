@@ -24,8 +24,14 @@ subject and object, so a caller who cares about direction can still see it.
 
 from alembic import op
 
-revision: str = "p9_04_0025"
-down_revision: str | None = "p9_03_0024"
+from rememberstack.spine.migrations._helpers import _split_sql
+from rememberstack.spine.migrations._helpers import apply_ddl
+from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
+    MEMORY_V1_AUTHORED_DDL,
+)
+
+revision: str = "p9_05_0026"
+down_revision: str | None = "p9_04_0025"
 branch_labels = None
 depends_on = None
 
@@ -36,6 +42,77 @@ _NEIGHBORHOOD_EDGES_MAX = 500
 _PATH_DEPTH_MAX = 6
 _PATH_PATHS_MAX = 10
 _PATH_EDGES_MAX = 500
+
+# Endpoint membership is a semijoin: the graph edge publishes no entity
+# columns. Spelling it as two ordinary joins makes PostgreSQL expand the full
+# entities_current definition twice inside the already-expanded fact view,
+# producing a multi-thousand-node plan after Batch A's coordinate correction.
+# EXISTS preserves exactly the same membership rule without that plan blow-up.
+GRAPH_EDGE_VIEW_DDL = r"""
+CREATE OR REPLACE VIEW memory_v1.graph_edges_current AS
+SELECT
+  f.deployment_id,
+  f.fact_id AS relation_id,
+  f.subject_entity_id,
+  f.object_entity_id,
+  f.predicate,
+  f.fact_label,
+  f.valid_from,
+  f.valid_until,
+  f.ingested_at,
+  f.contradiction_group,
+  f.confidence,
+  f.evidence_count,
+  f.contradict_count,
+  f.support_state,
+  f.evaluated_at
+FROM memory_v1.facts_current AS f
+WHERE f.fact_kind = 'relation'
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.entities_current AS subject
+    WHERE subject.deployment_id = f.deployment_id
+      AND subject.entity_id = f.subject_entity_id
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.entities_current AS object
+    WHERE object.deployment_id = f.deployment_id
+      AND object.entity_id = f.object_entity_id
+  );
+
+CREATE OR REPLACE VIEW memory_v1.graph_edges_visible_history AS
+SELECT
+  h.deployment_id,
+  h.fact_id AS relation_id,
+  h.subject_entity_id,
+  h.object_entity_id,
+  h.predicate,
+  h.fact_label,
+  h.valid_from,
+  h.valid_until,
+  h.ingested_at,
+  h.invalidated_at,
+  h.contradiction_group,
+  h.confidence,
+  h.evidence_count_current,
+  h.contradict_count_current,
+  h.support_state_current
+FROM memory_v1.facts_visible_history AS h
+WHERE h.fact_kind = 'relation'
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.entities_current AS subject
+    WHERE subject.deployment_id = h.deployment_id
+      AND subject.entity_id = h.subject_entity_id
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.entities_current AS object
+    WHERE object.deployment_id = h.deployment_id
+      AND object.entity_id = h.object_entity_id
+  );
+"""
 
 _EDGE_COLUMNS = """
   relation_id uuid,
@@ -118,6 +195,8 @@ STABLE
 PARALLEL SAFE
 SECURITY INVOKER
 SET search_path = memory_v1, pg_catalog
+SET join_collapse_limit = 1
+SET from_collapse_limit = 1
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -144,7 +223,7 @@ BEGIN
       coalesce(valid_at, statement_timestamp()) AS as_of_valid,
       coalesce(believed_at, statement_timestamp()) AS as_of_believed
   ),
-  edges AS (\n@@EDGE_SOURCE@@\n  ),
+  edges AS MATERIALIZED (\n@@EDGE_SOURCE@@\n  ),
   walk AS (
     SELECT
       e.relation_id,
@@ -261,6 +340,8 @@ STABLE
 PARALLEL SAFE
 SECURITY INVOKER
 SET search_path = memory_v1, pg_catalog
+SET join_collapse_limit = 1
+SET from_collapse_limit = 1
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -285,7 +366,7 @@ BEGIN
       coalesce(valid_at, statement_timestamp()) AS as_of_valid,
       coalesce(believed_at, statement_timestamp()) AS as_of_believed
   ),
-  edges AS (\n@@EDGE_SOURCE@@\n  ),
+  edges AS MATERIALIZED (\n@@EDGE_SOURCE@@\n  ),
   walk AS (
     SELECT
       CASE
@@ -413,6 +494,11 @@ _PATH_SIGNATURE = (
     " timestamptz, integer, integer)"
 )
 
+_GRAPH_EDGE_VIEWS = (
+    "memory_v1.graph_edges_current",
+    "memory_v1.graph_edges_visible_history",
+)
+
 _GRANT = """
 DO $do$
 DECLARE
@@ -425,7 +511,8 @@ $do$;
 
 
 def upgrade() -> None:
-    """Create only the two documented helpers and grant only the query role."""
+    """Bound graph-edge plans, then create and grant the two public helpers."""
+    apply_ddl(sql=GRAPH_EDGE_VIEW_DDL)
     # PostgreSQL grants EXECUTE on new functions to PUBLIC by default. Close
     # both the inherited ACL and this migration role's future default before
     # creating the public API functions, then grant only the routed query role.
@@ -466,9 +553,30 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop both helpers; their grants go with them."""
+    """Drop both helpers and restore the prior graph-edge view definitions."""
     op.execute(f"DROP FUNCTION IF EXISTS {_PATH_SIGNATURE}")
     op.execute(f"DROP FUNCTION IF EXISTS {_NEIGHBORHOOD_SIGNATURE}")
+    prior = _prior_graph_edge_views()
+    for name in _GRAPH_EDGE_VIEWS:
+        op.execute(prior[name])
+
+
+def _prior_graph_edge_views() -> dict[str, str]:
+    """Extract the immutable p9.01 graph-edge definitions for downgrade."""
+    definitions: dict[str, str] = {}
+    for block in MEMORY_V1_AUTHORED_DDL:
+        for statement in _split_sql(sql=block):
+            if not statement.startswith("CREATE VIEW "):
+                continue
+            name = statement.split(maxsplit=3)[2]
+            if name in _GRAPH_EDGE_VIEWS:
+                definitions[name] = statement.replace(
+                    "CREATE VIEW ", "CREATE OR REPLACE VIEW ", 1
+                )
+    missing = set(_GRAPH_EDGE_VIEWS) - set(definitions)
+    if missing:
+        raise RuntimeError(f"missing prior graph-edge views: {sorted(missing)}")
+    return definitions
 
 
 def _quote(value: str) -> str:

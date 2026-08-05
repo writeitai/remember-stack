@@ -225,3 +225,27 @@ physical-address origin/coercion functions there: `id`, `rowid`, `internal_id`,
 `e.id` and ``e.`id` `` remain readable, and the final logical-type check remains
 defense in depth. This avoids both a parser and unreliable output-string shape
 matching.
+
+## Post-stack planner reconciliation
+
+Rebasing Batch D after Batch A exposed two integration facts, not new product
+requirements. First, Batch A now owns `p9_04_0025`, so the graph migration must
+follow it as `p9_05_0026`; keeping D's old revision identifier would create two
+Alembic revisions with the same name. Second, the corrected coordinate-complete
+views make PostgreSQL expand a much deeper authorization tree. The stacked
+`graph_edges_current` plan reached 2,064 nodes on the pinned local PostgreSQL,
+and a bounded evidence-hydration query could exhaust the server during plan
+search.
+
+The graph edge views publish no entity columns, so their two entity joins are
+membership tests. Expressing them as `EXISTS` semijoins preserves that exact
+authority while avoiding repeated expansion of `entities_current`; the
+equivalent probe completed in about 1.5 seconds. The public helpers, SQL
+sandbox transaction, and bounded `multi_hop_context` hydration preserve their
+written join order with query-local `join_collapse_limit` and
+`from_collapse_limit` settings. The hydration query also materializes its
+already-confirmed edge set once and reads base entity rows only for names and
+types after the graph view has authorized both endpoints.
+
+These are planner boundaries around the existing authorities. They add no
+RLS, visibility rule, cache, parser, or result behavior.

@@ -835,6 +835,11 @@ class QueryEngine:
             with self._engine.connect().execution_options(
                 isolation_level="REPEATABLE READ"
             ) as connection:
+                # The invariant-compiled authority views are deliberately deep.
+                # Preserve the written join order for this bounded hydration query
+                # so PostgreSQL does not exhaust memory exploring equivalent plans.
+                connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+                connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
                 evidence_rows = (
                     connection.execute(
                         _MULTI_HOP_EDGE_EVIDENCE,
@@ -3099,7 +3104,7 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         SELECT relation_id, graph_rank
         FROM unnest(CAST(:relation_ids AS uuid[])) WITH ORDINALITY
              AS nominated(relation_id, graph_rank)
-    ), confirmed AS (
+    ), confirmed AS MATERIALIZED (
         SELECT requested.graph_rank, r.relation_id AS fact_id,
                r.subject_entity_id AS subject_id,
                r.object_entity_id AS object_id, r.predicate,
@@ -3107,9 +3112,9 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                r.evidence_count_current AS evidence_count,
                r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
                subject.canonical_name AS subject_name,
-               subject.entity_type AS subject_type,
+               subject.type::text AS subject_type,
                object.canonical_name AS object_name,
-               object.entity_type AS object_type,
+               object.type::text AS object_type,
                EXISTS (
                    SELECT 1
                    FROM review_queue q
@@ -3122,10 +3127,14 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         JOIN memory_v1.graph_edges_visible_history r
           ON r.deployment_id = :deployment_id
          AND r.relation_id = requested.relation_id
-        JOIN memory_v1.entities_current subject
+        -- The graph view already proved both endpoints current. These base
+        -- joins hydrate names and types only; repeating entities_current here
+        -- expands its full authorization plan twice without changing
+        -- membership.
+        JOIN entities subject
           ON subject.deployment_id = r.deployment_id
          AND subject.entity_id = r.subject_entity_id
-        JOIN memory_v1.entities_current object
+        JOIN entities object
           ON object.deployment_id = r.deployment_id
          AND object.entity_id = r.object_entity_id
         WHERE r.invalidated_at IS NULL

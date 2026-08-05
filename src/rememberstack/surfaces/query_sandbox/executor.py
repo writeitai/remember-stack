@@ -656,6 +656,8 @@ class QuerySandboxExecutor:
                             " SET LOCAL lock_timeout = {};"
                             " SET LOCAL idle_in_transaction_session_timeout = {};"
                             " SET LOCAL work_mem = {};"
+                            " SET LOCAL join_collapse_limit = 1;"
+                            " SET LOCAL from_collapse_limit = 1;"
                             " SET LOCAL max_parallel_workers_per_gather = 0"
                         ).format(
                             pgsql.Literal(limits_ms.statement_timeout_ms_default),

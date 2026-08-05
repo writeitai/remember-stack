@@ -269,7 +269,8 @@ def _projected_relation_ids(connection: ladybug.Connection) -> set[str]:
     assert isinstance(result, ladybug.QueryResult)
     identifiers: set[str] = set()
     while result.has_next():
-        identifiers.add(str(result.get_next()[0]))
+        row = cast("list[object]", result.get_next())
+        identifiers.add(str(row[0]))
     return identifiers
 
 

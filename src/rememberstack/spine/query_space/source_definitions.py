@@ -43,6 +43,9 @@ from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding impor
 from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
     MEMORY_V1_CORRECTION_DDL,
 )
+from rememberstack.spine.migrations.versions.p9_05_0026_graph_helpers import (
+    GRAPH_EDGE_VIEW_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -122,7 +125,11 @@ def _authored_parts() -> tuple[
     """Read the latest definitions plus their stable authored documentation."""
     statements: list[str] = []
     column_comments: dict[str, dict[str, str]] = {}
-    for block in (*MEMORY_V1_AUTHORED_DDL, MEMORY_V1_CORRECTION_DDL):
+    for block in (
+        *MEMORY_V1_AUTHORED_DDL,
+        MEMORY_V1_CORRECTION_DDL,
+        GRAPH_EDGE_VIEW_DDL,
+    ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):
             column_comments.setdefault(view, {})[column] = comment

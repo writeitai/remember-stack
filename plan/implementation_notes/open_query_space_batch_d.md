@@ -24,6 +24,14 @@ so a caller cannot mistake those values for a historical reconstruction. The
 helpers are pure PostgreSQL reads and therefore stay `SECURITY INVOKER` and
 `PARALLEL SAFE`; they do not inherit the projection bridge's elevated owner.
 
+After stacking Batch A, the graph migration is `p9_05_0026` and depends on
+Batch A's `p9_04_0025`. The graph edge views express endpoint membership as
+`EXISTS` semijoins because they publish no entity columns; this is equivalent
+to the prior joins without multiplying the corrected `entities_current`
+authorization plan. The helpers preserve their written join order and
+materialize the bounded edge input once, preventing PostgreSQL plan search
+from exhausting memory without changing which rows are visible.
+
 ## The Cypher gate stays lexical
 
 The pinned LadybugDB engine is the Cypher syntax authority. The pre-engine gate
@@ -162,6 +170,12 @@ Current-context and graph-context evidence hydration now join
 `documents_live`; one document lineage counts once and a missing or tombstoned
 document cannot authorize evidence. The Batch D retrieval fixture carries
 honest surviving provenance for withdrawn and isolated cases.
+
+`multi_hop_context` materializes its PostgreSQL-confirmed edge set once and
+preserves the hydration query's written join order with transaction-local
+planner settings. After the graph view has authorized both endpoints, base
+entity rows supply names and types only. The same planner settings bound the
+SQL sandbox's expansion of the invariant-compiled views.
 
 Nested LadybugDB `INTERNAL_ID` logical types and the observed physical-address
 function family are refused, while caller-authored field names and public `.id`
