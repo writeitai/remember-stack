@@ -6,6 +6,7 @@ version and cannot leak data. The first-call resource leads with the bound
 two-layer retrieval headline, verbatim from the design.
 """
 
+from dataclasses import asdict
 from dataclasses import dataclass
 import fnmatch
 from typing import Final
@@ -82,17 +83,7 @@ def describe_query_space(
                 ),
             )
         )
-    limits = {
-        tier.value: {
-            "statement_timeout_ms": caps.statement_timeout_ms_default,
-            "statement_timeout_ms_hard": caps.statement_timeout_ms_hard,
-            "returned_rows": caps.returned_rows_default,
-            "returned_rows_hard": caps.returned_rows_hard,
-            "returned_bytes": caps.returned_bytes_default,
-            "concurrent_per_principal": caps.concurrent_per_principal,
-        }
-        for tier, caps in TIER_LIMITS.items()
-    }
+    limits = {tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()}
     return QuerySpaceDescription(
         schema="memory_v1",
         schema_major=1,

@@ -3081,3 +3081,40 @@ single handler patch.
 per-chunk location LLM; hotfix-only durability inside the old monolith; ungoverned connector
 JSON as Lance filters; free-form header as sole E2 location grounding channel without typed
 replacement.
+
+## D81. Query-sandbox contracts follow enforceable authorities, not parallel approximations (refines D68)
+
+**Decision (2026-08-05, Batch B correction review).** The open SQL sandbox uses one
+deployment-derived query login and its enforceable 64 MiB `temp_file_limit` for both
+interactive and entitled analytical requests; no second analytical role is introduced merely
+to advertise a larger temporary-file allowance. Raw SQL containing U+0000 is rejected before
+pglast. Every rejected or failed `QueryResult/v1` carries zero rows and
+`empty_result=true`. Discovery serializes every field of the authoritative `TierLimits`
+record rather than a hand-picked subset. A public request executes `READ ONLY, REPEATABLE
+READ`, because its bounded internal confirmation work and caller statement must share one
+snapshot.
+
+D68's database boundary applies to content-bearing deployment databases. Provisioning revokes
+default `PUBLIC` database privileges before deployment content or query credentials exist,
+then grants `CONNECT` to that database's derived login; the pool/HBA route offers that login
+only its bound database. PostgreSQL effective privileges are additive, so revoking from one
+role cannot override `PUBLIC`. We therefore make no false claim that an arbitrary
+unprovisioned or administrative database has a per-role deny ACL; such databases must contain
+no deployment content. The implementation analysis and PostgreSQL sources are recorded in
+`plan/analysis/open_query_space_batch_b_corrections.md`.
+
+**Context.** Review found six cases where code or prose duplicated an authority and drifted:
+an analytical cap larger than the only role setting; parser-first handling of NUL; a model
+default that made rowless failures say non-empty; six manually selected discovery fields from
+a 19-field record; `READ COMMITTED` prose beside a repeatable-read executor; and a test over two
+migrated databases described as proof about every database in a cluster.
+
+**Rejected alternatives.** A second analytical login solely for a temp cap; RLS; cluster event
+triggers that mutate all future database ACLs; a custom SQL lexer for the NUL precondition; a
+second discovery-limit schema; weakening the executor to `READ COMMITTED`.
+
+**Consequences.** The binding design, limits manifest, discovery payload, result honesty, and
+tests now name the same authorities. Cross-deployment acceptance tests prove isolation between
+provisioned deployment databases, while provisioning order and routing carry the boundary for
+the cluster around them. Changes to `TierLimits`, including the 64 MiB analytical temp cap,
+roll `surface_manifest_hash` through the existing manifest generator.

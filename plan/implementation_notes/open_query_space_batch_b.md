@@ -9,27 +9,43 @@ tenancy is physical routing plus grants.
 ## The tenancy boundary is per deployment, not per cluster
 
 Roles are cluster-global objects while D68 gives each deployment its own
-database, and PostgreSQL grants `CONNECT` on every database to `PUBLIC`. A
+database, and PostgreSQL grants `CONNECT` on every new database to `PUBLIC`. A
 single shared `rememberstack_query` login would therefore reach every
 deployment's database in the cluster and accumulate each migration's grants —
 which is what a review found. The login is derived from the database name
-(`rememberstack_query_<database>`), the database withdraws the `PUBLIC`
-defaults (connect, temp, schema usage, function execute, large-object APIs),
-and `CONNECT` is granted back to exactly one role. A test creates a second
-deployment database and proves the first deployment's login cannot enter it.
+(`rememberstack_query_<database>`), each provisioned deployment database
+withdraws the `PUBLIC` defaults (connect, temp, schema usage, function execute,
+large-object APIs), and `CONNECT` is granted back to exactly one role. A test
+creates and migrates a second deployment database and proves the first
+deployment's login cannot enter it. PostgreSQL has no per-login deny that
+overrides a `PUBLIC` grant, so this test deliberately makes no claim about
+arbitrary unprovisioned databases: they must contain no deployment content and
+the pool/HBA route must not offer them to a deployment login (D81).
+
+## Corrections closed after review
+
+- the node-class allowlist is now hashed, and qualified sort/expression
+  operators are rejected as complete names rather than checked piecewise;
+- NUL is rejected before pglast can treat it as a string terminator;
+- the one enforceable role-level temp cap is 64 MiB for both tiers;
+- rejected and failed results explicitly report `empty_result=true`;
+- discovery serializes every field from `TierLimits`, its existing authority;
+- the binding transaction contract now says `READ ONLY, REPEATABLE READ`,
+  matching the executor's single-snapshot confirmation requirement.
 
 ## Recorded gaps (follow-ups, not silent omissions)
 
 Reviews confirmed these remain outside what this batch implements. They are
 listed so a later batch closes them deliberately rather than discovering them:
 
-1. **Structural grammar rules are code, not manifest members.** The hash now
-   covers the allowlists, the public function names, the invocation and
-   recursion bounds, and every tier cap — so those changes roll the surface
-   identity. The *shape* rules (SRF placement, the recursive template, CTE
-   shadowing, the rejection mapping) are not yet expressible as manifest data
-   and can change without rolling the hash. Closing this means giving the
-   rules a declarative form; it is not a one-line addition.
+1. **Visitor algorithms are code, not manifest members.** The hash now covers
+   the node-class, function, operator, cast, and public-function allowlists,
+   the invocation and recursion bounds, and every tier cap — so vocabulary and
+   limit changes roll the surface identity. The *algorithmic* rules (SRF
+   placement, the recursive template, CTE shadowing, the rejection mapping)
+   are not yet declarative manifest data and can change without rolling the
+   hash. Closing this means giving those algorithms a stable declarative form;
+   it is not a one-line addition.
 2. **`QueryResult` fields awaiting later batches**: `referenced_graph_types`,
    `referenced_graph_properties`, and `confirmation` belong to the Cypher and
    semantic surfaces (Batches C and D) and are absent until those land.

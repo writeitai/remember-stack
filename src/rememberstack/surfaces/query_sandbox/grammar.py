@@ -461,6 +461,8 @@ class _AllowlistVisitor(Visitor):
 
 
 def _assert_single_readonly_statement(sql: str) -> SelectStmt:
+    if "\x00" in sql:
+        raise _reject(QueryErrorCode.PARSE_ERROR, "SQL text contains a NUL byte")
     try:
         statements = parse_sql(sql)
     except ParseError as error:
