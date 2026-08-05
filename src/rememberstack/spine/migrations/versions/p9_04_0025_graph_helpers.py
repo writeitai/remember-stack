@@ -24,8 +24,8 @@ subject and object, so a caller who cares about direction can still see it.
 
 from alembic import op
 
-revision: str = "p9_03_0024"
-down_revision: str | None = "p9_02_0023"
+revision: str = "p9_04_0025"
+down_revision: str | None = "p9_03_0024"
 branch_labels = None
 depends_on = None
 
