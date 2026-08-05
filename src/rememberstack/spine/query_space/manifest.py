@@ -361,12 +361,13 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 ],
                 "volatility": "stable",
                 "security": "invoker",
-                "parallel": "safe",
+                "parallel": "unsafe",
                 "comment": (
                     "Traverse the live graph with statement_timestamp() applied to"
                     " both clocks when both are omitted, or the half-open historical"
                     " graph when both valid_at and believed_at are supplied. Supplying"
-                    " exactly one clock fails with invalid_parameter_value."
+                    " exactly one clock fails with invalid_parameter_value. Reaching"
+                    " a depth or edge cap is disclosed in QueryResult/v1."
                 ),
                 "example": (
                     "SELECT * FROM memory_v1.graph_neighborhood("
@@ -444,13 +445,14 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 ],
                 "volatility": "stable",
                 "security": "invoker",
-                "parallel": "safe",
+                "parallel": "unsafe",
                 "comment": (
                     "Return bounded simple paths over the live graph with"
                     " statement_timestamp() applied to both clocks when both are"
                     " omitted, or the half-open historical graph when both valid_at"
                     " and believed_at are supplied. Supplying exactly one clock fails"
-                    " with invalid_parameter_value."
+                    " with invalid_parameter_value. Reaching a depth, path, or edge"
+                    " cap is disclosed in QueryResult/v1."
                 ),
                 "example": (
                     "SELECT * FROM memory_v1.graph_path("

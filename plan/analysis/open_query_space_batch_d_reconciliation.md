@@ -281,3 +281,17 @@ the 20-result cap. Standalone `resolve` retains its complete ambiguity set.
 
 Both corrections enforce existing resource contracts. They introduce no new
 visibility authority, RLS, parser, cache, or retrieval channel.
+
+## Final cap-disclosure reconciliation
+
+Direct helper tests proved the row bounds but did not prove the gateway's
+disclosure contract. An aggregate over `graph_neighborhood(..., max_edges=1)`
+could consume five reachable rows as one and still report
+`truncated = false`; a whole path excluded by its edge budget could look like
+an uncapped empty result.
+
+The existing helper invocation now records only whether its own bounded walk
+omitted reachable work, using transaction-local state that the existing SQL
+executor reads before the transaction ends. The traversal still runs once and
+returns the same columns and rows. This closes the disclosure gap without a
+second traversal, a new public function, or a wider graph subsystem.

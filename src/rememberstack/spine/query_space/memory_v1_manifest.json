@@ -664,10 +664,10 @@
             "applied_valid_at",
             "applied_believed_at"
           ],
-          "comment": "Traverse the live graph with statement_timestamp() applied to both clocks when both are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
+          "comment": "Traverse the live graph with statement_timestamp() applied to both clocks when both are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value. Reaching a depth or edge cap is disclosed in QueryResult/v1.",
           "example": "SELECT * FROM memory_v1.graph_neighborhood($1, 2, NULL, $2, $3, 100)",
           "name": "graph_neighborhood",
-          "parallel": "safe",
+          "parallel": "unsafe",
           "security": "invoker",
           "target": "graph",
           "volatility": "stable"
@@ -773,10 +773,10 @@
             "applied_valid_at",
             "applied_believed_at"
           ],
-          "comment": "Return bounded simple paths over the live graph with statement_timestamp() applied to both clocks when both are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
+          "comment": "Return bounded simple paths over the live graph with statement_timestamp() applied to both clocks when both are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value. Reaching a depth, path, or edge cap is disclosed in QueryResult/v1.",
           "example": "SELECT * FROM memory_v1.graph_path($1, $2, 4, NULL, $3, $4, 3, 100)",
           "name": "graph_path",
-          "parallel": "safe",
+          "parallel": "unsafe",
           "security": "invoker",
           "target": "graph",
           "volatility": "stable"
@@ -29639,5 +29639,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "eed7eb50c7ff59e52fb627d54484616816680c5da7c5343314575a5e924b936b"
+  "surface_manifest_hash": "e745bd2b9184e6ecfac9c884ec371755ec9e98e214de4990309d665308619e01"
 }

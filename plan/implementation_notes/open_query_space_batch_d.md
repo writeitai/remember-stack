@@ -206,3 +206,15 @@ deferred: the SQL matrix executes it and a worker fixture proves that the edge
 remains only in the old disclosed snapshot and disappears after rebuild. The
 manifest and OSS API reference now publish the actual Cypher openings,
 engine-rejected mutations, 32 KiB text cap, v4 flags, and snapshot semantics.
+
+## Graph-helper cap disclosure
+
+The PostgreSQL graph helpers now set one transaction-local marker when their
+depth, edge, or path bound omits reachable work. The SQL executor resets and
+reads that marker around the already-materialized helper invocation, then sets
+`QueryResult.truncated`, `truncation_reason = "graph_cap"`, and a warning. This
+also covers a whole path omitted by an edge budget, where the helper returns no
+public row from which the executor could otherwise infer the cut.
+
+The marker carries no corpus data and is scoped to the existing request
+transaction. It adds no query, parser, role, RLS policy, or second traversal.

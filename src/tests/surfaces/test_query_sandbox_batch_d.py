@@ -278,6 +278,41 @@ def test_the_edge_bound_cuts_the_result(
     assert rows[0][0] == 1
 
 
+def test_the_sql_gateway_discloses_a_graph_helper_cap(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """An aggregate cannot hide that its graph input was internally cut."""
+    url, edges = graph
+    executor = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT, connect=lambda: psycopg.connect(_psycopg_url(url))
+    )
+    outcome = executor.query_sql(
+        sql=(
+            "SELECT count(*) FROM graph_neighborhood($1::uuid, 3, NULL, NULL, NULL, 1)"
+        ),
+        parameters=[edges[0][1]],
+    )
+
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((1,),)
+    assert outcome.truncated is True
+    assert outcome.truncation_reason == "graph_cap"
+    assert "graph helpers reached" in outcome.warnings[0]
+
+    leaves = tuple(dict.fromkeys(edge[2] for edge in edges))
+    assert len(leaves) >= 2
+    omitted_path = executor.query_sql(
+        sql=(
+            "SELECT count(*) FROM graph_path("
+            "$1::uuid, $2::uuid, 4, NULL, NULL, NULL, 10, 1)"
+        ),
+        parameters=[leaves[0], leaves[-1]],
+    )
+    assert omitted_path.rows == ((0,),)
+    assert omitted_path.truncated is True
+    assert omitted_path.truncation_reason == "graph_cap"
+
+
 def test_a_relation_that_had_not_been_learned_yet_is_not_walked(
     graph: tuple[str, list[tuple[str, str, str]]],
 ) -> None:

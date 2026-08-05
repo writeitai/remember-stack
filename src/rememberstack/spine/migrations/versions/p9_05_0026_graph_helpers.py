@@ -192,7 +192,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 STABLE
-PARALLEL SAFE
+PARALLEL UNSAFE
 SECURITY INVOKER
 SET search_path = memory_v1, pg_catalog
 SET join_collapse_limit = 1
@@ -276,6 +276,25 @@ BEGIN
         END = ANY(w.seen_nodes)
       )
   ),
+  cap_status AS MATERIALIZED (
+    SELECT
+      (SELECT count(*) FROM walk) > b.edge_cap
+      OR EXISTS (
+        SELECT 1
+        FROM walk AS w
+        JOIN edges AS e
+          ON w.to_entity_id IN (e.subject_entity_id, e.object_entity_id)
+        WHERE w.hop = b.depth_cap
+          AND NOT (e.relation_id = ANY(w.seen_relations))
+          AND NOT (
+            CASE
+              WHEN e.subject_entity_id = w.to_entity_id
+              THEN e.object_entity_id ELSE e.subject_entity_id
+            END = ANY(w.seen_nodes)
+          )
+      ) AS reached
+    FROM bounds AS b
+  ),
   bounded AS (
     SELECT w.*, row_number() OVER (
       ORDER BY w.hop, w.relation_id, w.to_entity_id
@@ -283,33 +302,59 @@ BEGIN
     FROM walk AS w
     ORDER BY w.hop, w.relation_id, w.to_entity_id
     LIMIT (SELECT edge_cap FROM bounds)
+  ),
+  result_rows AS MATERIALIZED (
+    SELECT
+      bounded.path_id,
+      bounded.hop,
+      bounded.hop AS path_position,
+      bounded.from_entity_id,
+      bounded.to_entity_id,
+      e.relation_id,
+      e.subject_entity_id,
+      e.object_entity_id,
+      e.predicate,
+      e.fact_label,
+      e.valid_from,
+      e.valid_until,
+      e.ingested_at,
+      e.invalidated_at,
+      e.contradiction_group,
+      e.confidence,
+      e.evidence_count_current,
+      e.contradict_count_current,
+      e.support_state_current,
+      b.as_of_valid AS applied_valid_at,
+      b.as_of_believed AS applied_believed_at
+    FROM bounded
+    JOIN edges AS e ON e.relation_id = bounded.relation_id
+    CROSS JOIN bounds AS b
+  ),
+  cap_state AS MATERIALIZED (
+    SELECT set_config(
+      'rememberstack.graph_cap_reached',
+      (
+        coalesce(
+          current_setting('rememberstack.graph_cap_reached', true), 'false'
+        )::boolean
+        OR cap_status.reached
+      )::text,
+      true
+    ) AS marker
+    FROM cap_status
+  ),
+  marked_rows AS MATERIALIZED (
+    -- The left join deliberately produces one private marker row even when a
+    -- tight budget leaves no public row. The outer filter removes it, while
+    -- the executor can still read the transaction-local cap flag.
+    SELECT result_rows AS row_value, cap_state.marker
+    FROM cap_state
+    LEFT JOIN result_rows ON true
   )
-  SELECT
-    bounded.path_id,
-    bounded.hop,
-    bounded.hop AS path_position,
-    bounded.from_entity_id,
-    bounded.to_entity_id,
-    e.relation_id,
-    e.subject_entity_id,
-    e.object_entity_id,
-    e.predicate,
-    e.fact_label,
-    e.valid_from,
-    e.valid_until,
-    e.ingested_at,
-    e.invalidated_at,
-    e.contradiction_group,
-    e.confidence,
-    e.evidence_count_current,
-    e.contradict_count_current,
-    e.support_state_current,
-    b.as_of_valid,
-    b.as_of_believed
-  FROM bounded
-  JOIN edges AS e ON e.relation_id = bounded.relation_id
-  CROSS JOIN bounds AS b
-  ORDER BY bounded.path_id;
+  SELECT (mr.row_value).*
+  FROM marked_rows AS mr
+  WHERE (mr.row_value).path_id IS NOT NULL
+  ORDER BY (mr.row_value).path_id;
 END
 $$;
 """
@@ -337,7 +382,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 STABLE
-PARALLEL SAFE
+PARALLEL UNSAFE
 SECURITY INVOKER
 SET search_path = memory_v1, pg_catalog
 SET join_collapse_limit = 1
@@ -424,6 +469,30 @@ BEGIN
     FROM walk AS w
     WHERE w.head = graph_path.to_entity_id
   ),
+  cap_status AS MATERIALIZED (
+    SELECT
+      EXISTS (
+        SELECT 1
+        FROM walk AS w
+        JOIN edges AS e ON w.head IN (e.subject_entity_id, e.object_entity_id)
+        WHERE w.length = b.depth_cap
+          AND w.head <> graph_path.to_entity_id
+          AND NOT (
+            CASE
+              WHEN e.subject_entity_id = w.head
+              THEN e.object_entity_id ELSE e.subject_entity_id
+            END = ANY(w.nodes)
+          )
+      )
+      OR (SELECT count(*) FROM reached) > b.path_cap
+      OR EXISTS (
+        SELECT 1
+        FROM reached AS r
+        WHERE r.path_id <= b.path_cap
+          AND r.edges_through > b.edge_cap
+      ) AS reached
+    FROM bounds AS b
+  ),
   arrived AS (
     -- The edge bound is spent on WHOLE paths. Cutting rows at the end would
     -- return a path whose reported length does not match the steps it came
@@ -447,33 +516,56 @@ BEGIN
     FROM arrived AS a
     CROSS JOIN LATERAL unnest(a.relations)
       WITH ORDINALITY AS step(relation_id, position)
+  ),
+  result_rows AS MATERIALIZED (
+    SELECT
+      s.path_id,
+      s.length AS path_length,
+      s.path_position,
+      s.step_from_entity_id,
+      s.step_to_entity_id,
+      e.relation_id,
+      e.subject_entity_id,
+      e.object_entity_id,
+      e.predicate,
+      e.fact_label,
+      e.valid_from,
+      e.valid_until,
+      e.ingested_at,
+      e.invalidated_at,
+      e.contradiction_group,
+      e.confidence,
+      e.evidence_count_current,
+      e.contradict_count_current,
+      e.support_state_current,
+      b.as_of_valid AS applied_valid_at,
+      b.as_of_believed AS applied_believed_at
+    FROM steps AS s
+    JOIN edges AS e ON e.relation_id = s.relation_id
+    CROSS JOIN bounds AS b
+  ),
+  cap_state AS MATERIALIZED (
+    SELECT set_config(
+      'rememberstack.graph_cap_reached',
+      (
+        coalesce(
+          current_setting('rememberstack.graph_cap_reached', true), 'false'
+        )::boolean
+        OR cap_status.reached
+      )::text,
+      true
+    ) AS marker
+    FROM cap_status
+  ),
+  marked_rows AS MATERIALIZED (
+    SELECT result_rows AS row_value, cap_state.marker
+    FROM cap_state
+    LEFT JOIN result_rows ON true
   )
-  SELECT
-    s.path_id,
-    s.length,
-    s.path_position,
-    s.step_from_entity_id,
-    s.step_to_entity_id,
-    e.relation_id,
-    e.subject_entity_id,
-    e.object_entity_id,
-    e.predicate,
-    e.fact_label,
-    e.valid_from,
-    e.valid_until,
-    e.ingested_at,
-    e.invalidated_at,
-    e.contradiction_group,
-    e.confidence,
-    e.evidence_count_current,
-    e.contradict_count_current,
-    e.support_state_current,
-    b.as_of_valid,
-    b.as_of_believed
-  FROM steps AS s
-  JOIN edges AS e ON e.relation_id = s.relation_id
-  CROSS JOIN bounds AS b
-  ORDER BY s.path_id, s.path_position;
+  SELECT (mr.row_value).*
+  FROM marked_rows AS mr
+  WHERE (mr.row_value).path_id IS NOT NULL
+  ORDER BY (mr.row_value).path_id, (mr.row_value).path_position;
 END
 $$;
 """
