@@ -106,6 +106,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_03_0024",
         "p9_04_0025",
         "p9_05_0026",
+        "p9_06_0027",
     )
     assert len(script.get_heads()) == 1
 
@@ -433,7 +434,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 62
+    assert len(fresh_inventory.tables) == 64
     assert fresh_inventory.empty_tables == (
         "deployments",
         "entity_types",
