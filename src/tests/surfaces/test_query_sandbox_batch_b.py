@@ -987,3 +987,55 @@ def test_a_deployment_login_cannot_reach_another_deployment(migrated: str) -> No
             admin.execute(
                 f'DROP DATABASE IF EXISTS "{neighbour}" WITH (FORCE)'.encode()
             )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT JSON_OBJECT('a': 1)",
+        "SELECT JSON_ARRAY(1, 2)",
+        "SELECT JSON_ARRAYAGG(1)",
+        "SELECT JSON_OBJECTAGG('k': 1)",
+        "SELECT '[]' IS JSON ARRAY",
+        "SELECT GROUPING(fact_kind) FROM facts_current GROUP BY fact_kind",
+    ],
+)
+def test_a_construct_nobody_considered_is_refused(statement: str) -> None:
+    """Default-deny is over NODE CLASSES, not over a list of bad names.
+
+    Every one of these executed against the deployment role: the allowlists
+    were consulted only for the node classes that carry them, so a construct
+    expressed through a different class was never compared against anything.
+    `JSON_OBJECT` is not a `FuncCall`; `GROUPING` is a `GroupingFunc`. Naming
+    these six would have left the seventh.
+    """
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql(statement)
+    assert rejection.value.code == QueryErrorCode.STATEMENT_NOT_ALLOWED
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT claim_id FROM claims_live",
+        "SELECT c.claim_id FROM claims_live AS c JOIN mentions_live AS m"
+        "  ON m.claim_id = c.claim_id ORDER BY c.asserted_at DESC LIMIT 5",
+        "WITH x AS (SELECT claim_id FROM claims_live) SELECT count(*) FROM x",
+        "SELECT CASE WHEN evidence_count > 1 THEN 'many' ELSE 'one' END"
+        "  FROM facts_current",
+        "SELECT fact_id FROM facts_current WHERE predicate IS NOT NULL"
+        "  ORDER BY fact_id DESC",
+    ],
+)
+def test_ordinary_reads_still_pass_the_stricter_gate(statement: str) -> None:
+    """Default-deny that refuses ordinary joins, CTEs and CASE is not stricter,
+    it is broken."""
+    assert validate_sql(statement).sql
+
+
+def test_a_sort_operator_is_checked_like_any_other() -> None:
+    """`ORDER BY x USING <op>` names an operator, and it was never checked."""
+    assert validate_sql("SELECT fact_id FROM facts_current ORDER BY fact_id USING <")
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql("SELECT fact_id FROM facts_current ORDER BY fact_id USING ?|")
+    assert rejection.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED
