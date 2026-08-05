@@ -367,8 +367,31 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
         "contract": "memory_v1.limits/1",
         "sql_grammar": sql_grammar,
         "resource_limits": resource_limits,
-        "cypher_dialect": {"contract": "memory_v1.cypher/1", "clauses": []},
+        "cypher_dialect": _cypher_dialect(),
         "p2_projection": {"contract": "memory_v1.p2/1"},
+    }
+
+
+def _cypher_dialect() -> dict[str, CanonicalValue]:
+    """The §3.5 Cypher read surface: what it accepts and what it refuses.
+
+    The reject list is part of the public contract, not an implementation
+    detail: an agent needs to know that this surface reads and only reads, and
+    a change to what is refused changes the surface, so it rolls the hash.
+    """
+    from rememberstack.surfaces.query_sandbox import cypher
+
+    return {
+        "contract": "memory_v1.cypher/1",
+        "engine": "ladybug",
+        "engine_version": "0.18.2",
+        "read_clauses": list(sorted(cypher.READ_CLAUSES)),
+        "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
+        "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,
+        "grade": "snapshot_graph",
+        # `confirm=true` checks live membership of projected entity/relation
+        # ids; it does not make any other part of the result live.
+        "confirmable_types": ["Entity", "RELATES"],
     }
 
 
