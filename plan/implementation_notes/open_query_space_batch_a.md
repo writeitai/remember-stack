@@ -3,9 +3,10 @@
 **Date:** 2026-08-04
 **Binding design:** [`open_query_space_design.md`](../designs/open_query_space_design.md) §3.2, §3.3,
 §6, §9.1–§9.4, §11.1
-**Migration:** `p9_01_0022_memory_v1_query_space`
+**Migrations:** `p9_01_0022_memory_v1_query_space`,
+`p9_04_0025_coordinate_binding`
 **Manifest:** `src/rememberstack/spine/query_space/memory_v1_manifest.json`
-**`surface_manifest_hash`:** `e46f13a57f13c9a2…` (full value in the manifest)
+**`surface_manifest_hash`:** `e597529b3bfade738768b481e0959f7d8640274af0c66df9fb15d5be6da476b1`
 
 Batch A is the schema contract: the `memory_v1` relation set, the machine-readable
 manifest that describes it, the canonicalizer that turns that manifest into one stable
@@ -20,14 +21,21 @@ reading them directly with the migration role.
 Base tables, the projection views, and the operator schema stay in `public` and are not
 part of the query space.
 
-Three private helpers were added, and they are deliberately **not** in `memory_v1`:
+Five private authorization helpers exist, and they are deliberately **not** in
+`memory_v1`:
 
-- `public.v_memory_entity_survivor` resolves an entity id to the terminal survivor of
-  its `merged_into` chain. It exists because a merge in this system is a *redirect*
-  rather than a rewrite — the absorbed entity keeps its id, and `relations` keep their
-  original endpoint ids — so every entity reference must be redirected before it is
-  exposed or joined. Without it, a merged entity's facts, aliases, and mentions would
-  either disappear or point at an identity that no longer resolves.
+- `public.v_graph_survivor` is the one cycle-safe authority that resolves an entity id
+  to the terminal survivor of its `merged_into` chain. It has no guessed depth limit:
+  the recursive `UNION` deduplicates a repeated `(origin, current)` pair and therefore
+  terminates cycles, while a dangling redirect reaches no terminal row.
+- `public.v_memory_entity_survivor` is only the deployment-labelled query-space adapter
+  over `v_graph_survivor`. It does not implement a second merge walk.
+- `public.v_memory_fact_visible` is the one fact-membership authority. It admits a
+  relation or observation only when every declared endpoint resolves to
+  `entities_current` and at least one evidence association binds an existing claim to
+  that claim's surviving lineage. Both `facts_visible_history` and
+  `fact_claim_evidence_live` consume it, so an evidence row cannot manufacture a ghost
+  fact and the catalog cannot disagree with its bridge.
 - `public.v_memory_mention_current_content` is the single definition of "this mention
   occurs in current content, and this is the survivor it resolves to". Both
   `mentions_live` and `entity_document_mentions` are projections of it.
@@ -35,14 +43,15 @@ Three private helpers were added, and they are deliberately **not** in `memory_v
   target is still visible". Both the membership gate of `pages_live` and the per-link
   projection of `page_evidence_visible` read it.
 
-The last two exist for one reason: a rule that two public relations state separately is
-a rule that can drift, and both of the drifts it would allow were real. Stating the rule
+The last three shared authorities exist for one reason: a rule that two public relations
+state separately is a rule that can drift, and both of the drifts it would allow were
+real. Stating the rule
 once and projecting it twice makes the count equal to the transcript it counts, and
 makes a page's membership equal to the links it can show, *by construction* rather than
 by review. They are private subqueries in view form, which §3.3 explicitly permits for
 helpers.
 
-**The Batch B rule for the helpers.** None of the three is ever granted to a query role,
+**The Batch B rule for the helpers.** None of the five is ever granted to a query role,
 and none is ever placed on a query role's `search_path`. They are implementation detail
 of the public relations, not a supported surface: a caller reaches their rows only
 through `memory_v1`, whose gates the §9.2 matrix executes cell by cell. The survivor
@@ -52,7 +61,7 @@ be readable directly. Batch B's role work is where that rule is enforced in SQL;
 enforces the half it can, by keeping the helpers out of `memory_v1` and granting nothing.
 
 The existing catalog contract (`spine/catalog_contract.py`) locks the presence of all
-three helper views alongside the `memory_v1` schema at head, and their absence after a
+five helper views alongside the `memory_v1` schema at head, and their absence after a
 downgrade, so a leftover schema or a leftover helper cannot masquerade as the query
 surface. A gate reads `pg_class.relacl` and `information_schema.role_table_grants` for
 each helper and asserts there is no grant on any of them.
@@ -73,11 +82,12 @@ specialized to its own coordinates:
 
 The shipped legacy recipes contain the permissive form this design forbids —
 `LEFT JOIN documents d … WHERE (d.doc_id IS NULL OR d.deleted_at IS NULL)` — whose
-*absence* of a matching document **admits** the row. No `memory_v1` definition contains
-it, and a gate test greps every deployed definition for that shape. That grep reads
-`pg_get_viewdef`, which is fine for a grep: it is only the *hash* that must never see
-printer output (§5), and reading the deployed text is what makes the check about what is
-actually running.
+*absence* of a matching document **admits** the row. Batch A does not claim safety from
+a substring deny-list: equivalent SQL has many spellings, and the old check gave false
+confidence while incomplete coordinate joins remained. The gates instead insert
+inconsistent logical associations and prove their identifiers absent from every public
+surface and authorization helper. The authored ASTs of all five helpers are also hash
+members, so helper semantics cannot change without rolling the surface identity.
 
 A few left joins do appear, and they are a different thing: they project *optional
 columns of an already authorized row* and are themselves fully predicated, so they can
@@ -152,9 +162,9 @@ which now counts them (`page_without_visible_citation`), not on the public surfa
 `entities.merged_into` records a redirect, and nothing in the schema prevents two merges
 being recorded in opposite directions (A into B, B into A), a chain longer than any
 guard, or a redirect to a row that no longer exists. The walk in
-`v_memory_entity_survivor` therefore keeps a depth bound *and* only emits a row when the
-walk actually reaches an entity with `merged_into IS NULL`. Taking the furthest row
-reached instead — which is what a `DISTINCT ON … ORDER BY depth DESC` does — is
+`v_graph_survivor` therefore uses a deduplicating recursive walk and only emits a row
+when the walk actually reaches an entity with `merged_into IS NULL`. Taking the furthest
+row reached instead — which is what a `DISTINCT ON … ORDER BY depth DESC` does — is
 fail-open: in a two-node cycle each entity becomes its own "survivor" and both are
 republished as if no merge had happened, with a caller unable to tell which identity is
 canonical. Fail-closed means the entity resolves to nothing: it is absent from
@@ -162,7 +172,15 @@ canonical. Fail-closed means the entity resolves to nothing: it is absent from
 `facts_visible_history`, so a fact with an unresolvable endpoint drops as a unit rather
 than dangling — and the anomaly is counted in the operator quarantine report
 (`entity_merge_chain_unresolved`) so the omission is visible to someone who can repair
-it.
+it. Valid chains have no arbitrary maximum depth.
+
+**Shared authorities also need an explicit planning boundary at fan-out.** PostgreSQL
+expands ordinary views before planning. `changes_visible` references the same fact
+history in six union arms, so naively nesting the new fact and survivor authorities in
+each arm multiplies an already-deep authorization tree and can exhaust planner memory.
+Its `fact_history AS MATERIALIZED` CTE evaluates that authority once per statement and
+reuses it across the six arms. This changes no membership or public shape; it makes the
+single-authority design operationally safe instead of duplicating its expanded plan.
 
 ### D41 — one predicate, one instant
 
@@ -440,7 +458,7 @@ the repair it implies:
 
 `claim_without_chunk`, `chunk_without_version`, `section_outside_current_generation`,
 `mention_without_chunk`, `evidence_lineage_mismatch`,
-`fact_without_surviving_provenance`, `entity_without_surviving_provenance`,
+`fact_without_visible_membership`, `entity_without_surviving_provenance`,
 `entity_merge_chain_unresolved`, `crossref_without_live_endpoints`,
 `knowledge_citation_without_visible_target`, `page_without_visible_citation`,
 `currency_event_without_live_lineage`.
@@ -469,30 +487,31 @@ byte what the generator renders. The hash recomputes from source with no databas
 Two separate scratch databases, each migrated to head independently, deploy byte-identical
 surfaces that both equal the manifest. The golden vectors reproduce exactly, including
 the equivalence and distinction cases. `memory_v1` has no ACL on the schema, no ACL on any
-relation, and no `PUBLIC` grant; the three private helpers have no ACL either. All 24
+relation, and no `PUBLIC` grant; the five private helpers have no ACL either. All 24
 declared row keys are unique on the corpus. No column declared non-null is ever null, and
 every view has fixture rows. Every bound vocabulary covers the values that actually occur.
 Every view comment is a complete sentence over 200 characters and every column comment is
-a complete sentence. No definition contains the legacy orphan branch. Every declared join
-key resolves to a real column on a real `memory_v1` relation. All 48 manifest fixture
+a complete sentence. Corrupt-coordinate fixtures fail closed across all siblings rather
+than relying on a textual SQL deny-list. Every declared join key resolves to a real
+column on a real `memory_v1` relation. All 48 manifest fixture
 cases (one positive and one negative per view) are executed and pass, and the gate asserts
 the executed set equals the declared set exactly.
 
 **§9.2 — D48 deletion matrix.** The artifact
 `src/rememberstack/spine/query_space/d48_deletion_matrix.json` enumerates **9 targets ×
-25 surfaces = 225 cells** — the 24 public relations plus the private survivor helper,
+29 surfaces = 261 cells** — the 24 public relations plus all five authorization helpers,
 crossed with the six deletions this batch can perform and the three whose object class it
 does not build. It is generated by `build_matrix()` and checked in; a test asserts the
 file equals its generator verbatim. The split:
 
 | Cell status | Count | What the gate proves, per cell |
 |---|---|---|
-| `applicable` | 56 | The forbidden identifiers **were reachable** through this relation before the mutation, and no column of any row carries one after it. |
-| `not_applicable` / `no_identifier_of_this_class` | 88 | The reachable set really **is empty**, before and after — the declaration is checked, not trusted. |
-| `not_applicable` / `not_caller_reachable` | 6 | The surface is outside `memory_v1` and carries **no grant at all**, which the gate reads from `pg_class.relacl` and `information_schema.role_table_grants`. |
-| `deferred` | 75 | Recorded with the batch that will execute it (P1 candidate → C, P2 edge → D, corpus body → C), so the artifact's coverage claim states its own scope. |
+| `applicable` | 63 | The forbidden identifiers **were reachable** through this relation before the mutation, and no column of any row carries one after it. |
+| `not_applicable` / `no_identifier_of_this_class` | 99 | The reachable set really **is empty**, before and after — the declaration is checked, not trusted. |
+| `not_applicable` / `not_caller_reachable` | 12 | The surface is outside `memory_v1` and carries **no grant at all**, which the gate reads from `pg_class.relacl` and `information_schema.role_table_grants`. |
+| `deferred` | 87 | Recorded with the batch that will execute it (P1 candidate → C, P2 edge → D, corpus body → C), so the artifact's coverage claim states its own scope. |
 
-150 executable cells, all passing. The change from the previous 144-cell artifact is the
+174 executable cells, all passing. The change from the earlier artifact is the
 point of the rework: a single global "no forbidden identifier is present afterwards"
 assertion passes trivially wherever the identifier could never have been present, and the
 old per-*target* non-vacuity check (`any()` across that target's row) hid that — one
@@ -524,7 +543,7 @@ as open. Source deletion reduces counts and never opens the flag, and a zero cou
 manufactures a withdrawal. A processing-withdrawn fact stays visible in history with zero
 current support.
 
-**Coordinate binding and fail-closed resolution.** Seven further gates cover the boundary
+**Coordinate binding and fail-closed resolution.** Dedicated gates cover the boundary
 cases the invariants turn on, each written as the adversarial move it defends against.
 Repointing a mention's own `doc_id` at a tombstoned lineage removes the mention from
 `mentions_live` and its contribution from `entity_document_mentions`, rather than
@@ -535,26 +554,24 @@ survivor and lineage, and the corpus is asserted to contain a mention of superse
 content so the current-content restriction is not tested vacuously. A two-node merge cycle
 resolves to no survivor at all: both entities leave `entities_current`, the mention that
 resolved to one of them goes unresolved, a fact with such an endpoint drops as a unit, and
-the quarantine report counts two. A merge chain longer than the depth bound resolves to
-nothing while a short chain still resolves. Forgetting the last lineage a page cites
+the quarantine report counts two. A valid 70-hop merge chain resolves to its terminal
+entity, proving there is no guessed cutoff. Forgetting the last lineage a page cites
 removes the page and its links from the public surface, while a page that keeps one
 visible citation stays; the uncited page exists and is active in the base tables, is absent
 from `pages_live`, and is counted once by the quarantine report.
 
-**Suite, types, lint, migration cycle.** The full `src/tests/` suite is green — **1,208
-passed, 0 failed, 0 skipped** in 6 minutes, of which 38 are the §9 schema gates and 15 the
-database-free canonicalizer and artifact proofs; `pyright src/ benchmarks/` reports 0
-errors; `ruff check` and `ruff format --check` are clean; and the migration's up/down/up
-cycle passes through the existing `test_migrations.py` lifecycle test, which asserts the
-head revision is `p9_01_0022` and that a downgrade leaves no `memory_v1` schema behind.
-The one new runtime dependency is `pglast` (pinned to major 6, the PostgreSQL 16
-grammar), which is what makes the parse tree — rather than a printed rendering of it — the
-hash input.
+**Suite, types, lint, migration cycle.** The Batch A and manifest suites pass **62 tests**,
+including the 261 matrix cells and the explicit 24-view sibling sweep. All **5 migration
+tests** pass, including the fresh up/down/up lifecycle that asserts head revision
+`p9_04_0025` and that downgrade leaves no `memory_v1` schema behind.
+`pyright src/ benchmarks/` reports zero errors; `ruff check`, `ruff format --check`,
+generated-manifest identity, generated-matrix identity, and `git diff --check` are clean. `pglast` (pinned to
+major 6, the PostgreSQL 16 grammar) remains what makes the parse tree — rather than a
+printed rendering of it — the hash input.
 
 ## 8. What Batch A deliberately does not contain
 
-No roles and no grants, no SQL parser or allowlist, no executor, no limits, no
-`QueryResult`, no set-returning function, no Cypher, no registry, and no API, SDK, CLI,
-or MCP surface. `memory_v1` is not reachable by a customer until Batch F, which is why
-this batch ships no website page: the documentation obligation for the schema contract is
-this note.
+This correction adds no SQL parser or allowlist, executor, limits, `QueryResult`,
+set-returning function, Cypher, registry, or API, SDK, CLI, or MCP surface. It only
+reasserts the already-created query role's lack of access to private authorization
+helpers. Customer reachability remains the concern of the later delivery batches.

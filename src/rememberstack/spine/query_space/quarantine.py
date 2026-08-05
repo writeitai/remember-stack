@@ -147,22 +147,29 @@ _PROBES: Final = (
         ),
     ),
     _Probe(
-        category="fact_without_surviving_provenance",
+        category="fact_without_visible_membership",
         explanation=(
-            "A relation has no evidence row reaching a live lineage, so it has no "
-            "surviving provenance and is absent from every fact relation."
+            "A relation or observation is absent from the authoritative visible-fact "
+            "set because it has no claim-bound surviving provenance or an entity "
+            "endpoint is not externally visible."
         ),
         repair=(
-            "Expected after a forget; retire the fact, or re-ingest a source that "
-            "supports it."
+            "Repair the mismatched association or entity provenance; after a forget, "
+            "retire the fact or re-ingest a source that supports it."
         ),
         sql=(
-            "SELECT count(*) FROM relations r WHERE "
-            + _DEPLOYMENT_FILTER.format(alias="r")
-            + " AND NOT EXISTS (SELECT 1 FROM relation_evidence re JOIN documents d"
-            " ON d.deployment_id = re.deployment_id AND d.doc_id = re.doc_id"
-            " AND d.deleted_at IS NULL WHERE re.deployment_id = r.deployment_id"
-            " AND re.relation_id = r.relation_id)"
+            "SELECT count(*) FROM ("
+            " SELECT r.deployment_id, 'relation' AS fact_kind,"
+            " r.relation_id AS fact_id FROM relations AS r"
+            " UNION ALL"
+            " SELECT o.deployment_id, 'observation' AS fact_kind,"
+            " o.observation_id AS fact_id FROM observations AS o"
+            ") AS candidate WHERE "
+            + _DEPLOYMENT_FILTER.format(alias="candidate")
+            + " AND NOT EXISTS (SELECT 1 FROM v_memory_fact_visible AS visible"
+            " WHERE visible.deployment_id = candidate.deployment_id"
+            " AND visible.fact_kind = candidate.fact_kind"
+            " AND visible.fact_id = candidate.fact_id)"
         ),
     ),
     _Probe(
@@ -200,7 +207,7 @@ _PROBES: Final = (
         category="entity_merge_chain_unresolved",
         explanation=(
             "An entity's merge redirect never reaches an unmerged entity — a "
-            "cycle, an over-long chain, or a redirect to a missing row — so it "
+            "cycle or a redirect to a missing row — so it "
             "resolves to no survivor and is absent from every entity relation."
         ),
         repair=(

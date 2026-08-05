@@ -22,8 +22,8 @@ obligation:
   nothing here to leak. The gate does not take that on trust: it asserts the
   reachable set really is empty, before *and* after, so a wrong declaration
   fails loudly instead of hiding a leak.
-- ``not_applicable`` with basis ``not_caller_reachable`` — the surface is the
-  merge-redirect helper, which is the one surface here that deliberately does
+- ``not_applicable`` with basis ``not_caller_reachable`` — the surface is a
+  merge-redirect helper, which deliberately does
   *not* drop rows on a deletion: `entities_current` computes surviving
   provenance *from* it, so it must keep resolving an entity whose provenance is
   gone, and an "absent afterwards" obligation would be false of it. Its D48
@@ -32,12 +32,12 @@ obligation:
   which the gate asserts from `pg_class.relacl` and `information_schema`, while
   the public relations that read it carry their own cells.
 
-The other two private helpers are *not* discharged that way. `memory_v1` is
-where a caller reads, but the mention helper and the K citation helper are
-where two of the deletion rules are actually *defined* — the public relations
-project them — so their cells are executed exactly like a public relation's:
+The other private helpers are *not* discharged that way. `memory_v1` is where
+a caller reads, but the mention, fact, and K citation helpers are where deletion
+rules are actually *defined* — the public relations project them — so their
+cells are executed exactly like a public relation's:
 reachable before the mutation, absent after. Non-reachability is proven for
-all three helpers on top of that, by the gate that reads their grants.
+all five helpers on top of that, by the gate that reads their grants.
 - ``deferred`` — the target names an object class this batch does not build (a
   P1 nomination candidate, a P2 snapshot edge, a corpus body). The cell is
   recorded rather than omitted, with the batch that will execute it, so the
@@ -58,8 +58,8 @@ from typing import Final
 from pydantic import BaseModel
 from pydantic import ConfigDict
 
-from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
-    PRIVATE_HELPER_VIEWS,
+from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
+    AUTHORIZATION_HELPER_VIEWS,
 )
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -73,15 +73,16 @@ MATRIX_CONTRACT: Final = "memory_v1.d48_deletion_matrix/2"
 #: The checked-in coverage artifact the schema gate executes cell by cell.
 MATRIX_PATH: Final = Path(__file__).with_name("d48_deletion_matrix.json")
 
-#: The private merge-redirect helper, whose cells are discharged by
-#: non-reachability because it deliberately keeps resolving an entity whose
-#: provenance is gone.
-SURVIVOR_HELPER: Final = "public.v_memory_entity_survivor"
+#: The merge authority and its deployment-labelled adapter. Their cells are
+#: discharged by non-reachability because they deliberately keep resolving an
+#: entity whose provenance is gone.
+SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_survivor")
 
 #: The private helpers that *do* compile a deletion rule — they are where the
 #: rule is defined and the public relations project it — so their cells are
 #: executed like a public relation's, before and after the mutation.
 GATED_HELPERS: Final = (
+    "public.v_memory_fact_visible",
     "public.v_memory_mention_current_content",
     "public.v_memory_page_citation_visible",
 )
@@ -155,8 +156,9 @@ _PUBLIC_SURFACES: Final = tuple(
 )
 
 _HELPER_SURFACES: Final = (
-    MatrixSurface(
-        name=SURVIVOR_HELPER, caller_reachable=False, compiles_deletion=False
+    *(
+        MatrixSurface(name=helper, caller_reachable=False, compiles_deletion=False)
+        for helper in sorted(SURVIVOR_HELPERS)
     ),
     *(
         MatrixSurface(name=helper, caller_reachable=False)
@@ -165,7 +167,7 @@ _HELPER_SURFACES: Final = (
 )
 
 if {surface.name for surface in _HELPER_SURFACES} != {
-    f"public.{name}" for name in PRIVATE_HELPER_VIEWS
+    f"public.{name}" for name in AUTHORIZATION_HELPER_VIEWS
 }:  # pragma: no cover -- a new helper must be classified before it can ship
     raise RuntimeError(
         "the deletion matrix does not enumerate every private helper the "
@@ -232,6 +234,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.sections_live",
             "memory_v1.testimony_currency_events_visible",
             "public.v_memory_mention_current_content",
+            "public.v_memory_fact_visible",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -330,6 +333,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.graph_edges_current",
             "memory_v1.graph_edges_visible_history",
             "memory_v1.page_evidence_visible",
+            "public.v_memory_fact_visible",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -436,7 +440,7 @@ def cell_expectation(*, target: DeletionTarget, surface: MatrixSurface) -> str:
         )
     if not surface.compiles_deletion:
         return (
-            f"{surface.name} is the merge-redirect helper: it deliberately keeps "
+            f"{surface.name} is a merge-redirect helper: it deliberately keeps "
             "resolving an entity whose provenance is gone, because entities_current "
             "computes that provenance from it, so its obligation is "
             f"non-reachability rather than absence — outside {QUERY_SPACE_SCHEMA}, "
