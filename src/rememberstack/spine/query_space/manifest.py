@@ -376,8 +376,10 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
     """The §3.5 Cypher read surface: what it accepts and what it refuses.
 
     The reject list is part of the public contract, not an implementation
-    detail: an agent needs to know that this surface reads and only reads, and
-    a change to what is refused changes the surface, so it rolls the hash.
+    detail: an agent needs to know which constructs die before the engine sees
+    them (the file/network/extension family). Mutations are refused by the
+    engine's `read_only=True` and mapped to the same public code; a change to
+    either path rolls the hash.
     """
     from rememberstack.surfaces.query_sandbox import cypher
 
@@ -387,6 +389,8 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
         "engine_version": "0.18.2",
         "read_clauses": list(sorted(cypher.READ_CLAUSES)),
         "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
+        # Engine recursive upper bound; cost is a runtime resource limit now,
+        # not a syntax refusal — see open_query_space_batch_d.md.
         "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,
         "grade": "snapshot_graph",
         # `confirm=true` checks live membership of projected entity/relation

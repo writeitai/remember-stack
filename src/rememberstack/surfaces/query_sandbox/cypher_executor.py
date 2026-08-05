@@ -6,13 +6,13 @@ it projects. Every result carries grade `snapshot_graph` and the `built_at` of
 the generation it ran against, because an aggregate over a snapshot is exactly
 correct for that cut and says nothing about what has happened since.
 
-The order of controls is the point. The parse gate (`cypher.py`) refuses every
-mutation and external-action construct before the engine sees the text; the
-engine's own parser then decides whether what remains is a query the pinned
-dialect implements; only then does anything execute, read-only, under a
-timeout. A construct that reaches the engine is a gate failure, not something
-the engine's read-only mode will catch — `read_only=True` blocks writes but
-not `COPY`/`LOAD`/`INSTALL`-class file and extension actions.
+The order of controls is the point. The pre-engine deny-scan (`cypher.py`)
+refuses the file/network/extension family before the engine sees the text —
+those are the constructs `read_only=True` does not stop. Mutations are not
+scanned for: the snapshot is opened `read_only=True`, the engine refuses them
+itself, and this executor maps that refusal to `cypher_not_allowed` so the
+caller gets a stated rejection rather than a raw engine message. Everything
+else runs under a timeout and the row/byte caps.
 
 `confirm=true` is a narrow, explicit option: it checks that top-level `Entity`
 and `RELATES` VALUES still exist live in PostgreSQL and drops rows whose ids do
@@ -71,6 +71,15 @@ _ENGINE_INTERNAL_KEYS: Final = frozenset({"_id", "_src", "_dst"})
 
 #: Where the engine records a value's label, in the spellings it uses.
 _LABEL_KEYS: Final = ("_LABEL", "_label")
+
+#: The pinned engine's refusal when a mutation reaches a `read_only=True`
+#: database, verbatim. Mapped to `cypher_not_allowed` so the caller sees a
+#: stated rejection rather than an opaque execution failure. A version bump
+#: that changes this wording fails the pin test instead of silently
+#: reclassifying writes as execution errors.
+READ_ONLY_REFUSAL: Final = (
+    "Connection exception: Cannot execute write operations in a read-only database!"
+)
 
 #: Which live relation each confirmable graph type is checked against.
 _CONFIRM_SQL: Final = {
@@ -150,9 +159,9 @@ class CypherSandboxExecutor:
     ) -> QueryResult:
         """The engine's plan for a statement, without running it.
 
-        `EXPLAIN` is on the gate's reject list for caller text — a caller
-        cannot smuggle one into a query — so the surface prepends its own after
-        the gate has accepted the statement.
+        The surface prepends `EXPLAIN` after the deny-scan has accepted the
+        statement. This is the plan path only — ordinary `query_cypher`
+        executes the statement directly and does not compile it twice.
         """
         return self._run(
             cypher=cypher,
@@ -269,10 +278,13 @@ class CypherSandboxExecutor:
             query_language="cypher",
             # §4.4: a Cypher answer did not read the memory_v1 SQL schema, and
             # naming it would tell a caller their rows came from views they
-            # never queried.
+            # never queried. Graph type/property references are left empty:
+            # they used to come from a text walker the deny-scan no longer
+            # includes, and reintroducing heuristics would re-open the
+            # quoted-prose false positives that walker had.
             query_space_schema=None,
-            referenced_graph_types=statement.graph_types,
-            referenced_graph_properties=statement.graph_properties,
+            referenced_graph_types=(),
+            referenced_graph_properties=(),
             execution_started_at=started,
             elapsed_ms=(time.monotonic() - clock) * 1000,
             columns=columns,
@@ -378,6 +390,17 @@ class CypherSandboxExecutor:
             answer = connection.execute(text, dict(parameters))
         except RuntimeError as error:
             message = str(error)
+            if is_read_only_refusal(message):
+                # A mutation reached the engine. `read_only=True` already
+                # stopped it; map that to the stated refusal so the caller
+                # does not see a raw connection exception as an execution
+                # failure.
+                raise SandboxRejection(
+                    code=QueryErrorCode.CYPHER_NOT_ALLOWED,
+                    message=(
+                        "this surface reads the published graph and never changes it"
+                    ),
+                ) from error
             if "Parser exception" in message or "Binder exception" in message:
                 # The pinned dialect does not implement this. It is NOT
                 # rewritten into something the dialect does implement.
@@ -555,6 +578,17 @@ class _EngineResult:
     column_names: tuple[str, ...]
     column_types: tuple[str, ...]
     rows: list[list[object]]
+
+
+def is_read_only_refusal(message: str) -> bool:
+    """Whether `message` is the pinned engine's read-only write refusal.
+
+    One place. The pin test asserts the live engine still produces
+    `READ_ONLY_REFUSAL` for a known mutation; every mapping path goes through
+    this check so a wording change fails loudly instead of reclassifying
+    writes as execution errors.
+    """
+    return READ_ONLY_REFUSAL in message
 
 
 def _public_value(value: object) -> object:

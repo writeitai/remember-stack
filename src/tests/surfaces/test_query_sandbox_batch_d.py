@@ -27,10 +27,11 @@ from sqlalchemy import text
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.surfaces.query_sandbox.cypher import RECURSIVE_HOPS_MAX
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.cypher_executor import CYPHER_TEXT_BYTES_MAX
 from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
+from rememberstack.surfaces.query_sandbox.cypher_executor import is_read_only_refusal
+from rememberstack.surfaces.query_sandbox.cypher_executor import READ_ONLY_REFUSAL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -277,28 +278,26 @@ def test_a_path_never_revisits_an_entity(
         assert len(visited) == len(set(visited))
 
 
-# --- the Cypher read gate ----------------------------------------------------
+# --- the Cypher pre-engine deny-scan ----------------------------------------
 
 
 @pytest.mark.parametrize(
     "statement",
     [
-        "MATCH (e:Entity) SET e.name = 'x' RETURN e",
-        "MATCH (e:Entity) DELETE e",
-        "MATCH (e:Entity) RETURN e UNION MATCH (d) CREATE (n:Entity) RETURN d",
         "CALL db.schema() RETURN 1",
         "COPY Entity TO '/tmp/leak.csv'",
         "INSTALL fts",
+        "UNINSTALL fts",
         "LOAD FROM 'file:///etc/passwd' RETURN 1",
         "ATTACH '/other/graph.lbdb' AS other",
+        "IMPORT DATABASE '/tmp/imp'",
+        "EXPORT DATABASE '/tmp/exp'",
         "MATCH (e) RETURN e; MATCH (d) RETURN d",
-        "MATCH (e) RETURN e /* harmless */ ; DROP TABLE Entity",
+        "MATCH (e) RETURN e /* harmless */ ; COPY Entity TO '/tmp/x.csv'",
     ],
 )
-def test_a_construct_that_writes_or_reaches_out_never_reaches_the_engine(
-    statement: str,
-) -> None:
-    """`read_only=True` does not stop file or extension actions; this does."""
+def test_a_file_or_extension_construct_never_reaches_the_engine(statement: str) -> None:
+    """`read_only=True` does not stop these; the deny-scan does."""
     with pytest.raises(SandboxRejection) as rejection:
         validate_cypher(statement)
     assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
@@ -318,22 +317,23 @@ def test_a_construct_that_writes_or_reaches_out_never_reaches_the_engine(
         "MATCH (e) RETURN e // then CREATE something",
         "MATCH (e) RETURN e /* CREATE */",
         "MATCH (e) OPTIONAL MATCH (e)-[r]->(d) RETURN e, collect(r) AS rs",
+        # Mutations are not the gate's job: read_only refuses them at the
+        # engine, and the executor maps that to cypher_not_allowed.
+        "MATCH (e:Entity) SET e.name = 'x' RETURN e",
+        # Hop bounds are not syntax rules any more; a bare `*` is the engine's.
+        "MATCH (a)-[*]->(b) RETURN a",
+        "MATCH (e) RETURN count(*) AS n",
+        "RETURN 1 - [2 * 31][1] AS n",
+        "RETURN 1; // trailing comment",
     ],
 )
 def test_a_read_statement_is_accepted(statement: str) -> None:
-    """Quoted prose and comments are not query text, and reads are reads."""
+    """Quoted prose and comments are not query text, and the gate is a deny-list."""
     assert validate_cypher(statement).text
 
 
-def test_a_traversal_deeper_than_the_engine_allows_is_refused() -> None:
-    """The engine's own 30-hop bound is also the executor's hard cap."""
-    with pytest.raises(SandboxRejection) as rejection:
-        validate_cypher(f"MATCH (a)-[r*1..{RECURSIVE_HOPS_MAX + 1}]->(b) RETURN a")
-    assert rejection.value.code == QueryErrorCode.RESOURCE_LIMIT
-
-
-def test_text_that_is_not_a_read_statement_is_a_parse_error() -> None:
-    """Something that is not a query is rejected as one, not as a construct."""
+def test_text_that_is_not_a_statement_is_a_parse_error() -> None:
+    """Empty text and an unclosed quote are not statements at all."""
     for statement in ("", "   ", "RETURN 'unterminated"):
         with pytest.raises(SandboxRejection) as rejection:
             validate_cypher(statement)
@@ -453,13 +453,46 @@ def test_a_projected_node_loses_the_engines_physical_offsets(
     assert node["name"] in ("Ada", "Grace")
 
 
-def test_a_write_never_reaches_the_engine(snapshot: _Snapshot) -> None:
-    """The gate refuses it by name, before the engine is asked anything."""
+def test_a_mutation_is_reported_as_not_allowed_not_as_execution_error(
+    snapshot: _Snapshot,
+) -> None:
+    """A write that reaches the engine is a stated refusal, not a raw failure.
+
+    The deny-scan no longer names mutations: `read_only=True` refuses them, and
+    the executor maps that refusal to `cypher_not_allowed`.
+    """
     outcome = _cypher(snapshot).query_cypher(
         cypher="MATCH (e:Entity) SET e.name = 'x' RETURN e"
     )
     assert outcome.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
     assert outcome.termination_reason == "rejected"
+    assert outcome.error_code != QueryErrorCode.EXECUTION_ERROR
+
+
+def test_the_pinned_engine_still_refuses_writes_with_the_known_message(
+    snapshot: _Snapshot,
+) -> None:
+    """Pin the engine wording the mapping depends on.
+
+    A version bump that changes this string must fail here, not silently
+    reclassify mutations as execution errors.
+    """
+    connection = snapshot._connection
+    with pytest.raises(RuntimeError) as raised:
+        connection.execute("MATCH (e:Entity) SET e.name = 'x' RETURN e")
+    message = str(raised.value)
+    assert message == READ_ONLY_REFUSAL
+    assert is_read_only_refusal(message)
+    for mutation in (
+        "MATCH (e:Entity) DELETE e",
+        "CREATE (:Entity {id: $id, type: 'x', name: 'x',"
+        " normalized_name: 'x', summary: '',"
+        " created_at: timestamp('2024-01-01')})",
+        "MERGE (e:Entity {id: $id}) RETURN e",
+    ):
+        with pytest.raises(RuntimeError) as each:
+            connection.execute(mutation, {"id": uuid4()})
+        assert is_read_only_refusal(str(each.value)), each.value
 
 
 def test_syntax_the_pinned_dialect_rejects_is_a_parse_error(
@@ -488,13 +521,16 @@ def test_a_deployment_with_no_published_graph_fails_closed() -> None:
 
 
 def test_explain_returns_a_plan_without_running_the_query(snapshot: _Snapshot) -> None:
-    """The surface prepends EXPLAIN; a caller cannot smuggle one in."""
+    """`explain_cypher` prepends EXPLAIN; ordinary query does not compile twice."""
     executor = _cypher(snapshot)
     outcome = executor.explain_cypher(cypher="MATCH (e:Entity) RETURN e.name")
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows
+    # A caller who puts EXPLAIN in the text still gets a plan, not a second
+    # compile of a write-check: the surface no longer refuses EXPLAIN by name.
     smuggled = executor.query_cypher(cypher="EXPLAIN MATCH (e:Entity) RETURN e.name")
-    assert smuggled.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
+    assert smuggled.termination_reason == "completed", smuggled.error_message
+    assert smuggled.rows
 
 
 def test_parameters_are_bound_by_the_engine(snapshot: _Snapshot) -> None:
@@ -593,57 +629,15 @@ def test_the_gate_reads_the_comment_forms_the_engine_reads() -> None:
     """`--` is not a comment to the pinned engine, so it is not one here.
 
     Skipping a form the engine does not skip makes the scan blind to text the
-    engine goes on to parse. Every such statement happens to fail the engine's
-    parser today, but that is a property of this dialect rather than something
-    a gate should rely on.
+    engine goes on to parse. The denied keyword after `--` must still be seen.
     """
     with pytest.raises(SandboxRejection) as rejection:
-        validate_cypher("MATCH (e:Entity) RETURN e.name -- CREATE (n:Entity)")
+        validate_cypher("MATCH (e:Entity) RETURN e.name -- CALL db.schema()")
     assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
 
     # The forms the engine DOES honour still contribute nothing.
-    assert validate_cypher("MATCH (e:Entity) RETURN e.name // CREATE (n)").text
-    assert validate_cypher("MATCH (e:Entity) /* CREATE (n) */ RETURN e.name").text
-
-
-@pytest.mark.parametrize(
-    "statement",
-    [
-        "MATCH (a)-[*]->(b) RETURN a",
-        "MATCH (a)-[*1..]->(b) RETURN a",
-        "MATCH p = (a)-[:RELATES* ACYCLIC]->(b) RETURN p",
-        f"MATCH (a)-[r:RELATES*1..{RECURSIVE_HOPS_MAX + 1}]->(b) RETURN a",
-    ],
-)
-def test_a_traversal_must_state_a_bound_within_the_cap(statement: str) -> None:
-    """The engine runs `*` and `*1..`; a cap that ignores them is advisory.
-
-    Only an explicit upper bound over its own limit is refused by the engine's
-    binder, so a pattern that states no bound at all has to be refused here —
-    and this executes in the API process.
-    """
-    with pytest.raises(SandboxRejection) as rejection:
-        validate_cypher(statement)
-    assert rejection.value.code == QueryErrorCode.RESOURCE_LIMIT
-
-
-@pytest.mark.parametrize(
-    "statement",
-    [
-        "MATCH (a)-[r:RELATES*1..3]->(b) RETURN a",
-        "MATCH (a)-[r:RELATES*..5]->(b) RETURN a",
-        "MATCH (a)-[r:RELATES*3]->(b) RETURN a",
-        "MATCH p = (a)-[:RELATES* SHORTEST 1..5]->(b) RETURN p",
-        "MATCH p = (a)-[:RELATES* ALL SHORTEST 1..5]->(b) RETURN p",
-        "MATCH p = (a)-[:RELATES* WSHORTEST(weight) 1..5]->(b) RETURN p",
-        # A `*` outside a relationship pattern is not a traversal at all.
-        "MATCH (e) RETURN count(*) AS n",
-        "MATCH (e) RETURN 2 * 3 AS n",
-    ],
-)
-def test_a_bounded_traversal_and_a_bare_star_are_both_accepted(statement: str) -> None:
-    """§3.5 allows the engine's recursive modes; `count(*)` is not a hop."""
-    assert validate_cypher(statement).text
+    assert validate_cypher("MATCH (e:Entity) RETURN e.name // CALL db.schema()").text
+    assert validate_cypher("MATCH (e:Entity) /* CALL db.schema() */ RETURN e.name").text
 
 
 def test_a_negative_row_bound_is_not_a_larger_one(snapshot: _Snapshot) -> None:
@@ -701,30 +695,7 @@ def test_the_disclosed_cut_is_the_export_transactions_own_instant(
         engine.dispose()
 
 
-@pytest.mark.parametrize(
-    "statement",
-    [
-        # A `*` inside an inline recursive predicate is multiplication.
-        "MATCH p=(a)-[r:RELATES*1..3 (r,n | WHERE r.confidence * 100 > 50)]->(b)"
-        " RETURN p",
-        # ... and so is one inside a property map.
-        "MATCH (a)-[r:RELATES {confidence: 2 * 31}]->(b) RETURN r",
-        # A comment may sit between the `*` and the range it bounds.
-        "MATCH p=(a)-[r:RELATES* /* comment */ 1..3]->(b) RETURN p",
-        # A terminal semicolon with a trailing comment is one statement.
-        "RETURN 1; // trailing comment",
-    ],
-)
-def test_the_gate_accepts_what_the_pinned_engine_accepts(statement: str) -> None:
-    """Over-refusing is a real failure too: it makes legal queries impossible.
-
-    Every one of these parses in the pinned engine, and each was refused by an
-    earlier version of this scan.
-    """
-    assert validate_cypher(statement).text
-
-
-def test_extension_management_is_refused_by_name(snapshot: _Snapshot) -> None:
+def test_extension_management_is_refused_by_name() -> None:
     """The engine ACCEPTS `UNINSTALL`, so the gate must refuse it as a
     construct rather than let it look like bad syntax."""
     with pytest.raises(SandboxRejection) as rejection:
@@ -800,28 +771,19 @@ def test_the_disclosed_cap_is_the_one_that_applied(snapshot: _Snapshot) -> None:
     assert outcome.returned_row_count == 5
 
 
-@pytest.mark.parametrize(
-    "statement",
-    [
-        "RETURN [2 * 31] AS xs",
-        "MATCH (a)-[r:RELATES {confidence: [2 * 31][1]}]->(b) RETURN r",
-    ],
-)
-def test_a_list_literal_is_not_a_relationship_bracket(statement: str) -> None:
-    """Only `-[` opens a relationship pattern; every other `[` opens a list."""
-    assert validate_cypher(statement).text
-
-
 def test_a_cypher_answer_names_no_sql_schema(snapshot: _Snapshot) -> None:
-    """§4.4: naming memory_v1 would credit views the query never read."""
+    """§4.4: naming memory_v1 would credit views the query never read.
+
+    Graph type/property references are empty: the walker that filled them was
+    deleted with the hop/bracket scanner, and heuristics are not reintroduced.
+    """
     outcome = _cypher(snapshot).query_cypher(
         cypher="MATCH (e:Entity)-[r:RELATES]->(d:Entity) RETURN e.name, r.predicate"
     )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.query_space_schema is None
-    assert "Entity" in outcome.referenced_graph_types
-    assert "RELATES" in outcome.referenced_graph_types
-    assert "name" in outcome.referenced_graph_properties
+    assert outcome.referenced_graph_types == ()
+    assert outcome.referenced_graph_properties == ()
 
 
 def test_a_confirmed_result_dates_its_confirmation(
@@ -837,39 +799,6 @@ def test_a_confirmed_result_dates_its_confirmation(
     outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.pg_snapshot_at is not None
-
-
-def test_a_comment_cannot_hide_a_relationship_pattern() -> None:
-    """The engine runs this unbounded traversal; the gate must see it.
-
-    A dash-then-bracket check on raw characters missed it, because a comment
-    sat between them — the classification has to use what the SCAN saw, which
-    steps over comments, not what the text happens to look like.
-    """
-    with pytest.raises(SandboxRejection) as rejection:
-        validate_cypher("MATCH (a)-/* gap */[r:RELATES*]->(b) RETURN a")
-    assert rejection.value.code == QueryErrorCode.RESOURCE_LIMIT
-
-
-def test_subtraction_before_a_list_is_arithmetic() -> None:
-    """A relationship bracket sits inside the arrow on BOTH sides."""
-    assert validate_cypher("RETURN 1 - [2 * 31][1] AS n").text
-    assert validate_cypher("MATCH (a)<-[r:RELATES*1..2]-(b) RETURN a").text
-
-
-def test_graph_references_come_from_the_statement_not_its_prose() -> None:
-    """§4.4's references describe what was queried, not what was quoted."""
-    quoted = validate_cypher("RETURN ':Entity .name' AS prose")
-    assert quoted.graph_types == ()
-    assert quoted.graph_properties == ()
-
-    # A property map's keys are properties even with no dot before them.
-    pattern = validate_cypher(
-        "MATCH (a:Entity {name:'Ada'})-[r:RELATES {confidence:62}]->(b:Entity)"
-        " RETURN r.predicate"
-    )
-    assert set(pattern.graph_types) == {"Entity", "RELATES"}
-    assert {"name", "confidence", "predicate"} <= set(pattern.graph_properties)
 
 
 def test_current_helper_rows_report_the_instant_that_selected_them(

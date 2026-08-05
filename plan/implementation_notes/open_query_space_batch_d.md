@@ -23,39 +23,73 @@ caller has, one hop further away than it really is. Every bound is clamped
 inside the function and each walk is ordered before it is cut, so a bound means
 one thing rather than a different subgraph per run.
 
-## The Cypher gate is the mandatory control
+## The Cypher gate is a deny-scan for what `read_only` does not stop
 
-`read_only=True` blocks writes but does NOT block `COPY`/`LOAD`/`INSTALL`-class
-file, network, attachment, and extension actions. So every mutation and
-external-action construct is rejected by name BEFORE the engine sees the text,
-including one hidden in a `UNION` arm, behind a comment boundary, or inside a
-subquery. Quoted prose and comments contribute nothing to the scan, because a
-keyword inside a string is data.
+Two measured facts about the pinned engine (`ladybug==0.18.2`) define the
+control split:
 
-The comment forms the scan skips are exactly the ones the pinned engine skips —
-`//` and `/* */`, and NOT `--`, which this engine does not treat as a comment
-at all. Skipping a form the engine does not skip would make the scan blind to
-text the engine goes on to parse, and that is the one direction a gate must
-never be wrong in. Every statement of that shape happens to fail the engine's
-own parser today, but that is a property of this dialect rather than something
-worth depending on, and it was verified against the pinned engine rather than
-assumed.
+1. `Database(..., read_only=True)` refuses every mutation form on its own —
+   SET, DELETE, CREATE, MERGE — with
+   `Connection exception: Cannot execute write operations in a read-only database!`.
+   The gate does not need to detect mutations to be safe.
+2. `read_only=True` does **not** block the file/network/extension family.
+   Those are the only constructs that must die before the engine sees the text.
 
-The scan is deliberately blunt in one direction: a caller who names something
-`create` is inconvenienced, and a caller who hides `CREATE` anywhere is
-stopped. Blunt is not the same as careless, though, and over-refusing is its
-own failure — it makes legal queries impossible. A `*` counts as a hop bound
-only in the pattern itself, never inside a property map or an inline recursive
-predicate where it is multiplication; a comment may sit between the `*` and its
-range; and a terminal semicolon followed only by a comment is one statement,
-which is how the engine reads it too. Each of those was refused by an earlier
-version of this scan and is now covered by a test that names the engine as the
-authority. After the gate, the pinned engine's own parser decides whether what
-remains is a query it implements — syntax it does not implement fails
-`cypher_parse_error` rather than being rewritten into a different query.
+So the pre-engine scan refuses, by name, only: `COPY`, `LOAD`, `INSTALL`,
+`UNINSTALL`, `ATTACH`, `IMPORT`, `EXPORT`, `CALL`. Detection is a token scan
+that ignores text inside single quotes, double quotes, backticks, `//` line
+comments and `/* */` block comments — and NOT `--`, which this engine does not
+treat as a comment (verified). One statement per request still holds (a
+trailing `;` followed only by whitespace or comments is one statement), and
+the 32 KiB text cap still holds.
 
-`EXPLAIN` is on the reject list for caller text and is prepended by the surface
-itself, so `explain_cypher` cannot be reached by smuggling one into a query.
+Mutations that reach the engine are mapped from that pinned connection
+exception to `cypher_not_allowed`, so the caller gets a stated refusal rather
+than a raw engine message. The wording is pinned in one place
+(`READ_ONLY_REFUSAL` / `is_read_only_refusal`) with a test that asserts the
+live engine still produces it for a known mutation — a version bump that
+changes the string fails loudly instead of reclassifying writes as execution
+errors. Other engine errors keep their current mapping (parse/binder →
+`cypher_parse_error`, else `execution_error`).
+
+The scan deliberately does **not** compile with `EXPLAIN` first. A second
+compile was measured at 49–74% of a query's own runtime and buys nothing once
+`read_only` already refuses writes. `explain_cypher` still prepends `EXPLAIN`
+for the plan path; ordinary `query_cypher` executes directly.
+
+What was deleted from the earlier gate, and why: the hop-range parser, the
+relationship-bracket classifier, the recursive-mode keyword stepper, and the
+graph-reference walker. That machinery was a lexer doing a parser's job. Three
+review rounds found seven defects in it, four of them introduced by fixes to
+earlier ones (`--` treated as a comment when the engine does not; `*` inside
+property maps and inline predicates read as traversals; list literals and
+subtraction-before-a-list read as relationship brackets; a comment between `-`
+and `[` hiding a relationship pattern; label/property extraction matching
+inside quoted prose). The deny-scan has no structural understanding beyond
+tokens and comments, so those classes of defect have nowhere to live.
+
+## DEVIATION from design §3.5: the hop cap is a resource limit, not a syntax rule
+
+Design §3.5 calls the engine's 30-hop recursive upper bound "an executor hard
+cap" and describes refusing over-bound and unbounded variable-length patterns
+in the parser. That is no longer how this surface works.
+
+The hop bound is now a **resource** limit, enforced the same way other cost is
+enforced: `connection.set_query_timeout(...)` (already called in
+`cypher_executor.py`) plus the existing row and byte caps. There is no syntax
+analysis of `*`, `*1..`, or `*1..N`. An unbounded traversal is not refused by
+name; it is bounded by the timeout and the result caps, and — when built — by
+the process-isolated worker.
+
+That makes the **process-isolated worker load-bearing rather than
+defence-in-depth**. Design §3.5 put the parser first as the mandatory control
+and the worker second as defence-in-depth. With hop cost no longer killed in
+the gate, an expensive traversal that runs in the API process is a real
+availability risk until the worker exists. The worker was already unbuilt
+(below); this deviation makes that gap sharper, not softer. State it plainly:
+this is not "the same cap, implemented elsewhere" — it is a different kind of
+bound, and the supervisor that can outlive an engine fault is now the thing
+that has to carry it.
 
 ## Every answer carries the instant it projects
 
@@ -85,20 +119,16 @@ graph are different answers and must not read the same.
 
 A Cypher answer names no SQL schema (§4.4): it did not read the `memory_v1`
 views, and crediting them would tell a caller their rows came from somewhere
-they never queried. It does report the projection types and properties the
-statement referenced, so a caller can see which part of the graph contract
-their answer depends on.
+they never queried.
 
-## Variable-length patterns must state their bound
+## §4.4 graph references are empty (gap)
 
-The engine runs `*` and `*1..` quite happily; its binder only refuses an
-explicit upper bound above its own 30-hop limit. A gate that reads a bound when
-one is given and shrugs when none is would have a cap in name only, so a
-pattern stating no finite upper bound is refused. The `*` is only read as a
-traversal inside a relationship pattern's brackets — `count(*)` and
-multiplication are not hops — and §3.5's recursive modes (`SHORTEST`,
-`ALL SHORTEST`, `WSHORTEST(property)`, `TRAIL`, `ACYCLIC`) are stepped over so
-the range after them is the one that gets read.
+`referenced_graph_types` and `referenced_graph_properties` on `QueryResult`
+were populated by the graph-reference walker deleted with the hop/bracket
+scanner. They are left empty. Reintroducing text heuristics would re-open the
+quoted-prose false positives that walker had. Filling them correctly needs the
+engine's AST (or an equivalent structural source), not another scan. Until
+then the fields stay empty and this note is the record of the gap.
 
 ## `confirm=true` is narrow, and says so
 
@@ -133,16 +163,15 @@ silently matched nothing, which is how the test found it.
 §11 lists two more things under Batch D. Neither is done, and neither is
 hidden here:
 
-**The process-isolated engine worker.** The design puts the parse gate first
-as the mandatory control and the worker second as defense-in-depth, and the
-gate is built. The worker is not: Cypher still executes in the API process,
-bounded by the engine's own query timeout. This matters more than a
-belt-and-braces argument usually would, because we have *observed* the pinned
-engine fault mid-traversal (INT128 overflow, issue #144) rather than merely
-imagined it — an engine that can fault is an engine worth putting behind a
-supervisor that can outlive it. It is a substantial change (snapshot path
-plumbing, an RPC boundary, a supervisor deadline) and is called out rather
-than half-built.
+**The process-isolated engine worker.** The design put the parse gate first as
+the mandatory control and the worker second as defense-in-depth. The worker is
+not built: Cypher still executes in the API process, bounded by the engine's
+own query timeout and the row/byte caps. After the hop-cap deviation above,
+that worker is **load-bearing** for expensive traversals and for surviving an
+engine fault mid-query — we have *observed* the pinned engine fault
+mid-traversal (INT128 overflow, issue #144) rather than merely imagined it.
+It is a substantial change (snapshot path plumbing, an RPC boundary, a
+supervisor deadline) and is called out rather than half-built.
 
 **`question_context` v4.** The existing context operations do not yet gain the
 fact-backing and entity-candidate channels, the two default-false flags, or

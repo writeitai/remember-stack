@@ -905,46 +905,14 @@
         ],
         "recursive_hops_max": 30,
         "rejected_constructs": [
-          "alter",
-          "analyze",
           "attach",
-          "begin",
           "call",
-          "checkpoint",
-          "comment",
-          "commit",
-          "constraint",
           "copy",
-          "create",
-          "delete",
-          "detach",
-          "detach_database",
-          "drop",
-          "execute",
-          "explain",
           "export",
-          "extension",
-          "extract",
-          "force",
-          "grant",
           "import",
-          "index",
-          "insert",
           "install",
           "load",
-          "macro",
-          "merge",
-          "prepare",
-          "profile",
-          "remove",
-          "revoke",
-          "rollback",
-          "sequence",
-          "set",
-          "transaction",
-          "uninstall",
-          "update",
-          "use"
+          "uninstall"
         ],
         "unconfirmed_projections": [
           "scalar_id_projection"
@@ -29170,5 +29138,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "81623c8328d73644db137c8082c500ddabf0998d259b9a9ba0cfa3b4aa1565a3"
+  "surface_manifest_hash": "160435eb4330034b46c13efdb4cf8942288d063d04d071be15ec3398b036d687"
 }
