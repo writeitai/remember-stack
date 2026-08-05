@@ -216,6 +216,7 @@ class ProjectionCatalog:
                         "row_counts": row_counts,
                         "validation": {**validation, "superseded_by_newer": str(newer)},
                         "built_from_watermark": built_from_watermark,
+                        "built_at": built_at,
                     },
                 )
                 return False
@@ -711,7 +712,8 @@ _MARK_SUPERSEDED = text(
     """
     UPDATE projection_snapshots
     SET status = 'superseded', row_counts = :row_counts,
-        validation = :validation, built_from_watermark = :built_from_watermark
+        validation = :validation, built_from_watermark = :built_from_watermark,
+        built_at = coalesce(CAST(:built_at AS timestamptz), built_at)
     WHERE snapshot_id = :snapshot_id
     """
 ).bindparams(bindparam("row_counts", type_=JSON), bindparam("validation", type_=JSON))

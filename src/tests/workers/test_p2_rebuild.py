@@ -10,6 +10,8 @@ touching the published pointer.
 """
 
 from collections.abc import Iterator
+from datetime import datetime
+from datetime import UTC
 import json
 from pathlib import Path
 from typing import cast
@@ -448,6 +450,7 @@ def test_out_of_order_publish_never_regresses_the_pointer(
     fresh = worker.rebuild(  # …and the newer rebuild completes first
         deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work"
     )
+    slow_cut = datetime(2020, 1, 1, tzinfo=UTC)
     took_pointer = catalog.publish(
         deployment_id=_DEPLOYMENT_ID,
         snapshot_id=slow_id,
@@ -455,19 +458,22 @@ def test_out_of_order_publish_never_regresses_the_pointer(
         row_counts={},
         validation={"gate": "passed"},
         built_from_watermark=None,
+        built_at=slow_cut,
     )
     assert took_pointer is False  # the late old snapshot never wins
     latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P2_graph")
     assert latest is not None
     assert latest["version"] == fresh["version"]
     with corpus.engine.connect() as connection:
-        status = connection.execute(
+        status, built_at = connection.execute(
             text(
-                "SELECT status::text FROM projection_snapshots WHERE snapshot_id = :s"
+                "SELECT status::text, built_at FROM projection_snapshots"
+                " WHERE snapshot_id = :s"
             ),
             {"s": slow_id},
-        ).scalar_one()
+        ).one()
     assert status == "superseded"
+    assert built_at == slow_cut
 
 
 def test_a_crossref_to_a_forgotten_document_never_reaches_the_loader(

@@ -121,6 +121,9 @@ REJECTED_KEYWORDS: Final = frozenset(
     }
 )
 
+#: The exact engine version whose grammar and read-only behavior were gated.
+LADYBUG_ENGINE_VERSION: Final = "0.18.2"
+
 #: The engine's v0.18.2 recursive upper bound. Recorded in the surface
 #: manifest; no longer enforced by syntax analysis. Runtime caps (timeout,
 #: row, byte) bound cost instead — see the Batch D implementation note.

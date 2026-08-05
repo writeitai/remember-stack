@@ -184,6 +184,17 @@ These corrections reuse existing views, result fields, and the checked-in
 matrix. They do not add RLS, a parser, a new visibility layer, or query-time
 rebuild behavior.
 
+## Final resource and provenance audit
+
+The pinned dialect must also be pinned in package metadata; otherwise a future
+Ladybug release could execute while the manifest continued to claim the gated
+0.18.2 behavior. A request-private graph connection must be released even when
+its provenance is incomplete, before the normal execution cleanup block is
+installed. Finally, an out-of-order snapshot that loses publication remains a
+point-in-time artifact and therefore must retain its export transaction's
+`built_at`, not its earlier registry-row timestamp. These corrections tighten
+existing lifecycle and disclosure contracts without adding a new subsystem.
+
 ## Final sibling-case audit
 
 The closing review found four narrow cases where the implemented order or

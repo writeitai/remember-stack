@@ -170,6 +170,12 @@ Broad supported-Python suites run in CI. The known LadybugDB INT128 traversal
 flake is rerun when it appears; it is not treated as evidence for unrelated
 code changes.
 
+The final resource/provenance review also pins the installed Ladybug dependency
+to the manifest's exact gated version, closes a request lease when its snapshot
+provenance fails validation, and retains the export cut on an out-of-order
+snapshot recorded as superseded. These are lifecycle and disclosure fixes; no
+new parser, isolation layer, or retention behavior was added.
+
 ## Final review corrections
 
 Current-context and graph-context evidence hydration now join

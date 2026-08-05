@@ -34,6 +34,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditEvent
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+from rememberstack.surfaces.query_sandbox.cypher import LADYBUG_ENGINE_VERSION
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.cypher_executor import CYPHER_TEXT_BYTES_MAX
 from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
@@ -57,6 +58,14 @@ _NAMES = ("alice", "bob", "cara", "dan")
 
 def _psycopg_url(url: str) -> str:
     return url.replace("postgresql+psycopg://", "postgresql://")
+
+
+def test_installed_ladybug_matches_the_published_dialect() -> None:
+    """The manifest must never describe a different engine than executes."""
+    assert ladybug.__version__ == LADYBUG_ENGINE_VERSION
+    manifest = load_manifest()
+    limits = manifest["hash_members"]["limits"]  # type: ignore[index]
+    assert limits["cypher_dialect"]["engine_version"] == LADYBUG_ENGINE_VERSION  # type: ignore[index]
 
 
 @pytest.fixture(scope="module")
@@ -444,6 +453,26 @@ class _NoSnapshot:
         raise RuntimeError("no published P2 snapshot exists yet")
 
 
+class _IncompleteSnapshot:
+    """A reader that leases a connection but cannot describe its generation."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def pinned(self) -> tuple[object, UUID, str, None]:
+        """Return a lease with deliberately incomplete provenance."""
+        owner = self
+
+        class _Lease:
+            """Record release without implementing an execution surface."""
+
+            def close(self) -> None:
+                """Record that fail-closed validation released the lease."""
+                owner.closed = True
+
+        return _Lease(), uuid4(), "incomplete", None
+
+
 @pytest.fixture(scope="module")
 def snapshot(tmp_path_factory: pytest.TempPathFactory) -> _Snapshot:
     """A two-entity graph in the shape the P2 rebuild publishes."""
@@ -771,6 +800,14 @@ def test_a_deployment_with_no_published_graph_fails_closed() -> None:
     outcome = _cypher(_NoSnapshot()).query_cypher(cypher="MATCH (e:Entity) RETURN e")
     assert outcome.error_code == QueryErrorCode.P2_UNAVAILABLE
     assert outcome.rows == ()
+
+
+def test_incomplete_snapshot_provenance_releases_the_request_lease() -> None:
+    """Fail-closed provenance validation cannot accumulate open connections."""
+    reader = _IncompleteSnapshot()
+    outcome = _cypher(reader).query_cypher(cypher="RETURN 1")
+    assert outcome.error_code == QueryErrorCode.P2_UNAVAILABLE
+    assert reader.closed is True
 
 
 def test_explain_returns_a_plan_without_running_the_query(snapshot: _Snapshot) -> None:

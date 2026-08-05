@@ -721,7 +721,7 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
     return {
         "contract": "memory_v1.cypher/1",
         "engine": "ladybug",
-        "engine_version": "0.18.2",
+        "engine_version": cypher.LADYBUG_ENGINE_VERSION,
         "read_clauses": list(sorted(cypher.READ_CLAUSES)),
         "read_openings": list(sorted(cypher.READ_OPENINGS)),
         "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),

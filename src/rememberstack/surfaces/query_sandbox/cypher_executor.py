@@ -413,9 +413,16 @@ class CypherSandboxExecutor:
         """
         try:
             connection, snapshot_id, version, built_at = self._reader.pinned()
-            return connection, self._describe(
-                snapshot_id, version, built_at, started_at=started_at
-            )
+            try:
+                snapshot = self._describe(
+                    snapshot_id, version, built_at, started_at=started_at
+                )
+            except Exception:
+                # The caller's closing block begins only after this method
+                # returns. Release a lease whose provenance failed validation.
+                connection.close()
+                raise
+            return connection, snapshot
         except SandboxRejection:
             raise
         except Exception as error:
