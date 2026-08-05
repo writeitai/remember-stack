@@ -560,7 +560,7 @@ removes the page and its links from the public surface, while a page that keeps 
 visible citation stays; the uncited page exists and is active in the base tables, is absent
 from `pages_live`, and is counted once by the quarantine report.
 
-**Suite, types, lint, migration cycle.** The Batch A and manifest gate comprises **63
+**Suite, types, lint, migration cycle.** The Batch A and manifest gate comprises **64
 tests**. The focused reviewer regressions, the explicit 24-view sibling sweep, and the
 complete 261-cell matrix pass. All **6 migration tests** pass, including the fresh
 up/down/up lifecycle and the exact p9.03 helper metadata restoration check. The

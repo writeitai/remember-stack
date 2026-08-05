@@ -2077,6 +2077,39 @@ def test_a_tombstoned_chunk_lineage_cannot_authorize_sibling_surfaces(
     assert counts == {name: 0 for name in counts}
 
 
+def test_identity_events_cite_only_mentions_live(corpus: _Corpus) -> None:
+    """A historical mention cannot leave an identity event in a live transcript."""
+    with corpus.engine.connect() as connection:
+        entity_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.entities_current"
+                " WHERE entity_id = :entity"
+            ),
+            entity=corpus.entity["alice"],
+        )
+        mention_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.mentions_live"
+                " WHERE mention_id = :mention"
+            ),
+            mention=corpus.mention["old"],
+        )
+        event_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.identity_events_visible"
+                " WHERE event_id = :event"
+            ),
+            event=corpus.decision["old"],
+        )
+
+    assert entity_visible == 1, "the entity gate must not decide this test"
+    assert mention_visible == 0
+    assert event_visible == 0
+
+
 def test_a_claim_cannot_borrow_a_representation_from_another_lineage(
     corpus: _Corpus,
 ) -> None:
@@ -2489,6 +2522,9 @@ def test_a_fact_with_an_invisible_endpoint_is_absent_from_fact_and_evidence_view
             )
             == 0
         )
+        before_report = orphan_quarantine_report(
+            connection=connection, deployment_id=str(_DEPLOYMENT_ID)
+        )
         connection.execute(
             text(
                 "UPDATE relations SET object_entity_id = :ghost"
@@ -2512,17 +2548,22 @@ def test_a_fact_with_an_invisible_endpoint_is_absent_from_fact_and_evidence_view
             ),
             fact=corpus.fact["current"],
         )
-        report = orphan_quarantine_report(
+        after_report = orphan_quarantine_report(
             connection=connection, deployment_id=str(_DEPLOYMENT_ID)
         )
         connection.rollback()
 
-    quarantine_counts = {
-        category.category: category.row_count for category in report.categories
+    before_counts = {
+        category.category: category.row_count for category in before_report.categories
+    }
+    after_counts = {
+        category.category: category.row_count for category in after_report.categories
     }
     assert catalog == 0
     assert bridge == 0
-    assert quarantine_counts["knowledge_citation_without_visible_target"] >= 1
+    assert after_counts["knowledge_citation_without_visible_target"] == (
+        before_counts["knowledge_citation_without_visible_target"] + 1
+    )
 
 
 def test_corrupt_coordinates_leak_no_identifier_through_any_surface(
