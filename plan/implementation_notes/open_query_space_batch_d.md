@@ -61,10 +61,32 @@ surfaces it, having previously read it from the registry and dropped it.
 No published snapshot fails `p2_unavailable`. An empty graph and an absent
 graph are different answers and must not read the same.
 
+## Variable-length patterns must state their bound
+
+The engine runs `*` and `*1..` quite happily; its binder only refuses an
+explicit upper bound above its own 30-hop limit. A gate that reads a bound when
+one is given and shrugs when none is would have a cap in name only, so a
+pattern stating no finite upper bound is refused. The `*` is only read as a
+traversal inside a relationship pattern's brackets — `count(*)` and
+multiplication are not hops — and §3.5's recursive modes (`SHORTEST`,
+`ALL SHORTEST`, `WSHORTEST(property)`, `TRAIL`, `ACYCLIC`) are stepped over so
+the range after them is the one that gets read.
+
 ## `confirm=true` is narrow, and says so
 
-It checks live membership of top-level `Entity` and `RELATES` ids in
-PostgreSQL and drops rows whose ids fail, as units. It does not re-run the
+It checks live membership of top-level `Entity` and `RELATES` VALUES in
+PostgreSQL and drops rows whose ids fail, as units.
+
+It does NOT yet confirm a scalar projection of `Entity.id` or
+`RELATES.relation_id` — `RETURN e.id` comes back unconfirmed with all three
+counts at zero. §3.5 asks for those too, and doing it correctly needs the
+parsed Cypher AST to know that a particular UUID column derives from
+`Entity.id`; guessing from column names or from the value's shape would drop
+`Document` ids, which §3.5 says are never confirmed. Until the AST is
+available, the disclosure reports zero rather than reporting a confirmation
+that did not happen — but a caller who projects ids and reads
+`nominated = 0` as "all clear" would be misreading it, which is why it is
+written down here and in the surface documentation rather than left implicit. It does not re-run the
 plan, re-ground an aggregate, or make any other part of the result live, and
 the result keeps its `snapshot_graph` grade. Asking for it without a
 PostgreSQL connection is refused rather than ignored: a caller who asked for

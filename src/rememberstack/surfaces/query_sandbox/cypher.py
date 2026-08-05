@@ -135,6 +135,12 @@ REJECTED_KEYWORDS: Final = _MUTATION | _EXTERNAL | _ADMINISTRATIVE
 #: silently shortened traversal answers a different question.
 RECURSIVE_HOPS_MAX: Final = 30
 
+#: The engine's recursive traversal modes (§3.5). They appear between the `*`
+#: and the hop range, and are stepped over when the bound is read.
+_RECURSIVE_MODES: Final = frozenset(
+    {"shortest", "all", "wshortest", "trail", "acyclic"}
+)
+
 #: One statement per request. A script is not a query.
 _STATEMENT_SEPARATOR: Final = ";"
 
@@ -159,7 +165,7 @@ def validate_cypher(text: str) -> CypherStatement:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_PARSE_ERROR, message="the statement is empty"
         )
-    words, statements, hops = _scan(text)
+    words, statements, hops, unbounded = _scan(text)
     if statements > 1:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
@@ -180,6 +186,18 @@ def validate_cypher(text: str) -> CypherStatement:
             code=QueryErrorCode.CYPHER_PARSE_ERROR,
             message="a read statement opens with MATCH, UNWIND, or RETURN",
         )
+    if unbounded:
+        # The engine happily runs `*` and `*1..`; only an explicit upper bound
+        # over its own limit is refused by its binder. A gate that claims a
+        # hop cap has to refuse the forms that state no bound at all, or the
+        # cap is advisory — and this runs in the API process.
+        raise SandboxRejection(
+            code=QueryErrorCode.RESOURCE_LIMIT,
+            message=(
+                "a variable-length pattern must state an upper bound of at"
+                f" most {RECURSIVE_HOPS_MAX} hops"
+            ),
+        )
     if hops is not None and hops > RECURSIVE_HOPS_MAX:
         raise SandboxRejection(
             code=QueryErrorCode.RESOURCE_LIMIT,
@@ -191,8 +209,9 @@ def validate_cypher(text: str) -> CypherStatement:
     return CypherStatement(text=text.strip(), keywords=frozenset(words), max_hops=hops)
 
 
-def _scan(text: str) -> tuple[set[str], int, int | None]:
-    """Split the statement into bare words, statement count, and hop bound.
+def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
+    """Split the statement into words, statement count, hop bound, and whether
+    any variable-length pattern was left unbounded.
 
     String literals, backtick-quoted identifiers, and comments contribute
     nothing: a keyword inside quoted prose is data, and a keyword inside a
@@ -205,13 +224,17 @@ def _scan(text: str) -> tuple[set[str], int, int | None]:
     parse, which is the one direction a gate must never be wrong in. That every
     such statement happens to fail the engine's parser today is a property of
     this dialect, not a guarantee worth depending on.
+
+    A `*` is only read as a variable-length bound inside a relationship
+    pattern's brackets. Outside them it is `count(*)` or multiplication, and
+    treating those as traversals would refuse ordinary queries.
     """
     words: set[str] = set()
     statements = 1
     max_hops: int | None = None
+    unbounded = False
     word = ""
-    digits = ""
-    in_range = False
+    brackets = 0
     index = 0
     length = len(text)
     while index < length:
@@ -229,35 +252,74 @@ def _scan(text: str) -> tuple[set[str], int, int | None]:
             index = length if newline < 0 else newline + 1
             continue
         if character.isalnum() or character == "_":
-            if character.isdigit() and in_range:
-                digits += character
             word += character
             index += 1
             continue
         if word:
             words.add(word.lower())
             word = ""
-        if character == "*":
-            # `*1..3` or `*..5`: the variable-length bound follows.
-            in_range = True
-            digits = ""
-        elif in_range and character not in (".", " "):
-            if digits:
-                max_hops = max(max_hops or 0, int(digits))
-            in_range = False
-            digits = ""
-        elif character == ".":
-            if digits:
-                max_hops = max(max_hops or 0, int(digits))
-                digits = ""
+        if character == "[":
+            brackets += 1
+        elif character == "]":
+            brackets = max(0, brackets - 1)
+        elif character == "*" and brackets:
+            upper, index = _range_upper_bound(text, index + 1)
+            if upper is None:
+                unbounded = True
+            else:
+                max_hops = max(max_hops or 0, upper)
+            continue
         if character == _STATEMENT_SEPARATOR and text[index + 1 :].strip():
             statements += 1
         index += 1
     if word:
         words.add(word.lower())
-    if in_range and digits:
-        max_hops = max(max_hops or 0, int(digits))
-    return words, statements, max_hops
+    return words, statements, max_hops, unbounded
+
+
+def _range_upper_bound(text: str, start: int) -> tuple[int | None, int]:
+    """The upper bound of a variable-length range, and where it ends.
+
+    `*3` is three, `*1..5` and `*..5` are five. `*` alone and `*1..` state no
+    upper bound at all — and the engine runs those, so they cannot be read as
+    "some small number". They return None, which the caller refuses.
+
+    §3.5 allows the engine's recursive modes, which sit between the `*` and the
+    range: `* SHORTEST 1..5`, `* ALL SHORTEST 1..5`, `* WSHORTEST(w) 1..5`,
+    `* TRAIL 1..5`, `* ACYCLIC 1..5`. Those words are stepped over so the bound
+    that follows is the one that gets read.
+    """
+    index = start
+    length = len(text)
+
+    def digits_at(position: int) -> tuple[int | None, int]:
+        end = position
+        while end < length and text[end].isdigit():
+            end += 1
+        return (int(text[position:end]) if end > position else None), end
+
+    while True:
+        while index < length and text[index].isspace():
+            index += 1
+        end = index
+        while end < length and (text[end].isalpha() or text[end] == "_"):
+            end += 1
+        word = text[index:end].lower()
+        if word not in _RECURSIVE_MODES:
+            break
+        index = end
+        # `WSHORTEST(weight)` names the property it weights by.
+        while index < length and text[index].isspace():
+            index += 1
+        if index < length and text[index] == "(":
+            closing = text.find(")", index)
+            index = length if closing < 0 else closing + 1
+    lower, index = digits_at(index)
+    if text.startswith("..", index):
+        upper, index = digits_at(index + 2)
+        return upper, index
+    # No range operator: a bare count is its own bound, and a bare `*` is not.
+    return lower, index
 
 
 def _skip_quoted(text: str, start: int) -> int:

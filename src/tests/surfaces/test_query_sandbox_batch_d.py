@@ -604,3 +604,43 @@ def test_the_gate_reads_the_comment_forms_the_engine_reads() -> None:
     # The forms the engine DOES honour still contribute nothing.
     assert validate_cypher("MATCH (e:Entity) RETURN e.name // CREATE (n)").text
     assert validate_cypher("MATCH (e:Entity) /* CREATE (n) */ RETURN e.name").text
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "MATCH (a)-[*]->(b) RETURN a",
+        "MATCH (a)-[*1..]->(b) RETURN a",
+        "MATCH p = (a)-[:RELATES* ACYCLIC]->(b) RETURN p",
+        f"MATCH (a)-[r:RELATES*1..{RECURSIVE_HOPS_MAX + 1}]->(b) RETURN a",
+    ],
+)
+def test_a_traversal_must_state_a_bound_within_the_cap(statement: str) -> None:
+    """The engine runs `*` and `*1..`; a cap that ignores them is advisory.
+
+    Only an explicit upper bound over its own limit is refused by the engine's
+    binder, so a pattern that states no bound at all has to be refused here —
+    and this executes in the API process.
+    """
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_cypher(statement)
+    assert rejection.value.code == QueryErrorCode.RESOURCE_LIMIT
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "MATCH (a)-[r:RELATES*1..3]->(b) RETURN a",
+        "MATCH (a)-[r:RELATES*..5]->(b) RETURN a",
+        "MATCH (a)-[r:RELATES*3]->(b) RETURN a",
+        "MATCH p = (a)-[:RELATES* SHORTEST 1..5]->(b) RETURN p",
+        "MATCH p = (a)-[:RELATES* ALL SHORTEST 1..5]->(b) RETURN p",
+        "MATCH p = (a)-[:RELATES* WSHORTEST(weight) 1..5]->(b) RETURN p",
+        # A `*` outside a relationship pattern is not a traversal at all.
+        "MATCH (e) RETURN count(*) AS n",
+        "MATCH (e) RETURN 2 * 3 AS n",
+    ],
+)
+def test_a_bounded_traversal_and_a_bare_star_are_both_accepted(statement: str) -> None:
+    """§3.5 allows the engine's recursive modes; `count(*)` is not a hop."""
+    assert validate_cypher(statement).text
