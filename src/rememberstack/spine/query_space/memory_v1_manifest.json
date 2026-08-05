@@ -1028,7 +1028,50 @@
           "semantic_entities": "nomination",
           "semantic_facts": "nomination"
         },
-        "srf_invocations_max_per_category": 3
+        "srf_invocations_max_per_category": 3,
+        "statement_node_classes": [
+          "A_ArrayExpr",
+          "A_Const",
+          "A_Expr",
+          "A_Indices",
+          "A_Indirection",
+          "A_Star",
+          "Alias",
+          "BitString",
+          "BoolExpr",
+          "Boolean",
+          "BooleanTest",
+          "CaseExpr",
+          "CaseWhen",
+          "CoalesceExpr",
+          "CollateClause",
+          "ColumnRef",
+          "CommonTableExpr",
+          "Float",
+          "FuncCall",
+          "GroupingSet",
+          "Integer",
+          "JoinExpr",
+          "MinMaxExpr",
+          "NamedArgExpr",
+          "Null",
+          "NullTest",
+          "ParamRef",
+          "RangeFunction",
+          "RangeSubselect",
+          "RangeVar",
+          "RawStmt",
+          "ResTarget",
+          "RowExpr",
+          "SelectStmt",
+          "SortBy",
+          "String",
+          "SubLink",
+          "TypeCast",
+          "TypeName",
+          "WindowDef",
+          "WithClause"
+        ]
       }
     },
     "views_schema": {
@@ -29032,5 +29075,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "1ed06a4a31031553119c089c0fb243fde93f266a2d5e6219129a161a9a3a2e15"
+  "surface_manifest_hash": "248c195d32c9afcac240664d335280ee2a28dd6fa36fd6ee8a960ba4f4a8f8ae"
 }

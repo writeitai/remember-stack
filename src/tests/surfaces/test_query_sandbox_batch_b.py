@@ -909,6 +909,16 @@ def test_the_surface_hash_covers_the_grammar_and_the_limits() -> None:
         grammar_module.FUNCTION_ALLOWLIST = original
     assert surface_manifest_hash(build_hash_members()) == baseline
 
+    original_nodes = grammar_module.STATEMENT_NODE_ALLOWLIST
+    try:
+        grammar_module.STATEMENT_NODE_ALLOWLIST = frozenset(
+            original_nodes | {"JsonObjectConstructor"}
+        )
+        assert surface_manifest_hash(build_hash_members()) != baseline
+    finally:
+        grammar_module.STATEMENT_NODE_ALLOWLIST = original_nodes
+    assert surface_manifest_hash(build_hash_members()) == baseline
+
 
 def test_the_analytical_tier_requires_an_entitlement(migrated: str) -> None:
     """Asking for the analytical tier does not grant it."""
@@ -1039,3 +1049,9 @@ def test_a_sort_operator_is_checked_like_any_other() -> None:
     with pytest.raises(SandboxRejection) as rejection:
         validate_sql("SELECT fact_id FROM facts_current ORDER BY fact_id USING ?|")
     assert rejection.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED
+
+    with pytest.raises(SandboxRejection) as qualified:
+        validate_sql(
+            'SELECT fact_id FROM facts_current ORDER BY fact_id USING OPERATOR("<".<)'
+        )
+    assert qualified.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED

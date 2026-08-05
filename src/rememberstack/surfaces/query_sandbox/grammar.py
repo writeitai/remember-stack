@@ -339,13 +339,17 @@ class _AllowlistVisitor(Visitor):
         It travels on the sort clause rather than inside an expression, so the
         operator allowlist never saw it.
         """
-        for part in getattr(node, "useOp", ()) or ():
-            operator = _sval(part)
-            if operator and operator not in OPERATOR_ALLOWLIST:
-                raise _reject(
-                    QueryErrorCode.OPERATOR_NOT_ALLOWED,
-                    f"operator {operator} is not allowed",
-                )
+        parts = tuple(_sval(part) for part in getattr(node, "useOp", ()) or ())
+        if len(parts) > 1:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"qualified operator {'.'.join(parts)} is not allowed",
+            )
+        if parts and parts[0] not in OPERATOR_ALLOWLIST:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"operator {parts[0]} is not allowed",
+            )
         return None
 
     def visit_RangeVar(self, ancestors, node: RangeVar):  # noqa: ANN001, ANN201
