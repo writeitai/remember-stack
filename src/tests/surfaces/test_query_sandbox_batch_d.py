@@ -526,11 +526,11 @@ def test_explain_returns_a_plan_without_running_the_query(snapshot: _Snapshot) -
     outcome = executor.explain_cypher(cypher="MATCH (e:Entity) RETURN e.name")
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows
-    # A caller who puts EXPLAIN in the text still gets a plan, not a second
-    # compile of a write-check: the surface no longer refuses EXPLAIN by name.
+    # A read statement begins with one of five words, and EXPLAIN is not one
+    # of them, so a caller cannot ask for a plan through the query path — they
+    # use `explain_cypher`, which prepends it after the statement is accepted.
     smuggled = executor.query_cypher(cypher="EXPLAIN MATCH (e:Entity) RETURN e.name")
-    assert smuggled.termination_reason == "completed", smuggled.error_message
-    assert smuggled.rows
+    assert smuggled.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
 
 
 def test_parameters_are_bound_by_the_engine(snapshot: _Snapshot) -> None:
@@ -626,18 +626,20 @@ def test_a_path_is_returned_whole_or_not_at_all(
 
 
 def test_the_gate_reads_the_comment_forms_the_engine_reads() -> None:
-    """`--` is not a comment to the pinned engine, so it is not one here.
+    """Only a form the engine honours may stand before the opening word.
 
-    Skipping a form the engine does not skip makes the scan blind to text the
-    engine goes on to parse. The denied keyword after `--` must still be seen.
+    `//` and `/* */` are comments to the pinned engine, so a statement may
+    legitimately open after one. `--` is NOT, so what follows it is still part
+    of the statement — treating it as a comment would let this scan find an
+    opening word the engine never sees, which is the one direction the scan
+    must not be wrong in.
     """
-    with pytest.raises(SandboxRejection) as rejection:
-        validate_cypher("MATCH (e:Entity) RETURN e.name -- CALL db.schema()")
-    assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
+    assert validate_cypher("// leading\nMATCH (e:Entity) RETURN e.name").text
+    assert validate_cypher("/* leading */ MATCH (e:Entity) RETURN e.name").text
 
-    # The forms the engine DOES honour still contribute nothing.
-    assert validate_cypher("MATCH (e:Entity) RETURN e.name // CALL db.schema()").text
-    assert validate_cypher("MATCH (e:Entity) /* CALL db.schema() */ RETURN e.name").text
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_cypher("-- leading\nMATCH (e:Entity) RETURN e.name")
+    assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
 
 
 def test_a_negative_row_bound_is_not_a_larger_one(snapshot: _Snapshot) -> None:
@@ -831,3 +833,16 @@ def test_extension_update_is_denied_like_the_rest_of_its_family() -> None:
     with pytest.raises(SandboxRejection) as rejection:
         validate_cypher("UPDATE fts")
     assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
+
+
+def test_confirmation_is_opt_in(snapshot: _Snapshot) -> None:
+    """`confirm` defaults to false: the extra PostgreSQL round trip is a
+    choice, and a caller who did not ask for it is not charged for it.
+
+    A result without confirmation reports none, rather than reporting zeros
+    that could be read as "checked, nothing wrong".
+    """
+    outcome = _cypher(snapshot).query_cypher(cypher="MATCH (e:Entity) RETURN e")
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.confirmation is None
+    assert outcome.rows

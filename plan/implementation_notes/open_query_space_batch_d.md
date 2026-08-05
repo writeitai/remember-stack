@@ -130,7 +130,15 @@ quoted-prose false positives that walker had. Filling them correctly needs the
 engine's AST (or an equivalent structural source), not another scan. Until
 then the fields stay empty and this note is the record of the gap.
 
-## `confirm=true` is narrow, and says so
+## `confirm=true` is opt-in, narrow, and says so
+
+It defaults to FALSE. The check costs a PostgreSQL round trip that most
+callers do not want on every query, and an agent that needs live membership can
+already get it by projecting ids and passing them to `query_sql` — this is the
+convenient form of a composition the design describes anyway, not the only way
+to have it. A result that was not asked to confirm reports no confirmation at
+all, rather than zeros a reader could mistake for "checked, nothing wrong".
+
 
 It checks live membership of top-level `Entity` and `RELATES` VALUES in
 PostgreSQL and drops rows whose ids fail, as units.

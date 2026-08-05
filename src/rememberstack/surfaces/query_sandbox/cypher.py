@@ -1,10 +1,20 @@
 """The Cypher pre-engine deny-scan: what must never reach the graph engine.
 
 `Database(..., read_only=True)` already refuses every mutation form the pinned
-engine implements — SET, DELETE, CREATE, MERGE — with a connection exception.
-So this gate does not re-detect writes. What `read_only=True` does NOT stop is
-the file, network, attachment, and extension family: those constructs must die
-here, by name, before the engine sees the text.
+engine implements — SET, DELETE, CREATE, MERGE — with a connection exception,
+so this gate does not re-detect writes. What `read_only=True` does NOT stop is
+everything else the engine will happily run: session control
+(`BEGIN TRANSACTION READ ONLY` leaves the shared connection in an open
+transaction across requests), maintenance (`ANALYZE`, `CHECKPOINT`), database
+switching (`USE`, `DETACH`), extension management (`INSTALL`, `UPDATE`), and
+the file and attachment family (`COPY`, `LOAD`, `ATTACH`).
+
+Two successive deny-lists failed to name all of that — the first missed
+`UPDATE`, the second missed the whole session and maintenance family — so the
+gate no longer denies by name. A read statement can only BEGIN one of five
+ways, and requiring that refuses everything else at once, including the
+constructs nobody here has thought of. It also stops refusing ordinary reads
+that merely use one of those words as an alias.
 
 The scan is a token scan, not a parser. It ignores text inside single quotes,
 double quotes, backticks, `//` line comments, and `/* */` block comments — and
@@ -71,6 +81,14 @@ READ_CLAUSES: Final = frozenset(
 #: `read_only=True` does not block. Mutations are not listed — the engine
 #: refuses them itself, and the executor maps that refusal to
 #: `cypher_not_allowed`.
+#: How a read statement may begin. Everything else — session control, engine
+#: maintenance, extension management, file and attachment constructs, and any
+#: form nobody here has considered — is refused by not being on this list,
+#: which is the only way to refuse what has not been thought of.
+READ_OPENINGS: Final = frozenset({"match", "optional", "with", "unwind", "return"})
+
+#: Retained for the surface manifest, which publishes what this gate refuses by
+#: name. Enforcement is by `READ_OPENINGS` above.
 REJECTED_KEYWORDS: Final = frozenset(
     {
         "copy",
@@ -115,39 +133,49 @@ def validate_cypher(text: str) -> CypherStatement:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_PARSE_ERROR, message="the statement is empty"
         )
-    words, statements = _scan(text)
+    opening, statements = _scan(text)
     if statements > 1:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
             message="one statement per request; a script is not a query",
         )
-    rejected = sorted(words & REJECTED_KEYWORDS)
-    if rejected:
+    # Default-deny on the OPENING, rather than a list of denied keywords.
+    #
+    # A deny list only refuses what somebody remembered. The first version
+    # missed `UPDATE`; the second still missed `BEGIN TRANSACTION READ ONLY`
+    # (which leaves the shared connection in an open transaction across
+    # requests), `ANALYZE`, `CHECKPOINT`, `USE` and `DETACH` — all of which the
+    # engine runs. It also refused ordinary reads that merely USED a denied
+    # word as an alias, like `RETURN 1 AS update`.
+    #
+    # A read statement can only begin one of five ways. Requiring that refuses
+    # every session, maintenance, extension and file construct at once —
+    # including the ones nobody has thought of — and stops punishing a caller
+    # for their choice of alias.
+    if opening not in READ_OPENINGS:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
             message=(
-                f"{rejected[0]} is not a read construct;"
-                " this surface reads the published graph and never changes it,"
-                " loads from it, or calls out of it"
+                f"a read statement begins with {', '.join(sorted(READ_OPENINGS))};"
+                f" {opening or 'this'} is not something this surface runs"
             ),
         )
     return CypherStatement(text=text.strip())
 
 
-def _scan(text: str) -> tuple[set[str], int]:
-    """Split the statement into lowercased words and a statement count.
+def _scan(text: str) -> tuple[str, int]:
+    """The statement's opening word, lowercased, and how many statements it is.
 
     String literals, backtick-quoted identifiers, and comments contribute
     nothing: a keyword inside quoted prose is data, and a keyword inside a
-    comment is not part of the query. Everything else contributes its words so
-    the deny-list can be applied by name.
+    comment is not part of the query, so neither can masquerade as the opening.
 
     The comment forms recognised here are exactly the ones the pinned engine
     recognises — `//` and `/* */`, and NOT `--`. Skipping a form the engine
     does not skip would make this scan blind to text the engine goes on to
     parse, which is the one direction a gate must never be wrong in.
     """
-    words: set[str] = set()
+    opening = ""
     statements = 1
     word = ""
     index = 0
@@ -171,14 +199,14 @@ def _scan(text: str) -> tuple[set[str], int]:
             index += 1
             continue
         if word:
-            words.add(word.lower())
+            opening = opening or word.lower()
             word = ""
         if character == _STATEMENT_SEPARATOR and _has_statement_after(text, index + 1):
             statements += 1
         index += 1
     if word:
-        words.add(word.lower())
-    return words, statements
+        opening = opening or word.lower()
+    return opening, statements
 
 
 def _has_statement_after(text: str, start: int) -> bool:
