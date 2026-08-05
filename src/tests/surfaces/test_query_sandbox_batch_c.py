@@ -319,3 +319,56 @@ def test_the_statement_budget_spans_its_invocations(seeded: tuple[str, UUID]) ->
     settings.nominations_used += first
     second = bounded_k(requested=settings.total_nominations_max, settings=settings)
     assert first + second <= settings.total_nominations_max
+
+
+def test_confirmed_text_cannot_reshape_the_statement(seeded: tuple[str, UUID]) -> None:
+    """Claim text is prose from a document, not syntax.
+
+    The rewrite replaces a function call with the rows it resolved to. If those
+    rows were rendered into SQL text, a sentence containing an apostrophe or a
+    parenthesis — perfectly ordinary prose — would be reparsed as structure.
+    Values are bound parameters, so this hostile-looking text is just text.
+    """
+    url, _ = seeded
+    hostile = "'); DROP TABLE claims; SELECT ('"
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            b"SELECT deployment_id, claim_id FROM memory_v1.claims_live LIMIT 1"
+        ).fetchone()
+        assert row is not None
+        connection.execute(
+            b"UPDATE claims SET claim_text = %s WHERE claim_id = %s", (hostile, row[1])
+        )
+    try:
+        executor = _executor(url, _FakeSearch((_nomination(row[1]),)))
+        outcome = executor.query_sql(
+            sql="SELECT claim_text FROM semantic_claims($1, 5)", parameters=["q"]
+        )
+        assert outcome.termination_reason == "completed", outcome.error_message
+        assert outcome.rows == ((hostile,),)
+        with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+            survived = connection.execute(b"SELECT count(*) FROM claims").fetchone()
+        assert survived is not None and survived[0] >= 1
+    finally:
+        with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+            connection.execute(
+                b"UPDATE claims SET claim_text = 'restored' WHERE claim_id = %s",
+                (row[1],),
+            )
+
+
+def test_a_confirmed_value_keeps_its_type_through_the_rewrite(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A bound placeholder is `unknown` to the planner unless it is cast."""
+    url, claim_id = seeded
+    executor = _executor(url, _FakeSearch((_nomination(claim_id),)))
+    outcome = executor.query_sql(
+        sql=(
+            "SELECT s.rank + 1 AS bumped, upper(s.claim_text) AS shouted"
+            " FROM semantic_claims($1, 5) s"
+        ),
+        parameters=["q"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows and outcome.rows[0][0] == 2
