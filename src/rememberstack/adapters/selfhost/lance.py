@@ -36,6 +36,9 @@ LANCE_TARGET_PARTITION_ROWS: Final = 8_192
 LANCE_NPROBES: Final = 20
 """WP-5.6 query probe count for filtered ANN reads."""
 
+_GENERATION_SCAN_ROWS: Final = 4_096
+"""How many rows are sampled to learn which generation pairs exist."""
+
 _MIN_VECTOR_INDEX_ROWS: Final = 256
 _INDEX_OPTIMIZE_MUTATIONS: Final = 20
 """Optimize indexed tails after this many writes (LanceDB guidance)."""
@@ -560,7 +563,7 @@ class LanceChunkIndex:
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         table = self._connection.open_table(_CHUNK_TABLE)
         columns = {field.name for field in table.schema}
-        _require_generations(
+        policy_generation, embedder_generation = resolve_generations(
             table=table,
             deployment_id=deployment_id,
             policy_generation=policy_generation,
@@ -604,7 +607,7 @@ class LanceChunkIndex:
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         table = self._connection.open_table(_CHUNK_TABLE)
         columns = {field.name for field in table.schema}
-        _require_generations(
+        policy_generation, embedder_generation = resolve_generations(
             table=table,
             deployment_id=deployment_id,
             policy_generation=policy_generation,
@@ -1019,38 +1022,64 @@ def _nomination_score(row: dict) -> float:
     return 0.0
 
 
-def _require_generations(
+def resolve_generations(
     *,
     table: Table,
     deployment_id: str,
     policy_generation: str | None,
     embedder_generation: str | None,
-) -> None:
-    """Fail when the requested generations are not ones this deployment holds.
+) -> tuple[str | None, str | None]:
+    """The ONE generation pair a search will run against.
 
-    The two pins are checked TOGETHER, and inside the deployment: a policy that
-    exists and an embedder that exists do not mean the pair was ever produced,
-    and a generation another deployment holds is not one this caller can pin
-    to. Searching anyway would return an empty result that reads as "nothing
-    matched your query" when it means "what you pinned to is not here".
+    A chunk exists once per generation triple, so a search that does not bind a
+    pair nominates the same chunk once per generation it was ever embedded
+    under — the caller sees duplicates and spends their k on them. Binding one
+    pair also makes a pin mean something: a partial pin is completed from the
+    rows that carry it, and an ambiguous completion is refused rather than
+    guessed.
+
+    Returns the pair to search under, or `(None, None)` when this dataset
+    records no generations at all (a pre-D80 table).
     """
-    if policy_generation is None and embedder_generation is None:
-        return
     columns = {field.name for field in table.schema}
+    if "policy_generation" not in columns or "embedder_generation" not in columns:
+        if policy_generation is not None or embedder_generation is not None:
+            raise LookupError("the projection records no generations")
+        return None, None
     where = f"deployment_id = '{_escape_literal(deployment_id)}'"
     for column, value in (
         ("policy_generation", policy_generation),
         ("embedder_generation", embedder_generation),
     ):
-        if value is None:
-            continue
-        if column not in columns:
-            raise LookupError(f"the projection records no {column}")
-        where += f" AND {column} = '{_escape_literal(value)}'"
-    if not table.search().where(where, prefilter=True).limit(1).to_list():
+        if value is not None:
+            where += f" AND {column} = '{_escape_literal(value)}'"
+    rows = (
+        table.search()
+        .where(where, prefilter=True)
+        .limit(_GENERATION_SCAN_ROWS)
+        .to_list()
+    )
+    pairs = {
+        (str(row["policy_generation"]), str(row["embedder_generation"]))
+        for row in rows
+        if row.get("policy_generation") and row.get("embedder_generation")
+    }
+    if not pairs:
+        if policy_generation is None and embedder_generation is None:
+            return None, None
         raise LookupError(
             "the projection holds no chunk under the requested generations"
         )
+    if len(pairs) == 1:
+        return next(iter(pairs))
+    if policy_generation is not None or embedder_generation is not None:
+        # A partial pin that still names more than one vector space is a
+        # question with two answers; answering either would be a guess.
+        raise LookupError(
+            "the requested generation does not name one embedding generation"
+        )
+    # Unpinned: search the newest pair this deployment holds, and say which.
+    return max(pairs)
 
 
 def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) -> str:

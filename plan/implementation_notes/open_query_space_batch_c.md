@@ -103,6 +103,18 @@ per target is declared in `EMPTY_CONTRACTS` beside the confirmation statements,
 so a zero-result search produces a typed empty relation and the caller's join
 still type-checks.
 
+## One search, one vector space
+
+A chunk exists once per D80 generation triple, so a search that does not bind a
+pair nominates the same chunk once per generation it was ever embedded under —
+the caller sees duplicates and spends their `k` on them. Every chunk search
+therefore binds exactly one `(policy_generation, embedder_generation)` pair:
+the pinned one, a partial pin completed from the rows that carry it, or the
+newest pair the deployment holds. A partial pin that still names two vector
+spaces is refused rather than resolved by guess, and a pinned embedder
+generation is passed to the embedder — comparing an old document vector to a
+new query vector is not a search, it is a category error.
+
 ## Generation pins bind, or the request fails
 
 Only the chunk projection is stamped with a D80 generation triple. A pin on
@@ -115,7 +127,10 @@ pinned to is not here".
 
 ## Confirmation and execution share one snapshot
 
-Both run in the SAME transaction. Confirming in a separate one would freeze
+Both run in the same transaction, at `REPEATABLE READ`. The isolation level is
+the other half of the claim: under `READ COMMITTED` each statement takes a new
+snapshot, so confirmation and the caller's statement would still see different
+states of the database inside one transaction. Confirming in a separate one would freeze
 rows that were live then into a statement that runs now, and a lineage
 tombstoned in between would come back in a result the live views no longer
 publish — exactly the D48 leak confirmation exists to prevent.

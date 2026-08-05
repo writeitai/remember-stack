@@ -7,6 +7,7 @@ posture against a hostile-infinite builtin surface — while the §4.3 caps and
 the read-only role bound whatever the allowlist admits.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import hashlib
 from typing import Final
@@ -1022,6 +1023,29 @@ class _Unrepresentable:
 UNREPRESENTABLE: Final = _Unrepresentable()
 
 
+def apply_cast(value: object, casts: Sequence[str]) -> object:
+    """A cast the caller wrote, actually applied.
+
+    `semantic_claims('q', '5'::integer)` asks for k = 5. Dropping the cast and
+    handing on the string would reject a legal call; applying it is what the
+    statement says.
+    """
+    for name in casts:
+        if name in ("int2", "int4", "int8", "integer", "bigint", "smallint"):
+            try:
+                value = int(str(value))
+            except (TypeError, ValueError):
+                return UNREPRESENTABLE
+        elif name in ("text", "varchar", "bpchar", "jsonb", "json", "uuid"):
+            value = str(value)
+        elif name in ("float4", "float8", "numeric", "real"):
+            try:
+                value = float(str(value))
+            except (TypeError, ValueError):
+                return UNREPRESENTABLE
+    return value
+
+
 def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
     """The argument list as literals and parameter positions.
 
@@ -1037,19 +1061,31 @@ def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
     arguments: list[object] = []
     for argument in call.args or ():
         node = argument
+        casts: list[str] = []
         while isinstance(node, TypeCast):
+            casts.extend(
+                _sval(part)
+                for part in getattr(node.typeName, "names", ()) or ()
+                if _sval(part)
+            )
             node = node.arg
         if isinstance(node, ParamRef):
             number = node.number if isinstance(node.number, int) else 0
-            arguments.append(("$", number))
+            arguments.append(("$", number, tuple(casts)))
         elif isinstance(node, A_Const):
             value = node.val
-            if isinstance(value, Integer):
-                arguments.append(_ival(value))
+            if getattr(node, "isnull", False) or value is None:
+                # SQL NULL in an optional position means "not supplied", which
+                # is what `DEFAULT NULL` says it means.
+                arguments.append(None)
+            elif isinstance(value, Integer):
+                arguments.append(apply_cast(_ival(value), casts))
             elif isinstance(value, PgString):
-                arguments.append(_sval(value))
+                arguments.append(apply_cast(_sval(value), casts))
             elif isinstance(value, Float):
-                arguments.append(float(str(getattr(value, "fval", "0"))))
+                arguments.append(
+                    apply_cast(float(str(getattr(value, "fval", "0"))), casts)
+                )
             else:
                 # A literal this extractor cannot represent is NOT the same as
                 # an omitted argument: reading `true::jsonb` as "no filters"

@@ -189,7 +189,7 @@ def _executor(url: str, search: object) -> QuerySandboxExecutor:
         deployment_id=_DEPLOYMENT,
         connect=lambda: psycopg.connect(_psycopg_url(url)),
         search=search,
-        embed=lambda *, query: (0.1,) * 8,
+        embed=lambda *, query, embedder_generation=None: (0.1,) * 8,
     )
 
 
@@ -933,3 +933,124 @@ def test_two_facts_sharing_an_id_are_both_withheld(seeded: tuple[str, UUID]) -> 
     )
     assert outcome.rows == ()
     assert outcome.semantic_invocations[0].dropped_ambiguous == 1
+
+
+def test_explaining_a_bridged_statement_returns_a_plan(
+    seeded: tuple[str, UUID],
+) -> None:
+    """EXPLAIN plans the statement; it does not search or confirm."""
+    url, _ = seeded
+    search = _FakeSearch(())
+    outcome = _executor(url, search).explain_sql(
+        sql="SELECT rank, claim_text FROM semantic_claims($1, 5)", parameters=["memory"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows
+    assert search.calls == 0
+
+
+def test_the_manifest_publishes_the_columns_a_caller_receives(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A manifest that omits a published column misdescribes the surface."""
+    from rememberstack.spine.query_space.manifest import build_manifest
+
+    members = build_manifest()["hash_members"]
+    assert isinstance(members, dict)
+    signatures = members["function_signatures"]
+    assert isinstance(signatures, dict)
+    published = {
+        entry["name"]: entry["columns"]  # type: ignore[index]
+        for entry in signatures["functions"]  # type: ignore[union-attr]
+    }
+    for channel in ("semantic_chunks", "lexical_chunks"):
+        assert "source_text" in published[channel]
+        assert "location_header" in published[channel]
+
+
+def test_a_cast_the_caller_wrote_is_applied(seeded: tuple[str, UUID]) -> None:
+    """`'5'::integer` asks for k = 5; dropping the cast rejects a legal call."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, '5'::integer)", parameters=["memory"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+
+
+def test_an_explicit_null_pin_means_unpinned(seeded: tuple[str, UUID]) -> None:
+    """`DEFAULT NULL` says NULL means "not supplied"; so it does."""
+    url, chunk_id = seeded
+    outcome = _executor(url, _BodySearch({})).query_sql(
+        sql="SELECT rank FROM semantic_chunks($1, 5, '{}'::jsonb, NULL, NULL)",
+        parameters=["weather"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+
+
+def test_an_alias_containing_a_parenthesis_survives_substitution(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A quoted identifier is a name, not statement structure."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql='SELECT "x)".rank FROM semantic_claims($1, 5) AS "x)"',
+        parameters=["memory"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((1,),)
+
+
+def test_the_confirmation_instant_is_disclosed(seeded: tuple[str, UUID]) -> None:
+    """A caller cannot date a confirmation the surface does not report."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5)", parameters=["memory"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.semantic_invocations[0].pg_confirmed_at is not None
+
+
+def test_one_search_binds_one_generation_pair(tmp_path: Path) -> None:
+    """A chunk embedded twice must not be nominated twice by one search."""
+    from rememberstack.adapters.selfhost.lance import resolve_generations
+
+    class _Table:
+        schema = [
+            type("F", (), {"name": "policy_generation"}),
+            type("F", (), {"name": "embedder_generation"}),
+        ]
+
+        def __init__(self, rows: list[dict[str, str]]) -> None:
+            self._rows = rows
+
+        def search(self):  # noqa: ANN202
+            return self
+
+        def where(self, *_: object, **__: object):  # noqa: ANN202
+            return self
+
+        def limit(self, *_: object):  # noqa: ANN202
+            return self
+
+        def to_list(self) -> list[dict[str, str]]:
+            return self._rows
+
+    rows = [
+        {"policy_generation": "p1", "embedder_generation": "e1"},
+        {"policy_generation": "p1", "embedder_generation": "e2"},
+    ]
+    # Unpinned: exactly one pair, the newest.
+    assert resolve_generations(
+        table=_Table(rows),  # type: ignore[arg-type]
+        deployment_id=str(_DEPLOYMENT),
+        policy_generation=None,
+        embedder_generation=None,
+    ) == ("p1", "e2")
+    # A partial pin that still names two vector spaces is refused, not guessed.
+    with pytest.raises(LookupError):
+        resolve_generations(
+            table=_Table(rows),  # type: ignore[arg-type]
+            deployment_id=str(_DEPLOYMENT),
+            policy_generation="p1",
+            embedder_generation=None,
+        )

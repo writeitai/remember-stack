@@ -33,6 +33,7 @@ from rememberstack.surfaces.query_sandbox.nomination import confirm
 from rememberstack.surfaces.query_sandbox.nomination import confirm_chunk_coordinates
 from rememberstack.surfaces.query_sandbox.nomination import Confirmation
 from rememberstack.surfaces.query_sandbox.nomination import projection_filters
+from rememberstack.surfaces.query_sandbox.nomination import published_contract
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 from rememberstack.surfaces.query_sandbox.nomination import verify_bodies
 from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
@@ -100,9 +101,17 @@ FACTS_AS_OF_ROWS_MAX: Final = 1000
 
 
 class EmbeddingSource(Protocol):
-    """Whatever turns a query string into the P1 vector space."""
+    """Whatever turns a query string into the P1 vector space.
 
-    def __call__(self, *, query: str) -> tuple[float, ...]: ...
+    `embedder_generation` is passed only when the caller pinned one. An
+    implementation that cannot serve a named generation should not accept the
+    argument: the bridge turns that into `generation_unavailable` rather than
+    embedding the query in a different space from the stored vectors.
+    """
+
+    def __call__(
+        self, *, query: str, embedder_generation: str | None = None
+    ) -> tuple[float, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -132,12 +141,7 @@ def resolve_invocations(
     for cte_name, function, raw_arguments in bindings:
         if function in SQL_NATIVE_FUNCTIONS:
             continue
-        arguments = tuple(
-            parameters[value[1] - 1]
-            if isinstance(value, tuple) and value and value[0] == "$"
-            else value
-            for value in raw_arguments
-        )
+        arguments = tuple(_bound(value, parameters) for value in raw_arguments)
         resolved.append(
             _resolve_one(
                 cte_name=cte_name,
@@ -150,6 +154,62 @@ def resolve_invocations(
             )
         )
     return tuple(resolved)
+
+
+def explain_placeholders(
+    bindings: Sequence[tuple[str, str, tuple[object, ...]]],
+) -> tuple[ResolvedInvocation, ...]:
+    """Planable, empty stand-ins for each bridged invocation (§3.1 EXPLAIN).
+
+    EXPLAIN asks what the planner would do, so nothing is nominated and nothing
+    is confirmed — but the statement still has to be planable, and a call to a
+    function PostgreSQL does not have is not. Each invocation becomes an empty
+    relation of the shape that function publishes, which is what the planner
+    needs and all it needs.
+    """
+    placeholders: list[ResolvedInvocation] = []
+    for cte_name, function, _ in bindings:
+        if function in SQL_NATIVE_FUNCTIONS:
+            continue
+        if function not in FUNCTION_TARGETS:
+            raise SandboxRejection(
+                code=QueryErrorCode.FUNCTION_NOT_ALLOWED,
+                message=f"{function} is not a resolvable public function",
+            )
+        if function == "fetch_chunk_bodies":
+            columns, oids = BODY_COLUMNS, BODY_TYPE_OIDS
+        else:
+            target, _ = FUNCTION_TARGETS[function]
+            columns, oids = published_contract(target)
+        placeholders.append(
+            ResolvedInvocation(
+                cte_name=cte_name,
+                columns=columns,
+                rows=(),
+                type_oids=oids,
+                invocation=SemanticInvocation(
+                    function=function,
+                    nominated=0,
+                    confirmed=0,
+                    dropped_stale=0,
+                    termination_reason="explained",
+                ),
+            )
+        )
+    return tuple(placeholders)
+
+
+def _bound(value: object, parameters: Sequence[object]) -> object:
+    """One argument: a literal, or the bound value of a `$n`, cast as written."""
+    if not (isinstance(value, tuple) and value and value[0] == "$"):
+        return value
+    bound = parameters[value[1] - 1]
+    casts = value[2] if len(value) > 2 else ()
+    if isinstance(casts, tuple) and casts:
+        from rememberstack.surfaces.query_sandbox.grammar import apply_cast
+
+        return apply_cast(bound, casts)
+    return bound
 
 
 def _resolve_one(
@@ -278,7 +338,10 @@ def _resolve_one(
             dropped_absent_current=body.absent_current if body else 0,
             dropped_absent_projection=body.absent_projection if body else 0,
             dropped_hash_mismatch=body.mismatch_hash if body else 0,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
             generation=embedder_generation or policy_generation,
+            pg_confirmed_at=confirmation.pg_confirmed_at,
             termination_reason="completed",
         ),
     )
@@ -424,14 +487,29 @@ def _nominator(
 
     def vector(query: str) -> tuple[float, ...]:
         # The executor refuses a semantic statement without an embedder, so
-        # this is unreachable; it is here so the impossible case still fails
-        # as a stated refusal rather than as an attribute error.
+        # the None case is unreachable; it is here so the impossible case still
+        # fails as a stated refusal rather than as an attribute error.
         if embed is None:
             raise SandboxRejection(
                 code=QueryErrorCode.LANCE_UNAVAILABLE,
                 message="no embedder is configured for this deployment",
             )
-        return embed(query=query)
+        if embedder_generation is None:
+            return embed(query=query)
+        # A pin names the generation the stored vectors were produced under.
+        # Embedding the query with a different generation would compare two
+        # vector spaces, so an embedder that cannot serve the pinned one is a
+        # refusal rather than a silent substitution.
+        try:
+            return embed(query=query, embedder_generation=embedder_generation)
+        except TypeError as error:
+            raise SandboxRejection(
+                code=QueryErrorCode.GENERATION_UNAVAILABLE,
+                message=(
+                    "this deployment's embedder cannot produce a query vector"
+                    f" for embedder generation {embedder_generation!r}"
+                ),
+            ) from error
 
     def narrow(filters: dict[str, Any]) -> dict[str, str]:
         # Filters the projection understands are applied there, before top-k,
@@ -530,24 +608,27 @@ def substitute(
 def _matching_paren(sql: str, start: int) -> int:
     """The index just past the parenthesis that closes the one before `start`.
 
-    A parenthesis inside a string literal is text, not structure: a caller may
-    legitimately write `semantic_claims(\')\', 10)`, and counting that as a
-    nesting level would cut the CTE body in the wrong place.
+    A parenthesis inside a string literal or a quoted identifier is text, not
+    structure: a caller may legitimately write `semantic_claims(\')\', 10)` or
+    alias a call `AS "x)"`, and counting either as a nesting level would cut
+    the CTE body in the wrong place.
     """
     depth = 1
     index = start
-    in_string = False
+    quote = ""
     while index < len(sql) and depth:
         character = sql[index]
-        if in_string:
-            if character == "'":
+        if quote:
+            if character == quote:
                 # A doubled quote is an escaped quote, not the end.
-                if index + 1 < len(sql) and sql[index + 1] == "'":
+                if index + 1 < len(sql) and sql[index + 1] == quote:
                     index += 1
                 else:
-                    in_string = False
-        elif character == "'":
-            in_string = True
+                    quote = ""
+        elif character in ("'", '"'):
+            # Both kinds are opaque: `AS "x)"` is a legal alias, and its
+            # parenthesis is part of a name rather than structure.
+            quote = character
         elif character == "(":
             depth += 1
         elif character == ")":

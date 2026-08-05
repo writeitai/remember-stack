@@ -157,6 +157,19 @@ def stub_function_signatures() -> dict[str, CanonicalValue]:
     return {"contract": "memory_v1.functions/1", "functions": []}
 
 
+#: PostgreSQL type OIDs the query space publishes, by name. A column list
+#: without types tells a caller what it will get called but not what it is.
+_TYPE_NAMES: Final[dict[int, str]] = {
+    16: "boolean",
+    20: "bigint",
+    23: "integer",
+    25: "text",
+    701: "double precision",
+    1184: "timestamptz",
+    2950: "uuid",
+}
+
+
 def _bridge_function_signatures() -> dict[str, CanonicalValue]:
     """The §6 `function_signatures` member: what each public function accepts
     and answers with, taken from the implementation rather than restated.
@@ -195,7 +208,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
     for name in sorted(SIGNATURES):
         target, channel = FUNCTION_TARGETS[name]
         least, most = SIGNATURES[name]
-        columns, _ = nomination.EMPTY_CONTRACTS[target]
+        columns, oids = nomination.published_contract(target)
         functions.append(
             {
                 "name": name,
@@ -204,13 +217,18 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "arguments_min": least,
                 "arguments_max": most,
                 "arguments": nomination_arguments[:most],
-                "volatility": "stable",
                 "security": "invoker",
                 "filters": list(sorted(nomination.FILTER_ALLOWLISTS[target])),
                 "projection_filters": list(
                     sorted(nomination.LANCE_FILTER_COLUMNS[target])
                 ),
                 "columns": list(columns),
+                "column_types": [_TYPE_NAMES.get(oid, "unknown") for oid in oids],
+                # These call an external projection, so repeated evaluation in
+                # one statement need not agree: they are volatile, whatever the
+                # PostgreSQL-side helpers are.
+                "volatility": "volatile",
+                "parallel": "unsafe",
             }
         )
     functions.append(
@@ -238,6 +256,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "projection_filters": [],
             "columns": list(FACTS_AS_OF_COLUMNS),
             "max_rows_hard_cap": FACTS_AS_OF_ROWS_MAX,
+            "parallel": "safe",
         }
     )
     functions.append(
@@ -253,7 +272,12 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "filters": [],
             "projection_filters": [],
             "columns": list(nomination.BODY_COLUMNS),
+            "column_types": [
+                _TYPE_NAMES.get(oid, "unknown") for oid in nomination.BODY_TYPE_OIDS
+            ],
             "chunk_ids_max": nomination.CHUNK_IDS_MAX,
+            "volatility": "volatile",
+            "parallel": "unsafe",
         }
     )
     return {

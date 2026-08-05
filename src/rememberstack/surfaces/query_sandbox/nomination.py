@@ -136,6 +136,22 @@ EMPTY_CONTRACTS: Final[dict[str, tuple[tuple[str, ...], tuple[int, ...]]]] = {
     ),
 }
 
+
+def published_contract(target: str) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    """What a caller actually receives from a channel, columns and types.
+
+    `EMPTY_CONTRACTS` is the shape PostgreSQL confirmation produces; the chunk
+    channels then splice in `source_text` from the shared body path. This is
+    the composed answer, so the manifest, the EXPLAIN placeholder, and the
+    runtime result cannot describe the surface differently.
+    """
+    columns, oids = EMPTY_CONTRACTS[target]
+    if target != "chunks":
+        return columns, oids
+    at = columns.index("location_header")
+    return ((*columns[:at], "source_text", *columns[at:]), (*oids[:at], 25, *oids[at:]))
+
+
 _FACT_KINDS: Final = frozenset({"relation", "observation"})
 _SUPPORT_STATES: Final = frozenset({"current", "withdrawn"})
 
@@ -381,6 +397,7 @@ class Confirmation:
     dropped_stale: int = 0
     dropped_filtered: int = 0
     dropped_ambiguous: int = 0
+    pg_confirmed_at: datetime | None = None
 
 
 def confirm(
@@ -420,6 +437,7 @@ def confirm(
     # projection's memory and PostgreSQL disagree.
     extra = f", ({' AND '.join(predicates)}) AS filter_pass" if predicates else ""
     statement = statement.replace("{extra}", extra)
+    confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
     cursor = connection.execute(
         statement.encode(), {"deployment": str(deployment_id), "ids": ids, **parameters}
     )
@@ -472,6 +490,7 @@ def confirm(
         dropped_stale=dropped_stale,
         dropped_filtered=dropped_filtered,
         dropped_ambiguous=dropped_ambiguous,
+        pg_confirmed_at=confirmed_at[0] if confirmed_at else None,
     )
 
 

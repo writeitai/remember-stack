@@ -27,6 +27,7 @@ from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+from rememberstack.surfaces.query_sandbox.bridge import explain_placeholders
 from rememberstack.surfaces.query_sandbox.bridge import required_adapters
 from rememberstack.surfaces.query_sandbox.bridge import resolve_invocations
 from rememberstack.surfaces.query_sandbox.bridge import substitute
@@ -402,7 +403,19 @@ class QuerySandboxExecutor:
                 # runs now, and a lineage tombstoned in between would come back
                 # in a result the live views no longer publish — exactly the
                 # D48 leak the confirmation exists to prevent.
-                if validated.srf_bindings and not explain:
+                if validated.srf_bindings and explain:
+                    # EXPLAIN plans the statement; it does not search. The
+                    # bridged calls become empty relations of the shape they
+                    # publish, so the planner sees something it can plan
+                    # instead of a function PostgreSQL does not have.
+                    resolutions = explain_placeholders(validated.srf_bindings)
+                    executable, bridge_parameters = substitute(
+                        validated.sql, resolutions
+                    )
+                    semantic_invocations = tuple(
+                        resolution.invocation for resolution in resolutions
+                    )
+                elif validated.srf_bindings:
                     resolutions = resolve_invocations(
                         bindings=validated.srf_bindings,
                         parameters=parameters,
@@ -621,6 +634,13 @@ class QuerySandboxExecutor:
             connection.autocommit = previous_autocommit
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    # REPEATABLE READ, first thing in the transaction: under
+                    # READ COMMITTED each statement takes a NEW snapshot, so
+                    # confirmation and the caller's statement would see
+                    # different states of the database even inside one
+                    # transaction — which is the leak the shared transaction
+                    # was supposed to close.
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                     # Only GUCs a non-superuser may set belong here: the
                     # deployment role is deliberately unprivileged, so
                     # temp_file_limit (superuser-only) is pinned on the role
