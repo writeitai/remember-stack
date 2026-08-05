@@ -240,6 +240,26 @@ class _Corpus:
             text("UPDATE documents SET deleted_at = :at WHERE doc_id = :doc"),
             {"at": _NOW, "doc": tombstoned_doc},
         )
+        # The v4 entity channel confirms through entities_current, whose D48
+        # membership requires a surviving document association. Give the
+        # three connected entities explicit, live document provenance instead
+        # of weakening the production view for a test fixture.
+        for entity_key, document_key in (
+            ("alice", "alice_beacon-support-0"),
+            ("beacon", "beacon_acme-support-0"),
+            ("acme", "beacon_acme-support-1"),
+        ):
+            connection.execute(
+                text(
+                    "UPDATE documents SET document_entity_id = :entity"
+                    " WHERE deployment_id = :deployment AND doc_id = :doc"
+                ),
+                {
+                    "entity": self.entities[entity_key],
+                    "deployment": _DEPLOYMENT_ID,
+                    "doc": self.docs[document_key],
+                },
+            )
 
     def _document(self, connection: Connection, *, key: str, live_chunk: bool) -> UUID:
         doc_id = uuid4()
