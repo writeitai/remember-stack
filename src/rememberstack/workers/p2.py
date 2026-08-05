@@ -501,6 +501,26 @@ class GraphSnapshotReader:
             raise RuntimeError("no published P2 snapshot exists yet")
         return self._connection
 
+    def pinned(self) -> tuple[ladybug.Connection, UUID, str, datetime | None]:
+        """One generation's connection AND the provenance that describes it.
+
+        Taking the connection and then reading the metadata separately leaves a
+        window in which a refresh swaps generations between the two: the rows
+        come from the old snapshot and the disclosure names the new one. Since
+        provenance is the whole basis of the `snapshot_graph` grade, the pair is
+        read under the refresh lock so a result can never describe a generation
+        other than the one it came from.
+        """
+        self.refresh()
+        with self._refresh_lock:
+            if (
+                self._connection is None
+                or self._snapshot_id is None
+                or self._version is None
+            ):
+                raise RuntimeError("no published P2 snapshot exists yet")
+            return (self._connection, self._snapshot_id, self._version, self._built_at)
+
     def fresh_connection(self) -> ladybug.Connection:
         """A NEW connection to the served snapshot's database.
 

@@ -183,8 +183,17 @@ class CypherSandboxExecutor:
         started = datetime.now(tz=UTC)
         clock = time.monotonic()
         request_id = uuid4()
+        # `max_rows=0` asks for no rows; only an ABSENT bound takes the tier
+        # default. Treating zero as unset answered a different question, and a
+        # negative bound is not a smaller one — `min(-1, cap)` is -1, and
+        # `rows[:-1]` keeps almost everything.
+        requested_rows = limits.returned_rows_default if max_rows is None else max_rows
+        row_cap = max(0, min(requested_rows, limits.returned_rows_hard))
         limits_model = ResultLimits(
-            row_cap=limits.returned_rows_hard,
+            # The cap this request actually ran under, not the tier ceiling: a
+            # disclosure that always names the ceiling tells the caller nothing
+            # about the bound their rows were cut at.
+            row_cap=row_cap,
             # §4.3 gives a default and a hard cap; a request that names neither
             # runs under the DEFAULT. Disclosing and enforcing the hard cap
             # would let an unremarkable query return eight times what the tier
@@ -193,11 +202,6 @@ class CypherSandboxExecutor:
             statement_timeout_ms=limits.statement_timeout_ms_default,
             analytical_tier=tier is LimitTier.ANALYTICAL,
         )
-        # A negative bound is not a smaller bound: `min(-1, 1000)` is -1, and
-        # `rows[:-1]` keeps almost everything. Clamp into the range the cap
-        # actually describes before it is used as one.
-        requested_rows = limits.returned_rows_default if not max_rows else max_rows
-        row_cap = max(0, min(requested_rows, limits.returned_rows_hard))
 
         try:
             self._check_request(cypher=cypher, parameters=parameters, limits=limits)
@@ -210,8 +214,7 @@ class CypherSandboxExecutor:
                         " surface has none"
                     ),
                 )
-            connection = self._graph_connection()
-            snapshot = self._provenance()
+            connection, snapshot = self._pinned_snapshot()
             text = f"EXPLAIN {statement.text}" if explain else statement.text
             result = self._execute(
                 connection=connection,
@@ -264,12 +267,21 @@ class CypherSandboxExecutor:
             query_hash=_statement_hash(statement.text, parameters),
             grade="snapshot_graph",
             query_language="cypher",
+            # §4.4: a Cypher answer did not read the memory_v1 SQL schema, and
+            # naming it would tell a caller their rows came from views they
+            # never queried.
+            query_space_schema=None,
+            referenced_graph_types=statement.graph_types,
+            referenced_graph_properties=statement.graph_properties,
             execution_started_at=started,
             elapsed_ms=(time.monotonic() - clock) * 1000,
             columns=columns,
             rows=tuple(tuple(row) for row in rows),
             returned_row_count=len(rows),
             returned_byte_count=encoded,
+            pg_snapshot_at=(
+                confirmation.pg_confirmed_at if confirmation is not None else None
+            ),
             truncated=truncated or byte_truncated,
             truncation_reason=(
                 "byte_cap" if byte_truncated else ("row_cap" if truncated else None)
@@ -304,15 +316,40 @@ class CypherSandboxExecutor:
                 message="the bound parameters exceed their encoded byte cap",
             )
 
-    def _graph_connection(self) -> Any:
-        """The read-only connection to the served snapshot, or fail closed."""
+    def _pinned_snapshot(self) -> tuple[Any, P2Snapshot | None]:
+        """The served connection and the provenance describing THAT generation.
+
+        Read as one act, so a refresh between them cannot produce rows from one
+        generation labelled with another's cut.
+        """
         try:
-            return self._reader.connection()
+            if hasattr(self._reader, "pinned"):
+                connection, snapshot_id, version, built_at = self._reader.pinned()
+                return connection, self._describe(snapshot_id, version, built_at)
+            # A reader without the paired accessor still serves, but its
+            # provenance cannot be pinned to the connection; say nothing rather
+            # than say something that might describe a different generation.
+            return self._reader.connection(), self._provenance()
+        except SandboxRejection:
+            raise
         except Exception as error:
             raise SandboxRejection(
                 code=QueryErrorCode.P2_UNAVAILABLE,
                 message="no published graph snapshot is available",
             ) from error
+
+    @staticmethod
+    def _describe(
+        snapshot_id: Any, version: Any, built_at: datetime | None
+    ) -> P2Snapshot | None:
+        if snapshot_id is None or version is None or built_at is None:
+            return None
+        return P2Snapshot(
+            snapshot_id=snapshot_id,
+            snapshot_version=str(version),
+            built_at=built_at,
+            age_seconds=(datetime.now(tz=UTC) - built_at).total_seconds(),
+        )
 
     def _provenance(self) -> P2Snapshot | None:
         """What the snapshot is, and how old the cut it projects is."""
@@ -491,6 +528,10 @@ class CypherSandboxExecutor:
             query_hash="",
             grade="snapshot_graph",
             query_language="cypher",
+            # §4.4: a Cypher answer did not read the memory_v1 SQL schema, and
+            # naming it would tell a caller their rows came from views they
+            # never queried.
+            query_space_schema=None,
             execution_started_at=started,
             elapsed_ms=(time.monotonic() - clock) * 1000,
             termination_reason=(

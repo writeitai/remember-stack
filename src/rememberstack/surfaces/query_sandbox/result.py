@@ -109,11 +109,18 @@ class QueryResult(BaseModel):
     request_id: UUID
     deployment_id: UUID
     surface_manifest_hash: str
-    query_space_schema: Literal["memory_v1"] = "memory_v1"
+    # Null for Cypher (§4.4): the graph surface does not read the memory_v1
+    # SQL schema, and naming it would tell a caller their rows came from views
+    # they did not query.
+    query_space_schema: Literal["memory_v1"] | None = "memory_v1"
     query_hash: str
     query_language: Literal["sql", "cypher"] = "sql"
     saved_query: dict[str, str] | None = None
     referenced_views: tuple[str, ...] = ()
+    #: The graph labels/types and properties a Cypher statement referenced, so
+    #: a caller can see which part of the projection contract it depended on.
+    referenced_graph_types: tuple[str, ...] = ()
+    referenced_graph_properties: tuple[str, ...] = ()
     referenced_functions: tuple[str, ...] = ()
     source_grain_tags: tuple[str, ...] = ()
     columns: tuple[ResultColumn, ...] = ()

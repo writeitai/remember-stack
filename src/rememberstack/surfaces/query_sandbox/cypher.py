@@ -26,6 +26,7 @@ boundary, or inside a subquery is stopped. Blunt in that direction is correct.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Final
 
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -146,6 +147,14 @@ _RECURSIVE_MODES: Final = frozenset(
 _STATEMENT_SEPARATOR: Final = ";"
 
 
+#: The graph types the published projection contract defines (§3.5). A label
+#: the statement names that is not one of these is simply not in the graph, so
+#: it is not reported as a reference to it.
+PROJECTION_TYPES: Final = frozenset(
+    {"Entity", "Document", "RELATES", "MENTIONED_IN", "DOC_CROSSREF", "IS_DOCUMENT"}
+)
+
+
 @dataclass(frozen=True)
 class CypherStatement:
     """One accepted read statement and what the gate observed in it."""
@@ -153,6 +162,8 @@ class CypherStatement:
     text: str
     keywords: frozenset[str]
     max_hops: int | None
+    graph_types: tuple[str, ...] = ()
+    graph_properties: tuple[str, ...] = ()
 
 
 def validate_cypher(text: str) -> CypherStatement:
@@ -207,7 +218,31 @@ def validate_cypher(text: str) -> CypherStatement:
                 " hops, which is the pinned engine's own bound"
             ),
         )
-    return CypherStatement(text=text.strip(), keywords=frozenset(words), max_hops=hops)
+    types, properties = _references(text)
+    return CypherStatement(
+        text=text.strip(),
+        keywords=frozenset(words),
+        max_hops=hops,
+        graph_types=types,
+        graph_properties=properties,
+    )
+
+
+def _references(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The projection types and properties this statement names (§4.4).
+
+    Reported so a caller can see which part of the projection contract their
+    answer depended on: a statement reading `RELATES.confidence` is tied to a
+    property that contract may change, and that is worth being able to see
+    without re-reading the query.
+    """
+    labels = {
+        match
+        for match in re.findall(r":\s*([A-Za-z_][A-Za-z0-9_]*)", text)
+        if match in PROJECTION_TYPES
+    }
+    properties = set(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)", text))
+    return tuple(sorted(labels)), tuple(sorted(properties))
 
 
 def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
@@ -264,11 +299,19 @@ def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
             words.add(word.lower())
             word = ""
         if character == "[":
-            brackets += 1
-            nested = 0
+            # A relationship bracket follows the pattern's dash: `-[r:T]->`.
+            # Every other `[` opens a list, where `*` is multiplication and the
+            # surrounding pattern state must not be disturbed.
+            if _previous_symbol(text, index) == "-":
+                brackets += 1
+                nested = 0
+            elif brackets:
+                nested += 1
         elif character == "]":
-            brackets = max(0, brackets - 1)
-            nested = 0
+            if nested:
+                nested -= 1
+            else:
+                brackets = max(0, brackets - 1)
         elif brackets and character in ("{", "("):
             nested += 1
         elif brackets and character in ("}", ")"):
@@ -342,6 +385,14 @@ def _range_upper_bound(text: str, start: int) -> tuple[int | None, int]:
         return upper, index
     # No range operator: a bare count is its own bound, and a bare `*` is not.
     return lower, index
+
+
+def _previous_symbol(text: str, index: int) -> str:
+    """The last non-space character before `index`, or the empty string."""
+    position = index - 1
+    while position >= 0 and text[position].isspace():
+        position -= 1
+    return text[position] if position >= 0 else ""
 
 
 def _has_statement_after(text: str, start: int) -> bool:

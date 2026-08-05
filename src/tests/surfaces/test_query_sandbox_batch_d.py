@@ -779,3 +779,61 @@ def test_a_relation_with_no_recorded_start_is_still_walked(
     # The walk is bounded, so it cannot exceed what the predicate publishes;
     # what matters is that a null-endpoint relation is not excluded outright.
     assert walked[0] <= direct[0]
+
+
+def test_asking_for_no_rows_returns_no_rows(snapshot: _Snapshot) -> None:
+    """Only an ABSENT bound takes the tier default; zero means zero."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="UNWIND RANGE(1, 3) AS n RETURN n", max_rows=0
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ()
+    assert outcome.limits.row_cap == 0
+
+
+def test_the_disclosed_cap_is_the_one_that_applied(snapshot: _Snapshot) -> None:
+    """A disclosure that always names the ceiling says nothing useful."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="UNWIND RANGE(1, 50) AS n RETURN n", max_rows=5
+    )
+    assert outcome.limits.row_cap == 5
+    assert outcome.returned_row_count == 5
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "RETURN [2 * 31] AS xs",
+        "MATCH (a)-[r:RELATES {confidence: [2 * 31][1]}]->(b) RETURN r",
+    ],
+)
+def test_a_list_literal_is_not_a_relationship_bracket(statement: str) -> None:
+    """Only `-[` opens a relationship pattern; every other `[` opens a list."""
+    assert validate_cypher(statement).text
+
+
+def test_a_cypher_answer_names_no_sql_schema(snapshot: _Snapshot) -> None:
+    """§4.4: naming memory_v1 would credit views the query never read."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity)-[r:RELATES]->(d:Entity) RETURN e.name, r.predicate"
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.query_space_schema is None
+    assert "Entity" in outcome.referenced_graph_types
+    assert "RELATES" in outcome.referenced_graph_types
+    assert "name" in outcome.referenced_graph_properties
+
+
+def test_a_confirmed_result_dates_its_confirmation(
+    snapshot: _Snapshot, graph: tuple[str, list[tuple[str, str, str]]]
+) -> None:
+    """§4.4 puts the confirmation instant on the result, not only inside it."""
+    url, _ = graph
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.pg_snapshot_at is not None

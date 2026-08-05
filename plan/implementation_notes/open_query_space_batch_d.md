@@ -73,8 +73,21 @@ from the transaction that read the data rather than reconstructed afterwards.
 The reader surfaces it, having previously read it from the registry and
 dropped it.
 
+The connection and the provenance that describes it are read as one act, under
+the reader's refresh lock. Taking them separately left a window in which a
+refresh swapped generations between the two, so rows from one generation could
+be labelled with another's cut — and since provenance is the entire basis of
+this grade, a result that misdescribes its own generation is worse than one
+that returns nothing.
+
 No published snapshot fails `p2_unavailable`. An empty graph and an absent
 graph are different answers and must not read the same.
+
+A Cypher answer names no SQL schema (§4.4): it did not read the `memory_v1`
+views, and crediting them would tell a caller their rows came from somewhere
+they never queried. It does report the projection types and properties the
+statement referenced, so a caller can see which part of the graph contract
+their answer depends on.
 
 ## Variable-length patterns must state their bound
 
