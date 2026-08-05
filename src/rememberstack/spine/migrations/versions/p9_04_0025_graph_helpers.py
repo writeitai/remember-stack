@@ -279,16 +279,32 @@ AS $$
         END = ANY(w.nodes)
       )
   ),
-  arrived AS (
+  reached AS (
     SELECT
       w.length,
       w.relations,
       w.nodes,
-      row_number() OVER (ORDER BY w.length, w.relations) AS path_id
+      row_number() OVER (ORDER BY w.length, w.relations) AS path_id,
+      -- How many edges have been spent by the end of this path, in the same
+      -- deterministic order the paths are returned in.
+      sum(w.length) OVER (
+        ORDER BY w.length, w.relations
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      ) AS edges_through
     FROM walk AS w
     WHERE w.head = graph_path.to_entity_id
-    ORDER BY w.length, w.relations
-    LIMIT (SELECT path_cap FROM bounds)
+  ),
+  arrived AS (
+    -- The edge bound is spent on WHOLE paths. Cutting rows at the end would
+    -- return a path whose reported length does not match the steps it came
+    -- with — a route that does not connect, presented as one that does. A
+    -- path that cannot fit within the bound is omitted entirely, which is a
+    -- shorter answer rather than a wrong one.
+    SELECT r.length, r.relations, r.nodes, r.path_id
+    FROM reached AS r
+    CROSS JOIN bounds AS b
+    WHERE r.path_id <= b.path_cap
+      AND r.edges_through <= b.edge_cap
   ),
   steps AS (
     SELECT
@@ -328,7 +344,6 @@ AS $$
   JOIN edges AS e ON e.relation_id = s.relation_id
   CROSS JOIN bounds AS b
   ORDER BY s.path_id, s.path_position
-  LIMIT (SELECT edge_cap FROM bounds)
 $$;
 """
 

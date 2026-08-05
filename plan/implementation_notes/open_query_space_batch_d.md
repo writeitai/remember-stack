@@ -32,6 +32,15 @@ including one hidden in a `UNION` arm, behind a comment boundary, or inside a
 subquery. Quoted prose and comments contribute nothing to the scan, because a
 keyword inside a string is data.
 
+The comment forms the scan skips are exactly the ones the pinned engine skips —
+`//` and `/* */`, and NOT `--`, which this engine does not treat as a comment
+at all. Skipping a form the engine does not skip would make the scan blind to
+text the engine goes on to parse, and that is the one direction a gate must
+never be wrong in. Every statement of that shape happens to fail the engine's
+own parser today, but that is a property of this dialect rather than something
+worth depending on, and it was verified against the pinned engine rather than
+assumed.
+
 The scan is deliberately blunt in one direction: a caller who names something
 `create` is inconvenienced, and a caller who hides `CREATE` anywhere is
 stopped. After the gate, the pinned engine's own parser decides whether what

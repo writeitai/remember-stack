@@ -198,6 +198,13 @@ def _scan(text: str) -> tuple[set[str], int, int | None]:
     nothing: a keyword inside quoted prose is data, and a keyword inside a
     comment is not part of the query. Everything else contributes its words,
     lowercased, so the reject list can be applied by name.
+
+    The comment forms recognised here are exactly the ones the pinned engine
+    recognises — `//` and `/* */`, and NOT `--`. Skipping a form the engine
+    does not skip would make this scan blind to text the engine goes on to
+    parse, which is the one direction a gate must never be wrong in. That every
+    such statement happens to fail the engine's parser today is a property of
+    this dialect, not a guarantee worth depending on.
     """
     words: set[str] = set()
     statements = 1
@@ -217,7 +224,7 @@ def _scan(text: str) -> tuple[set[str], int, int | None]:
             closing = text.find("*/", index + 2)
             index = length if closing < 0 else closing + 2
             continue
-        if text.startswith("//", index) or text.startswith("--", index):
+        if text.startswith("//", index):
             newline = text.find("\n", index)
             index = length if newline < 0 else newline + 1
             continue

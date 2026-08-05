@@ -556,3 +556,51 @@ def test_confirmation_reports_zero_when_nothing_is_confirmable(
     assert outcome.confirmation is not None
     assert (outcome.confirmation.nominated, outcome.confirmation.confirmed) == (0, 0)
     assert outcome.rows == ((2,),)
+
+
+def test_a_path_is_returned_whole_or_not_at_all(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """The edge bound is spent on whole paths, never on part of one.
+
+    A path whose reported length does not match the steps it arrived with is a
+    route that does not connect, presented as one that does. Under a bound too
+    small for a path, that path is absent rather than truncated.
+    """
+    url, edges = graph
+    subject, obj = edges[0][1], edges[0][2]
+    for edge_cap in (1, 2, 3, 500):
+        rows = _rows(
+            url,
+            "SELECT path_id, path_length, path_position"
+            " FROM memory_v1.graph_path(%s, %s, 6, NULL, NULL, NULL, 10, %s)"
+            " ORDER BY path_id, path_position",
+            (subject, obj, edge_cap),
+        )
+        steps: dict[object, list[int]] = {}
+        lengths: dict[object, int] = {}
+        for path_id, path_length, position in rows:
+            steps.setdefault(path_id, []).append(position)
+            lengths[path_id] = path_length
+        for path_id, positions in steps.items():
+            assert positions == list(range(1, lengths[path_id] + 1)), (
+                f"path {path_id} came back cut at edge_cap={edge_cap}"
+            )
+        assert len(rows) <= edge_cap
+
+
+def test_the_gate_reads_the_comment_forms_the_engine_reads() -> None:
+    """`--` is not a comment to the pinned engine, so it is not one here.
+
+    Skipping a form the engine does not skip makes the scan blind to text the
+    engine goes on to parse. Every such statement happens to fail the engine's
+    parser today, but that is a property of this dialect rather than something
+    a gate should rely on.
+    """
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_cypher("MATCH (e:Entity) RETURN e.name -- CREATE (n:Entity)")
+    assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED
+
+    # The forms the engine DOES honour still contribute nothing.
+    assert validate_cypher("MATCH (e:Entity) RETURN e.name // CREATE (n)").text
+    assert validate_cypher("MATCH (e:Entity) /* CREATE (n) */ RETURN e.name").text
