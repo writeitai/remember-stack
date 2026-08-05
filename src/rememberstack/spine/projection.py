@@ -62,9 +62,11 @@ class GraphExport:
         return self._connection.execute(_SELECT_WATERMARK).scalar_one_or_none()
 
     def unresolved_survivors(self) -> tuple[UUID, ...]:
-        """The abort-before-snapshot gate (spike c): entities whose survivor
-        is still merged — a merge cycle or a corrupt redirect chain. Any row
-        aborts the snapshot; the offenders are recorded for the operator."""
+        """Return entities omitted by terminal survivor resolution.
+
+        A cycle or dangling redirect has no terminal row in ``graph_survivor``.
+        Any omission aborts the snapshot and is recorded for the operator.
+        """
         return tuple(self._connection.execute(_SELECT_UNRESOLVED_SURVIVORS).scalars())
 
 
@@ -447,9 +449,12 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
 
 _SELECT_UNRESOLVED_SURVIVORS = text(
     """
-    SELECT s.entity_id FROM graph_survivor s
-    JOIN entities e ON e.entity_id = s.survivor
-    WHERE e.merged_into IS NOT NULL
+    SELECT e.entity_id
+    FROM entities AS e
+    LEFT JOIN graph_survivor AS resolved
+      ON resolved.entity_id = e.entity_id
+    WHERE resolved.entity_id IS NULL
+    ORDER BY e.entity_id
     """
 )
 

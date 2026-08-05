@@ -285,6 +285,12 @@ historical reconstructions.
   the entity or its identity event visible. The quarantine probe
   `entity_without_surviving_provenance` asks `entities_current` directly, so the report
   and the public omission cannot describe different sets.
+- **P2 cycle validation consumes survivor absence, not a nonterminal row.** The
+  cycle-safe helper emits only origins that reach a terminal entity, so a merge
+  cycle or dangling redirect is absent by construction. The rebuild gate left
+  joins every entity to the materialized survivor map and aborts on every
+  missing origin; this preserves loud snapshot rejection without weakening the
+  authorization helper or restoring a guessed hop limit.
 - **`identity_events_visible`** and **`changes_visible`** are UNION views whose declared
   key is `(deployment_id, object_kind, event_id)`. Uniqueness across the underlying id
   spaces is proven by construction: **every arm emits a distinct `object_kind` literal
