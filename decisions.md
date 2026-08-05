@@ -3129,9 +3129,11 @@ is engine-native. Graph type/property references are null until the engine suppl
 parse metadata; `confirm=true` checks only top-level engine-typed `NODE`/`REL` values labelled
 `Entity`/`RELATES` and warns when none were confirmable. Forgeable structs and scalar UUID
 projections remain snapshot-scoped, and engine `INTERNAL_ID` offsets are never public.
-The engine-internal `id(...)` function is refused before execution because the
-pinned engine can coerce its physical address into a `STRING`; ordinary public
-`e.id` properties remain available.
+The observed pinned-engine physical-address family — `id`, `rowid`,
+`internal_id`, `offset`, `hash`, `cast`, `string`, and `to_string` — is refused
+in function-call position, including backtick-quoted names. These functions can
+expose or derive a physical address directly or erase its engine type; ordinary
+public `e.id` and ``e.`id` `` properties remain available.
 
 The P2 rebuild reads the same D48/D54-bearing `memory_v1` relations as the live query surface,
 and reader caches are keyed and verified by deployment plus immutable snapshot identity and a

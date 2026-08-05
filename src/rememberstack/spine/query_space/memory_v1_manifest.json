@@ -441,7 +441,7 @@
           "columns": [
             "result"
           ],
-          "comment": "Return the bounded engine plan for one accepted read without executing it. The same dialect gate applies, including refusal of the engine-internal id(...) function.",
+          "comment": "Return the bounded engine plan for one accepted read without executing it. The same dialect gate applies, including refusal of the manifest's physical-address functions.",
           "example": "MATCH (e:Entity) RETURN e.name LIMIT 20",
           "grade": "snapshot_graph",
           "name": "explain_cypher",
@@ -664,7 +664,7 @@
             "applied_valid_at",
             "applied_believed_at"
           ],
-          "comment": "Traverse the live graph when both clocks are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
+          "comment": "Traverse the live graph with statement_timestamp() applied to both clocks when both are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
           "example": "SELECT * FROM memory_v1.graph_neighborhood($1, 2, NULL, $2, $3, 100)",
           "name": "graph_neighborhood",
           "parallel": "safe",
@@ -773,7 +773,7 @@
             "applied_valid_at",
             "applied_believed_at"
           ],
-          "comment": "Return bounded simple paths over the live graph when both clocks are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
+          "comment": "Return bounded simple paths over the live graph with statement_timestamp() applied to both clocks when both are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
           "example": "SELECT * FROM memory_v1.graph_path($1, $2, 4, NULL, $3, $4, 3, 100)",
           "name": "graph_path",
           "parallel": "safe",
@@ -951,7 +951,7 @@
           "columns": [
             "result"
           ],
-          "comment": "Execute one bounded read against the disclosed P2 snapshot; confirm defaults false and checks only top-level typed Entity and RELATES values. The engine-internal id(...) function is rejected, including coerced results.",
+          "comment": "Execute one bounded read against the disclosed P2 snapshot; confirm defaults false and checks only top-level typed Entity and RELATES values. The manifest's rejected_functions list names the pinned physical-address origin and coercion functions that are unavailable.",
           "example": "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20",
           "execution_options": {
             "confirm": {
@@ -1356,7 +1356,14 @@
           "use"
         ],
         "rejected_functions": [
-          "id"
+          "cast",
+          "hash",
+          "id",
+          "internal_id",
+          "offset",
+          "rowid",
+          "string",
+          "to_string"
         ],
         "text_bytes_max": 32768,
         "unconfirmed_projections": [
@@ -29628,5 +29635,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "f42899f4d7b0e779543c0edfb82cfe026ccc2c12aa833c30bbee91c7ff929ce3"
+  "surface_manifest_hash": "7dc1762ac9d6a8ef323ef1242760acbbdafae811a2d40ba3b3d516a8b67638c6"
 }

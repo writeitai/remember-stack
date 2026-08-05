@@ -18,9 +18,11 @@ the pinned engine remains the syntax authority.
 
 The scan is a token scan, not a parser. It ignores text inside single quotes,
 double quotes, backticks, `//` line comments, and `/* */` block comments — and
-NOT `--`, which the pinned engine does not treat as a comment. Anything beyond
-that (hop bounds, relationship brackets, graph-reference walking) is left to
-the engine and to the executor's runtime caps.
+NOT `--`, which the pinned engine does not treat as a comment. The sole
+backtick exception is a quoted identifier immediately followed by `(`, because
+the pinned engine accepts quoted function names. Anything beyond that (hop
+bounds, relationship brackets, graph-reference walking) is left to the engine
+and to the executor's runtime caps.
 """
 
 from __future__ import annotations
@@ -124,10 +126,13 @@ REJECTED_KEYWORDS: Final = frozenset(
 #: row, byte) bound cost instead — see the Batch D implementation note.
 RECURSIVE_HOPS_MAX: Final = 30
 
-#: Engine functions whose result is a physical graph address rather than a
-#: public graph value. Refusing the call itself also closes coercions such as
-#: `CAST(id(e) AS STRING)`, whose final engine type no longer says INTERNAL_ID.
-REJECTED_FUNCTIONS: Final = frozenset({"id"})
+#: Pinned-engine functions observed to expose, construct, derive, or erase the
+#: type of physical graph addresses. Some are general conversions, but the
+#: engine exposes no input-type AST with which to admit only their safe calls;
+#: refusing these exact names is the narrow fail-closed boundary.
+REJECTED_FUNCTIONS: Final = frozenset(
+    {"cast", "hash", "id", "internal_id", "offset", "rowid", "string", "to_string"}
+)
 
 #: One statement per request. A script is not a query.
 _STATEMENT_SEPARATOR: Final = ";"
@@ -190,7 +195,10 @@ def validate_cypher(text: str) -> CypherStatement:
         function = sorted(rejected_functions)[0]
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
-            message=f"{function}(...) exposes an engine-internal graph identifier",
+            message=(
+                f"{function}(...) is unavailable because it can expose"
+                " engine-internal graph identifiers"
+            ),
         )
     return CypherStatement(text=text.strip())
 
@@ -218,9 +226,12 @@ def _scan(text: str) -> tuple[str, int, frozenset[str], frozenset[str]]:
     while index < length:
         character = text[index]
         if character in ("'", '"', "`"):
-            index = _skip_quoted(text, index)
+            closing = _skip_quoted(text, index)
+            pending_word = (
+                text[index + 1 : closing - 1].lower() if character == "`" else ""
+            )
+            index = closing
             word = ""
-            pending_word = ""
             continue
         if character == "/" and text.startswith("/*", index):
             closing = text.find("*/", index + 2)

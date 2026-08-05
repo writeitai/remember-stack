@@ -208,3 +208,20 @@ confirmed once before the 20-result cut. Finally, the existing function
 signature member and PostgreSQL comments publish the paired-clock error and
 valid calls. No general expression parser, new resource controller, or new
 retrieval channel is needed.
+
+The re-review's quoted-function probe showed that LadybugDB accepts
+backtick-quoted function names, so skipping every backtick run still let
+`` `id`(...) `` through. A bounded catalog probe of the same pinned engine found
+the same physical address exposed directly by `rowid(node)` and `hash(node)`, or
+hidden by `cast`, `string`, and `to_string` over a node, relationship, collection,
+or internal ID; `offset(internal_id(...))` also turns a constructed engine
+address into an integer. These are observed v0.18.2 behaviors, not a speculative
+function denylist.
+
+The smallest complete correction is to recognize backtick-quoted names only
+when they occupy function-call position and reject the eight observed
+physical-address origin/coercion functions there: `id`, `rowid`, `internal_id`,
+`offset`, `hash`, `cast`, `string`, and `to_string`. Public properties such as
+`e.id` and ``e.`id` `` remain readable, and the final logical-type check remains
+defense in depth. This avoids both a parser and unreliable output-string shape
+matching.

@@ -261,9 +261,11 @@ One statement may open with `MATCH`, `OPTIONAL`, `WITH`, `UNWIND`, or `RETURN`.
 Parameters are typed and bound, never interpolated. File, attachment,
 extension, session, maintenance, and plan-control constructs are rejected by
 the gateway. `CREATE`, `DELETE`, `MERGE`, and `SET` are refused by the pinned
-LadybugDB engine opened read-only. The engine-internal `id(...)` function is
-also refused because casts can otherwise expose its physical address; query the
-public `e.id` property instead. Cypher text is capped at 32 KiB; the selected
+LadybugDB engine opened read-only. The pinned physical-address function family
+(`id`, `rowid`, `internal_id`, `offset`, `hash`, `cast`, `string`, and
+`to_string`) is also refused because those calls can expose or derive an engine
+address, including after coercion; query the public `e.id` property instead.
+Cypher text is capped at 32 KiB; the selected
 tier also supplies the statement timeout and returned row, byte, parameter, and
 concurrency limits. If the engine timeout cannot be installed, the statement is
 not executed. `explain_cypher` returns the engine plan and does not execute the

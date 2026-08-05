@@ -34,8 +34,9 @@ does only the two jobs it can do exactly without rebuilding a parser:
 - it rejects the pinned external-action, extension, session, maintenance,
   attachment, and plan-control tokens wherever they occur outside strings,
   quoted identifiers, and the engine's `//` or `/* */` comments; and
-- it rejects the engine-internal `id(...)` function, including spacing/comment
-  variants, because the pinned engine can coerce its physical address to text.
+- it rejects the observed physical-address function family — `id`, `rowid`,
+  `internal_id`, `offset`, `hash`, `cast`, `string`, and `to_string` — including
+  spacing/comment and backtick-quoted call variants.
 
 One statement and 32 KiB of Cypher text remain hard request bounds. The scan
 does not treat `--` as a comment because the pinned engine does not.
@@ -78,9 +79,10 @@ Every Cypher result has grade `snapshot_graph`, no SQL schema name, and the
 snapshot ID/version/build instant/age that actually served it. Engine physical
 offsets (`_ID`, `_SRC`, `_DST`, matched case-insensitively) are stripped from
 structural values, and a scalar engine `INTERNAL_ID` result is refused rather
-than publishing its physical `{offset, table}` address. `id(...)` is refused
-before execution so casting that address cannot hide its engine type; ordinary
-public `e.id` properties remain available. Snapshot identity is
+than publishing its physical `{offset, table}` address. The pinned functions
+observed to expose, derive, or erase the type of an address are refused before
+execution; ordinary public `e.id` and ``e.`id` `` properties remain available.
+Snapshot identity is
 pinned with the connection, failures after pinning retain that identity,
 snapshot age is measured at execution start and clamped nonnegative, and an
 age over 3600 seconds emits the bound freshness warning.
@@ -161,8 +163,8 @@ Current-context and graph-context evidence hydration now join
 document cannot authorize evidence. The Batch D retrieval fixture carries
 honest surviving provenance for withdrawn and isolated cases.
 
-Nested LadybugDB `INTERNAL_ID` logical types and the coercible `id(...)`
-function are refused, while caller-authored field names and public `.id`
+Nested LadybugDB `INTERNAL_ID` logical types and the observed physical-address
+function family are refused, while caller-authored field names and public `.id`
 properties remain data. Timeout installation fails closed. Failures after
 snapshot pinning retain the stale-age warning, and audit events carry snapshot
 freshness, confirmation counts, graph caps, and a content-free engine fault

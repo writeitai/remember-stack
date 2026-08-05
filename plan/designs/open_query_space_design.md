@@ -536,7 +536,8 @@ expressions, aliases, `ORDER BY`, `SKIP`, and `LIMIT` are allowed. Expressions
 include parameters, property access, arithmetic/boolean/string/list operators,
 read-only built-in scalar/list/path functions, simple and searched `CASE`, bare
 pattern predicates, and `EXISTS { MATCH ... }` or `COUNT { MATCH ... }`
-subqueries. Aggregation is unrestricted by result meaning: `count`, `collect`,
+subqueries, except for the pinned physical-address function list below.
+Aggregation is unrestricted by result meaning: `count`, `collect`,
 `min`, `max`, `avg`, `sum`, grouping projections, and engine-supported
 read-only aggregates are allowed.
 
@@ -605,11 +606,14 @@ aggregate, list, path, node, relationship, and exposed property values. Engine
 structural node/relationship/path values are serialized as typed QueryResult
 values; engine-local physical offsets are not stable identifiers. Any result
 column whose engine logical type contains `INTERNAL_ID` is rejected, including
-an `INTERNAL_ID[]` or a nested struct field. The engine-internal `id(...)`
-function is rejected before execution because casts and string conversion can
-otherwise erase that logical type while preserving the physical address; an
-ordinary public `e.id` property and a caller-authored field merely named
-`INTERNAL_ID` remain available data. There is no
+an `INTERNAL_ID[]` or a nested struct field. The pinned engine functions
+`id`, `rowid`, `internal_id`, `offset`, `hash`, `cast`, `string`, and
+`to_string` are rejected in call position, including backtick-quoted names:
+live probes show they expose, construct, derive, or erase the type of physical
+addresses for structural/internal inputs, and the engine supplies no input-type
+AST with which to admit only safe calls. Ordinary public `e.id` and ``e.`id` ``
+properties and a caller-authored field merely named `INTERNAL_ID` remain
+available data. There is no
 identifier-only projection restriction, aggregate ban, absence ban, or generic
 Cypher-result-to-Envelope adapter.
 

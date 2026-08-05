@@ -198,6 +198,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     assert all(entry["example"] for entry in batch_d_functions.values())
     for name in ("graph_neighborhood", "graph_path"):
         assert "invalid_parameter_value" in batch_d_functions[name]["comment"]
+        assert "statement_timestamp()" in batch_d_functions[name]["comment"]
         assert validate_sql(batch_d_functions[name]["example"])
     for name in ("query_cypher", "explain_cypher"):
         assert validate_cypher(batch_d_functions[name]["example"])
@@ -237,7 +238,16 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     assert cypher["text_bytes_max"] == 32 * 1024
     assert cypher["read_openings"] == ["match", "optional", "return", "unwind", "with"]
     assert cypher["engine_rejected_mutations"] == ["create", "delete", "merge", "set"]
-    assert cypher["rejected_functions"] == ["id"]
+    assert cypher["rejected_functions"] == [
+        "cast",
+        "hash",
+        "id",
+        "internal_id",
+        "offset",
+        "rowid",
+        "string",
+        "to_string",
+    ]
     projection = limits["p2_projection"]
     assert isinstance(projection, dict)
     assert projection["contract_version"] == "p2-rebuild-2026.07"

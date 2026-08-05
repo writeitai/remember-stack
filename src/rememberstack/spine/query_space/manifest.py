@@ -363,10 +363,10 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "security": "invoker",
                 "parallel": "safe",
                 "comment": (
-                    "Traverse the live graph when both clocks are omitted, or the"
-                    " half-open historical graph when both valid_at and believed_at"
-                    " are supplied. Supplying exactly one clock fails with"
-                    " invalid_parameter_value."
+                    "Traverse the live graph with statement_timestamp() applied to"
+                    " both clocks when both are omitted, or the half-open historical"
+                    " graph when both valid_at and believed_at are supplied. Supplying"
+                    " exactly one clock fails with invalid_parameter_value."
                 ),
                 "example": (
                     "SELECT * FROM memory_v1.graph_neighborhood("
@@ -446,10 +446,11 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "security": "invoker",
                 "parallel": "safe",
                 "comment": (
-                    "Return bounded simple paths over the live graph when both clocks"
-                    " are omitted, or the half-open historical graph when both"
-                    " valid_at and believed_at are supplied. Supplying exactly one"
-                    " clock fails with invalid_parameter_value."
+                    "Return bounded simple paths over the live graph with"
+                    " statement_timestamp() applied to both clocks when both are"
+                    " omitted, or the half-open historical graph when both valid_at"
+                    " and believed_at are supplied. Supplying exactly one clock fails"
+                    " with invalid_parameter_value."
                 ),
                 "example": (
                     "SELECT * FROM memory_v1.graph_path("
@@ -503,8 +504,9 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "comment": (
                     "Execute one bounded read against the disclosed P2 snapshot;"
                     " confirm defaults false and checks only top-level typed Entity"
-                    " and RELATES values. The engine-internal id(...) function is"
-                    " rejected, including coerced results."
+                    " and RELATES values. The manifest's rejected_functions list"
+                    " names the pinned physical-address origin and coercion functions"
+                    " that are unavailable."
                 ),
                 "example": (
                     "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20"
@@ -532,7 +534,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "comment": (
                     "Return the bounded engine plan for one accepted read without"
                     " executing it. The same dialect gate applies, including refusal"
-                    " of the engine-internal id(...) function."
+                    " of the manifest's physical-address functions."
                 ),
                 "example": "MATCH (e:Entity) RETURN e.name LIMIT 20",
                 "columns": ["result"],

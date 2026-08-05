@@ -498,6 +498,14 @@ def test_a_projected_node_loses_the_engines_physical_offsets(
         "{physical: id(e)}",
         "CAST(id(e) AS STRING)",
         "to_string(id(e))",
+        "CAST(`id`(e) AS STRING)",
+        "to_string(`id`(e))",
+        "CAST(e AS STRING)",
+        "to_string(e)",
+        "STRING(e)",
+        "rowid(e)",
+        "hash(e)",
+        "offset(internal_id(0, 0))",
         "id /* comment */ (e)",
     ),
 )
@@ -514,11 +522,15 @@ def test_engine_internal_ids_are_never_published(
 
 def test_public_id_properties_remain_available(snapshot: _Snapshot) -> None:
     """The physical `id(...)` refusal must not block the public UUID property."""
-    outcome = _cypher(snapshot).query_cypher(
-        cypher="MATCH (e:Entity) RETURN e.id ORDER BY e.id LIMIT 1"
-    )
-    assert outcome.termination_reason == "completed", outcome.error_message
-    assert UUID(str(outcome.rows[0][0]))
+    for property_name in ("id", "`id`"):
+        outcome = _cypher(snapshot).query_cypher(
+            cypher=(
+                f"MATCH (e:Entity) RETURN e.{property_name}"
+                f" ORDER BY e.{property_name} LIMIT 1"
+            )
+        )
+        assert outcome.termination_reason == "completed", outcome.error_message
+        assert UUID(str(outcome.rows[0][0]))
 
 
 def test_a_struct_field_named_internal_id_is_ordinary_caller_data(
