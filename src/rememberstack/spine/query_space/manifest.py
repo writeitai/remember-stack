@@ -677,13 +677,19 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
     either path rolls the hash.
     """
     from rememberstack.surfaces.query_sandbox import cypher
+    from rememberstack.surfaces.query_sandbox.cypher_executor import (
+        CYPHER_TEXT_BYTES_MAX,
+    )
 
     return {
         "contract": "memory_v1.cypher/1",
         "engine": "ladybug",
         "engine_version": "0.18.2",
         "read_clauses": list(sorted(cypher.READ_CLAUSES)),
+        "read_openings": list(sorted(cypher.READ_OPENINGS)),
         "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
+        "engine_rejected_mutations": list(sorted(cypher.ENGINE_REJECTED_MUTATIONS)),
+        "text_bytes_max": CYPHER_TEXT_BYTES_MAX,
         # Pinned engine-native recursive upper bound. The executor does not
         # duplicate this grammar in a text walker.
         "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,

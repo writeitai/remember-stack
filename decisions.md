@@ -3135,6 +3135,10 @@ and reader caches are keyed and verified by deployment plus immutable snapshot i
 validated leaf version. Cypher shares SQL's kill-switch/admission/audit objects. Pure
 PostgreSQL graph helpers remain invoker-security, parallel-safe functions; only
 projection-backed functions need the no-login definer bridge.
+Their paired-clock refusal is internal to the two documented helpers; PUBLIC
+has no function EXECUTE privilege in `memory_v1`, and the routed query role is
+granted only the manifest-enumerated functions. Nested engine `INTERNAL_ID`
+types are refused just like scalar physical IDs.
 
 `question_context` v4 adds default-false `include_facts` and `include_entities` flags. Facts
 reuse `current_context`'s semantic nomination, D48/D41 confirmation, both-stance evidence,

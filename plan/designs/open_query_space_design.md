@@ -511,6 +511,13 @@ depth, edge, and path bounds are defined only by the §4.3 limits table. Reachin
 a cap is disclosed in QueryResult. Raw recursive CTEs remain available only
 under §4.1's template linter and the PG snapshot.
 
+The two graph helpers perform the paired-clock refusal inside their documented
+function bodies. `memory_v1` publishes no auxiliary clock-guard function.
+PUBLIC has no EXECUTE privilege on any function in the schema; the routed
+deployment query role receives EXECUTE only on the functions enumerated by the
+manifest. The migration also revokes PostgreSQL's default PUBLIC function
+EXECUTE privilege for subsequent functions in this schema.
+
 ### 3.5 Full P2 Cypher read surface
 
 The v1 dialect IS the read portion implemented by the repository-pinned
@@ -593,7 +600,10 @@ The initial exposed P2 property schema, versioned as projection contract
 Rows carry exactly the values projected by `RETURN`, including scalar,
 aggregate, list, path, node, relationship, and exposed property values. Engine
 structural node/relationship/path values are serialized as typed QueryResult
-values; engine-local physical offsets are not stable identifiers. There is no
+values; engine-local physical offsets are not stable identifiers. Any result
+column whose engine logical type contains `INTERNAL_ID` is rejected, including
+an `INTERNAL_ID[]` or a nested struct field; a caller-authored field merely
+named `INTERNAL_ID` remains ordinary data. There is no
 identifier-only projection restriction, aggregate ban, absence ban, or generic
 Cypher-result-to-Envelope adapter.
 

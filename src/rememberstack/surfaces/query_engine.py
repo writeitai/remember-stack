@@ -3030,44 +3030,45 @@ _CURRENT_FACT_EVIDENCE = text(
         SELECT requested.fact_id, requested.kind, requested.nomination_rank,
                e.claim_id, e.doc_id, e.stance::text AS stance
         FROM requested
-        JOIN relation_evidence e
-          ON requested.kind = 'relation'
-         AND e.deployment_id = :deployment_id
-         AND e.relation_id = requested.fact_id
-        UNION ALL
-        SELECT requested.fact_id, requested.kind, requested.nomination_rank,
-               e.claim_id, e.doc_id, e.stance::text AS stance
+        JOIN memory_v1.fact_claim_evidence_live e
+          ON e.deployment_id = :deployment_id
+         AND e.fact_kind = requested.kind
+         AND e.fact_id = requested.fact_id
+    ), totals AS (
+        SELECT requested.fact_id, requested.kind, lineage.stance,
+               count(*)::bigint AS evidence_total
         FROM requested
-        JOIN observation_evidence e
-          ON requested.kind = 'observation'
-         AND e.deployment_id = :deployment_id
-         AND e.observation_id = requested.fact_id
+        JOIN memory_v1.evidence_lineage lineage
+          ON lineage.deployment_id = :deployment_id
+         AND lineage.fact_kind = requested.kind
+         AND lineage.fact_id = requested.fact_id
+        GROUP BY requested.fact_id, requested.kind, lineage.stance
     ), eligible AS (
         SELECT links.fact_id, links.kind, links.nomination_rank, links.stance,
                c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
                c.char_start, c.char_end, c.is_attributed,
-               c.is_current_testimony, c.asserted_at, c.claim_valid_from,
+               true AS is_current_testimony, c.asserted_at, c.claim_valid_from,
                c.claim_valid_until, c.claim_valid_precision::text,
                c.claim_valid_kind::text, d.title AS document_title,
                d.source_kind, c.ingested_at AS evidence_ingested_at,
-               count(*) OVER (
-                   PARTITION BY links.fact_id, links.stance
-               ) AS evidence_total,
+               totals.evidence_total,
                row_number() OVER (
                    PARTITION BY links.fact_id, links.stance, links.doc_id
                    ORDER BY c.asserted_at DESC NULLS LAST,
                             c.ingested_at DESC, c.claim_id
                ) AS lineage_claim_rank
         FROM links
-        JOIN claims c
+        JOIN memory_v1.claims_live c
           ON c.deployment_id = :deployment_id
          AND c.claim_id = links.claim_id
          AND c.doc_id = links.doc_id
-        LEFT JOIN documents d
+        JOIN memory_v1.documents_live d
           ON d.deployment_id = c.deployment_id
          AND d.doc_id = c.doc_id
-        WHERE c.is_current_testimony
-          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+        JOIN totals
+          ON totals.fact_id = links.fact_id
+         AND totals.kind = links.kind
+         AND totals.stance = links.stance
     ), diverse AS (
         SELECT eligible.*,
                row_number() OVER (
@@ -3077,6 +3078,7 @@ _CURRENT_FACT_EVIDENCE = text(
                             evidence_ingested_at DESC, doc_id, claim_id
                ) AS stance_rank
         FROM eligible
+        WHERE lineage_claim_rank = 1
     )
     SELECT fact_id, kind, stance, evidence_total, stance_rank,
            claim_id, doc_id, chunk_id, claim_text, source_span,
@@ -3101,10 +3103,13 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         SELECT requested.graph_rank, r.relation_id AS fact_id,
                r.subject_entity_id AS subject_id,
                r.object_entity_id AS object_id, r.predicate,
-               r.fact_label AS fact, r.evidence_count,
+               r.fact_label AS fact,
+               r.evidence_count_current AS evidence_count,
                r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
-               subject.canonical_name AS subject_name, subject.type AS subject_type,
-               object.canonical_name AS object_name, object.type AS object_type,
+               subject.canonical_name AS subject_name,
+               subject.entity_type AS subject_type,
+               object.canonical_name AS object_name,
+               object.entity_type AS object_type,
                EXISTS (
                    SELECT 1
                    FROM review_queue q
@@ -3114,13 +3119,13 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                      AND (q.candidate ->> 'fact_id') = r.relation_id::text
                ) AS support_withdrawn
         FROM requested
-        JOIN relations r
+        JOIN memory_v1.graph_edges_visible_history r
           ON r.deployment_id = :deployment_id
          AND r.relation_id = requested.relation_id
-        JOIN entities subject
+        JOIN memory_v1.entities_current subject
           ON subject.deployment_id = r.deployment_id
          AND subject.entity_id = r.subject_entity_id
-        JOIN entities object
+        JOIN memory_v1.entities_current object
           ON object.deployment_id = r.deployment_id
          AND object.entity_id = r.object_entity_id
         WHERE r.invalidated_at IS NULL
@@ -3130,35 +3135,44 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         SELECT confirmed.fact_id, confirmed.graph_rank,
                e.claim_id, e.doc_id, e.stance::text AS stance
         FROM confirmed
-        JOIN relation_evidence e
+        JOIN memory_v1.fact_claim_evidence_live e
           ON e.deployment_id = :deployment_id
-         AND e.relation_id = confirmed.fact_id
+         AND e.fact_kind = 'relation'
+         AND e.fact_id = confirmed.fact_id
+    ), totals AS (
+        SELECT confirmed.fact_id, lineage.stance,
+               count(*)::bigint AS evidence_total
+        FROM confirmed
+        JOIN memory_v1.evidence_lineage lineage
+          ON lineage.deployment_id = :deployment_id
+         AND lineage.fact_kind = 'relation'
+         AND lineage.fact_id = confirmed.fact_id
+        GROUP BY confirmed.fact_id, lineage.stance
     ), eligible AS (
         SELECT links.fact_id, links.graph_rank, links.stance,
                c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
                c.char_start, c.char_end, c.is_attributed,
-               c.is_current_testimony, c.asserted_at, c.claim_valid_from,
+               true AS is_current_testimony, c.asserted_at, c.claim_valid_from,
                c.claim_valid_until, c.claim_valid_precision::text,
                c.claim_valid_kind::text, d.title AS document_title,
                d.source_kind, c.ingested_at AS evidence_ingested_at,
-               count(*) OVER (
-                   PARTITION BY links.fact_id, links.stance
-               ) AS evidence_total,
+               totals.evidence_total,
                row_number() OVER (
                    PARTITION BY links.fact_id, links.stance, links.doc_id
                    ORDER BY c.asserted_at DESC NULLS LAST,
                             c.ingested_at DESC, c.claim_id
                ) AS lineage_claim_rank
         FROM links
-        JOIN claims c
+        JOIN memory_v1.claims_live c
           ON c.deployment_id = :deployment_id
          AND c.claim_id = links.claim_id
          AND c.doc_id = links.doc_id
-        LEFT JOIN documents d
+        JOIN memory_v1.documents_live d
           ON d.deployment_id = c.deployment_id
          AND d.doc_id = c.doc_id
-        WHERE c.is_current_testimony
-          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+        JOIN totals
+          ON totals.fact_id = links.fact_id
+         AND totals.stance = links.stance
     ), diverse AS (
         SELECT eligible.*,
                row_number() OVER (
@@ -3168,6 +3182,7 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                             evidence_ingested_at DESC, doc_id, claim_id
                ) AS stance_rank
         FROM eligible
+        WHERE lineage_claim_rank = 1
     ), limited AS (
         SELECT *
         FROM diverse

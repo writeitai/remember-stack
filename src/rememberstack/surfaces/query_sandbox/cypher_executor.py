@@ -38,6 +38,7 @@ from datetime import datetime
 from datetime import UTC
 import hashlib
 import json
+import re
 import time
 from typing import Any
 from typing import Final
@@ -49,6 +50,7 @@ import psycopg
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+from rememberstack.surfaces.query_sandbox.cypher import RECURSIVE_HOPS_MAX
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -81,6 +83,13 @@ NO_CONFIRMABLE_VALUES_WARNING: Final = (
 #: else entirely. Matched case-insensitively: the pinned engine spells them
 #: `_ID`/`_SRC`/`_DST`, and a case-sensitive list silently published all three.
 _ENGINE_INTERNAL_KEYS: Final = frozenset({"_id", "_src", "_dst"})
+
+# LadybugDB reports physical addresses as INTERNAL_ID wherever they are nested
+# in the result type: scalar, collection, or struct field. Match a type token,
+# not a caller-authored struct field named INTERNAL_ID.
+_INTERNAL_ID_TYPE: Final = re.compile(
+    r"(?:^|[\s,(])INTERNAL_ID(?:\[\])*(?=$|[,\)\]])", re.IGNORECASE
+)
 
 #: Where the engine records a value's label, in the spellings it uses.
 _LABEL_KEYS: Final = ("_LABEL", "_label")
@@ -230,6 +239,7 @@ class CypherSandboxExecutor:
         )
         statement_hash = ""
         snapshot: P2Snapshot | None = None
+        engine_fault_class: str | None = None
         admitted = False
         try:
             self._check_request(cypher=cypher, parameters=parameters, limits=limits)
@@ -338,6 +348,7 @@ class CypherSandboxExecutor:
                 confirmation=confirmation,
             )
         except SandboxRejection as rejection:
+            engine_fault_class = rejection.engine_fault_class
             outcome = self._failure(
                 rejection,
                 self._deployment_id,
@@ -359,7 +370,12 @@ class CypherSandboxExecutor:
                 self._kills.release(
                     deployment_id=self._deployment_id, principal=principal
                 )
-        self._audit.emit(outcome=outcome, principal=principal)
+        self._audit.emit(
+            outcome=outcome,
+            principal=principal,
+            engine_fault_class=engine_fault_class,
+            graph_depth_cap=RECURSIVE_HOPS_MAX,
+        )
         return outcome
 
     @staticmethod
@@ -401,6 +417,7 @@ class CypherSandboxExecutor:
             raise SandboxRejection(
                 code=QueryErrorCode.P2_UNAVAILABLE,
                 message="no published graph snapshot is available",
+                engine_fault_class="p2_snapshot",
             ) from error
 
     @staticmethod
@@ -415,6 +432,7 @@ class CypherSandboxExecutor:
             raise SandboxRejection(
                 code=QueryErrorCode.P2_UNAVAILABLE,
                 message="the published graph snapshot has incomplete provenance",
+                engine_fault_class="p2_snapshot",
             )
         return P2Snapshot(
             snapshot_id=snapshot_id,
@@ -452,6 +470,7 @@ class CypherSandboxExecutor:
                     message=(
                         "this surface reads the published graph and never changes it"
                     ),
+                    engine_fault_class="ladybug_read_only",
                 ) from error
             if "Parser exception" in message or "Binder exception" in message:
                 # The pinned dialect does not implement this. It is NOT
@@ -459,20 +478,24 @@ class CypherSandboxExecutor:
                 raise SandboxRejection(
                     code=QueryErrorCode.CYPHER_PARSE_ERROR,
                     message="the pinned Cypher dialect does not accept this statement",
+                    engine_fault_class="ladybug_parse",
                 ) from error
             if "Interrupt" in message or "timeout" in message.lower():
                 raise SandboxRejection(
                     code=QueryErrorCode.STATEMENT_TIMEOUT,
                     message="the statement exceeded its timeout",
+                    engine_fault_class="ladybug_timeout",
                 ) from error
             raise SandboxRejection(
                 code=QueryErrorCode.EXECUTION_ERROR,
                 message="the statement failed during execution",
+                engine_fault_class="ladybug_runtime",
             ) from error
         except Exception as error:
             raise SandboxRejection(
                 code=QueryErrorCode.EXECUTION_ERROR,
                 message="the statement failed during execution",
+                engine_fault_class="ladybug_runtime",
             ) from error
         names = tuple(answer.get_column_names())
         types = tuple(str(kind) for kind in answer.get_column_data_types())
@@ -566,6 +589,7 @@ class CypherSandboxExecutor:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
                 message="live membership could not be checked",
+                engine_fault_class="postgresql_confirmation",
             ) from error
 
         kept: list[Sequence[object]] = []
@@ -596,6 +620,7 @@ class CypherSandboxExecutor:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
                 message="live membership could not be checked",
+                engine_fault_class="postgresql_confirmation",
             ) from error
         return row[0] if row else None
 
@@ -639,6 +664,12 @@ class CypherSandboxExecutor:
             ),
             error_code=rejection.code,
             error_message=rejection.message,
+            warnings=(
+                (P2_STALE_WARNING,)
+                if p2_snapshot is not None
+                and p2_snapshot.age_seconds > P2_FRESHNESS_WARNING_SECONDS
+                else ()
+            ),
             limits=limits_model,
             p2_snapshot=p2_snapshot,
         )
@@ -702,7 +733,7 @@ def _confirmable(value: object, *, logical_type: str) -> tuple[str | None, str |
 
 def _is_internal_id_type(logical_type: str) -> bool:
     """Whether an engine result column is a physical graph address."""
-    return logical_type.strip().upper() == "INTERNAL_ID"
+    return _INTERNAL_ID_TYPE.search(logical_type.strip()) is not None
 
 
 def _identifier(value: object) -> str | None:

@@ -27,6 +27,7 @@ from sqlalchemy import text
 
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine.query_space import load_manifest
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditEvent
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
@@ -488,13 +489,29 @@ def test_a_projected_node_loses_the_engines_physical_offsets(
     assert node["name"] in ("Ada", "Grace")
 
 
-def test_a_scalar_engine_internal_id_is_never_published(snapshot: _Snapshot) -> None:
-    """`id(e)` is a physical address, not the public Entity UUID."""
+@pytest.mark.parametrize(
+    "projection", ("id(e)", "[id(e)]", "collect(id(e))", "{physical: id(e)}")
+)
+def test_engine_internal_ids_are_never_published(
+    snapshot: _Snapshot, projection: str
+) -> None:
+    """Physical addresses stay private when scalar, collected, or structured."""
     outcome = _cypher(snapshot).query_cypher(
-        cypher="MATCH (e:Entity) RETURN id(e) LIMIT 1"
+        cypher=f"MATCH (e:Entity) RETURN {projection} LIMIT 1"
     )
     assert outcome.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
     assert outcome.rows == ()
+
+
+def test_a_struct_field_named_internal_id_is_ordinary_caller_data(
+    snapshot: _Snapshot,
+) -> None:
+    """Match the logical type token, not an unrelated caller-authored key."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="RETURN {INTERNAL_ID: 1} AS caller_data"
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == (({"INTERNAL_ID": 1},),)
 
 
 def test_a_mutation_is_reported_as_not_allowed_not_as_execution_error(
@@ -677,6 +694,7 @@ class _ConfirmationFailure(CypherSandboxExecutor):
         raise SandboxRejection(
             code=QueryErrorCode.PG_UNAVAILABLE,
             message="live membership could not be checked",
+            engine_fault_class="postgresql_confirmation",
         )
 
 
@@ -694,12 +712,13 @@ def test_a_failure_after_pinning_keeps_snapshot_provenance(
     assert outcome.error_code == QueryErrorCode.PG_UNAVAILABLE
     assert outcome.p2_snapshot is not None
     assert outcome.p2_snapshot.snapshot_id == snapshot.snapshot_id
+    assert P2_STALE_WARNING in outcome.warnings
 
 
 def test_cypher_uses_the_shared_kill_switch_and_audit(snapshot: _Snapshot) -> None:
     """Cypher participates in the same admission and content-free audit path."""
     switches = KillSwitches()
-    trail = AuditTrail(capacity=2)
+    trail = AuditTrail(capacity=3)
     switches.block_principal("blocked-agent")
     executor = CypherSandboxExecutor(
         deployment_id=_DEPLOYMENT, reader=snapshot, kill_switches=switches, audit=trail
@@ -707,11 +726,25 @@ def test_cypher_uses_the_shared_kill_switch_and_audit(snapshot: _Snapshot) -> No
     outcome = executor.query_cypher(cypher="RETURN 1", principal="blocked-agent")
     assert outcome.error_code == QueryErrorCode.QUOTA_EXCEEDED
 
+    completed = executor.query_cypher(cypher="RETURN 1", principal="reader")
+    assert completed.termination_reason == "completed"
+    refused = executor.query_cypher(
+        cypher="MATCH (e:Entity) SET e.name = 'x' RETURN e", principal="reader"
+    )
+    assert refused.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
+
     events: list[AuditEvent] = []
-    assert trail.drain(sink=events.append) == 1
+    assert trail.drain(sink=events.append) == 3
     assert events[0].principal == "blocked-agent"
     assert events[0].query_language == "cypher"
     assert events[0].admission == "rejected"
+    assert events[1].p2_snapshot_id == snapshot.snapshot_id
+    assert events[1].p2_snapshot_version == snapshot.version
+    assert events[1].p2_built_at == snapshot.built_at
+    assert events[1].p2_age_seconds is not None
+    assert events[1].graph_depth_cap == 30
+    assert events[1].graph_rows == 1
+    assert events[2].engine_fault_class == "ladybug_read_only"
 
 
 def test_a_path_is_returned_whole_or_not_at_all(
@@ -848,6 +881,43 @@ def test_naming_one_clock_and_not_the_other_is_refused(
                 ).fetchone()
 
 
+def test_only_documented_query_functions_are_executable(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """PUBLIC gets no function ACL and the routed role gets the documented set."""
+    url, _ = graph
+    signatures = load_manifest()["hash_members"]["function_signatures"]["functions"]
+    documented = {
+        entry["name"]
+        for entry in signatures
+        if entry["name"] not in {"query_cypher", "explain_cypher"}
+    }
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        query_role = connection.execute(
+            "SELECT 'rememberstack_query_' || current_database()"
+        ).fetchone()
+        assert query_role is not None
+        rows = connection.execute(
+            "SELECT p.proname,"
+            " has_function_privilege(%s, p.oid, 'EXECUTE'),"
+            " EXISTS ("
+            "   SELECT 1"
+            "   FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl"
+            "   WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'"
+            " )"
+            " FROM pg_proc p"
+            " JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE n.nspname = 'memory_v1'"
+            " ORDER BY p.proname",
+            (query_role[0],),
+        ).fetchall()
+    deployed = {name for name, _query_execute, _public_execute in rows}
+    assert deployed <= documented
+    assert {"facts_as_of", "graph_neighborhood", "graph_path"} <= deployed
+    assert all(query_execute for _name, query_execute, _public_execute in rows)
+    assert not any(public_execute for _name, _query_execute, public_execute in rows)
+
+
 def test_a_relation_with_no_recorded_start_is_still_walked(
     graph: tuple[str, list[tuple[str, str, str]]],
 ) -> None:
@@ -918,14 +988,23 @@ def test_a_confirmed_result_dates_its_confirmation(
 ) -> None:
     """§4.4 puts the confirmation instant on the result, not only inside it."""
     url, _ = graph
+    trail = AuditTrail(capacity=1)
     executor = CypherSandboxExecutor(
         deployment_id=_DEPLOYMENT,
         reader=snapshot,
         connect=lambda: psycopg.connect(_psycopg_url(url)),
+        audit=trail,
     )
     outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.pg_snapshot_at is not None
+    events: list[AuditEvent] = []
+    assert trail.drain(sink=events.append) == 1
+    assert outcome.confirmation is not None
+    assert events[0].confirmation_requested == outcome.confirmation.requested
+    assert events[0].confirmation_nominated == outcome.confirmation.nominated
+    assert events[0].confirmation_confirmed == outcome.confirmation.confirmed
+    assert events[0].confirmation_dropped_stale == outcome.confirmation.dropped_stale
 
 
 def test_current_helper_rows_report_the_instant_that_selected_them(

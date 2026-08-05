@@ -116,6 +116,7 @@ class _Corpus:
         self.relations: dict[str, UUID] = {}
         self.claims: dict[str, UUID] = {}
         self.docs: dict[str, UUID] = {}
+        self.doc_chunks: dict[UUID, UUID] = {}
         self.query_chunk_id = uuid4()
         self.query_chunk_text = P1ChunkText(
             chunk_id=self.query_chunk_id,
@@ -227,6 +228,53 @@ class _Corpus:
                 stance="contradicts",
                 at=_NOW - timedelta(days=1),
             )
+        # Repeating a claim inside one source lineage must not inflate D54's
+        # evidence total. The production query therefore has to count the
+        # authoritative evidence_lineage rows, not raw claim associations.
+        self._evidence(
+            connection,
+            key="alice_beacon-support-repeat",
+            relation_key="alice_beacon",
+            stance="supports",
+            doc_id=self.docs["alice_beacon-support-0"],
+            at=_NOW + timedelta(minutes=2),
+        )
+        # A withdrawn edge still needs surviving historical provenance even
+        # though it has no current testimony. Build that state explicitly.
+        self._evidence(
+            connection,
+            key="withdrawn-historical",
+            relation_key="withdrawn",
+            stance="supports",
+            at=_NOW - timedelta(days=2),
+        )
+        connection.execute(
+            text(
+                "UPDATE claims SET is_current_testimony = false"
+                " WHERE deployment_id = :deployment AND claim_id = :claim"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "claim": self.claims["withdrawn-historical"],
+            },
+        )
+        # Entity resolution is provenance-gated. An isolated but known entity
+        # therefore needs its own live source before a no-path answer can be a
+        # typed known-empty result.
+        isolated_doc = self._document(
+            connection, key="isolated-provenance", live_chunk=False
+        )
+        connection.execute(
+            text(
+                "UPDATE documents SET document_entity_id = :entity"
+                " WHERE deployment_id = :deployment AND doc_id = :doc"
+            ),
+            {
+                "entity": self.entities["isolated"],
+                "deployment": _DEPLOYMENT_ID,
+                "doc": isolated_doc,
+            },
+        )
         tombstoned_doc = self._document(connection, key="tombstoned", live_chunk=False)
         self._evidence(
             connection,
@@ -248,6 +296,7 @@ class _Corpus:
             ("alice", "alice_beacon-support-0"),
             ("beacon", "beacon_acme-support-0"),
             ("acme", "beacon_acme-support-1"),
+            ("legacy", "withdrawn-historical"),
         ):
             connection.execute(
                 text(
@@ -277,11 +326,14 @@ class _Corpus:
                 "title": f"Batch D {key}",
             },
         )
-        if live_chunk:
-            self._live_chunk_document(connection, doc_id=doc_id)
+        chunk_id = self.query_chunk_id if live_chunk else uuid4()
+        self.doc_chunks[doc_id] = chunk_id
+        self._live_chunk_document(connection, doc_id=doc_id, chunk_id=chunk_id)
         return doc_id
 
-    def _live_chunk_document(self, connection: Connection, *, doc_id: UUID) -> None:
+    def _live_chunk_document(
+        self, connection: Connection, *, doc_id: UUID, chunk_id: UUID
+    ) -> None:
         version_id = uuid4()
         representation_id = uuid4()
         section_id = uuid4()
@@ -392,7 +444,7 @@ class _Corpus:
                 " 'batch-d-input', 0, 60, 'Connection context.', :at)"
             ),
             {
-                "chunk": self.query_chunk_id,
+                "chunk": chunk_id,
                 "deployment": _DEPLOYMENT_ID,
                 "doc": doc_id,
                 "version": version_id,
@@ -416,7 +468,7 @@ class _Corpus:
         doc_id = doc_id or self._document(connection, key=key, live_chunk=live_chunk)
         claim_id = uuid4()
         self.claims[key] = claim_id
-        chunk_id = self.query_chunk_id if live_chunk else uuid4()
+        chunk_id = self.doc_chunks[doc_id]
         body = f"Evidence for {key}."
         connection.execute(
             text(

@@ -263,6 +263,16 @@ def _scalar(connection: ladybug.Connection, query: str) -> object:
     return cast("list[object]", result.get_next())[0]
 
 
+def _projected_relation_ids(connection: ladybug.Connection) -> set[str]:
+    """Every public RELATES identity in one pinned graph generation."""
+    result = connection.execute("MATCH ()-[r:RELATES]->() RETURN r.relation_id")
+    assert isinstance(result, ladybug.QueryResult)
+    identifiers: set[str] = set()
+    while result.has_next():
+        identifiers.add(str(result.get_next()[0]))
+    return identifiers
+
+
 def test_rebuild_publishes_a_validated_snapshot(
     corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:
@@ -304,6 +314,35 @@ def test_rebuild_publishes_a_validated_snapshot(
     assert relation_rows[str(corpus.retracted_relation)] is not None
     # Its only source lineage was forgotten, so D48/D54 remove it from P2.
     assert str(corpus.forgotten_relation) not in relation_rows
+
+
+def test_deleted_edge_survives_only_in_the_pre_deletion_snapshot(
+    corpus: _InvariantCorpus, tmp_path: Path
+) -> None:
+    """The Batch D D48 target crosses the disclosed P2 generation boundary."""
+    worker, reader, _catalog = _rig(corpus.engine, tmp_path)
+    first = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
+    assert reader.refresh() is True
+    assert str(corpus.live_relation) in _projected_relation_ids(reader.connection())
+
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM relation_evidence"
+                " WHERE deployment_id = :deployment AND relation_id = :relation"
+            ),
+            {"deployment": _DEPLOYMENT_ID, "relation": corpus.live_relation},
+        )
+
+    # No new generation exists yet, so the old snapshot remains an honest
+    # point-in-time answer and keeps the edge under its earlier built_at.
+    assert reader.version == first["version"]
+    assert str(corpus.live_relation) in _projected_relation_ids(reader.connection())
+
+    second = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
+    assert second["version"] != first["version"]
+    assert str(corpus.live_relation) not in _projected_relation_ids(reader.connection())
+    assert reader.version == second["version"]
 
 
 def test_validation_gate_aborts_on_a_merge_cycle(

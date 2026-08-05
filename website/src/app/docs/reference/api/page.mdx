@@ -85,6 +85,7 @@ source-context, current-state, and connection recipes:
 | `claims_as_of` | `from`, `to`, optional `query`, optional `k` (1–50, default 20) | stamped testimony whose source-valid interval intersects the inclusive window; unknown precision is excluded and counted |
 | `chunk_neighbors` | `chunk_id`, optional `radius` (1–2, default 1) | the current source chunk and its document-order neighbors, with document edges disclosed as truncation |
 | `current_context` | `query`, optional `k` (1–30, default 15), optional `evidence_per_fact` (1–5, default 3) | current relations and observations nominated semantically for the question, with live supporting and contradicting claims; evidence is capped at 60 records per envelope |
+| `question_context` v4 | `query`, optional `k`, optional `include_facts=false`, optional `include_entities=false` | hybrid live claims and source chunks by default; optionally adds PostgreSQL-confirmed current facts and resolution-first current entities without implicit graph expansion |
 | `multi_hop_context` | `query`, `entity_a`, optional `entity_b`, optional `k` (1–30, default 15), optional `hops` (1–2, default 2), optional `evidence_per_fact` (1–5, default 3) | a shortest path between two resolved names or a bounded neighborhood around one, with both evidence stances and ordinary question context in one flat evidence-grain envelope; graph edges are structure, and quotable answers come from `evidence[]` |
 
 The entity-string recipes never silently choose among exact-name candidates:
@@ -207,7 +208,15 @@ kept. Do not quote an edge label as source testimony—quote `evidence[]` or rea
 the live passage in `chunks[]`.
 
 For ordinary question answering, prefer the public `question_context` recipe.
-It independently fuses semantic and BM25 claim nominations and source-chunk
+Version 4 keeps `include_facts` and `include_entities` false by default. The
+fact flag reuses `current_context` with fixed evidence depth 3, at most 30
+facts, and at most 60 fact/evidence associations. The entity flag returns exact
+resolution candidates before semantic candidates, deduplicates by survivor ID,
+confirms through `memory_v1.entities_current`, and returns at most 20. Neither
+flag silently adds graph neighbors; use `multi_hop_context` for an explicit
+graph request.
+
+The default question channel independently fuses semantic and BM25 claim nominations and source-chunk
 nominations, confirms the complete already-fetched pools, and takes the final
 bound only after live confirmation. A stale head result is therefore refilled
 from the deterministic ranked tail without another index search. Exact claim
@@ -231,6 +240,38 @@ A relation returned by `lookup` or `hydrate` that sits in a live
 contradiction group always carries the other sides with it — a contradiction
 is surfaced, never silently resolved. A fact whose supporting testimony was
 withdrawn is returned flagged, not hidden.
+
+## Open Cypher surface
+
+Deployments that compose the open query gateway publish these exact graph
+entry points:
+
+```text
+query_cypher(cypher, parameters, max_rows?, confirm=false)
+explain_cypher(cypher, parameters)
+```
+
+One statement may open with `MATCH`, `OPTIONAL`, `WITH`, `UNWIND`, or `RETURN`.
+Parameters are typed and bound, never interpolated. File, attachment,
+extension, session, maintenance, and plan-control constructs are rejected by
+the gateway. `CREATE`, `DELETE`, `MERGE`, and `SET` are refused by the pinned
+LadybugDB engine opened read-only. Cypher text is capped at 32 KiB; the selected
+tier also supplies the statement timeout and returned row, byte, parameter, and
+concurrency limits. `explain_cypher` returns the engine plan and does not execute
+the statement.
+
+Every result has grade `snapshot_graph` and names the exact P2 snapshot ID,
+version, `built_at`, and age that served it. A snapshot older than one hour
+remains usable with a warning. Results and absence are correct for that
+disclosed cut only; they do not describe changes after `built_at`, and a query
+never triggers or waits for a rebuild.
+
+`confirm=true` checks live PostgreSQL membership only for top-level engine-typed
+`Entity` nodes and `RELATES` relationships, then drops a row if any such ID is
+stale. Scalar IDs, aggregates, collections, paths, documents, and other graph
+types remain snapshot-scoped. Confirmation reports nominated, confirmed, and
+dropped counts; if nothing was confirmable, the result warns instead of
+claiming the rest of the row became live.
 
 ## The auth perimeter
 

@@ -1268,6 +1268,12 @@
         ],
         "contract": "memory_v1.cypher/1",
         "engine": "ladybug",
+        "engine_rejected_mutations": [
+          "create",
+          "delete",
+          "merge",
+          "set"
+        ],
         "engine_version": "0.18.2",
         "grade": "snapshot_graph",
         "graph_reference_metadata": "unavailable",
@@ -1311,6 +1317,13 @@
           "with",
           "xor"
         ],
+        "read_openings": [
+          "match",
+          "optional",
+          "return",
+          "unwind",
+          "with"
+        ],
         "recursive_hops_max": 30,
         "rejected_constructs": [
           "analyze",
@@ -1334,6 +1347,7 @@
           "update",
           "use"
         ],
+        "text_bytes_max": 32768,
         "unconfirmed_projections": [
           "scalar_id_projection"
         ]
@@ -29603,5 +29617,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "96a6fa74ef06ddd36d8679da8efa73227aa1d50cc8dc516814a240aa59e479f8"
+  "surface_manifest_hash": "5d78da1525abcf7b54259d21e18b08b1d895800b2033ae94f14e0c2b81087f8b"
 }

@@ -82,6 +82,11 @@ READ_CLAUSES: Final = frozenset(
 #: which is the only way to refuse what has not been thought of.
 READ_OPENINGS: Final = frozenset({"match", "optional", "with", "unwind", "return"})
 
+# Mutations are deliberately left to LadybugDB's read-only authority. They are
+# still part of the published dialect contract because callers need to know
+# which accepted-opening statements the engine itself will refuse.
+ENGINE_REJECTED_MUTATIONS: Final = frozenset({"create", "delete", "merge", "set"})
+
 #: Constructs `read_only=True` does not reliably stop, rejected wherever they
 #: appear outside data/identifier quotes and comments. Mutations are not listed:
 #: the engine refuses them, and the executor maps that refusal to

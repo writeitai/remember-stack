@@ -211,6 +211,11 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         "resource_limits",
         "sql_grammar",
     ]
+    cypher = limits["cypher_dialect"]
+    assert isinstance(cypher, dict)
+    assert cypher["text_bytes_max"] == 32 * 1024
+    assert cypher["read_openings"] == ["match", "optional", "return", "unwind", "with"]
+    assert cypher["engine_rejected_mutations"] == ["create", "delete", "merge", "set"]
     projection = limits["p2_projection"]
     assert isinstance(projection, dict)
     assert projection["contract_version"] == "p2-rebuild-2026.07"
@@ -364,7 +369,6 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     deferred = [target for target in DELETION_TARGETS if target.deferred]
     assert {target.target_id for target in deferred} == {
         "p1_candidate",
-        "p2_edge",
         "corpus_body",
     }
     assert len(EXECUTED_TARGETS) + len(deferred) == len(DELETION_TARGETS)

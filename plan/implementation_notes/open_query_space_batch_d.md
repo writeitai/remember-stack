@@ -146,3 +146,24 @@ Focused verification covers:
 Broad supported-Python suites run in CI. The known LadybugDB INT128 traversal
 flake is rerun when it appears; it is not treated as evidence for unrelated
 code changes.
+
+## Final review corrections
+
+Current-context and graph-context evidence hydration now join
+`fact_claim_evidence_live`, `evidence_lineage`, `claims_live`, and
+`documents_live`; one document lineage counts once and a missing or tombstoned
+document cannot authorize evidence. The Batch D retrieval fixture carries
+honest surviving provenance for withdrawn and isolated cases.
+
+Nested LadybugDB `INTERNAL_ID` logical types are refused, while caller-authored
+field names remain data. Failures after snapshot pinning retain the stale-age
+warning, and audit events carry snapshot freshness, confirmation counts, graph
+caps, and a content-free engine fault class.
+
+The graph migration inlines the paired-clock error in the two public helpers,
+revokes PUBLIC function execution and its schema default, and grants the routed
+query role only documented functions. The P2 deletion target is no longer
+deferred: the SQL matrix executes it and a worker fixture proves that the edge
+remains only in the old disclosed snapshot and disappears after rebuild. The
+manifest and OSS API reference now publish the actual Cypher openings,
+engine-rejected mutations, 32 KiB text cap, v4 flags, and snapshot semantics.

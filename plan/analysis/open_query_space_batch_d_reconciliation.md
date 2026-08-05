@@ -155,3 +155,31 @@ features. Pure PostgreSQL graph helpers need no elevated bridge authority, so
 their existing `SECURITY INVOKER`/`PARALLEL SAFE` implementation is the smaller
 and safer binding; only projection-backed functions require the definer
 bridge.
+
+## Final-review authority audit
+
+The final review found one remaining instance of the same systemic mistake:
+context hydration rebuilt D48/D54 from raw `relation_evidence`, `claims`, and a
+permissive document join even though `fact_claim_evidence_live`,
+`evidence_lineage`, `claims_live`, and `documents_live` already are the
+authorities. Repeating a claim in one document could therefore inflate an
+evidence total, while an absent document could authorize a row. Hydration must
+join the existing live bridge and documents, and it must count the one-row-per-
+lineage relation. The graph-context confirmation step likewise needs the
+historical graph view so a withdrawn edge retains surviving historical
+provenance without treating a provenance-less raw relation as visible.
+
+The same review exposed four disclosure/gate gaps rather than new product
+features. Physical `INTERNAL_ID` values must be rejected wherever the engine
+type nests them, not just as scalar columns. PostgreSQL's implicit PUBLIC
+function EXECUTE default must be revoked for the whole `memory_v1` schema; the
+paired-clock check belongs inside the two documented helpers instead of in an
+undocumented callable guard. The D48 matrix's P2 target must execute now and be
+paired with an old-generation/new-generation projection proof. Finally, the
+manifest, content-free audit event, and OSS reference must state the already
+enforced Cypher openings, mutations, 32 KiB text cap, snapshot/confirmation
+telemetry, and v4 behavior.
+
+These corrections reuse existing views, result fields, and the checked-in
+matrix. They do not add RLS, a parser, a new visibility layer, or query-time
+rebuild behavior.

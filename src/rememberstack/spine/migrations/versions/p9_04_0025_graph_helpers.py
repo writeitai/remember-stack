@@ -94,28 +94,6 @@ _EDGE_SOURCE = """
            OR h.predicate = ANY({function}.predicates))
 """
 
-_GUARD_DDL = """
-CREATE FUNCTION memory_v1.require_paired_clocks(
-  valid_at timestamptz, believed_at timestamptz
-) RETURNS boolean
-LANGUAGE plpgsql
-IMMUTABLE
-PARALLEL SAFE
-AS $$
-BEGIN
-  IF (valid_at IS NULL) <> (believed_at IS NULL) THEN
-    RAISE EXCEPTION
-      'a bitemporal traversal takes both clocks or neither'
-      USING ERRCODE = 'invalid_parameter_value';
-  END IF;
-  RETURN true;
-END
-$$;
-
-COMMENT ON FUNCTION memory_v1.require_paired_clocks(timestamptz, timestamptz) IS
-  'Refuses a traversal that names one D41 clock and not the other. Defaulting the missing one to now() would answer "as the world was then, as we believe it now" — a third question the caller did not ask.';
-"""
-
 _NEIGHBORHOOD_DDL = f"""
 CREATE FUNCTION memory_v1.graph_neighborhood(
   start_entity_id uuid,
@@ -135,12 +113,21 @@ RETURNS TABLE (
   applied_valid_at timestamptz,
   applied_believed_at timestamptz
 )
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 PARALLEL SAFE
 SECURITY INVOKER
 SET search_path = memory_v1, pg_catalog
 AS $$
+#variable_conflict use_column
+BEGIN
+  IF (graph_neighborhood.valid_at IS NULL)
+     <> (graph_neighborhood.believed_at IS NULL) THEN
+    RAISE EXCEPTION
+      'a bitemporal traversal takes both clocks or neither'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  RETURN QUERY
   WITH RECURSIVE bounds AS (
     SELECT
       least(greatest(coalesce(max_depth, 2), 1), {_NEIGHBORHOOD_DEPTH_MAX})
@@ -151,7 +138,6 @@ AS $$
       -- to now() answers a bitemporal question nobody asked: "as the world was
       -- then, as we believe it now" is a third thing, and returning it under
       -- the caller's one-clock request would misreport what it means.
-      memory_v1.require_paired_clocks(valid_at, believed_at) AS clocks_checked,
       -- `statement_timestamp()`, not `now()`. `now()` is transaction start,
       -- while `graph_edges_current` evaluates at statement time, so a row
       -- selected by one instant was being labelled with an earlier one.
@@ -244,7 +230,8 @@ AS $$
   FROM bounded
   JOIN edges AS e ON e.relation_id = bounded.relation_id
   CROSS JOIN bounds AS b
-  ORDER BY bounded.path_id
+  ORDER BY bounded.path_id;
+END
 $$;
 """
 
@@ -269,12 +256,20 @@ RETURNS TABLE (
   applied_valid_at timestamptz,
   applied_believed_at timestamptz
 )
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 PARALLEL SAFE
 SECURITY INVOKER
 SET search_path = memory_v1, pg_catalog
 AS $$
+#variable_conflict use_column
+BEGIN
+  IF (graph_path.valid_at IS NULL) <> (graph_path.believed_at IS NULL) THEN
+    RAISE EXCEPTION
+      'a bitemporal traversal takes both clocks or neither'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  RETURN QUERY
   WITH RECURSIVE bounds AS (
     SELECT
       least(greatest(coalesce(max_depth, 4), 1), {_PATH_DEPTH_MAX}) AS depth_cap,
@@ -284,7 +279,6 @@ AS $$
       -- to now() answers a bitemporal question nobody asked: "as the world was
       -- then, as we believe it now" is a third thing, and returning it under
       -- the caller's one-clock request would misreport what it means.
-      memory_v1.require_paired_clocks(valid_at, believed_at) AS clocks_checked,
       -- `statement_timestamp()`, not `now()`. `now()` is transaction start,
       -- while `graph_edges_current` evaluates at statement time, so a row
       -- selected by one instant was being labelled with an earlier one.
@@ -398,7 +392,8 @@ AS $$
   FROM steps AS s
   JOIN edges AS e ON e.relation_id = s.relation_id
   CROSS JOIN bounds AS b
-  ORDER BY s.path_id, s.path_position
+  ORDER BY s.path_id, s.path_position;
+END
 $$;
 """
 
@@ -430,16 +425,14 @@ $do$;
 
 
 def upgrade() -> None:
-    """Create the clock guard and both helpers, then grant them."""
-    op.execute(_GUARD_DDL)
+    """Create only the two documented helpers and grant only the query role."""
+    # PostgreSQL grants EXECUTE on new functions to PUBLIC by default. Close
+    # both the inherited ACL and this migration role's future default before
+    # creating the public API functions, then grant only the routed query role.
+    op.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memory_v1 FROM PUBLIC")
     op.execute(
-        "ALTER FUNCTION memory_v1.require_paired_clocks(timestamptz, timestamptz)"
-        " OWNER TO rememberstack_view_owner"
-    )
-    op.execute(
-        _GRANT.replace(
-            "{signature}", "memory_v1.require_paired_clocks(timestamptz, timestamptz)"
-        )
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA memory_v1"
+        " REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
     )
     for ddl, signature, comment in (
         (
@@ -448,8 +441,8 @@ def upgrade() -> None:
             "Relations within max_depth hops of an entity, traversed"
             " undirected over both D41 clocks (each half-open, each defaulting"
             f" to now()). Depth is clamped to {_NEIGHBORHOOD_DEPTH_MAX} and"
-            f" edges to {_NEIGHBORHOOD_EDGES_MAX}; a relation is walked at most"
-            " once per branch.",
+            f" edges to {_NEIGHBORHOOD_EDGES_MAX}; neither a relation nor an"
+            " entity is revisited within one branch.",
         ),
         (
             _PATH_DDL,
@@ -463,6 +456,7 @@ def upgrade() -> None:
     ):
         op.execute(ddl)
         op.execute(f"COMMENT ON FUNCTION {signature} IS {_quote(comment)}")
+        op.execute(f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC")
         op.execute(f"ALTER FUNCTION {signature} OWNER TO rememberstack_view_owner")
         op.execute(_GRANT.replace("{signature}", signature))
 
@@ -470,10 +464,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop both helpers; their grants go with them."""
     op.execute(f"DROP FUNCTION IF EXISTS {_PATH_SIGNATURE}")
-    op.execute(
-        "DROP FUNCTION IF EXISTS"
-        " memory_v1.require_paired_clocks(timestamptz, timestamptz)"
-    )
     op.execute(f"DROP FUNCTION IF EXISTS {_NEIGHBORHOOD_SIGNATURE}")
 
 
