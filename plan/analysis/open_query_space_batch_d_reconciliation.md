@@ -152,9 +152,9 @@ surface's existing kill-switch/admission/audit objects, and the manifest must
 publish the already-binding exhaustive P2 property table rather than only a
 contract label. Those are composition and disclosure corrections, not new
 features. Pure PostgreSQL graph helpers need no elevated bridge authority, so
-their existing `SECURITY INVOKER`/`PARALLEL SAFE` implementation is the smaller
-and safer binding; only projection-backed functions require the definer
-bridge.
+their `SECURITY INVOKER` implementation is the smaller and safer binding; only
+projection-backed functions require the definer bridge. The later
+transaction-local cap marker makes the graph helpers `PARALLEL UNSAFE`.
 
 ## Final-review authority audit
 
@@ -295,3 +295,9 @@ omitted reachable work, using transaction-local state that the existing SQL
 executor reads before the transaction ends. The traversal still runs once and
 returns the same columns and rows. This closes the disclosure gap without a
 second traversal, a new public function, or a wider graph subsystem.
+
+The same closing audit found that Cypher hashes still used stripped raw text
+and Python class names despite the query-identity contract. The existing token
+scanner now supplies a formatting/comment-independent sequence, and the hash
+uses pinned-engine logical parameter families. This reuses the lexical
+authority D82 already accepts rather than adding a second Cypher parser.

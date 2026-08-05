@@ -36,6 +36,7 @@ from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.cypher import LADYBUG_ENGINE_VERSION
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
+from rememberstack.surfaces.query_sandbox.cypher_executor import _statement_hash
 from rememberstack.surfaces.query_sandbox.cypher_executor import CYPHER_TEXT_BYTES_MAX
 from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
 from rememberstack.surfaces.query_sandbox.cypher_executor import is_read_only_refusal
@@ -66,6 +67,22 @@ def test_installed_ladybug_matches_the_published_dialect() -> None:
     manifest = load_manifest()
     limits = manifest["hash_members"]["limits"]  # type: ignore[index]
     assert limits["cypher_dialect"]["engine_version"] == LADYBUG_ENGINE_VERSION  # type: ignore[index]
+
+
+def test_cypher_hash_normalizes_formatting_and_parameter_type_families() -> None:
+    """Formatting and values do not replace the logical type vector."""
+    compact = validate_cypher("RETURN $value AS value")
+    formatted = validate_cypher(
+        "/* formatting only */ RETURN  $value\nAS value; // trailing"
+    )
+    integer_hash = _statement_hash(compact.normalized_tokens, {"value": 1})
+    assert integer_hash == _statement_hash(
+        formatted.normalized_tokens, {"value": 70_000}
+    )
+    assert _statement_hash(compact.normalized_tokens, {"value": [1, 2]}) == (
+        _statement_hash(formatted.normalized_tokens, {"value": [8, 9]})
+    )
+    assert integer_hash != _statement_hash(compact.normalized_tokens, {"value": "1"})
 
 
 @pytest.fixture(scope="module")

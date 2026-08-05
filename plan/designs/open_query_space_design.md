@@ -409,8 +409,11 @@ internal `search_path`. Projection-backed semantic, lexical, and body bridges
 are `SECURITY DEFINER`, `PARALLEL UNSAFE`, and owned by a no-login bridge owner
 with only the exact PG reads and local projection RPC capability they need.
 The PostgreSQL-only `facts_as_of`, `graph_neighborhood`, and `graph_path`
-helpers are `SECURITY INVOKER`, `PARALLEL SAFE`, and owned by the no-login view
-owner; they need no privilege bridge and adding one would only widen authority.
+helpers are `SECURITY INVOKER` and owned by the no-login view owner; they need
+no privilege bridge and adding one would only widen authority. `facts_as_of`
+is `PARALLEL SAFE`. The graph helpers are `PARALLEL UNSAFE` because their
+single traversal records a content-free, transaction-local cap marker for the
+executor; the query role already disables parallel workers.
 Callers cannot supply URLs, relation names, code, or raw filter expressions.
 
 `facts_as_of`, `graph_neighborhood`, and `graph_path` are `STABLE` within the
@@ -910,9 +913,13 @@ confirmation = {requested, pg_confirmed_at, nominated, confirmed,
 p2_snapshot = {snapshot_id, snapshot_version, built_at, age_seconds} | null
 ```
 
-`query_hash` is SHA-256 over the language-specific normalized AST plus parameter
-type vector, not parameter values. `columns[].type` uses canonical PostgreSQL
-types for SQL and pinned LadybugDB logical types for Cypher. SQL sets
+`query_hash` is SHA-256 over the language-specific normalized representation
+plus parameter type vector, not parameter values. SQL uses its normalized AST.
+LadybugDB exposes no Cypher AST, so Cypher uses the existing lexical scan to
+discard formatting and real engine comments while retaining exact tokens; it
+does not introduce a second parser. `columns[].type` and the hash type vector
+use canonical PostgreSQL types for SQL and pinned LadybugDB logical families
+for Cypher. SQL sets
 `query_space_schema = "memory_v1"`, grade `exploratory_tabular`, and
 `p2_snapshot = null`. Cypher sets `query_space_schema = null`, grade
 `snapshot_graph`, and a non-null `p2_snapshot` for both entry points. The

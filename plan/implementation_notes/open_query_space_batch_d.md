@@ -21,8 +21,9 @@ connection. Current helper rows disclose `statement_timestamp()`, the instant
 that selected them, rather than the transaction start. Their live-at-read
 support fields retain the `_current` suffix even on historical traversal rows,
 so a caller cannot mistake those values for a historical reconstruction. The
-helpers are pure PostgreSQL reads and therefore stay `SECURITY INVOKER` and
-`PARALLEL SAFE`; they do not inherit the projection bridge's elevated owner.
+helpers stay `SECURITY INVOKER`; they do not inherit the projection bridge's
+elevated owner. Their transaction-local cap marker makes them `PARALLEL
+UNSAFE`, while the query role already disables parallel workers.
 
 After stacking Batch A, the graph migration is `p9_05_0026` and depends on
 Batch A's `p9_04_0025`. The graph edge views express endpoint membership as
@@ -218,3 +219,9 @@ public row from which the executor could otherwise infer the cut.
 
 The marker carries no corpus data and is scoped to the existing request
 transaction. It adds no query, parser, role, RLS policy, or second traversal.
+
+Cypher query hashes now use the existing scanner's token sequence with
+formatting and real engine comments removed, plus canonical LadybugDB logical
+parameter families. Different values of one logical type hash the same, while
+different logical types do not. This meets the audit identity contract without
+adding the parser that D82 rejects.

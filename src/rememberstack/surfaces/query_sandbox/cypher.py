@@ -146,6 +146,7 @@ class CypherStatement:
     """One accepted statement the surface is willing to pass to the engine."""
 
     text: str
+    normalized_tokens: tuple[str, ...]
 
 
 def validate_cypher(text: str) -> CypherStatement:
@@ -203,7 +204,65 @@ def validate_cypher(text: str) -> CypherStatement:
                 " engine-internal graph identifiers"
             ),
         )
-    return CypherStatement(text=text.strip())
+    stripped = text.strip()
+    return CypherStatement(
+        text=stripped, normalized_tokens=_normalized_tokens(stripped)
+    )
+
+
+def _normalized_tokens(text: str) -> tuple[str, ...]:
+    """Canonical lexical identity without inventing a second Cypher parser.
+
+    LadybugDB does not expose its parsed AST. The existing gate can still make
+    formatting and comments irrelevant by retaining the exact quoted and word
+    tokens while discarding whitespace and the two comment forms the pinned
+    engine recognizes. Operator runs stay intact, so changing ``<=`` to two
+    operators cannot accidentally keep the same identity.
+    """
+    normalized: list[str] = []
+    operator_characters = frozenset("=<>!+-*/%^|")
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character.isspace():
+            index += 1
+            continue
+        if text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = len(text) if closing < 0 else closing + 2
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline + 1
+            continue
+        if character in ("'", '"', "`"):
+            closing = _skip_quoted(text, index)
+            normalized.append(text[index:closing])
+            index = closing
+            continue
+        if character.isalnum() or character == "_":
+            closing = index + 1
+            while closing < len(text) and (
+                text[closing].isalnum() or text[closing] == "_"
+            ):
+                closing += 1
+            normalized.append(text[index:closing])
+            index = closing
+            continue
+        if character in operator_characters:
+            closing = index + 1
+            while closing < len(text) and text[closing] in operator_characters:
+                if text.startswith(("/*", "//"), closing):
+                    break
+                closing += 1
+            normalized.append(text[index:closing])
+            index = closing
+            continue
+        normalized.append(character)
+        index += 1
+    if normalized and normalized[-1] == ";":
+        normalized.pop()
+    return tuple(normalized)
 
 
 def _scan(text: str) -> tuple[str, int, frozenset[str], frozenset[str]]:

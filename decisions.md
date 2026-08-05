@@ -3138,13 +3138,18 @@ public `e.id` and ``e.`id` `` properties remain available.
 The P2 rebuild reads the same D48/D54-bearing `memory_v1` relations as the live query surface,
 and reader caches are keyed and verified by deployment plus immutable snapshot identity and a
 validated leaf version. Cypher shares SQL's kill-switch/admission/audit objects. Pure
-PostgreSQL graph helpers remain invoker-security, parallel-safe functions; only
-projection-backed functions need the no-login definer bridge.
+PostgreSQL graph helpers remain invoker-security; their transaction-local cap marker makes them
+parallel-unsafe, while only projection-backed functions need the no-login definer bridge.
 Their paired-clock refusal is internal to the two documented helpers; PUBLIC
 has no function EXECUTE privilege in `memory_v1`, and the routed query role is
 granted only the manifest-enumerated functions. Nested engine `INTERNAL_ID`
 types are refused just like scalar physical IDs. A failure to install the
 engine statement timeout fails closed before execution.
+
+Cypher query identity uses the existing scanner's normalized token sequence
+plus pinned-engine logical parameter families. It ignores formatting and real
+engine comments without pretending that the engine exposes an AST or adding a
+second parser.
 
 `question_context` v4 adds default-false `include_facts` and `include_entities` flags. Facts
 reuse `current_context`'s semantic nomination, D48/D41 confirmation, both-stance evidence,

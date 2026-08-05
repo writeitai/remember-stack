@@ -34,8 +34,11 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from datetime import datetime
+from datetime import time as datetime_time
 from datetime import UTC
+from decimal import Decimal
 import hashlib
 import json
 import re
@@ -251,7 +254,7 @@ class CypherSandboxExecutor:
                     message="the open query surface is disabled by the operator",
                 )
             statement = validate_cypher(cypher)
-            statement_hash = _statement_hash(statement.text, parameters)
+            statement_hash = _statement_hash(statement.normalized_tokens, parameters)
             if confirm and self._connect is None:
                 raise SandboxRejection(
                     code=QueryErrorCode.PG_UNAVAILABLE,
@@ -782,7 +785,53 @@ def _bounded(
     return kept, truncated, byte_truncated
 
 
-def _statement_hash(text: str, parameters: Mapping[str, object]) -> str:
-    """A stable identity for the statement and the shape of its parameters."""
-    shape = sorted((name, type(value).__name__) for name, value in parameters.items())
-    return hashlib.sha256(f"{text}|params={shape}".encode()).hexdigest()
+def _statement_hash(
+    normalized_tokens: Sequence[str], parameters: Mapping[str, object]
+) -> str:
+    """Hash normalized lexical identity plus canonical Ladybug type families."""
+    identity = {
+        "tokens": list(normalized_tokens),
+        "parameters": [
+            [name, _cypher_type_family(value)]
+            for name, value in sorted(parameters.items())
+        ],
+    }
+    encoded = json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _cypher_type_family(value: object) -> str:
+    """The pinned engine logical family of one bound Python value."""
+    if value is None:
+        return "ANY"
+    if isinstance(value, bool):
+        return "BOOL"
+    if isinstance(value, bytes):
+        return "BLOB"
+    if isinstance(value, str):
+        return "STRING"
+    if isinstance(value, int):
+        return "INTEGER"
+    if isinstance(value, float):
+        return "DOUBLE"
+    if isinstance(value, Decimal):
+        return "DECIMAL"
+    if isinstance(value, UUID):
+        return "UUID"
+    if isinstance(value, datetime):
+        return "TIMESTAMP"
+    if isinstance(value, date):
+        return "DATE"
+    if isinstance(value, datetime_time):
+        return "TIME_TZ" if value.tzinfo is not None else "TIME"
+    if isinstance(value, list):
+        members = sorted({_cypher_type_family(member) for member in value})
+        element = "ANY" if not members else "|".join(members)
+        return f"LIST<{element}>"
+    if isinstance(value, Mapping):
+        fields = ",".join(
+            f"{name}:{_cypher_type_family(member)}"
+            for name, member in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+        return f"STRUCT<{fields}>"
+    return "UNSUPPORTED"
