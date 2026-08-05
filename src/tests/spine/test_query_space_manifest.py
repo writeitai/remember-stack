@@ -162,6 +162,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     # vocabulary, and the columns it answers with, so a caller can read the
     # contract without executing anything.
     assert {entry["name"] for entry in published} == {  # type: ignore[index]
+        "facts_as_of",
         "fetch_chunk_bodies",
         "lexical_chunks",
         "lexical_claims",
