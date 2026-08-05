@@ -392,6 +392,8 @@ class GraphSnapshotReader:
         self._cache_dir = cache_dir
         self._version: str | None = None
         self._published_at: datetime | None = None
+        self._built_at: datetime | None = None
+        self._snapshot_id: UUID | None = None
         self._database: ladybug.Database | None = None
         self._connection: ladybug.Connection | None = None
         self._refresh_lock = Lock()
@@ -400,6 +402,21 @@ class GraphSnapshotReader:
     def version(self) -> str | None:
         """The snapshot version currently served (None before the first)."""
         return self._version
+
+    @property
+    def built_at(self) -> datetime | None:
+        """The export cut this snapshot projects.
+
+        This — not the publish time and not a wall clock read at query time —
+        is the instant a snapshot answer is scoped to, so it is what a caller
+        needs in order to interpret one.
+        """
+        return self._built_at
+
+    @property
+    def snapshot_id(self) -> UUID | None:
+        """The registry identity of the snapshot currently served."""
+        return self._snapshot_id
 
     @property
     def published_at(self) -> datetime | None:
@@ -455,6 +472,10 @@ class GraphSnapshotReader:
         self._version = version
         published = latest.get("published_at")
         self._published_at = published if isinstance(published, datetime) else None
+        built = latest.get("built_at")
+        self._built_at = built if isinstance(built, datetime) else None
+        identity = latest.get("snapshot_id")
+        self._snapshot_id = identity if isinstance(identity, UUID) else None
         return True
 
     def connection(self) -> ladybug.Connection:

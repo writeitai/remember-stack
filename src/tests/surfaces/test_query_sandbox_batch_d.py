@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+import ladybug
 import psycopg
 from pydantic import ValidationError
 import pytest
@@ -28,6 +29,8 @@ from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.cypher import RECURSIVE_HOPS_MAX
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
+from rememberstack.surfaces.query_sandbox.cypher_executor import CYPHER_TEXT_BYTES_MAX
+from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -335,3 +338,221 @@ def test_text_that_is_not_a_read_statement_is_a_parse_error() -> None:
         with pytest.raises(SandboxRejection) as rejection:
             validate_cypher(statement)
         assert rejection.value.code == QueryErrorCode.CYPHER_PARSE_ERROR
+
+
+# --- the Cypher executor over a real snapshot --------------------------------
+
+
+class _Snapshot:
+    """A served snapshot standing in for the published one."""
+
+    def __init__(self, path: Path, built_at: datetime) -> None:
+        self._database = ladybug.Database(str(path), read_only=True)
+        self._connection = ladybug.Connection(self._database)
+        self.version = "20260805T000000000000"
+        self.built_at = built_at
+        self.snapshot_id = uuid4()
+
+    def connection(self) -> object:
+        return self._connection
+
+
+class _NoSnapshot:
+    """A deployment whose graph has never been published."""
+
+    version = None
+    built_at = None
+    snapshot_id = None
+
+    def connection(self) -> object:
+        raise RuntimeError("no published P2 snapshot exists yet")
+
+
+@pytest.fixture(scope="module")
+def snapshot(tmp_path_factory: pytest.TempPathFactory) -> _Snapshot:
+    """A two-entity graph in the shape the P2 rebuild publishes."""
+    path = tmp_path_factory.mktemp("graph") / "graph.lbdb"
+    database = ladybug.Database(str(path))
+    connection = ladybug.Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Entity(id UUID, type STRING, name STRING,"
+        " normalized_name STRING, summary STRING, created_at TIMESTAMP,"
+        " PRIMARY KEY(id))"
+    )
+    connection.execute(
+        "CREATE REL TABLE RELATES(FROM Entity TO Entity, relation_id UUID,"
+        " subject_id UUID, object_id UUID, predicate STRING, fact STRING,"
+        " evidence_count INT64, contradict_count INT64, confidence DOUBLE)"
+    )
+    left, right = uuid4(), uuid4()
+    for identifier, name in ((left, "Ada"), (right, "Grace")):
+        connection.execute(
+            "CREATE (:Entity {id: $id, type: 'person', name: $name,"
+            " normalized_name: $normalized, summary: '', created_at: timestamp('2024-01-01')})",
+            {"id": identifier, "name": name, "normalized": name.lower()},
+        )
+    connection.execute(
+        "MATCH (a:Entity {id: $left}), (b:Entity {id: $right})"
+        " CREATE (a)-[:RELATES {relation_id: $relation, subject_id: $left,"
+        " object_id: $right, predicate: 'knows', fact: 'Ada knows Grace',"
+        " evidence_count: 2, contradict_count: 0, confidence: 0.9}]->(b)",
+        {"left": left, "right": right, "relation": uuid4()},
+    )
+    connection.close()
+    database.close()
+    return _Snapshot(path, datetime(2026, 8, 1, tzinfo=UTC))
+
+
+def _cypher(snapshot: object) -> CypherSandboxExecutor:
+    return CypherSandboxExecutor(deployment_id=_DEPLOYMENT, reader=snapshot)
+
+
+def test_a_read_statement_answers_from_the_snapshot(snapshot: _Snapshot) -> None:
+    """Rows come back, graded as what they are."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) RETURN e.name AS name ORDER BY name"
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert [row[0] for row in outcome.rows] == ["Ada", "Grace"]
+    assert outcome.grade == "snapshot_graph"
+    assert outcome.query_language == "cypher"
+
+
+def test_every_answer_carries_the_instant_it_projects(snapshot: _Snapshot) -> None:
+    """A snapshot answer cannot be interpreted without its cut."""
+    outcome = _cypher(snapshot).query_cypher(cypher="MATCH (e:Entity) RETURN count(*)")
+    assert outcome.p2_snapshot is not None
+    assert outcome.p2_snapshot.built_at == snapshot.built_at
+    assert outcome.p2_snapshot.age_seconds > 0
+    assert outcome.p2_snapshot.snapshot_version == snapshot.version
+
+
+def test_a_traversal_answers_over_the_projected_relations(snapshot: _Snapshot) -> None:
+    """The relations layer is queryable in the engine's own language."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher=(
+            "MATCH (a:Entity)-[r:RELATES]->(b:Entity)"
+            " RETURN a.name AS subject, r.predicate AS predicate, b.name AS object"
+        )
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == (("Ada", "knows", "Grace"),)
+
+
+def test_a_projected_node_loses_the_engines_physical_offsets(
+    snapshot: _Snapshot,
+) -> None:
+    """An engine offset is stable only within one build; it is not published."""
+    outcome = _cypher(snapshot).query_cypher(cypher="MATCH (e:Entity) RETURN e LIMIT 1")
+    assert outcome.termination_reason == "completed", outcome.error_message
+    node = outcome.rows[0][0]
+    assert isinstance(node, dict)
+    # The engine spells these in upper case; a case-sensitive check would pass
+    # while every offset was still being published.
+    assert not [key for key in node if key.lower() in ("_id", "_src", "_dst")]
+    assert node["name"] in ("Ada", "Grace")
+
+
+def test_a_write_never_reaches_the_engine(snapshot: _Snapshot) -> None:
+    """The gate refuses it by name, before the engine is asked anything."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) SET e.name = 'x' RETURN e"
+    )
+    assert outcome.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
+    assert outcome.termination_reason == "rejected"
+
+
+def test_syntax_the_pinned_dialect_rejects_is_a_parse_error(
+    snapshot: _Snapshot,
+) -> None:
+    """Unsupported syntax fails; it is never rewritten into another query."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) RETURN [x IN nodes(p) | x.name]"
+    )
+    assert outcome.error_code == QueryErrorCode.CYPHER_PARSE_ERROR
+
+
+def test_an_oversized_statement_is_refused_before_parsing(snapshot: _Snapshot) -> None:
+    """§4.3 caps Cypher text at 32 KiB."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) RETURN e // " + "x" * CYPHER_TEXT_BYTES_MAX
+    )
+    assert outcome.error_code == QueryErrorCode.RESOURCE_LIMIT
+
+
+def test_a_deployment_with_no_published_graph_fails_closed() -> None:
+    """No snapshot is not an empty graph, and must not read as one."""
+    outcome = _cypher(_NoSnapshot()).query_cypher(cypher="MATCH (e:Entity) RETURN e")
+    assert outcome.error_code == QueryErrorCode.P2_UNAVAILABLE
+    assert outcome.rows == ()
+
+
+def test_explain_returns_a_plan_without_running_the_query(snapshot: _Snapshot) -> None:
+    """The surface prepends EXPLAIN; a caller cannot smuggle one in."""
+    executor = _cypher(snapshot)
+    outcome = executor.explain_cypher(cypher="MATCH (e:Entity) RETURN e.name")
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows
+    smuggled = executor.query_cypher(cypher="EXPLAIN MATCH (e:Entity) RETURN e.name")
+    assert smuggled.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
+
+
+def test_parameters_are_bound_by_the_engine(snapshot: _Snapshot) -> None:
+    """Cypher parameters are never interpolated into the statement text."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) WHERE e.name = $name RETURN e.name",
+        parameters={"name": "Ada"},
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == (("Ada",),)
+
+
+def test_confirmation_without_a_connection_is_refused_not_ignored(
+    snapshot: _Snapshot,
+) -> None:
+    """A caller who asked for confirmation must not be told it happened."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) RETURN e", confirm=True
+    )
+    assert outcome.error_code == QueryErrorCode.PG_UNAVAILABLE
+
+
+def test_confirmation_drops_rows_whose_entities_are_no_longer_live(
+    snapshot: _Snapshot, graph: tuple[str, list[tuple[str, str, str]]]
+) -> None:
+    """`confirm=true` checks live membership of projected entity ids."""
+    url, _ = graph
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
+    assert outcome.termination_reason == "completed", outcome.error_message
+    # The snapshot's entities are not in this deployment's live views, so every
+    # row drops as a unit and the disclosure says exactly that.
+    assert outcome.rows == ()
+    assert outcome.confirmation is not None
+    assert outcome.confirmation.nominated == 2
+    assert outcome.confirmation.confirmed == 0
+    assert outcome.confirmation.dropped_stale == 2
+    assert outcome.grade == "snapshot_graph"
+
+
+def test_confirmation_reports_zero_when_nothing_is_confirmable(
+    snapshot: _Snapshot, graph: tuple[str, list[tuple[str, str, str]]]
+) -> None:
+    """An aggregate carries no confirmable id, and says so."""
+    url, _ = graph
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(
+        cypher="MATCH (e:Entity) RETURN count(*) AS n", confirm=True
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.confirmation is not None
+    assert (outcome.confirmation.nominated, outcome.confirmation.confirmed) == (0, 0)
+    assert outcome.rows == ((2,),)

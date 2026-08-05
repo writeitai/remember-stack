@@ -54,6 +54,24 @@ class P2Snapshot(BaseModel):
     age_seconds: float
 
 
+class GraphConfirmation(BaseModel):
+    """What `confirm=true` checked, and what it withheld (§3.5).
+
+    These are unique confirmable-id counts, and `confirmed + dropped_stale`
+    equals `nominated`. Confirmation checks live membership of projected entity
+    and relation ids; it does not make any other part of the result live, and
+    the result keeps its `snapshot_graph` grade.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    requested: int
+    nominated: int
+    confirmed: int
+    dropped_stale: int
+    pg_confirmed_at: datetime | None = None
+
+
 class SemanticInvocation(BaseModel):
     """One §3.4 nomination invocation's disclosure (populated by Batch C)."""
 
@@ -120,3 +138,4 @@ class QueryResult(BaseModel):
     warnings: tuple[str, ...] = ()
     semantic_invocations: tuple[SemanticInvocation, ...] = ()
     p2_snapshot: P2Snapshot | None = None
+    confirmation: GraphConfirmation | None = None
