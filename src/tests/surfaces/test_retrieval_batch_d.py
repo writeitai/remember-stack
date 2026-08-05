@@ -655,6 +655,50 @@ def test_question_context_confirms_before_cutting_the_entity_cap(
     assert answer.dropped_by_hydration >= len(stale_head)
 
 
+def test_question_context_bounds_exact_alias_fanout_before_confirmation(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    """A common alias cannot create an unbounded confirmation parameter set."""
+    seeded, _graph = corpus
+    with seeded.engine.begin() as connection:
+        for index in range(30):
+            entity_id = uuid4()
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    " canonical_name, normalized_name) VALUES (:entity,"
+                    " :deployment, 'Concept', :name, lower(:name))"
+                ),
+                {
+                    "entity": entity_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "name": f"Fanout {index:02d}",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                    " alias_text, normalized_lemma, provenance) VALUES"
+                    " (:alias, :deployment, :entity, 'Fanout', 'fanout',"
+                    " 'llm_canonical')"
+                ),
+                {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
+            )
+
+    engine = seeded.query_engine()
+    resolved = engine.resolve(deployment_id=_DEPLOYMENT_ID, name="Fanout")
+    assert len(resolved.entities) == 30
+
+    answer = engine.question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Fanout", include_entities=True
+    )
+
+    assert [candidate.entity_id for candidate in answer.entities] == [
+        seeded.entities["acme"]
+    ]
+    assert answer.dropped_by_hydration == 21
+
+
 def test_question_context_v4_flags_work_together(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:

@@ -83,6 +83,11 @@ generation provenance under the same refresh lock, preventing rows from one
 generation being labelled with another generation's cut. No published
 snapshot is `p2_unavailable`; it is not reported as an empty graph.
 
+Each Cypher request leases a distinct read-only connection under that lock and
+closes it after execution. The connection-local timeout therefore belongs only
+to the request whose disclosed tier selected it; concurrent interactive and
+analytical requests cannot overwrite each other's bounds.
+
 Every Cypher result has grade `snapshot_graph`, no SQL schema name, and the
 snapshot ID/version/build instant/age that actually served it. Engine physical
 offsets (`_ID`, `_SRC`, `_DST`, matched case-insensitively) are stripped from
@@ -131,9 +136,10 @@ or together:
   confirmation, both evidence stances, fixed evidence depth 3, 30-fact ceiling,
   and 60-association budget; and
 - entities take exact resolution candidates first, then semantic description
-  nominations, deduplicate by survivor ID, confirm the full bounded combined
-  set once through `memory_v1.entities_current`, and then return at most 20 live
-  survivors.
+  nominations, admit at most 21 deterministic candidates from each channel,
+  deduplicate by survivor ID, confirm the full bounded combined set once
+  through `memory_v1.entities_current`, and then return at most 20 live
+  survivors. Standalone `resolve` remains exhaustive.
 
 Claims, chunks, facts, fact/evidence links, totals, and entities remain in their
 existing typed Envelope fields. `current_context` stays v1. Graph expansion is
@@ -152,11 +158,12 @@ Focused verification covers:
 - helper bounds, clocks, undirected traversal, whole-path cutting, and live
   visibility;
 - gate placement attacks, read-only mutation mapping, parameter binding,
-  timeout/row/byte disclosure, and snapshot provenance;
+  timeout/row/byte disclosure, mixed-tier timeout isolation, and snapshot
+  provenance;
 - structural confirmation, no-confirmable warnings, stale-row dropping, and
   nullable graph-reference metadata;
 - both v4 flags default-false, independently enabled, and enabled together;
-- v4 fact/entity confirmation and channel caps; and
+- v4 fact/entity confirmation, channel caps, and high-fanout exact aliases; and
 - descriptor, function-signature, and manifest-hash determinism.
 
 Broad supported-Python suites run in CI. The known LadybugDB INT128 traversal

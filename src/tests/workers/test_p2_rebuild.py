@@ -413,6 +413,26 @@ def test_reader_hot_swaps_to_a_newer_snapshot(
     assert nodes == before + 1  # the newcomer arrived with surviving provenance
 
 
+def test_pinned_reader_leases_distinct_connections(
+    corpus: _InvariantCorpus, tmp_path: Path
+) -> None:
+    """Concurrent requests cannot share mutable connection timeout state."""
+    worker, reader, _ = _rig(corpus.engine, tmp_path)
+    worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
+    first, first_id, first_version, first_built = reader.pinned()
+    second, second_id, second_version, second_built = reader.pinned()
+    try:
+        assert first is not second
+        assert (first_id, first_version, first_built) == (
+            second_id,
+            second_version,
+            second_built,
+        )
+    finally:
+        first.close()
+        second.close()
+
+
 def test_out_of_order_publish_never_regresses_the_pointer(
     corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from threading import Barrier
 from uuid import UUID
 from uuid import uuid4
 
@@ -44,6 +46,7 @@ from rememberstack.surfaces.query_sandbox.cypher_executor import READ_ONLY_REFUS
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.result import GraphConfirmation
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
 
@@ -155,10 +158,7 @@ def test_graph_helpers_run_through_the_sql_sandbox_without_projection(
         embed=None,
     )
     queries = (
-        (
-            "SELECT count(*) FROM graph_neighborhood($1::uuid, 1)",
-            [edges[0][1]],
-        ),
+        ("SELECT count(*) FROM graph_neighborhood($1::uuid, 1)", [edges[0][1]]),
         (
             "SELECT count(*) FROM graph_path($1::uuid, $2::uuid, 1)",
             [edges[0][1], edges[0][2]],
@@ -423,8 +423,13 @@ class _Snapshot:
         return self._connection
 
     def pinned(self) -> tuple[object, UUID, str, datetime]:
-        """Return one connection with the provenance that describes it."""
-        return self._connection, self.snapshot_id, self.version, self.built_at
+        """Lease one connection with the provenance that describes it."""
+        return (
+            ladybug.Connection(self._database),
+            self.snapshot_id,
+            self.version,
+            self.built_at,
+        )
 
 
 class _NoSnapshot:
@@ -670,6 +675,95 @@ def test_timeout_setup_failure_prevents_execution() -> None:
     assert rejection.value.code == QueryErrorCode.EXECUTION_ERROR
     assert rejection.value.engine_fault_class == "ladybug_timeout_setup"
     assert connection.executed is False
+
+
+class _ConcurrentAnswer:
+    """One scalar row for the mixed-tier timeout regression."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+        self._read = False
+
+    def get_column_names(self) -> list[str]:
+        """Return the stable test column name."""
+        return ["timeout_ms"]
+
+    def get_column_data_types(self) -> list[str]:
+        """Return the stable test column type."""
+        return ["INT64"]
+
+    def has_next(self) -> bool:
+        """Expose exactly one row."""
+        return not self._read
+
+    def get_next(self) -> list[int]:
+        """Consume the one row."""
+        self._read = True
+        return [self._value]
+
+
+class _ConcurrentConnection:
+    """A request-private connection that observes its applied timeout."""
+
+    def __init__(self, *, barrier: Barrier) -> None:
+        self._barrier = barrier
+        self._timeout_ms = 0
+        self.closed = False
+
+    def set_query_timeout(self, timeout_ms: int) -> None:
+        """Store this connection's request-local timeout."""
+        self._timeout_ms = timeout_ms
+
+    def execute(self, _text: str, _parameters: object) -> _ConcurrentAnswer:
+        """Wait for both tiers, then expose this connection's own timeout."""
+        self._barrier.wait(timeout=5)
+        return _ConcurrentAnswer(self._timeout_ms)
+
+    def close(self) -> None:
+        """Record that the executor released the request lease."""
+        self.closed = True
+
+
+class _ConcurrentSnapshot:
+    """A reader that leases one connection per concurrent request."""
+
+    def __init__(self) -> None:
+        self._barrier = Barrier(2)
+        self.connections: list[_ConcurrentConnection] = []
+        self.snapshot_id = uuid4()
+
+    def pinned(self) -> tuple[object, UUID, str, datetime]:
+        """Lease a distinct connection with one generation's provenance."""
+        connection = _ConcurrentConnection(barrier=self._barrier)
+        self.connections.append(connection)
+        return connection, self.snapshot_id, "mixed-tier", _PAST
+
+
+def test_concurrent_cypher_tiers_keep_request_local_timeouts() -> None:
+    """A concurrent tier cannot overwrite another request's mandatory bound."""
+    reader = _ConcurrentSnapshot()
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT, reader=reader, analytical_entitlement=True
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        interactive = pool.submit(
+            executor.query_cypher,
+            cypher="RETURN 1",
+            tier=LimitTier.INTERACTIVE,
+            principal="interactive",
+        )
+        analytical = pool.submit(
+            executor.query_cypher,
+            cypher="RETURN 1",
+            tier=LimitTier.ANALYTICAL,
+            principal="analytical",
+        )
+    assert {interactive.result().rows, analytical.result().rows} == {
+        ((5_000,),),
+        ((60_000,),),
+    }
+    assert len(reader.connections) == 2
+    assert all(connection.closed for connection in reader.connections)
 
 
 def test_a_deployment_with_no_published_graph_fails_closed() -> None:

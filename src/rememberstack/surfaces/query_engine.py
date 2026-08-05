@@ -123,6 +123,9 @@ MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K: Final = 200
 QUESTION_CONTEXT_ENTITY_CAP: Final = 20
 """Maximum confirmed entity candidates in `question_context` v4."""
 
+QUESTION_CONTEXT_ENTITY_NOMINATION_CAP: Final = QUESTION_CONTEXT_ENTITY_CAP + 1
+"""Maximum exact or semantic candidates admitted per v4 entity channel."""
+
 QUESTION_CONTEXT_FACT_CAP: Final = 30
 """Maximum current facts in the opt-in v4 fact channel."""
 
@@ -2015,7 +2018,20 @@ class QueryEngine:
         self, *, deployment_id: UUID, query: str
     ) -> tuple[tuple[EntityCandidate, ...], int, bool, int]:
         """Resolution-first semantic entities, confirmed once in PostgreSQL."""
-        resolved = self.resolve(deployment_id=deployment_id, name=query)
+        with self._engine.connect() as connection:
+            resolved_rows = (
+                connection.execute(
+                    _QUESTION_CONTEXT_RESOLVE_T0,
+                    {
+                        "deployment_id": deployment_id,
+                        "lemma": normalized_lemma(surface=query),
+                        "entity_type": None,
+                        "candidate_limit": QUESTION_CONTEXT_ENTITY_NOMINATION_CAP,
+                    },
+                )
+                .mappings()
+                .all()
+            )
         search = getattr(self._search_index, "search_entities_scored", None)
         if not callable(search):
             raise RuntimeError(
@@ -2026,13 +2042,12 @@ class QueryEngine:
             search(
                 deployment_id=str(deployment_id),
                 vector=self._embed(query=query),
-                k=QUESTION_CONTEXT_ENTITY_CAP + 1,
+                k=QUESTION_CONTEXT_ENTITY_NOMINATION_CAP,
                 entity_type=None,
             ),
         )
         ordered: list[tuple[UUID, str, int]] = [
-            (candidate.entity_id, candidate.tier, candidate.context_hits)
-            for candidate in resolved.entities
+            (row["entity_id"], "T0", 0) for row in resolved_rows
         ]
         malformed = 0
         for nomination in nominations:
@@ -2887,8 +2902,7 @@ _CHUNK_NEIGHBORS = text(
     """
 )
 
-_RESOLVE_T0 = text(
-    """
+_RESOLVE_T0_SQL = """
     WITH RECURSIVE matched AS (
         SELECT entities.entity_id, entities.canonical_name, entities.type,
                entities.status, entities.merged_into
@@ -2911,6 +2925,15 @@ _RESOLVE_T0 = text(
     FROM matched
     WHERE status = 'active'
       AND (CAST(:entity_type AS text) IS NULL OR type = :entity_type)
+    """
+
+_RESOLVE_T0 = text(_RESOLVE_T0_SQL)
+
+_QUESTION_CONTEXT_RESOLVE_T0 = text(
+    _RESOLVE_T0_SQL
+    + """
+    ORDER BY canonical_name, entity_id
+    LIMIT :candidate_limit
     """
 )
 

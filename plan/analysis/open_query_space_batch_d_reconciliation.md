@@ -249,3 +249,24 @@ types after the graph view has authorized both endpoints.
 
 These are planner boundaries around the existing authorities. They add no
 RLS, visibility rule, cache, parser, or result behavior.
+
+## Final concurrency and input-bound reconciliation
+
+The final full-branch review found two implementation gaps inside already
+accepted bounds. `GraphSnapshotReader.pinned()` returned one shared LadybugDB
+connection even though the executor admits concurrent requests and installs a
+tier-specific timeout by mutating that connection. A 60-second analytical
+request could therefore overwrite an interactive request's 5-second bound.
+The reader now creates a distinct read-only connection under the same refresh
+lock as its snapshot provenance; the executor owns and closes that request
+lease. Snapshot selection and disclosure remain unchanged.
+
+The `question_context` entity channel also called the intentionally unlimited
+standalone resolver before its bounded combined confirmation. A high-fanout
+exact alias could therefore produce an unlimited PostgreSQL parameter list.
+Only this v4 channel now admits at most 21 deterministically ordered exact
+candidates, matching its 21 semantic nominations and preserving one row beyond
+the 20-result cap. Standalone `resolve` retains its complete ambiguity set.
+
+Both corrections enforce existing resource contracts. They introduce no new
+visibility authority, RLS, parser, cache, or retrieval channel.

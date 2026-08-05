@@ -284,15 +284,20 @@ class CypherSandboxExecutor:
             admitted = True
 
             connection, snapshot = self._pinned_snapshot(started_at=started)
-            text = f"EXPLAIN {statement.text}" if explain else statement.text
-            result = self._execute(
-                connection=connection,
-                text=text,
-                parameters=parameters,
-                timeout_ms=limits.statement_timeout_ms_default,
-                row_cap=row_cap,
-                byte_cap=limits.returned_bytes_default,
-            )
+            try:
+                text = f"EXPLAIN {statement.text}" if explain else statement.text
+                result = self._execute(
+                    connection=connection,
+                    text=text,
+                    parameters=parameters,
+                    timeout_ms=limits.statement_timeout_ms_default,
+                    row_cap=row_cap,
+                    byte_cap=limits.returned_bytes_default,
+                )
+            finally:
+                # `pinned()` leases a request-private connection because its
+                # timeout is mutable. Never return that state to another query.
+                connection.close()
             columns = tuple(
                 ResultColumn(name=name, type=kind, nullable=True)
                 for name, kind in zip(
