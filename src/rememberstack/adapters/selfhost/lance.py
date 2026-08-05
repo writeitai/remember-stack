@@ -1,5 +1,6 @@
 """The embedded-LanceDB P1 chunk index: one table of text + vectors (D8)."""
 
+from collections.abc import Mapping
 from datetime import timedelta
 import math
 from pathlib import Path
@@ -481,6 +482,7 @@ class LanceChunkIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         deployment_id = str(UUID(deployment_id))
@@ -490,14 +492,17 @@ class LanceChunkIndex:
         self._ensure_bitmap_index(
             table_name=_CLAIM_TABLE, column="is_current_testimony"
         )
+        table = self._connection.open_table(_CLAIM_TABLE)
+        narrowing = _equality_clause(
+            filters=equality_filters, columns={field.name for field in table.schema}
+        )
         query = (
             cast(
                 "LanceVectorQueryBuilder",
-                self._connection.open_table(_CLAIM_TABLE)
-                .search(list(vector))
-                .where(
+                table.search(list(vector)).where(
                     f"deployment_id = '{deployment_id}'"
-                    + (" AND is_current_testimony" if current_only else ""),
+                    + (" AND is_current_testimony" if current_only else "")
+                    + narrowing,
                     prefilter=True,
                 ),
             )
@@ -509,7 +514,13 @@ class LanceChunkIndex:
         )
 
     def search_claims_lexical_scored(
-        self, *, deployment_id: str, query: str, k: int, current_only: bool
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         deployment_id = str(UUID(deployment_id))
@@ -523,6 +534,12 @@ class LanceChunkIndex:
         where = f"deployment_id = '{deployment_id}'"
         if current_only:
             where += " AND is_current_testimony"
+        where += _equality_clause(
+            filters=equality_filters,
+            columns={
+                field.name for field in self._connection.open_table(_CLAIM_TABLE).schema
+            },
+        )
         rows = (
             self._connection.open_table(_CLAIM_TABLE)
             .search(query, query_type="fts", fts_columns="text")
@@ -540,6 +557,7 @@ class LanceChunkIndex:
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel."""
         deployment_id = str(UUID(deployment_id))
@@ -554,7 +572,7 @@ class LanceChunkIndex:
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
             columns=columns,
-        )
+        ) + _equality_clause(filters=equality_filters, columns=columns)
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -577,6 +595,7 @@ class LanceChunkIndex:
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         deployment_id = str(UUID(deployment_id))
@@ -592,10 +611,10 @@ class LanceChunkIndex:
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
             columns=columns,
-        )
+        ) + _equality_clause(filters=equality_filters, columns=columns)
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
-            .search(query, query_type="fts", fts_columns="indexed_text")
+            .search(query, query_type="fts", fts_columns="text")
             .where(where, prefilter=True)
             .limit(k)
             .to_list()
@@ -985,6 +1004,23 @@ class LanceChunkIndex:
 def _escape_literal(value: str) -> str:
     """Escape single quotes for Lance filter string literals."""
     return value.replace("'", "''")
+
+
+def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) -> str:
+    """Render caller filters as a Lance predicate, or refuse to pretend.
+
+    A column this dataset does not have cannot be filtered here, and silently
+    dropping the predicate would return rows the caller explicitly excluded, so
+    it is an error instead.
+    """
+    if not filters:
+        return ""
+    clause = ""
+    for column, value in filters.items():
+        if column not in columns:
+            raise ValueError(f"the projection has no {column} column to filter on")
+        clause += f" AND {column} = '{_escape_literal(str(value))}'"
+    return clause
 
 
 def _chunk_search_where(

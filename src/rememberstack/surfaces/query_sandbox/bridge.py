@@ -15,19 +15,22 @@ complete one.
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 from typing import Final
 from typing import Protocol
-from uuid import UUID
 
 import psycopg
 
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.nomination import BODY_COLUMNS
+from rememberstack.surfaces.query_sandbox.nomination import BODY_TYPE_OIDS
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import confirm
+from rememberstack.surfaces.query_sandbox.nomination import confirm_bodies
+from rememberstack.surfaces.query_sandbox.nomination import projection_filters
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
 
@@ -39,7 +42,13 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
     "lexical_chunks": ("chunks", "bm25"),
     "semantic_facts": ("facts", "semantic"),
     "semantic_entities": ("entities", "semantic"),
+    "fetch_chunk_bodies": ("chunks", "body"),
 }
+
+#: Public functions PostgreSQL runs itself. They need no projection, so the
+#: executor leaves their invocation in place and the planner sees straight
+#: through it; only the Lance-backed ones are resolved and substituted.
+SQL_NATIVE_FUNCTIONS: Final = frozenset({"facts_as_of"})
 
 
 class EmbeddingSource(Protocol):
@@ -56,6 +65,9 @@ class ResolvedInvocation:
     columns: tuple[str, ...]
     rows: tuple[tuple[Any, ...], ...]
     invocation: SemanticInvocation
+    #: The PostgreSQL type OID of each column, so the rewritten relation can
+    #: cast its bound parameters back to the types confirmation reported.
+    type_oids: tuple[int, ...] = ()
 
 
 def resolve_invocations(
@@ -70,6 +82,8 @@ def resolve_invocations(
     """Run every public-function invocation the statement contains."""
     resolved: list[ResolvedInvocation] = []
     for cte_name, function, raw_arguments in bindings:
+        if function in SQL_NATIVE_FUNCTIONS:
+            continue
         arguments = tuple(
             parameters[value[1] - 1]
             if isinstance(value, tuple) and value and value[0] == "$"
@@ -106,21 +120,44 @@ def _resolve_one(
             message=f"{function} is not a resolvable public function",
         )
     target, channel = FUNCTION_TARGETS[function]
+    if function == "fetch_chunk_bodies":
+        return _resolve_bodies(
+            cte_name=cte_name,
+            arguments=arguments,
+            connection=connection,
+            search=search,
+            settings=settings,
+        )
+    _check_arity(function=function, arguments=arguments)
     query_text = arguments[0] if arguments else None
     if not isinstance(query_text, str) or not query_text:
         raise SandboxRejection(
             code=QueryErrorCode.INVALID_PARAMETER,
             message=f"{function} takes a non-empty query string",
         )
-    k = bounded_k(
-        requested=arguments[1] if len(arguments) > 1 else None, settings=settings
-    )
+    k = bounded_k(requested=arguments[1], settings=settings)
     filters = validate_filters(
         target=target, filters=arguments[2] if len(arguments) > 2 else None
     )
+    # §3.4's generation pins: a caller may name the embedding-input policy and
+    # the embedder generation, and an unavailable one fails rather than
+    # falling forward to whatever the projection happens to hold.
+    policy_generation = _optional_text(arguments, 3, "embedding_input_policy_version")
+    embedder_generation = _optional_text(arguments, 4, "embedder_generation")
+    if (policy_generation or embedder_generation) and channel != "semantic":
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message="generation pins apply to the semantic channels only",
+        )
 
     nominate = _nominator(
-        function=function, search=search, embed=embed, settings=settings
+        function=function,
+        target=target,
+        search=search,
+        embed=embed,
+        settings=settings,
+        policy_generation=policy_generation,
+        embedder_generation=embedder_generation,
     )
     try:
         nominations = nominate(query_text, k, filters)
@@ -131,10 +168,14 @@ def _resolve_one(
             code=QueryErrorCode.LANCE_UNAVAILABLE,
             message="the projection could not be searched",
         ) from error
+    # A projection that returns more than it was asked for does not get to
+    # spend the statement's budget: the cap is enforced here, not trusted.
+    if len(nominations) > k:
+        nominations = tuple(nominations)[:k]
     settings.nominations_used += len(nominations)
 
     try:
-        columns, rows, dropped = confirm(
+        confirmation = confirm(
             connection=connection,
             target=target,
             nominations=nominations,
@@ -149,43 +190,114 @@ def _resolve_one(
 
     return ResolvedInvocation(
         cte_name=cte_name,
-        columns=columns,
-        rows=tuple(rows),
+        columns=confirmation.columns,
+        rows=tuple(confirmation.rows),
+        type_oids=confirmation.type_oids,
         invocation=SemanticInvocation(
             function=function,
             nominated=len(nominations),
-            confirmed=len(rows),
-            dropped_stale=dropped,
-            generation=None,
+            confirmed=len(confirmation.rows),
+            dropped_stale=confirmation.dropped_stale,
+            dropped_filtered=confirmation.dropped_filtered,
+            generation=embedder_generation or policy_generation,
             termination_reason="completed",
         ),
     )
 
 
+#: How many arguments each §3.4 function takes: `query` and `k` are required,
+#: the filter object and the two generation pins are not. An extra argument is
+#: a caller misunderstanding, and silently ignoring it would hide the fact that
+#: the request did not mean what it appeared to mean.
+SIGNATURES: Final[dict[str, tuple[int, int]]] = {
+    "semantic_claims": (2, 5),
+    "semantic_chunks": (2, 5),
+    "semantic_facts": (2, 5),
+    "semantic_entities": (2, 3),
+    "lexical_claims": (2, 3),
+    "lexical_chunks": (2, 3),
+}
+
+
+def _check_arity(*, function: str, arguments: tuple[object, ...]) -> None:
+    least, most = SIGNATURES[function]
+    if not least <= len(arguments) <= most:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=(
+                f"{function} takes between {least} and {most} arguments,"
+                f" {len(arguments)} given"
+            ),
+        )
+
+
+def _optional_text(arguments: tuple[object, ...], index: int, name: str) -> str | None:
+    """One optional string argument, or None when it was not supplied."""
+    if len(arguments) <= index or arguments[index] is None:
+        return None
+    value = arguments[index]
+    if not isinstance(value, str) or not value:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=f"{name} must be a non-empty string when supplied",
+        )
+    return value
+
+
 def _nominator(
-    *, function: str, search: object, embed: EmbeddingSource, settings: BridgeSettings
+    *,
+    function: str,
+    target: str,
+    search: object,
+    embed: EmbeddingSource,
+    settings: BridgeSettings,
+    policy_generation: str | None = None,
+    embedder_generation: str | None = None,
 ) -> Callable[[str, int, dict[str, Any]], Sequence[Any]]:
     """Bind one function to its channel on the scored search port."""
     deployment = str(settings.deployment_id)
 
+    def narrow(filters: dict[str, Any]) -> dict[str, str]:
+        # Filters the projection understands are applied there, before top-k,
+        # so a narrow search still fills its k with rows that match.
+        return projection_filters(target=target, filters=filters)
+
     def semantic_claims(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_claims_scored(  # type: ignore[attr-defined]
-            deployment_id=deployment, vector=embed(query=query), k=k, current_only=True
+            deployment_id=deployment,
+            vector=embed(query=query),
+            k=k,
+            current_only=True,
+            equality_filters=narrow(filters),
         )
 
     def lexical_claims(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_claims_lexical_scored(  # type: ignore[attr-defined]
-            deployment_id=deployment, query=query, k=k, current_only=True
+            deployment_id=deployment,
+            query=query,
+            k=k,
+            current_only=True,
+            equality_filters=narrow(filters),
         )
 
     def semantic_chunks(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_chunks_scored(  # type: ignore[attr-defined]
-            deployment_id=deployment, vector=embed(query=query), k=k
+            deployment_id=deployment,
+            vector=embed(query=query),
+            k=k,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+            equality_filters=narrow(filters),
         )
 
     def lexical_chunks(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_chunks_lexical_scored(  # type: ignore[attr-defined]
-            deployment_id=deployment, query=query, k=k
+            deployment_id=deployment,
+            query=query,
+            k=k,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+            equality_filters=narrow(filters),
         )
 
     def semantic_facts(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
@@ -214,7 +326,9 @@ def _nominator(
     }[function]
 
 
-def substitute(sql: str, resolutions: Sequence[ResolvedInvocation]) -> str:
+def substitute(
+    sql: str, resolutions: Sequence[ResolvedInvocation]
+) -> tuple[str, dict[str, Any]]:
     """Replace each generated CTE body with the rows it resolved to.
 
     The CTE keeps its name and its position, so the caller's statement is
@@ -223,54 +337,159 @@ def substitute(sql: str, resolutions: Sequence[ResolvedInvocation]) -> str:
     than disappearing, so the surrounding joins still type-check.
     """
     rewritten = sql
+    bound: dict[str, Any] = {}
     for resolution in resolutions:
-        marker = f"__srf_{resolution.cte_name.rsplit('_', 1)[-1]} AS MATERIALIZED ("
+        marker = f"{resolution.cte_name} AS MATERIALIZED ("
         start = rewritten.find(marker)
         if start < 0:
             continue
         body_start = start + len(marker)
-        depth = 1
-        index = body_start
-        while index < len(rewritten) and depth:
-            if rewritten[index] == "(":
-                depth += 1
-            elif rewritten[index] == ")":
-                depth -= 1
-            index += 1
-        rewritten = (
-            rewritten[:body_start]
-            + _values_relation(resolution)
-            + rewritten[index - 1 :]
-        )
-    return rewritten
+        index = _matching_paren(rewritten, body_start)
+        relation, parameters = _values_relation(resolution)
+        bound.update(parameters)
+        rewritten = rewritten[:body_start] + relation + rewritten[index - 1 :]
+    return rewritten, bound
 
 
-def _values_relation(resolution: ResolvedInvocation) -> str:
-    """The confirmed rows as an inline relation with the contract's columns."""
-    aliases = ", ".join(f'"{column}"' for column in resolution.columns)
-    if not resolution.rows:
-        nulls = ", ".join("NULL" for _ in resolution.columns)
-        return f"SELECT * FROM (VALUES ({nulls})) AS t({aliases}) WHERE false"
-    literals = ", ".join(
-        "(" + ", ".join(_literal(value) for value in row) + ")"
-        for row in resolution.rows
-    )
-    return f"SELECT * FROM (VALUES {literals}) AS t({aliases})"
+def _matching_paren(sql: str, start: int) -> int:
+    """The index just past the parenthesis that closes the one before `start`.
 
-
-def _literal(value: object) -> str:
-    """One confirmed value as SQL text.
-
-    Every value here came out of PostgreSQL a moment ago in the same
-    transaction; quoting is still explicit because the rewritten text is
-    parsed again.
+    A parenthesis inside a string literal is text, not structure: a caller may
+    legitimately write `semantic_claims(\')\', 10)`, and counting that as a
+    nesting level would cut the CTE body in the wrong place.
     """
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, float)):
-        return repr(value)
-    if isinstance(value, (UUID, datetime)):
-        return "'" + str(value).replace("'", "''") + "'"
-    return "'" + str(value).replace("'", "''") + "'"
+    depth = 1
+    index = start
+    in_string = False
+    while index < len(sql) and depth:
+        character = sql[index]
+        if in_string:
+            if character == "'":
+                # A doubled quote is an escaped quote, not the end.
+                if index + 1 < len(sql) and sql[index + 1] == "'":
+                    index += 1
+                else:
+                    in_string = False
+        elif character == "'":
+            in_string = True
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        index += 1
+    return index
+
+
+def _values_relation(resolution: ResolvedInvocation) -> tuple[str, dict[str, Any]]:
+    """The confirmed rows as a relation whose values are bound, not rendered.
+
+    Rendering a confirmed value into SQL text would make the statement's
+    structure depend on the value's content — claim text is arbitrary prose
+    that came out of a document, so an apostrophe or a parenthesis in a source
+    sentence would be reparsed as syntax. Every value is therefore a bound
+    parameter, cast to the type confirmation reported for its column, and the
+    only thing this writes into the statement is placeholders.
+    """
+    aliases = ", ".join(f'"{column}"' for column in resolution.columns)
+    oids = resolution.type_oids or (0,) * len(resolution.columns)
+    casts = [f"::{_type_name(oid)}" for oid in oids]
+    if not resolution.rows:
+        nulls = ", ".join(f"NULL{cast}" for cast in casts)
+        return f"SELECT * FROM (VALUES ({nulls})) AS t({aliases}) WHERE false", {}
+
+    parameters: dict[str, Any] = {}
+    rendered_rows: list[str] = []
+    prefix = resolution.cte_name.strip("_")
+    for row_index, row in enumerate(resolution.rows):
+        placeholders: list[str] = []
+        for column_index, value in enumerate(row):
+            name = f"{prefix}_r{row_index}_c{column_index}"
+            parameters[name] = value
+            placeholders.append(f"%({name})s{casts[column_index]}")
+        rendered_rows.append("(" + ", ".join(placeholders) + ")")
+    relation = f"SELECT * FROM (VALUES {', '.join(rendered_rows)}) AS t({aliases})"
+    return relation, parameters
+
+
+#: The types confirmation can actually report for these views.
+_OID_TYPES: Final[dict[int, str]] = {
+    16: "boolean",
+    20: "bigint",
+    21: "smallint",
+    23: "integer",
+    25: "text",
+    701: "double precision",
+    1043: "varchar",
+    1082: "date",
+    1114: "timestamp",
+    1184: "timestamptz",
+    1700: "numeric",
+    2950: "uuid",
+    3802: "jsonb",
+}
+
+
+def _type_name(oid: int) -> str:
+    """The cast a bound parameter needs to match its confirmed column.
+
+    Without it PostgreSQL infers `unknown` for a placeholder inside VALUES,
+    and a later comparison or join against the same column fails to plan.
+    """
+    return _OID_TYPES.get(oid, "text")
+
+
+def _resolve_bodies(
+    *,
+    cte_name: str,
+    arguments: tuple[object, ...],
+    connection: psycopg.Connection,
+    search: object,
+    settings: BridgeSettings,
+) -> ResolvedInvocation:
+    """`fetch_chunk_bodies(chunk_ids)`: the body path minus nomination (§3.4)."""
+    if len(arguments) != 1:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message="fetch_chunk_bodies takes exactly one uuid[] argument",
+        )
+    chunk_ids = chunk_id_list(arguments[0])
+    try:
+        texts = search.chunk_texts(  # type: ignore[attr-defined]
+            deployment_id=str(settings.deployment_id), chunk_ids=chunk_ids
+        )
+    except Exception as error:  # the projection is a separate process
+        raise SandboxRejection(
+            code=QueryErrorCode.LANCE_UNAVAILABLE,
+            message="chunk bodies could not be read",
+        ) from error
+    try:
+        confirmation = confirm_bodies(
+            connection=connection,
+            chunk_ids=chunk_ids,
+            deployment_id=settings.deployment_id,
+            texts={str(key): value for key, value in texts.items()},
+        )
+    except SandboxRejection:
+        raise
+    except psycopg.Error as error:
+        raise SandboxRejection(
+            code=QueryErrorCode.CONFIRMATION_FAILED,
+            message="chunk coordinates could not be confirmed",
+        ) from error
+    return ResolvedInvocation(
+        cte_name=cte_name,
+        columns=BODY_COLUMNS,
+        rows=tuple(confirmation.rows),
+        type_oids=BODY_TYPE_OIDS,
+        invocation=SemanticInvocation(
+            function="fetch_chunk_bodies",
+            # §3.4: requested ids occupy the nomination-count slot; no new
+            # QueryResult field is added for the body path.
+            nominated=confirmation.requested,
+            confirmed=len(confirmation.rows),
+            dropped_stale=0,
+            dropped_absent=confirmation.absent,
+            dropped_body_mismatch=confirmation.mismatched,
+            termination_reason="completed",
+        ),
+    )

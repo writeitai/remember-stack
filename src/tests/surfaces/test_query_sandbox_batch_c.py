@@ -6,6 +6,7 @@ are the counts that actually happened.
 """
 
 from collections.abc import Iterator
+import json
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -16,14 +17,17 @@ import psycopg
 from pydantic import ValidationError
 import pytest
 
+from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.model.chunks import P1ChunkText
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.surfaces.query_sandbox.bridge import FUNCTION_TARGETS
+from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import PROJECTION_ONLY_FILTERS
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 
@@ -113,6 +117,48 @@ class _FakeSearch:
     search_chunks_lexical_scored = _answer
     search_facts_scored = _answer
     search_entities_scored = _answer
+
+
+class _RecordingSearch(_FakeSearch):
+    """A projection that remembers what it was asked to narrow to."""
+
+    def __init__(self, nominations: tuple[P1Nomination, ...]) -> None:
+        super().__init__(nominations)
+        self.equality_filters: dict[str, str] = {}
+
+    def _answer(self, **kwargs: object) -> tuple[P1Nomination, ...]:  # type: ignore[override]
+        self.calls += 1
+        narrowing = kwargs.get("equality_filters") or {}
+        assert isinstance(narrowing, dict)
+        self.equality_filters = {str(k): str(v) for k, v in narrowing.items()}
+        return self.nominations
+
+    search_claims_scored = _answer
+    search_claims_lexical_scored = _answer
+    search_chunks_scored = _answer
+    search_chunks_lexical_scored = _answer
+    search_facts_scored = _answer
+    search_entities_scored = _answer
+
+
+class _BodySearch:
+    """A projection that holds text for the chunks it was given."""
+
+    def __init__(self, texts: dict[str, str]) -> None:
+        self.texts = texts
+        self.asked: tuple[str, ...] = ()
+
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
+    ):  # noqa: ANN201
+        self.asked = tuple(chunk_ids)
+        return {
+            chunk_id: P1ChunkText(
+                chunk_id=UUID(chunk_id), section_role="body", indexed_text=text
+            )
+            for chunk_id, text in self.texts.items()
+            if chunk_id in chunk_ids
+        }
 
 
 class _BrokenSearch:
@@ -257,7 +303,7 @@ def test_every_public_function_confirms_against_a_view(
 ) -> None:
     """Each function's nominations are checked, whatever its target."""
     url, _ = seeded
-    for function in sorted(FUNCTION_TARGETS):
+    for function in sorted(SIGNATURES):
         executor = _executor(url, _FakeSearch((_nomination(uuid4()),)))
         outcome = executor.query_sql(
             sql=f"SELECT rank FROM {function}($1, 5)", parameters=["memory"]
@@ -372,3 +418,247 @@ def test_a_confirmed_value_keeps_its_type_through_the_rewrite(
     )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows and outcome.rows[0][0] == 2
+
+
+def test_the_identity_column_is_published(seeded: tuple[str, UUID]) -> None:
+    """A nomination result the caller cannot join back is not much use."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql=(
+            "SELECT s.claim_id FROM semantic_claims($1, 5) s"
+            " JOIN claims_live c ON c.claim_id = s.claim_id"
+        ),
+        parameters=["q"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((claim_id,),)
+
+
+@pytest.mark.parametrize(
+    ("function", "filters"),
+    (
+        ("semantic_chunks", '{"section_role": "body"}'),
+        ("semantic_chunks", '{"language": "en"}'),
+        ("semantic_chunks", '{"source_kind": "test"}'),
+        ("semantic_claims", '{"source_kind": "test"}'),
+    ),
+)
+def test_published_filters_reach_a_real_column(
+    seeded: tuple[str, UUID], function: str, filters: str
+) -> None:
+    """A filter the surface publishes must be one confirmation can apply.
+
+    Publishing a filter that fails confirmation would turn a legitimate query
+    into an error the caller cannot fix.
+    """
+    url, _ = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(uuid4()),))).query_sql(
+        sql=f"SELECT rank FROM {function}($1, 5, $2::jsonb)", parameters=["q", filters]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+
+
+def test_generation_pins_reach_the_projection(seeded: tuple[str, UUID]) -> None:
+    """A pinned generation is passed down, not accepted and ignored."""
+    url, _ = seeded
+
+    seen: dict[str, object] = {}
+
+    class _RecordingSearch(_FakeSearch):
+        def search_chunks_scored(self, **kwargs: object):  # noqa: ANN202
+            seen.update(kwargs)
+            return self.nominations
+
+    executor = _executor(url, _RecordingSearch((_nomination(uuid4()),)))
+    outcome = executor.query_sql(
+        sql="SELECT rank FROM semantic_chunks($1, 5, '{}'::jsonb, $2, $3)",
+        parameters=["q", "policy-2026.08", "embedder-7"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert seen["policy_generation"] == "policy-2026.08"
+    assert seen["embedder_generation"] == "embedder-7"
+    assert outcome.semantic_invocations[0].generation == "embedder-7"
+
+
+def test_a_projection_cannot_overspend_the_budget(seeded: tuple[str, UUID]) -> None:
+    """More rows than were asked for do not become more rows than allowed."""
+    url, claim_id = seeded
+    greedy = _FakeSearch(tuple(_nomination(claim_id, rank) for rank in range(1, 51)))
+    outcome = _executor(url, greedy).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 3)", parameters=["q"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.semantic_invocations[0].nominated == 3
+
+
+# --- signatures, filter reach, and honest drop categories --------------------
+
+
+def _a_live_chunk(url: str) -> tuple[str, str, str]:
+    """One current chunk: its id, its D80 header, and its document."""
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT chunk_id::text, location_header, doc_id::text"
+            " FROM memory_v1.chunks_live WHERE deployment_id = %s LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    assert row is not None, "the corpus must publish at least one live chunk"
+    return row
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT rank FROM semantic_claims($1)",
+        "SELECT rank FROM semantic_claims($1, 5, '{}'::jsonb, 'p', 'e', 'extra')",
+        "SELECT rank FROM lexical_claims($1, 5, '{}'::jsonb, 'p')",
+    ],
+)
+def test_a_call_that_does_not_match_the_signature_is_named(
+    seeded: tuple[str, UUID], sql: str
+) -> None:
+    """§3.4 lists k as required; an extra argument is a misunderstanding."""
+    url, _ = seeded
+    outcome = _executor(url, _FakeSearch(())).query_sql(sql=sql, parameters=["memory"])
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_an_eligible_filter_reaches_the_projection(seeded: tuple[str, UUID]) -> None:
+    """Filters the projection understands are applied before top-k, not after."""
+    url, claim_id = seeded
+    _, _, doc_id = _a_live_chunk(url)
+    search = _RecordingSearch((_nomination(claim_id),))
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5, $2::jsonb)",
+        parameters=["memory", json.dumps({"doc_id": doc_id})],
+    )
+    assert outcome.termination_reason in ("completed", "failed")
+    assert search.equality_filters == {"doc_id": doc_id}
+
+
+def test_a_filter_value_of_the_wrong_type_is_rejected_as_such(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A non-UUID doc_id is the caller's error, not a failed confirmation."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5, $2::jsonb)",
+        parameters=["memory", json.dumps({"doc_id": "not-a-uuid"})],
+    )
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_a_filtered_out_row_is_not_reported_as_stale(seeded: tuple[str, UUID]) -> None:
+    """A row the view still publishes was filtered, not superseded."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5, $2::jsonb)",
+        parameters=["memory", json.dumps({"doc_id": str(uuid4())})],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    invocation = outcome.semantic_invocations[0]
+    assert (invocation.dropped_filtered, invocation.dropped_stale) == (1, 0)
+
+
+def test_a_section_role_outside_the_vocabulary_is_rejected(
+    seeded: tuple[str, UUID],
+) -> None:
+    """`section_role` is a closed vocabulary, not free text."""
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_filters(target="chunks", filters={"section_role": "epilogue"})
+    assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+
+
+# --- confirmed body fetch ----------------------------------------------------
+
+
+def test_a_confirmed_body_separates_the_generated_header(
+    seeded: tuple[str, UUID],
+) -> None:
+    """The D80 header is returned beside the body, never folded into it."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    body = "The measured value was 41 degrees."
+    indexed = f"{header}{body}"
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        connection.execute(
+            "UPDATE chunks SET embedding_text_hash = %s WHERE chunk_id = %s",
+            (embedding_text_hash(indexed), chunk_id),
+        )
+    search = _BodySearch({chunk_id: indexed})
+    outcome = _executor(url, search).query_sql(
+        sql=(
+            "SELECT input_ordinal, source_text, location_header"
+            " FROM fetch_chunk_bodies($1) ORDER BY input_ordinal"
+        ),
+        parameters=[[chunk_id]],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((0, body, header),)
+    invocation = outcome.semantic_invocations[0]
+    assert (invocation.nominated, invocation.confirmed) == (1, 1)
+
+
+def test_a_body_that_does_not_hash_to_the_spine_is_dropped(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Projection text that disagrees with PostgreSQL never reaches a caller."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    search = _BodySearch({chunk_id: f"{header}text the spine never recorded"})
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT source_text FROM fetch_chunk_bodies($1)", parameters=[[chunk_id]]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ()
+    assert outcome.semantic_invocations[0].dropped_body_mismatch == 1
+
+
+def test_a_repeated_chunk_id_keeps_its_first_position(seeded: tuple[str, UUID]) -> None:
+    """Duplicates collapse to first input position (§3.4)."""
+    chunk = str(uuid4())
+    other = str(uuid4())
+    assert chunk_id_list([chunk, other, chunk]) == (chunk, other)
+
+
+def test_more_than_fifty_chunk_ids_fails_before_any_store_is_read(
+    seeded: tuple[str, UUID],
+) -> None:
+    """The id cap is checked first, so an oversized ask costs nothing."""
+    url, _ = seeded
+    search = _BodySearch({})
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT source_text FROM fetch_chunk_bodies($1)",
+        parameters=[[str(uuid4()) for _ in range(51)]],
+    )
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+    assert search.asked == ()
+
+
+def test_the_bitemporal_srf_runs_in_postgresql(seeded: tuple[str, UUID]) -> None:
+    """`facts_as_of` needs no projection, so the statement never touches one."""
+    url, _ = seeded
+    search = _BrokenSearch()
+    outcome = _executor(url, search).query_sql(
+        sql=(
+            "SELECT fact_id, identity_regime, applied_valid_at"
+            " FROM facts_as_of($1::timestamptz, $2::timestamptz, 10)"
+        ),
+        parameters=["2999-01-01T00:00:00+00:00", "2999-01-01T00:00:00+00:00"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows, "the corpus holds facts that were current at that instant"
+    assert {row[1] for row in outcome.rows} == {"current"}
+
+
+def test_the_bitemporal_srf_cannot_be_asked_for_more_than_the_cap(
+    seeded: tuple[str, UUID],
+) -> None:
+    """The §4.3 row bound is clamped in the function, not trusted."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT count(*) FROM memory_v1.facts_as_of(now(), now(), 100000)"
+        ).fetchone()
+    assert row is not None
+    assert row[0] <= 1000

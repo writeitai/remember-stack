@@ -1,5 +1,6 @@
 """D61 seam for the P1 search indexes: chunks, claims, facts (D8)."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 from typing import runtime_checkable
@@ -174,12 +175,19 @@ class P1ScoredSearchPort(Protocol):
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         ...
 
     def search_claims_lexical_scored(
-        self, *, deployment_id: str, query: str, k: int, current_only: bool
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         ...
@@ -192,8 +200,14 @@ class P1ScoredSearchPort(Protocol):
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Scored source-chunk nominations from the semantic channel."""
+        """Scored source-chunk nominations from the semantic channel.
+
+        `equality_filters` are column/value pairs the projection applies BEFORE
+        top-k, so a narrow search still returns k matching rows. A column the
+        dataset does not have is an error, never a silently dropped predicate.
+        """
         ...
 
     def search_chunks_lexical_scored(
@@ -204,6 +218,7 @@ class P1ScoredSearchPort(Protocol):
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         ...

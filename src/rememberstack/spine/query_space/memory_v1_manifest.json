@@ -277,7 +277,212 @@
     },
     "function_signatures": {
       "contract": "memory_v1.functions/1",
-      "functions": []
+      "functions": [
+        {
+          "arguments_max": 3,
+          "arguments_min": 2,
+          "channel": "bm25",
+          "columns": [
+            "rank",
+            "score",
+            "channel",
+            "chunk_id",
+            "doc_id",
+            "version_id",
+            "representation_id",
+            "section_id",
+            "chunk_content_hash",
+            "embedding_text_hash",
+            "location_header"
+          ],
+          "filters": [
+            "doc_id",
+            "language",
+            "section_role",
+            "source_kind",
+            "source_shape"
+          ],
+          "name": "lexical_chunks",
+          "projection_filters": [
+            "doc_id",
+            "section_role",
+            "source_kind",
+            "source_shape"
+          ],
+          "target": "chunks"
+        },
+        {
+          "arguments_max": 3,
+          "arguments_min": 2,
+          "channel": "bm25",
+          "columns": [
+            "rank",
+            "score",
+            "channel",
+            "claim_id",
+            "doc_id",
+            "claim_text",
+            "source_handle",
+            "source_kind",
+            "asserted_at",
+            "claim_valid_from",
+            "claim_valid_until"
+          ],
+          "filters": [
+            "asserted_from",
+            "asserted_to",
+            "doc_id",
+            "entity_id",
+            "source_kind"
+          ],
+          "name": "lexical_claims",
+          "projection_filters": [
+            "doc_id"
+          ],
+          "target": "claims"
+        },
+        {
+          "arguments_max": 5,
+          "arguments_min": 2,
+          "channel": "semantic",
+          "columns": [
+            "rank",
+            "score",
+            "channel",
+            "chunk_id",
+            "doc_id",
+            "version_id",
+            "representation_id",
+            "section_id",
+            "chunk_content_hash",
+            "embedding_text_hash",
+            "location_header"
+          ],
+          "filters": [
+            "doc_id",
+            "language",
+            "section_role",
+            "source_kind",
+            "source_shape"
+          ],
+          "name": "semantic_chunks",
+          "projection_filters": [
+            "doc_id",
+            "section_role",
+            "source_kind",
+            "source_shape"
+          ],
+          "target": "chunks"
+        },
+        {
+          "arguments_max": 5,
+          "arguments_min": 2,
+          "channel": "semantic",
+          "columns": [
+            "rank",
+            "score",
+            "channel",
+            "claim_id",
+            "doc_id",
+            "claim_text",
+            "source_handle",
+            "source_kind",
+            "asserted_at",
+            "claim_valid_from",
+            "claim_valid_until"
+          ],
+          "filters": [
+            "asserted_from",
+            "asserted_to",
+            "doc_id",
+            "entity_id",
+            "source_kind"
+          ],
+          "name": "semantic_claims",
+          "projection_filters": [
+            "doc_id"
+          ],
+          "target": "claims"
+        },
+        {
+          "arguments_max": 3,
+          "arguments_min": 2,
+          "channel": "semantic",
+          "columns": [
+            "rank",
+            "score",
+            "channel",
+            "entity_id",
+            "entity_type",
+            "canonical_name",
+            "profile_summary",
+            "live_mention_count",
+            "live_document_count"
+          ],
+          "filters": [
+            "entity_type"
+          ],
+          "name": "semantic_entities",
+          "projection_filters": [],
+          "target": "entities"
+        },
+        {
+          "arguments_max": 5,
+          "arguments_min": 2,
+          "channel": "semantic",
+          "columns": [
+            "rank",
+            "score",
+            "channel",
+            "fact_id",
+            "fact_kind",
+            "fact_label",
+            "predicate",
+            "subject_entity_id",
+            "object_entity_id",
+            "evidence_count",
+            "contradict_count",
+            "support_state",
+            "evaluated_at"
+          ],
+          "filters": [
+            "fact_kind",
+            "object_entity_id",
+            "predicate",
+            "subject_entity_id",
+            "support_state"
+          ],
+          "name": "semantic_facts",
+          "projection_filters": [],
+          "target": "facts"
+        },
+        {
+          "arguments_max": 1,
+          "arguments_min": 1,
+          "channel": "body",
+          "chunk_ids_max": 50,
+          "columns": [
+            "input_ordinal",
+            "chunk_id",
+            "doc_id",
+            "version_id",
+            "representation_id",
+            "section_id",
+            "chunk_content_hash",
+            "embedding_text_hash",
+            "source_text",
+            "location_header",
+            "embedding_input_policy_version",
+            "policy_generation",
+            "embedder_generation",
+            "created_at"
+          ],
+          "filters": [],
+          "name": "fetch_chunk_bodies",
+          "projection_filters": [],
+          "target": "chunks"
+        }
+      ]
     },
     "limits": {
       "contract": "memory_v1.limits/1",
@@ -24394,5 +24599,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/1",
-  "surface_manifest_hash": "f9e994b5b325d136fb830ab38e537ec1c773c53e7f22191c7843e821e3d00ef7"
+  "surface_manifest_hash": "51c3a6280368371c1196599453f893df7c7f26370c245dd40bd2aa5778e360db"
 }

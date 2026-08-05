@@ -151,12 +151,57 @@ class ManifestView(BaseModel):
 def stub_function_signatures() -> dict[str, CanonicalValue]:
     """Return the bound, still-unpopulated SQL-function member.
 
-    The signatures of the bitemporal, semantic, lexical, body-fetch, and graph
-    functions are contributed by the batches that implement them. Binding the
-    member's shape here means those additions fill the hashed document rather
-    than reshaping it.
+    Superseded by `_bridge_function_signatures()` once the sandbox exists;
+    kept for a checkout that has the schema but not yet the surfaces package.
     """
     return {"contract": "memory_v1.functions/1", "functions": []}
+
+
+def _bridge_function_signatures() -> dict[str, CanonicalValue]:
+    """The §6 `function_signatures` member: what each public function accepts
+    and answers with, taken from the implementation rather than restated.
+
+    A caller reads this to know the arity, the filter vocabulary, and the
+    columns a function returns without executing anything, and any change to
+    those rolls `surface_manifest_hash` — the point of putting them here.
+    """
+    from rememberstack.surfaces.query_sandbox import nomination
+    from rememberstack.surfaces.query_sandbox.bridge import FUNCTION_TARGETS
+    from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
+
+    functions: list[CanonicalValue] = []
+    for name in sorted(SIGNATURES):
+        target, channel = FUNCTION_TARGETS[name]
+        least, most = SIGNATURES[name]
+        columns, _ = nomination.EMPTY_CONTRACTS[target]
+        functions.append(
+            {
+                "name": name,
+                "target": target,
+                "channel": channel,
+                "arguments_min": least,
+                "arguments_max": most,
+                "filters": list(sorted(nomination.FILTER_ALLOWLISTS[target])),
+                "projection_filters": list(
+                    sorted(nomination.LANCE_FILTER_COLUMNS[target])
+                ),
+                "columns": list(columns),
+            }
+        )
+    functions.append(
+        {
+            "name": "fetch_chunk_bodies",
+            "target": "chunks",
+            "channel": "body",
+            "arguments_min": 1,
+            "arguments_max": 1,
+            "filters": [],
+            "projection_filters": [],
+            "columns": list(nomination.BODY_COLUMNS),
+            "chunk_ids_max": nomination.CHUNK_IDS_MAX,
+        }
+    )
+    return {"contract": "memory_v1.functions/1", "functions": functions}
 
 
 def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
@@ -222,7 +267,7 @@ def build_hash_members() -> dict[str, CanonicalValue]:
     """Build the exact document `surface_manifest_hash` is taken over."""
     return {
         "core_operation_descriptors": stub_core_operation_descriptors(),
-        "function_signatures": stub_function_signatures(),
+        "function_signatures": _bridge_function_signatures(),
         "limits": _sandbox_limits_member(),
         "views_schema": _build_views_schema(),
     }

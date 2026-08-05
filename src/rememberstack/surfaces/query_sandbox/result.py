@@ -63,6 +63,9 @@ class SemanticInvocation(BaseModel):
     nominated: int
     confirmed: int
     dropped_stale: int
+    dropped_filtered: int = 0
+    dropped_absent: int = 0
+    dropped_body_mismatch: int = 0
     generation: str | None = None
     termination_reason: str | None = None
 
