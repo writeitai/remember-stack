@@ -905,11 +905,11 @@ def _to_named_placeholders(sql: str, *, count: int, escape: bool = True) -> str:
     once, here, and the executor binds a matching mapping.
 
     The rewrite walks the statement rather than replacing text globally,
-    because both things it touches also occur inside string literals and mean
-    something else there: `SELECT '$1'` asks for two characters of text, and
-    `SELECT '100%'` asks for four. Rewriting either inside its quotes changes
-    what the caller asked for — and produces a statement psycopg then fails to
-    bind.
+    because both things it touches also occur inside quotes and mean something
+    else there: `SELECT '$1'` asks for two characters of text, `SELECT '100%'`
+    asks for four, and `AS "a$1"` names a column `a$1`. Rewriting any of them
+    changes what the caller asked for — and produces a statement psycopg then
+    fails to bind.
     """
     if count == 0 and not escape:
         return sql
@@ -918,12 +918,13 @@ def _to_named_placeholders(sql: str, *, count: int, escape: bool = True) -> str:
     length = len(sql)
     while index < length:
         character = sql[index]
-        if character == "'":
-            closing = _end_of_literal(sql, index)
-            literal = sql[index:closing]
-            # A percent inside a literal still passes through psycopg's binder,
-            # so it is escaped; a `$n` inside one is text and is not.
-            out.append(literal.replace("%", "%%") if escape else literal)
+        if character in ("'", '"'):
+            closing = _end_of_quoted(sql, index)
+            quoted = sql[index:closing]
+            # A percent inside quotes still passes through psycopg's binder, so
+            # it is escaped; a `$n` inside quotes is part of a value or a name
+            # and is not rewritten. `AS "a$1"` names a column `a$1`.
+            out.append(quoted.replace("%", "%%") if escape else quoted)
             index = closing
             continue
         if character == "%" and escape:
@@ -944,12 +945,17 @@ def _to_named_placeholders(sql: str, *, count: int, escape: bool = True) -> str:
     return "".join(out)
 
 
-def _end_of_literal(sql: str, start: int) -> int:
-    """The index just past the single-quoted literal beginning at `start`."""
+def _end_of_quoted(sql: str, start: int) -> int:
+    """The index just past the quoted run beginning at `start`.
+
+    Handles both kinds: `'…'` is a value and `"…"` is a name, and a doubled
+    quote of either kind is an escaped quote rather than the end.
+    """
+    quote = sql[start]
     index = start + 1
     while index < len(sql):
-        if sql[index] == "'":
-            if index + 1 < len(sql) and sql[index + 1] == "'":
+        if sql[index] == quote:
+            if index + 1 < len(sql) and sql[index + 1] == quote:
                 index += 2
                 continue
             return index + 1
@@ -980,6 +986,17 @@ def _rewrite_srf_invocations(
             for entry in node.functions or ():
                 call = entry[0] if isinstance(entry, tuple) else entry
                 if isinstance(call, FuncCall) and _func_name(call) in PUBLIC_SRF_NAMES:
+                    if node.ordinality:
+                        # The rewrite replaces the call with the rows it
+                        # resolved to, and a resolved relation has no
+                        # generated ordinality column to carry. Refusing says
+                        # so; substituting would drop a column the caller
+                        # named and fail during planning instead.
+                        raise _reject(
+                            QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED,
+                            "WITH ORDINALITY is not available on public"
+                            " functions; number the rows in the outer query",
+                        )
                     name = f"__srf_{counter}"
                     counter += 1
                     bindings.append((name, _func_name(call), _literal_arguments(call)))
@@ -1030,7 +1047,9 @@ def apply_cast(value: object, casts: Sequence[str]) -> object:
     handing on the string would reject a legal call; applying it is what the
     statement says.
     """
-    for name in casts:
+    for name in reversed(list(casts)):
+        if name == "_array":
+            continue
         if name in ("int2", "int4", "int8", "integer", "bigint", "smallint"):
             try:
                 value = int(str(value))
@@ -1061,13 +1080,21 @@ def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
     arguments: list[object] = []
     for argument in call.args or ():
         node = argument
+        # Collected outermost-first as the walk descends; applied in the other
+        # order below, because `('5'::text)::integer` casts to text and THEN to
+        # integer, which is not the same as the reverse.
         casts: list[str] = []
         while isinstance(node, TypeCast):
-            casts.extend(
+            names = [
                 _sval(part)
                 for part in getattr(node.typeName, "names", ()) or ()
                 if _sval(part)
-            )
+            ]
+            if getattr(node.typeName, "arrayBounds", None):
+                # An array cast does not change the element values, and
+                # stringifying the list would destroy them.
+                names = ["_array"]
+            casts.extend(names)
             node = node.arg
         if isinstance(node, ParamRef):
             number = node.number if isinstance(node.number, int) else 0

@@ -300,6 +300,28 @@
           "arguments_max": 3,
           "arguments_min": 2,
           "channel": "bitemporal",
+          "column_types": [
+            "uuid",
+            "text",
+            "uuid",
+            "uuid",
+            "text",
+            "uuid",
+            "text",
+            "text",
+            "timestamptz",
+            "timestamptz",
+            "timestamptz",
+            "timestamptz",
+            "uuid",
+            "real",
+            "bigint",
+            "bigint",
+            "text",
+            "timestamptz",
+            "timestamptz",
+            "text"
+          ],
           "columns": [
             "deployment_id",
             "fact_kind",
@@ -24938,5 +24960,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/1",
-  "surface_manifest_hash": "aecb3c9201a551bfba2ec034faf6b6d760f886ed9bedfe0f6212dc9372ddfd78"
+  "surface_manifest_hash": "0e4ceec3f9c3c9149927f172acb19759d20549e6d2ed1218e1194f21b9587244"
 }

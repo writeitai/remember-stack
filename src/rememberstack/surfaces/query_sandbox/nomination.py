@@ -621,6 +621,7 @@ class BodyConfirmation:
 
     rows: list[tuple[Any, ...]]
     requested: int
+    pg_confirmed_at: datetime | None = None
     absent_current: int = 0
     absent_projection: int = 0
     mismatch_hash: int = 0
@@ -685,10 +686,39 @@ def chunk_id_list(value: object) -> tuple[tuple[int, str], ...]:
     return tuple(ordered)
 
 
+_CURRENT_GENERATIONS_SQL: Final = (
+    "SELECT embedding_input_policy_version, policy_generation, embedder_generation"
+    " FROM memory_v1.chunks_live"
+    " WHERE deployment_id = %(deployment)s"
+    "   AND policy_generation IS NOT NULL"
+    "   AND embedder_generation IS NOT NULL"
+    " ORDER BY created_at DESC"
+    " LIMIT 1"
+)
+
+
+def current_chunk_generations(
+    *, connection: psycopg.Connection, deployment_id: UUID
+) -> tuple[str | None, str | None]:
+    """The D80 generation pair the spine currently stamps chunks with.
+
+    The spine decides which generation is current, not the projection: asking
+    the projection would mean reading whichever pair happens to sort highest
+    among whatever rows it still holds, including generations the spine has
+    already moved past.
+    """
+    row = connection.execute(
+        _CURRENT_GENERATIONS_SQL.encode(), {"deployment": str(deployment_id)}
+    ).fetchone()
+    if row is None:
+        return None, None
+    return row[1], row[2]
+
+
 def confirm_chunk_coordinates(
     *, connection: psycopg.Connection, chunk_ids: Sequence[str], deployment_id: UUID
-) -> dict[str, tuple[Any, ...]]:
-    """What PostgreSQL currently publishes for each requested chunk id.
+) -> tuple[dict[str, tuple[Any, ...]], datetime | None]:
+    """What PostgreSQL currently publishes for each requested chunk id, and when.
 
     This runs BEFORE any projection read. PostgreSQL decides which chunks
     exist, what their current coordinate is, which D80 header belongs to them,
@@ -696,7 +726,8 @@ def confirm_chunk_coordinates(
     about ids that survived, and only to supply bytes.
     """
     if not chunk_ids:
-        return {}
+        return {}, None
+    confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
     cursor = connection.execute(
         _BODY_SQL.encode(), {"deployment": str(deployment_id), "ids": list(chunk_ids)}
     )
@@ -707,7 +738,7 @@ def confirm_chunk_coordinates(
             code=QueryErrorCode.INVALID_PARAMETER,
             message="the requested chunks span more than one D80 generation",
         )
-    return confirmed
+    return confirmed, (confirmed_at[0] if confirmed_at else None)
 
 
 def verify_bodies(
@@ -716,6 +747,7 @@ def verify_bodies(
     coordinates: dict[str, tuple[Any, ...]],
     texts: dict[str, Any],
     budget: BridgeSettings | None = None,
+    pg_confirmed_at: datetime | None = None,
 ) -> BodyConfirmation:
     """Admit projection bytes only where they match what the spine recorded.
 
@@ -763,6 +795,7 @@ def verify_bodies(
     return BodyConfirmation(
         rows=rows,
         requested=len(requested),
+        pg_confirmed_at=pg_confirmed_at,
         absent_current=absent_current,
         absent_projection=absent_projection,
         mismatch_hash=mismatch_hash,

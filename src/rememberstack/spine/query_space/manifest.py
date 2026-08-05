@@ -179,6 +179,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
     those rolls `surface_manifest_hash` — the point of putting them here.
     """
     from rememberstack.surfaces.query_sandbox import nomination
+    from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_COLUMN_TYPES
     from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_COLUMNS
     from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_ROWS_MAX
     from rememberstack.surfaces.query_sandbox.bridge import FUNCTION_TARGETS
@@ -255,6 +256,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "filters": [],
             "projection_filters": [],
             "columns": list(FACTS_AS_OF_COLUMNS),
+            "column_types": list(FACTS_AS_OF_COLUMN_TYPES),
             "max_rows_hard_cap": FACTS_AS_OF_ROWS_MAX,
             "parallel": "safe",
         }

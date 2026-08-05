@@ -1010,47 +1010,81 @@ def test_the_confirmation_instant_is_disclosed(seeded: tuple[str, UUID]) -> None
     assert outcome.semantic_invocations[0].pg_confirmed_at is not None
 
 
-def test_one_search_binds_one_generation_pair(tmp_path: Path) -> None:
-    """A chunk embedded twice must not be nominated twice by one search."""
-    from rememberstack.adapters.selfhost.lance import resolve_generations
+def test_a_search_runs_under_the_generation_the_spine_stamps(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A chunk embedded twice must not be searched under both at once."""
+    url, _ = seeded
 
-    class _Table:
-        schema = [
-            type("F", (), {"name": "policy_generation"}),
-            type("F", (), {"name": "embedder_generation"}),
-        ]
+    class _Recording(_BodySearch):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.pins: tuple[object, object] = (None, None)
 
-        def __init__(self, rows: list[dict[str, str]]) -> None:
-            self._rows = rows
+        def _answer(self, **kwargs: object):  # type: ignore[override]  # noqa: ANN202
+            self.pins = (
+                kwargs.get("policy_generation"),
+                kwargs.get("embedder_generation"),
+            )
+            return ()
 
-        def search(self):  # noqa: ANN202
-            return self
+        search_chunks_scored = _answer
+        search_chunks_lexical_scored = _answer
 
-        def where(self, *_: object, **__: object):  # noqa: ANN202
-            return self
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        current = connection.execute(
+            "SELECT policy_generation, embedder_generation FROM memory_v1.chunks_live"
+            " WHERE deployment_id = %s AND policy_generation IS NOT NULL"
+            " ORDER BY created_at DESC LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    assert current is not None, "the corpus stamps its chunks"
 
-        def limit(self, *_: object):  # noqa: ANN202
-            return self
+    search = _Recording()
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT rank FROM semantic_chunks($1, 5)", parameters=["weather"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    # Unpinned still binds ONE pair: the one the spine currently stamps.
+    assert search.pins == (current[0], current[1])
 
-        def to_list(self) -> list[dict[str, str]]:
-            return self._rows
 
-    rows = [
-        {"policy_generation": "p1", "embedder_generation": "e1"},
-        {"policy_generation": "p1", "embedder_generation": "e2"},
-    ]
-    # Unpinned: exactly one pair, the newest.
-    assert resolve_generations(
-        table=_Table(rows),  # type: ignore[arg-type]
-        deployment_id=str(_DEPLOYMENT),
-        policy_generation=None,
-        embedder_generation=None,
-    ) == ("p1", "e2")
-    # A partial pin that still names two vector spaces is refused, not guessed.
-    with pytest.raises(LookupError):
-        resolve_generations(
-            table=_Table(rows),  # type: ignore[arg-type]
-            deployment_id=str(_DEPLOYMENT),
-            policy_generation="p1",
-            embedder_generation=None,
+def test_a_partial_pin_the_spine_cannot_complete_is_refused(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Guessing which half of a pin the caller meant is worse than refusing."""
+    url, _ = seeded
+    outcome = _executor(url, _BodySearch({})).query_sql(
+        sql="SELECT rank FROM semantic_chunks($1, 5, '{}'::jsonb, $2, NULL)",
+        parameters=["weather", "a-policy-nobody-stamps"],
+    )
+    assert outcome.error_code == QueryErrorCode.GENERATION_UNAVAILABLE
+
+
+def test_a_parameter_marker_inside_an_identifier_is_part_of_the_name(
+    seeded: tuple[str, UUID],
+) -> None:
+    """`AS "a$1"` names a column `a$1`; it does not bind a parameter."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql='SELECT "a$1".rank FROM semantic_claims($1, 5) AS "a$1"',
+        parameters=["memory"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((1,),)
+
+
+def test_a_body_fetch_reports_when_postgresql_confirmed(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A confirmation a caller cannot date is a confirmation they must trust."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    body = "A short body."
+    with _embedding_hash(url, chunk_id, embedding_text_hash(f"{header}\n\n{body}")):
+        outcome = _executor(url, _BodySearch({chunk_id: body})).query_sql(
+            sql="SELECT source_text FROM fetch_chunk_bodies($1)",
+            parameters=[[chunk_id]],
         )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.semantic_invocations[0].pg_confirmed_at is not None

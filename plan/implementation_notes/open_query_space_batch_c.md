@@ -108,12 +108,18 @@ still type-checks.
 A chunk exists once per D80 generation triple, so a search that does not bind a
 pair nominates the same chunk once per generation it was ever embedded under —
 the caller sees duplicates and spends their `k` on them. Every chunk search
-therefore binds exactly one `(policy_generation, embedder_generation)` pair:
-the pinned one, a partial pin completed from the rows that carry it, or the
-newest pair the deployment holds. A partial pin that still names two vector
-spaces is refused rather than resolved by guess, and a pinned embedder
-generation is passed to the embedder — comparing an old document vector to a
-new query vector is not a search, it is a category error.
+therefore binds exactly one `(policy_generation, embedder_generation)` pair.
+
+The pair is resolved BEFORE the query is embedded, and PostgreSQL is the
+authority: an unpinned search runs under the generation the spine currently
+stamps chunks with, not under whichever pair happens to sort highest among
+whatever the projection still holds. A partial pin is completed only when the
+spine's current pair carries the pinned half; otherwise it is refused, because
+guessing which half the caller meant is worse than saying it cannot be done.
+The resolved embedder generation is then passed to the embedder — comparing an
+old document vector to a new query vector is not a worse search, it is a
+meaningless one — and the projection refuses a pair it does not hold rather
+than returning an empty result that reads as "nothing matched".
 
 ## Generation pins bind, or the request fails
 
@@ -159,6 +165,13 @@ separation rather than assuming it, and it is why `source_text` is returned as
 the body alone with the header in its own column. An earlier version of this
 path expected P1 to hold the composed text; it could not have verified a
 single row written by the real pipeline.
+
+What is verified is the embedding-text hash. §3.4 also names the source-content
+hash, and that one is NOT checked here: `chunk_content_hash` is a hash of the
+chunk's ordered block hashes, which cannot be derived from the body text the
+projection stores, so there is nothing to compare it against without carrying
+it into P1. That is an ingest-side change and is recorded here rather than
+described as done.
 
 A chunk with no recorded embedding-text hash has nothing to verify against, so
 its body is not returned. Unverifiable is not the same as verified, and this

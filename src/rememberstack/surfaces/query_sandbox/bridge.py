@@ -32,6 +32,7 @@ from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import confirm
 from rememberstack.surfaces.query_sandbox.nomination import confirm_chunk_coordinates
 from rememberstack.surfaces.query_sandbox.nomination import Confirmation
+from rememberstack.surfaces.query_sandbox.nomination import current_chunk_generations
 from rememberstack.surfaces.query_sandbox.nomination import projection_filters
 from rememberstack.surfaces.query_sandbox.nomination import published_contract
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
@@ -96,6 +97,28 @@ FACTS_AS_OF_COLUMNS: Final = (
     "applied_valid_at",
     "applied_believed_at",
     "identity_regime",
+)
+FACTS_AS_OF_COLUMN_TYPES: Final = (
+    "uuid",
+    "text",
+    "uuid",
+    "uuid",
+    "text",
+    "uuid",
+    "text",
+    "text",
+    "timestamptz",
+    "timestamptz",
+    "timestamptz",
+    "timestamptz",
+    "uuid",
+    "real",
+    "bigint",
+    "bigint",
+    "text",
+    "timestamptz",
+    "timestamptz",
+    "text",
 )
 FACTS_AS_OF_ROWS_MAX: Final = 1000
 
@@ -168,7 +191,7 @@ def explain_placeholders(
     needs and all it needs.
     """
     placeholders: list[ResolvedInvocation] = []
-    for cte_name, function, _ in bindings:
+    for cte_name, function, raw_arguments in bindings:
         if function in SQL_NATIVE_FUNCTIONS:
             continue
         if function not in FUNCTION_TARGETS:
@@ -176,6 +199,17 @@ def explain_placeholders(
                 code=QueryErrorCode.FUNCTION_NOT_ALLOWED,
                 message=f"{function} is not a resolvable public function",
             )
+        # A plan for a call that could not run is not a useful answer: the
+        # arity is checked here too, so EXPLAIN and execution agree about
+        # which statements are legal.
+        if function == "fetch_chunk_bodies":
+            if len(raw_arguments) != 1:
+                raise SandboxRejection(
+                    code=QueryErrorCode.INVALID_PARAMETER,
+                    message="fetch_chunk_bodies takes exactly one uuid[] argument",
+                )
+        else:
+            _check_arity(function=function, arguments=tuple(raw_arguments))
         if function == "fetch_chunk_bodies":
             columns, oids = BODY_COLUMNS, BODY_TYPE_OIDS
         else:
@@ -268,6 +302,18 @@ def _resolve_one(
                 f"the {target} channel carries no D80 generation stamp,"
                 " so it cannot be pinned to one"
             ),
+        )
+
+    if target == "chunks":
+        # Resolve the generation pair FIRST, then embed under it. Embedding
+        # before the pair is known means the query vector can come from a
+        # different vector space than the stored vectors that are about to be
+        # searched — which is not a worse search, it is a meaningless one.
+        policy_generation, embedder_generation = _pinned_generations(
+            connection=connection,
+            settings=settings,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
         )
 
     nominate = _nominator(
@@ -386,6 +432,7 @@ def _hydrate(
         coordinates=coordinates,
         texts=texts,
         budget=settings,
+        pg_confirmed_at=confirmation.pg_confirmed_at,
     )
     bodies = {chunk_ids[row[0]]: row[8] for row in body.rows}
     rows = [
@@ -457,6 +504,49 @@ def _check_arity(*, function: str, arguments: tuple[object, ...]) -> None:
                 f" {len(arguments)} given"
             ),
         )
+
+
+def _pinned_generations(
+    *,
+    connection: psycopg.Connection,
+    settings: BridgeSettings,
+    policy_generation: str | None,
+    embedder_generation: str | None,
+) -> tuple[str | None, str | None]:
+    """The one generation pair this search will run against.
+
+    A fully pinned request is taken as written. An unpinned one takes the pair
+    the spine currently stamps, so a corpus that has been re-embedded is
+    searched under one vector space rather than all of them at once. A partial
+    pin is completed only when the spine's current pair carries the pinned
+    half; otherwise the caller has named something this surface cannot resolve
+    on its own, and guessing which half they meant would be worse than saying
+    so.
+    """
+    if policy_generation is not None and embedder_generation is not None:
+        return policy_generation, embedder_generation
+    try:
+        current_policy, current_embedder = current_chunk_generations(
+            connection=connection, deployment_id=settings.deployment_id
+        )
+    except psycopg.Error as error:
+        raise SandboxRejection(
+            code=QueryErrorCode.CONFIRMATION_FAILED,
+            message="the current chunk generation could not be read",
+        ) from error
+    if policy_generation is None and embedder_generation is None:
+        return current_policy, current_embedder
+    if policy_generation is not None and current_policy == policy_generation:
+        return policy_generation, current_embedder
+    if embedder_generation is not None and current_embedder == embedder_generation:
+        return current_policy, embedder_generation
+    raise SandboxRejection(
+        code=QueryErrorCode.GENERATION_UNAVAILABLE,
+        message=(
+            "a partial generation pin can only be completed from the"
+            " generation the spine currently stamps; name both halves"
+        ),
+    )
 
 
 def _optional_text(arguments: tuple[object, ...], index: int, name: str) -> str | None:
@@ -711,7 +801,7 @@ def _resolve_bodies(
         )
     requested = chunk_id_list(arguments[0])
     try:
-        coordinates = confirm_chunk_coordinates(
+        coordinates, confirmed_at = confirm_chunk_coordinates(
             connection=connection,
             chunk_ids=[chunk_id for _, chunk_id in requested],
             deployment_id=settings.deployment_id,
@@ -730,7 +820,11 @@ def _resolve_bodies(
         else {}
     )
     confirmation = verify_bodies(
-        requested=requested, coordinates=coordinates, texts=texts, budget=settings
+        requested=requested,
+        coordinates=coordinates,
+        texts=texts,
+        budget=settings,
+        pg_confirmed_at=confirmed_at,
     )
     return ResolvedInvocation(
         cte_name=cte_name,
@@ -749,6 +843,7 @@ def _resolve_bodies(
             dropped_absent_current=confirmation.absent_current,
             dropped_absent_projection=confirmation.absent_projection,
             dropped_hash_mismatch=confirmation.mismatch_hash,
+            pg_confirmed_at=confirmation.pg_confirmed_at,
             termination_reason="completed",
         ),
     )
