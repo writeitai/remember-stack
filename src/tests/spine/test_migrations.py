@@ -461,3 +461,49 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_after_noop = _head_revision(database_url=database_url)
     assert head_before_noop == head_after_noop == "p9_04_0025"
     assert _inventory(database_url=database_url) == restored_inventory
+
+
+def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
+    """The correction migration must leave exact p9.03 metadata on downgrade."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+
+    def metadata() -> dict[str, tuple[str, str | None, str]]:
+        """Read the owner, comment, and definition of the corrected helpers."""
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                rows = connection.execute(
+                    text(
+                        "SELECT c.relname, pg_get_userbyid(c.relowner) AS owner,"
+                        " obj_description(c.oid, 'pg_class') AS comment,"
+                        " pg_get_viewdef(c.oid, true) AS definition"
+                        " FROM pg_class AS c"
+                        " JOIN pg_namespace AS n ON n.oid = c.relnamespace"
+                        " WHERE n.nspname = 'public'"
+                        " AND c.relname IN"
+                        " ('v_graph_survivor', 'v_memory_entity_survivor')"
+                    )
+                ).mappings()
+                return {
+                    str(row["relname"]): (
+                        str(row["owner"]),
+                        None if row["comment"] is None else str(row["comment"]),
+                        str(row["definition"]),
+                    )
+                    for row in rows
+                }
+        finally:
+            engine.dispose()
+
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p9_03_0024")
+    expected = metadata()
+    assert set(expected) == {"v_graph_survivor", "v_memory_entity_survivor"}
+
+    try:
+        command.upgrade(config=config, revision="head")
+        command.downgrade(config=config, revision="p9_03_0024")
+        assert metadata() == expected
+    finally:
+        command.upgrade(config=config, revision="head")

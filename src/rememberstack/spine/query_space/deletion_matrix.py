@@ -263,7 +263,6 @@ DELETION_TARGETS: Final = (
             "memory_v1.changes_visible",
             "memory_v1.claims_visible_history",
             "memory_v1.document_versions_visible",
-            "memory_v1.identity_events_visible",
             "memory_v1.testimony_currency_events_visible",
         ),
     ),

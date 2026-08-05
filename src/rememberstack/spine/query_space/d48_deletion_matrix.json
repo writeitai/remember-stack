@@ -331,9 +331,9 @@
       "target_id": "version"
     },
     {
-      "basis": null,
-      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.identity_events_visible before the mutation, and no column of any row carries one of them after it.",
-      "status": "applicable",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.identity_events_visible",
       "target_id": "version"
     },
@@ -1832,9 +1832,9 @@
   "contract": "memory_v1.d48_deletion_matrix/2",
   "schema": "memory_v1",
   "status_counts": {
-    "applicable": 63,
+    "applicable": 62,
     "deferred": 87,
-    "not_applicable": 111
+    "not_applicable": 112
   },
   "surface_count": 29,
   "surfaces": [
@@ -2042,7 +2042,6 @@
         "memory_v1.changes_visible",
         "memory_v1.claims_visible_history",
         "memory_v1.document_versions_visible",
-        "memory_v1.identity_events_visible",
         "memory_v1.testimony_currency_events_visible"
       ],
       "executed_in": "A",

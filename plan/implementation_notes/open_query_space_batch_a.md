@@ -6,7 +6,7 @@
 **Migrations:** `p9_01_0022_memory_v1_query_space`,
 `p9_04_0025_coordinate_binding`
 **Manifest:** `src/rememberstack/spine/query_space/memory_v1_manifest.json`
-**`surface_manifest_hash`:** `e597529b3bfade738768b481e0959f7d8640274af0c66df9fb15d5be6da476b1`
+**`surface_manifest_hash`:** `4f7a5a69fda0cfdba698d4d71c4e9e54c7b432ccaa05f33e5872a4bd84345eff`
 
 Batch A is the schema contract: the `memory_v1` relation set, the machine-readable
 manifest that describes it, the canonicalizer that turns that manifest into one stable
@@ -32,8 +32,8 @@ Five private authorization helpers exist, and they are deliberately **not** in
   over `v_graph_survivor`. It does not implement a second merge walk.
 - `public.v_memory_fact_visible` is the one fact-membership authority. It admits a
   relation or observation only when every declared endpoint resolves to
-  `entities_current` and at least one evidence association binds an existing claim to
-  that claim's surviving lineage. Both `facts_visible_history` and
+  `entities_current` and at least one evidence association binds a fully visible
+  historical claim coordinate. Both `facts_visible_history` and
   `fact_claim_evidence_live` consume it, so an evidence row cannot manufacture a ghost
   fact and the catalog cannot disagree with its bridge.
 - `public.v_memory_mention_current_content` is the single definition of "this mention
@@ -175,12 +175,12 @@ than dangling — and the anomaly is counted in the operator quarantine report
 it. Valid chains have no arbitrary maximum depth.
 
 **Shared authorities also need an explicit planning boundary at fan-out.** PostgreSQL
-expands ordinary views before planning. `changes_visible` references the same fact
-history in six union arms, so naively nesting the new fact and survivor authorities in
-each arm multiplies an already-deep authorization tree and can exhaust planner memory.
-Its `fact_history AS MATERIALIZED` CTE evaluates that authority once per statement and
-reuses it across the six arms. This changes no membership or public shape; it makes the
-single-authority design operationally safe instead of duplicating its expanded plan.
+expands ordinary views before planning. `changes_visible` references the same fact set
+in six union arms, so naively nesting the new fact and survivor authorities in each arm
+multiplies an already-deep authorization tree and can exhaust planner memory. Its
+`visible_facts AS MATERIALIZED` CTE evaluates `v_memory_fact_visible` once per statement
+and reuses it across the six arms. This changes no membership or public shape; the
+history projection adds live evidence counts that a change event does not consume.
 
 ### D41 — one predicate, one instant
 
@@ -274,20 +274,17 @@ historical reconstructions.
   reviewed: the count *is* the number of transcript rows, and a gate asserts that
   equality on every pair. `entities_current.live_mention_count` sums these counts, so it
   inherits the same meaning instead of a differently-derived one.
-- **`entities_current`** requires surviving provenance — a mention in current content or
+- **`entities_current`** requires surviving provenance — a mention in surviving content or
   a live document-entity bridge — so an entity whose every source was forgotten
   disappears instead of becoming an orphan. `graph_degree` is copied from the latest
   published graph snapshot and is documented as orientation that can lag.
-  **One consequence is worth stating plainly**, because it follows from counting current
-  content and is not obvious: an entity whose *only* mention sits in a superseded version
-  of a live lineage is now absent, where a version-level gate would have kept it. That is
-  the fail-closed direction — the entity has no place in current content to point at, and
-  the alternative is a second, looser provenance chain beside the counting one, which is
-  the drift this batch just removed. The quarantine probe
-  `entity_without_surviving_provenance` was rewritten against the same helper for the
-  same reason — an operator report that counted a *different* set from the one the view
-  omits would be worse than no report — so such entities are omitted from the surface and
-  countable in the report.
+  Mention provenance may come from a superseded but surviving version, while the live
+  mention and document counts remain current-content counts. That historical provenance
+  still binds the mention's chunk to the same document, version, and ready
+  representation; a chunk cannot borrow a representation from another version to keep
+  the entity or its identity event visible. The quarantine probe
+  `entity_without_surviving_provenance` asks `entities_current` directly, so the report
+  and the public omission cannot describe different sets.
 - **`identity_events_visible`** and **`changes_visible`** are UNION views whose declared
   key is `(deployment_id, object_kind, event_id)`. Uniqueness across the underlying id
   spaces is proven by construction: **every arm emits a distinct `object_kind` literal
@@ -316,12 +313,12 @@ historical reconstructions.
 - **`v_memory_page_citation_visible` is written as two UNION arms rather than one scan
   with an `OR` of two gates**, and that is a planner fact worth knowing before someone
   "simplifies" it back. A disjunction of two `EXISTS` subqueries cannot be planned as two
-  semi-joins: PostgreSQL falls back to evaluating each side as a materialized subplan, and
-  because one side is `facts_visible_history` — which itself resolves survivors and
-  aggregates `evidence_lineage` — reading `pages_live` on a four-artifact fixture took
-  **7.9 seconds**. The same predicate split into one arm per target class, each with its
-  own `EXISTS`, reads in **0.02 seconds**. Nothing about the semantics changed; only the
-  shape the planner is given.
+  semi-joins: PostgreSQL falls back to evaluating each side as a materialized subplan.
+  The relation arm asks `v_memory_fact_visible` directly rather than expanding
+  `facts_visible_history` and its unused live evidence counts. `page_evidence_visible`
+  materializes the citation authority once and joins the artifact's non-tombstoned
+  status directly, which is exactly the membership rule it needs. Nothing about the
+  semantics changed; only duplicate authorization work was removed.
 - **`document_crossrefs_live`** exposes a `context` bounded to 500 characters and
   deliberately omits `raw_citation`, which is retained even after a target is forgotten
   and would therefore be a leak path.
@@ -506,8 +503,8 @@ file equals its generator verbatim. The split:
 
 | Cell status | Count | What the gate proves, per cell |
 |---|---|---|
-| `applicable` | 63 | The forbidden identifiers **were reachable** through this relation before the mutation, and no column of any row carries one after it. |
-| `not_applicable` / `no_identifier_of_this_class` | 99 | The reachable set really **is empty**, before and after — the declaration is checked, not trusted. |
+| `applicable` | 62 | The forbidden identifiers **were reachable** through this relation before the mutation, and no column of any row carries one after it. |
+| `not_applicable` / `no_identifier_of_this_class` | 100 | The reachable set really **is empty**, before and after — the declaration is checked, not trusted. |
 | `not_applicable` / `not_caller_reachable` | 12 | The surface is outside `memory_v1` and carries **no grant at all**, which the gate reads from `pg_class.relacl` and `information_schema.role_table_grants`. |
 | `deferred` | 87 | Recorded with the batch that will execute it (P1 candidate → C, P2 edge → D, corpus body → C), so the artifact's coverage claim states its own scope. |
 
@@ -517,7 +514,7 @@ assertion passes trivially wherever the identifier could never have been present
 old per-*target* non-vacuity check (`any()` across that target's row) hid that — one
 reachable surface satisfied it for all 24. Per-cell reachability makes each cell state
 and prove its own obligation, and the honest consequence is visible in the numbers: only
-56 of 144 public cells were ever proving anything, and the other 88 now say so and prove
+55 of 144 public cells are proving deletion, and the other 89 say so and prove
 their emptiness instead. A separate fixture proves a composed fact → evidence → claim →
 source path drops as a unit when any hop stops being visible.
 
@@ -547,7 +544,10 @@ current support.
 cases the invariants turn on, each written as the adversarial move it defends against.
 Repointing a mention's own `doc_id` at a tombstoned lineage removes the mention from
 `mentions_live` and its contribution from `entity_document_mentions`, rather than
-publishing it under the live lineage of its chunk. Retiring the entity a live resolution
+publishing it under the live lineage of its chunk. Repointing the chunk's representation
+at another version also removes the claim, entity, identity event, fact, and all their
+siblings. A raw claim whose chunk does not exist cannot authorize any fact surface.
+Retiring the entity a live resolution
 names leaves the mention visible and nulls all five resolution columns together. Every
 `entity_document_mentions` row's count equals the number of `mentions_live` rows for that
 survivor and lineage, and the corpus is asserted to contain a mention of superseded
@@ -560,10 +560,12 @@ removes the page and its links from the public surface, while a page that keeps 
 visible citation stays; the uncited page exists and is active in the base tables, is absent
 from `pages_live`, and is counted once by the quarantine report.
 
-**Suite, types, lint, migration cycle.** The Batch A and manifest suites pass **62 tests**,
-including the 261 matrix cells and the explicit 24-view sibling sweep. All **5 migration
-tests** pass, including the fresh up/down/up lifecycle that asserts head revision
-`p9_04_0025` and that downgrade leaves no `memory_v1` schema behind.
+**Suite, types, lint, migration cycle.** The Batch A and manifest gate comprises **63
+tests**. The focused reviewer regressions, the explicit 24-view sibling sweep, and the
+complete 261-cell matrix pass. All **6 migration tests** pass, including the fresh
+up/down/up lifecycle and the exact p9.03 helper metadata restoration check. The
+lifecycle asserts head revision `p9_04_0025` and that downgrade leaves no `memory_v1`
+schema behind.
 `pyright src/ benchmarks/` reports zero errors; `ruff check`, `ruff format --check`,
 generated-manifest identity, generated-matrix identity, and `git diff --check` are clean. `pglast` (pinned to
 major 6, the PostgreSQL 16 grammar) remains what makes the parse tree — rather than a

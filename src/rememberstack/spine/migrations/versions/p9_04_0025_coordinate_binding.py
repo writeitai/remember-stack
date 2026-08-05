@@ -394,6 +394,11 @@ WHERE e.status = 'active'
         ON vv.deployment_id = ch.deployment_id
        AND vv.version_id = ch.version_id
        AND vv.doc_id = ch.doc_id
+      JOIN document_representations AS representation
+        ON representation.deployment_id = ch.deployment_id
+       AND representation.version_id = ch.version_id
+       AND representation.representation_id = ch.representation_id
+       AND representation.status = 'ready'
       CROSS JOIN LATERAL (
         SELECT rd.entity_id
         FROM resolution_decisions AS rd
@@ -452,20 +457,9 @@ JOIN v_memory_entity_survivor AS s
 JOIN memory_v1.entities_current AS ec
   ON ec.deployment_id = s.deployment_id
  AND ec.entity_id = s.survivor_entity_id
-WHERE EXISTS (
-  SELECT 1
-  FROM mentions AS m
-  JOIN chunks AS ch
-    ON ch.deployment_id = m.deployment_id
-   AND ch.chunk_id = m.chunk_id
-   AND ch.doc_id = m.doc_id
-  JOIN memory_v1.document_versions_visible AS vv
-    ON vv.deployment_id = ch.deployment_id
-   AND vv.version_id = ch.version_id
-   AND vv.doc_id = ch.doc_id
-  WHERE m.deployment_id = rd.deployment_id
-    AND m.mention_id = rd.mention_id
-)
+JOIN memory_v1.mentions_live AS mention
+  ON mention.deployment_id = rd.deployment_id
+ AND mention.mention_id = rd.mention_id
 UNION ALL
 SELECT
   me.deployment_id,
@@ -535,13 +529,10 @@ JOIN memory_v1.entities_current AS object
 WHERE EXISTS (
   SELECT 1
   FROM relation_evidence AS evidence
-  JOIN claims AS claim
+  JOIN memory_v1.claims_visible_history AS claim
     ON claim.deployment_id = evidence.deployment_id
    AND claim.claim_id = evidence.claim_id
    AND claim.doc_id = evidence.doc_id
-  JOIN memory_v1.documents_live AS lineage
-    ON lineage.deployment_id = claim.deployment_id
-   AND lineage.doc_id = claim.doc_id
   WHERE evidence.deployment_id = r.deployment_id
     AND evidence.relation_id = r.relation_id
 )
@@ -571,18 +562,57 @@ JOIN memory_v1.entities_current AS subject
 WHERE EXISTS (
   SELECT 1
   FROM observation_evidence AS evidence
-  JOIN claims AS claim
+  JOIN memory_v1.claims_visible_history AS claim
     ON claim.deployment_id = evidence.deployment_id
    AND claim.claim_id = evidence.claim_id
    AND claim.doc_id = evidence.doc_id
-  JOIN memory_v1.documents_live AS lineage
-    ON lineage.deployment_id = claim.deployment_id
-   AND lineage.doc_id = claim.doc_id
   WHERE evidence.deployment_id = o.deployment_id
     AND evidence.observation_id = o.observation_id
 );
 COMMENT ON VIEW v_memory_fact_visible IS
-  'Private single authority for historically visible fact membership. A relation or observation appears only when every entity endpoint resolves to entities_current and at least one evidence association binds an existing claim to that claim''s surviving document lineage. Both facts_visible_history and fact_claim_evidence_live consume this helper, so the fact catalog and its evidence bridge cannot disagree. Not part of memory_v1 and never granted to a query role.';
+  'Private single authority for historically visible fact membership. A relation or observation appears only when every entity endpoint resolves to entities_current and at least one evidence association binds a fully visible historical claim coordinate. Both facts_visible_history and fact_claim_evidence_live consume this helper, so the fact catalog and its evidence bridge cannot disagree. Not part of memory_v1 and never granted to a query role.';
+
+CREATE OR REPLACE VIEW v_memory_page_citation_visible (
+  deployment_id,
+  artifact_id,
+  role,
+  target_kind,
+  target_id,
+  claim_chunk_content_hash
+) AS
+SELECT
+  e.deployment_id,
+  e.artifact_id,
+  e.role::text,
+  CASE WHEN e.claim_lineage_id IS NOT NULL THEN 'claim' ELSE 'document' END,
+  coalesce(e.claim_lineage_id, e.doc_id),
+  e.claim_chunk_content_hash
+FROM knowledge_artifact_evidence AS e
+WHERE (e.claim_lineage_id IS NOT NULL OR e.relation_id IS NULL)
+  AND EXISTS (
+    SELECT 1
+    FROM memory_v1.documents_live AS d
+    WHERE d.deployment_id = e.deployment_id
+      AND d.doc_id = coalesce(e.claim_lineage_id, e.doc_id)
+  )
+UNION ALL
+SELECT
+  e.deployment_id,
+  e.artifact_id,
+  e.role::text,
+  'relation',
+  e.relation_id,
+  e.claim_chunk_content_hash
+FROM knowledge_artifact_evidence AS e
+WHERE e.claim_lineage_id IS NULL
+  AND e.relation_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM v_memory_fact_visible AS fact
+    WHERE fact.deployment_id = e.deployment_id
+      AND fact.fact_kind = 'relation'
+      AND fact.fact_id = e.relation_id
+  );
 
 CREATE OR REPLACE VIEW memory_v1.fact_claim_evidence_live (
   deployment_id,
@@ -705,6 +735,43 @@ CROSS JOIN LATERAL (
     AND lineage.fact_id = fact.fact_id
 ) AS counts;
 
+CREATE OR REPLACE VIEW memory_v1.page_evidence_visible (
+  deployment_id,
+  artifact_id,
+  role,
+  target_kind,
+  target_id,
+  claim_chunk_content_hashes,
+  link_count
+) AS
+WITH visible_links AS MATERIALIZED (
+  SELECT * FROM v_memory_page_citation_visible
+)
+SELECT
+  link.deployment_id,
+  link.artifact_id,
+  link.role,
+  link.target_kind,
+  link.target_id,
+  array_agg(
+    DISTINCT link.claim_chunk_content_hash
+    ORDER BY link.claim_chunk_content_hash
+  ) FILTER (WHERE link.claim_chunk_content_hash IS NOT NULL),
+  count(*)::bigint
+FROM visible_links AS link
+JOIN knowledge_artifacts AS artifact
+  ON artifact.deployment_id = link.deployment_id
+ AND artifact.artifact_id = link.artifact_id
+ AND artifact.status <> 'tombstoned'
+GROUP BY
+  link.deployment_id,
+  link.artifact_id,
+  link.role,
+  link.target_kind,
+  link.target_id;
+COMMENT ON VIEW memory_v1.page_evidence_visible IS
+  'One row per visible artifact-to-target citation, keyed by (deployment_id, artifact_id, role, target_kind, target_id) and joinable to pages_live on (deployment_id, artifact_id), documents_live on target_id for claim and document targets, and the fact relations on target_id for relation targets. EACH TARGET PASSES ITS OWN VISIBILITY GATE: a citation appears only while its cited lineage is live or its cited relation still has surviving provenance, so forgetting a source removes the link rather than leaving a reference to vanished content. The authoritative citation set is evaluated once and joined directly to non-tombstoned artifact status, which is exactly the membership rule pages_live applies, so a visible page always has at least one row here and a link never outlives the page that carries it. A claim citation is a stable coordinate on the asserting LINEAGE, and its chunk content hashes are exposed only as locators inside that already authorized lineage: the hash never authorizes a read and cannot be used to bypass the lineage gate. Because several chunk coordinates in one lineage collapse into one association, link_count reports exactly how many underlying links were collapsed. The view carries no clocks.';
+
 CREATE OR REPLACE VIEW memory_v1.changes_visible (
   deployment_id,
   object_kind,
@@ -713,23 +780,23 @@ CREATE OR REPLACE VIEW memory_v1.changes_visible (
   occurred_at,
   label
 ) AS
-WITH fact_history AS MATERIALIZED (
-  SELECT * FROM memory_v1.facts_visible_history
+WITH visible_facts AS MATERIALIZED (
+  SELECT * FROM v_memory_fact_visible
 )
 SELECT h.deployment_id, 'relation_ingest', h.fact_id, h.fact_id, h.ingested_at,
        coalesce(h.fact_label, h.predicate)
-FROM fact_history AS h
+FROM visible_facts AS h
 WHERE h.fact_kind = 'relation'
 UNION ALL
 SELECT h.deployment_id, 'relation_invalidation', h.fact_id, h.fact_id,
        h.invalidated_at, coalesce(h.fact_label, h.predicate)
-FROM fact_history AS h
+FROM visible_facts AS h
 WHERE h.fact_kind = 'relation' AND h.invalidated_at IS NOT NULL
 UNION ALL
 SELECT ra.deployment_id, 'relation_supersession', ra.adjudication_id, h.fact_id,
        ra.decided_at, coalesce(h.fact_label, h.predicate)
 FROM relation_adjudications AS ra
-JOIN fact_history AS h
+JOIN visible_facts AS h
   ON h.deployment_id = ra.deployment_id
  AND h.fact_kind = 'relation'
  AND h.fact_id = ra.relation_id
@@ -737,18 +804,18 @@ WHERE ra.outcome = 'supersede'
 UNION ALL
 SELECT h.deployment_id, 'observation_ingest', h.fact_id, h.fact_id, h.ingested_at,
        coalesce(h.fact_label, h.statement)
-FROM fact_history AS h
+FROM visible_facts AS h
 WHERE h.fact_kind = 'observation'
 UNION ALL
 SELECT h.deployment_id, 'observation_invalidation', h.fact_id, h.fact_id,
        h.invalidated_at, coalesce(h.fact_label, h.statement)
-FROM fact_history AS h
+FROM visible_facts AS h
 WHERE h.fact_kind = 'observation' AND h.invalidated_at IS NOT NULL
 UNION ALL
 SELECT oa.deployment_id, 'observation_supersession', oa.adjudication_id, h.fact_id,
        oa.decided_at, coalesce(h.fact_label, h.statement)
 FROM observation_adjudications AS oa
-JOIN fact_history AS h
+JOIN visible_facts AS h
   ON h.deployment_id = oa.deployment_id
  AND h.fact_kind = 'observation'
  AND h.fact_id = oa.observation_id
@@ -783,9 +850,16 @@ _REPLACED_INITIAL_VIEWS: tuple[str, ...] = (
     "memory_v1.testimony_currency_events_visible",
     "memory_v1.entities_current",
     "memory_v1.identity_events_visible",
+    "v_memory_page_citation_visible",
     "memory_v1.fact_claim_evidence_live",
     "memory_v1.facts_visible_history",
+    "memory_v1.page_evidence_visible",
     "memory_v1.changes_visible",
+)
+
+_REPLACED_VIEW_COMMENTS: tuple[str, ...] = (
+    "v_memory_entity_survivor",
+    "memory_v1.page_evidence_visible",
 )
 
 
@@ -812,6 +886,24 @@ def _prior_view_definitions() -> dict[str, str]:
     return definitions
 
 
+def _prior_view_comments() -> dict[str, str]:
+    """Extract comments overwritten by the correction for exact downgrade."""
+    comments: dict[str, str] = {}
+    for block in MEMORY_V1_AUTHORED_DDL:
+        for statement in _split_sql(sql=block):
+            comment_offset = statement.find("COMMENT ON VIEW ")
+            if comment_offset < 0:
+                continue
+            comment = statement[comment_offset:]
+            qualified_name = comment.split(maxsplit=4)[3]
+            if qualified_name in _REPLACED_VIEW_COMMENTS:
+                comments[qualified_name] = comment
+    missing = set(_REPLACED_VIEW_COMMENTS) - set(comments)
+    if missing:
+        raise RuntimeError(f"missing prior view comments: {sorted(missing)}")
+    return comments
+
+
 def upgrade() -> None:
     """Install the complete coordinate-binding correction and lock its grants."""
     apply_ddl(sql=MEMORY_V1_CORRECTION_DDL)
@@ -830,5 +922,8 @@ def downgrade() -> None:
     definitions = _prior_view_definitions()
     for qualified_name in _REPLACED_INITIAL_VIEWS:
         op.execute(definitions[qualified_name])
+    for statement in _prior_view_comments().values():
+        op.execute(statement)
     op.execute(_PRIOR_GRAPH_SURVIVOR_DDL)
+    op.execute("ALTER VIEW public.v_graph_survivor OWNER TO CURRENT_USER")
     op.execute("DROP VIEW v_memory_fact_visible")

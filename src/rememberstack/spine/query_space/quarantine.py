@@ -150,7 +150,7 @@ _PROBES: Final = (
         category="fact_without_visible_membership",
         explanation=(
             "A relation or observation is absent from the authoritative visible-fact "
-            "set because it has no claim-bound surviving provenance or an entity "
+            "set because it has no fully visible historical claim coordinate or an entity "
             "endpoint is not externally visible."
         ),
         repair=(
@@ -251,18 +251,19 @@ _PROBES: Final = (
         sql=(
             "SELECT count(*) FROM knowledge_artifact_evidence e WHERE "
             + _DEPLOYMENT_FILTER.format(alias="e")
-            + " AND NOT ("
-            " (coalesce(e.claim_lineage_id, e.doc_id) IS NOT NULL"
-            "  AND EXISTS (SELECT 1 FROM documents d"
-            "   WHERE d.deployment_id = e.deployment_id"
-            "   AND d.doc_id = coalesce(e.claim_lineage_id, e.doc_id)"
-            "   AND d.deleted_at IS NULL))"
-            " OR (e.relation_id IS NOT NULL AND EXISTS ("
-            "   SELECT 1 FROM relation_evidence re JOIN documents d"
-            "   ON d.deployment_id = re.deployment_id AND d.doc_id = re.doc_id"
-            "   AND d.deleted_at IS NULL WHERE re.deployment_id = e.deployment_id"
-            "   AND re.relation_id = e.relation_id))"
-            ")"
+            + " AND NOT EXISTS (SELECT 1"
+            " FROM v_memory_page_citation_visible visible"
+            " WHERE visible.deployment_id = e.deployment_id"
+            " AND visible.artifact_id = e.artifact_id"
+            " AND visible.role = e.role::text"
+            " AND visible.target_kind = CASE"
+            "   WHEN e.claim_lineage_id IS NOT NULL THEN 'claim'"
+            "   WHEN e.relation_id IS NOT NULL THEN 'relation'"
+            "   ELSE 'document' END"
+            " AND visible.target_id = coalesce("
+            "   e.claim_lineage_id, e.relation_id, e.doc_id)"
+            " AND visible.claim_chunk_content_hash IS NOT DISTINCT FROM"
+            "   e.claim_chunk_content_hash)"
         ),
     ),
     _Probe(
