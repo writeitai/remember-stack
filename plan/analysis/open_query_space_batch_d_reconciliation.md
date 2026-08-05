@@ -183,3 +183,28 @@ telemetry, and v4 behavior.
 These corrections reuse existing views, result fields, and the checked-in
 matrix. They do not add RLS, a parser, a new visibility layer, or query-time
 rebuild behavior.
+
+## Final sibling-case audit
+
+The closing review found four narrow cases where the implemented order or
+disclosure still differed from the accepted authority:
+
+- checking only LadybugDB's final logical result type does not stop
+  `CAST(id(e) AS STRING)` or `to_string(id(e))` from coercing a physical graph
+  address into ordinary text;
+- swallowing a failure from `set_query_timeout` turns a mandatory resource
+  bound into best effort;
+- taking the 20-entity slice before `entities_current` confirmation lets stale
+  head nominations hide a live ranked tail; and
+- the graph helpers reject a single supplied D41 clock, but their database
+  comments and manifest signatures did not disclose that both-or-neither rule.
+
+The minimal fixes stay at the existing boundaries. The quote/comment-aware
+Cypher token scan rejects only the engine-internal `id(...)` function, including
+spacing and comment variants; ordinary `.id` properties remain available.
+Timeout installation fails closed with a content-free engine fault class.
+Entity candidates are still one bounded combined pool, but the whole pool is
+confirmed once before the 20-result cut. Finally, the existing function
+signature member and PostgreSQL comments publish the paired-clock error and
+valid calls. No general expression parser, new resource controller, or new
+retrieval channel is needed.

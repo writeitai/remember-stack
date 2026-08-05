@@ -441,6 +441,8 @@
           "columns": [
             "result"
           ],
+          "comment": "Return the bounded engine plan for one accepted read without executing it. The same dialect gate applies, including refusal of the engine-internal id(...) function.",
+          "example": "MATCH (e:Entity) RETURN e.name LIMIT 20",
           "grade": "snapshot_graph",
           "name": "explain_cypher",
           "result_contract": "QueryResult/v1",
@@ -662,6 +664,8 @@
             "applied_valid_at",
             "applied_believed_at"
           ],
+          "comment": "Traverse the live graph when both clocks are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
+          "example": "SELECT * FROM memory_v1.graph_neighborhood($1, 2, NULL, $2, $3, 100)",
           "name": "graph_neighborhood",
           "parallel": "safe",
           "security": "invoker",
@@ -769,6 +773,8 @@
             "applied_valid_at",
             "applied_believed_at"
           ],
+          "comment": "Return bounded simple paths over the live graph when both clocks are omitted, or the half-open historical graph when both valid_at and believed_at are supplied. Supplying exactly one clock fails with invalid_parameter_value.",
+          "example": "SELECT * FROM memory_v1.graph_path($1, $2, 4, NULL, $3, $4, 3, 100)",
           "name": "graph_path",
           "parallel": "safe",
           "security": "invoker",
@@ -945,6 +951,8 @@
           "columns": [
             "result"
           ],
+          "comment": "Execute one bounded read against the disclosed P2 snapshot; confirm defaults false and checks only top-level typed Entity and RELATES values. The engine-internal id(...) function is rejected, including coerced results.",
+          "example": "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20",
           "execution_options": {
             "confirm": {
               "default": false,
@@ -1346,6 +1354,9 @@
           "uninstall",
           "update",
           "use"
+        ],
+        "rejected_functions": [
+          "id"
         ],
         "text_bytes_max": 32768,
         "unconfirmed_projections": [
@@ -29617,5 +29628,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "5d78da1525abcf7b54259d21e18b08b1d895800b2033ae94f14e0c2b81087f8b"
+  "surface_manifest_hash": "f42899f4d7b0e779543c0edfb82cfe026ccc2c12aa833c30bbee91c7ff929ce3"
 }

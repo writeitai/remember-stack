@@ -124,6 +124,11 @@ REJECTED_KEYWORDS: Final = frozenset(
 #: row, byte) bound cost instead — see the Batch D implementation note.
 RECURSIVE_HOPS_MAX: Final = 30
 
+#: Engine functions whose result is a physical graph address rather than a
+#: public graph value. Refusing the call itself also closes coercions such as
+#: `CAST(id(e) AS STRING)`, whose final engine type no longer says INTERNAL_ID.
+REJECTED_FUNCTIONS: Final = frozenset({"id"})
+
 #: One statement per request. A script is not a query.
 _STATEMENT_SEPARATOR: Final = ";"
 
@@ -146,7 +151,7 @@ def validate_cypher(text: str) -> CypherStatement:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_PARSE_ERROR, message="the statement is empty"
         )
-    opening, statements, tokens = _scan(text)
+    opening, statements, tokens, function_calls = _scan(text)
     if statements > 1:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
@@ -180,11 +185,18 @@ def validate_cypher(text: str) -> CypherStatement:
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
             message=f"{construct} is not available on the read surface",
         )
+    rejected_functions = function_calls & REJECTED_FUNCTIONS
+    if rejected_functions:
+        function = sorted(rejected_functions)[0]
+        raise SandboxRejection(
+            code=QueryErrorCode.CYPHER_NOT_ALLOWED,
+            message=f"{function}(...) exposes an engine-internal graph identifier",
+        )
     return CypherStatement(text=text.strip())
 
 
-def _scan(text: str) -> tuple[str, int, frozenset[str]]:
-    """The opening, statement count, and unquoted lower-case word tokens.
+def _scan(text: str) -> tuple[str, int, frozenset[str], frozenset[str]]:
+    """Return the opening, statement count, tokens, and unquoted function calls.
 
     String literals, backtick-quoted identifiers, and comments contribute
     nothing: a keyword inside quoted prose is data, and a keyword inside a
@@ -198,6 +210,8 @@ def _scan(text: str) -> tuple[str, int, frozenset[str]]:
     opening = ""
     statements = 1
     tokens: set[str] = set()
+    function_calls: set[str] = set()
+    pending_word = ""
     word = ""
     index = 0
     length = len(text)
@@ -206,6 +220,7 @@ def _scan(text: str) -> tuple[str, int, frozenset[str]]:
         if character in ("'", '"', "`"):
             index = _skip_quoted(text, index)
             word = ""
+            pending_word = ""
             continue
         if character == "/" and text.startswith("/*", index):
             closing = text.find("*/", index + 2)
@@ -223,7 +238,14 @@ def _scan(text: str) -> tuple[str, int, frozenset[str]]:
             token = word.lower()
             opening = opening or token
             tokens.add(token)
+            pending_word = token
             word = ""
+        if character == "(":
+            if pending_word:
+                function_calls.add(pending_word)
+            pending_word = ""
+        elif not character.isspace():
+            pending_word = ""
         if character == _STATEMENT_SEPARATOR and _has_statement_after(text, index + 1):
             statements += 1
         index += 1
@@ -231,7 +253,7 @@ def _scan(text: str) -> tuple[str, int, frozenset[str]]:
         token = word.lower()
         opening = opening or token
         tokens.add(token)
-    return opening, statements, frozenset(tokens)
+    return opening, statements, frozenset(tokens), frozenset(function_calls)
 
 
 def _has_statement_after(text: str, start: int) -> bool:

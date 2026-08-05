@@ -212,7 +212,8 @@ Version 4 keeps `include_facts` and `include_entities` false by default. The
 fact flag reuses `current_context` with fixed evidence depth 3, at most 30
 facts, and at most 60 fact/evidence associations. The entity flag returns exact
 resolution candidates before semantic candidates, deduplicates by survivor ID,
-confirms through `memory_v1.entities_current`, and returns at most 20. Neither
+confirms the full bounded pool through `memory_v1.entities_current`, and then
+returns at most 20 live survivors. Neither
 flag silently adds graph neighbors; use `multi_hop_context` for an explicit
 graph request.
 
@@ -243,6 +244,11 @@ withdrawn is returned flagged, not hidden.
 
 ## Open Cypher surface
 
+The SQL helpers `memory_v1.graph_neighborhood` and `memory_v1.graph_path` use
+both D41 clocks. Omit both `valid_at` and `believed_at` for the statement
+instant, or supply both for a historical traversal; supplying exactly one fails
+with PostgreSQL `invalid_parameter_value`. Both intervals are half-open.
+
 Deployments that compose the open query gateway publish these exact graph
 entry points:
 
@@ -255,10 +261,13 @@ One statement may open with `MATCH`, `OPTIONAL`, `WITH`, `UNWIND`, or `RETURN`.
 Parameters are typed and bound, never interpolated. File, attachment,
 extension, session, maintenance, and plan-control constructs are rejected by
 the gateway. `CREATE`, `DELETE`, `MERGE`, and `SET` are refused by the pinned
-LadybugDB engine opened read-only. Cypher text is capped at 32 KiB; the selected
+LadybugDB engine opened read-only. The engine-internal `id(...)` function is
+also refused because casts can otherwise expose its physical address; query the
+public `e.id` property instead. Cypher text is capped at 32 KiB; the selected
 tier also supplies the statement timeout and returned row, byte, parameter, and
-concurrency limits. `explain_cypher` returns the engine plan and does not execute
-the statement.
+concurrency limits. If the engine timeout cannot be installed, the statement is
+not executed. `explain_cypher` returns the engine plan and does not execute the
+statement.
 
 Every result has grade `snapshot_graph` and names the exact P2 snapshot ID,
 version, `built_at`, and age that served it. A snapshot older than one hour

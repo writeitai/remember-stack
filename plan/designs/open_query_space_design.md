@@ -214,9 +214,9 @@ lexical channel through a later versioned descriptor change. With
 `include_entities=true`, exact name/alias resolution and semantic description
 nomination both contribute survivor candidates: resolved candidates precede
 semantic-only candidates, each channel retains its native rank, duplicates
-collapse on survivor `entity_id` before PostgreSQL confirmation, and the
-combined channel returns at most 20 candidates (resolution first, then
-semantic by rank). The channels
+collapse on survivor `entity_id` before PostgreSQL confirmation, and the full
+bounded combined pool is confirmed once before its live survivors are cut to
+at most 20 candidates (resolution first, then semantic by rank). The channels
 join the existing typed `facts[]`, `fact_evidence[]`, `evidence_totals[]`, and
 `entities[]` fields, with backing claims deduplicated into the existing
 `evidence[]` field. Claims, chunks, facts, fact-evidence associations, and
@@ -512,7 +512,10 @@ a cap is disclosed in QueryResult. Raw recursive CTEs remain available only
 under §4.1's template linter and the PG snapshot.
 
 The two graph helpers perform the paired-clock refusal inside their documented
-function bodies. `memory_v1` publishes no auxiliary clock-guard function.
+function bodies. Omitting both clocks applies `statement_timestamp()` to both;
+supplying both uses the two supplied half-open instants; supplying exactly one
+fails with PostgreSQL `invalid_parameter_value`. `memory_v1` publishes no
+auxiliary clock-guard function.
 PUBLIC has no EXECUTE privilege on any function in the schema; the routed
 deployment query role receives EXECUTE only on the functions enumerated by the
 manifest. The migration also revokes PostgreSQL's default PUBLIC function
@@ -602,8 +605,11 @@ aggregate, list, path, node, relationship, and exposed property values. Engine
 structural node/relationship/path values are serialized as typed QueryResult
 values; engine-local physical offsets are not stable identifiers. Any result
 column whose engine logical type contains `INTERNAL_ID` is rejected, including
-an `INTERNAL_ID[]` or a nested struct field; a caller-authored field merely
-named `INTERNAL_ID` remains ordinary data. There is no
+an `INTERNAL_ID[]` or a nested struct field. The engine-internal `id(...)`
+function is rejected before execution because casts and string conversion can
+otherwise erase that logical type while preserving the physical address; an
+ordinary public `e.id` property and a caller-authored field merely named
+`INTERNAL_ID` remain available data. There is no
 identifier-only projection restriction, aggregate ban, absence ban, or generic
 Cypher-result-to-Envelope adapter.
 
@@ -864,8 +870,10 @@ quotas; a caller cannot evade either quota by alternating languages. Cypher
 parameters are typed and bound through the engine API and are never
 interpolated into text. Client disconnect triggers PG and projection
 cancellation within one second. A wire row cap does not bound work below an
-aggregate or sort; engine timeout, memory/temp limits, concurrency, and rolling quotas remain
-mandatory. Larger exports use the separate governed scan/export surface, not
+aggregate or sort; engine timeout, memory/temp limits, concurrency, and rolling
+quotas remain mandatory. Failure to install the pinned Cypher engine timeout
+fails the request before execution with a content-free engine fault
+classification. Larger exports use the separate governed scan/export surface, not
 either open interactive language.
 
 ### 4.4 `QueryResult/v1`
@@ -1184,7 +1192,9 @@ canonical JSON with exactly these top-level members:
    byte caps, plus the exact `query_cypher(cypher, parameters, max_rows?)` and
    `explain_cypher(cypher, parameters)` entry-point signatures, parameter
    schemas, the `confirm` execution option/default, result contract, and
-   comments;
+   comments; the two graph helpers and two Cypher entry points also carry valid
+   examples, and the graph-helper comments state the both-or-neither clock rule
+   and `invalid_parameter_value` failure;
 3. `core_operation_descriptors`: the three sorted descriptors with name,
    version, input schema, Envelope version, grain/intent, bounds, and
    implementation-chain hash. `question_context` is v4, its input schema

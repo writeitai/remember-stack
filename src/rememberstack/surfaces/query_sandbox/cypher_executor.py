@@ -454,8 +454,12 @@ class CypherSandboxExecutor:
         """Run the statement read-only, bounded, with parameters bound."""
         try:
             connection.set_query_timeout(timeout_ms)
-        except Exception:  # an engine build without the knob still runs
-            pass
+        except Exception as error:
+            raise SandboxRejection(
+                code=QueryErrorCode.EXECUTION_ERROR,
+                message="the graph engine could not apply the statement timeout",
+                engine_fault_class="ladybug_timeout_setup",
+            ) from error
         try:
             answer = connection.execute(text, dict(parameters))
         except RuntimeError as error:

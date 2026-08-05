@@ -69,12 +69,13 @@ class _QuestionIndex:
         chunk_text: P1ChunkText,
         fact_id: UUID,
         entity_id: UUID,
+        entity_ids: tuple[UUID, ...] | None = None,
     ) -> None:
         self.claim_id = str(claim_id)
         self.chunk_id = str(chunk_id)
         self.chunk_text = chunk_text
         self.fact_id = str(fact_id)
-        self.entity_id = str(entity_id)
+        self.entity_ids = tuple(str(item) for item in (entity_ids or (entity_id,)))
 
     def search_claims(self, **_: object) -> tuple[str, ...]:
         return (self.claim_id,)
@@ -102,8 +103,11 @@ class _QuestionIndex:
         return (self.fact_id,)
 
     def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
-        return (
-            P1Nomination(item_id=self.entity_id, rank=1, score=0.9, channel="semantic"),
+        return tuple(
+            P1Nomination(
+                item_id=entity_id, rank=rank, score=1.0 / rank, channel="semantic"
+            )
+            for rank, entity_id in enumerate(self.entity_ids, start=1)
         )
 
 
@@ -525,13 +529,17 @@ class _Corpus:
             },
         )
 
-    def query_engine(self) -> QueryEngine:
+    def query_engine(
+        self, *, entity_ids: tuple[UUID, ...] | None = None
+    ) -> QueryEngine:
+        """Compose the public engine, optionally with a ranked entity fixture."""
         index = _QuestionIndex(
             claim_id=self.claims["alice_beacon-support-0"],
             chunk_id=self.query_chunk_id,
             chunk_text=self.query_chunk_text,
             fact_id=self.relations["alice_beacon"],
             entity_id=self.entities["acme"],
+            entity_ids=entity_ids,
         )
         return QueryEngine(
             engine=self.engine,
@@ -627,6 +635,24 @@ def test_question_context_v4_entity_channel_is_resolution_first_and_confirmed(
         seeded.entities["acme"],
     ]
     assert [candidate.tier for candidate in answer.entities] == ["T0", "semantic"]
+
+
+def test_question_context_confirms_before_cutting_the_entity_cap(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    """A stale semantic head cannot hide the 21st, live ranked nomination."""
+    seeded, _graph = corpus
+    stale_head = tuple(uuid4() for _ in range(20))
+    engine = seeded.query_engine(entity_ids=(*stale_head, seeded.entities["acme"]))
+
+    answer = engine.question_context(
+        deployment_id=_DEPLOYMENT_ID, query="no exact alias", include_entities=True
+    )
+
+    assert [candidate.entity_id for candidate in answer.entities] == [
+        seeded.entities["acme"]
+    ]
+    assert answer.dropped_by_hydration >= len(stale_head)
 
 
 def test_question_context_v4_flags_work_together(

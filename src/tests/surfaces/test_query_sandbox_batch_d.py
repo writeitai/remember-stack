@@ -490,7 +490,16 @@ def test_a_projected_node_loses_the_engines_physical_offsets(
 
 
 @pytest.mark.parametrize(
-    "projection", ("id(e)", "[id(e)]", "collect(id(e))", "{physical: id(e)}")
+    "projection",
+    (
+        "id(e)",
+        "[id(e)]",
+        "collect(id(e))",
+        "{physical: id(e)}",
+        "CAST(id(e) AS STRING)",
+        "to_string(id(e))",
+        "id /* comment */ (e)",
+    ),
 )
 def test_engine_internal_ids_are_never_published(
     snapshot: _Snapshot, projection: str
@@ -501,6 +510,15 @@ def test_engine_internal_ids_are_never_published(
     )
     assert outcome.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
     assert outcome.rows == ()
+
+
+def test_public_id_properties_remain_available(snapshot: _Snapshot) -> None:
+    """The physical `id(...)` refusal must not block the public UUID property."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) RETURN e.id ORDER BY e.id LIMIT 1"
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert UUID(str(outcome.rows[0][0]))
 
 
 def test_a_struct_field_named_internal_id_is_ordinary_caller_data(
@@ -572,6 +590,39 @@ def test_an_oversized_statement_is_refused_before_parsing(snapshot: _Snapshot) -
         cypher="MATCH (e:Entity) RETURN e // " + "x" * CYPHER_TEXT_BYTES_MAX
     )
     assert outcome.error_code == QueryErrorCode.RESOURCE_LIMIT
+
+
+class _TimeoutSetupFailure:
+    """A connection that proves execution is unreachable after setup failure."""
+
+    def __init__(self) -> None:
+        self.executed = False
+
+    def set_query_timeout(self, _timeout_ms: int) -> None:
+        """Model an engine build whose timeout control failed."""
+        raise RuntimeError("timeout control unavailable")
+
+    def execute(self, _text: str, _parameters: object) -> object:
+        """Record any unsafe attempt to run without a timeout."""
+        self.executed = True
+        raise AssertionError("execution must not be reached")
+
+
+def test_timeout_setup_failure_prevents_execution() -> None:
+    """A mandatory engine timeout is fail-closed, never best effort."""
+    connection = _TimeoutSetupFailure()
+    with pytest.raises(SandboxRejection) as rejection:
+        CypherSandboxExecutor._execute(
+            connection=connection,
+            text="RETURN 1",
+            parameters={},
+            timeout_ms=5_000,
+            row_cap=200,
+            byte_cap=1024 * 1024,
+        )
+    assert rejection.value.code == QueryErrorCode.EXECUTION_ERROR
+    assert rejection.value.engine_fault_class == "ladybug_timeout_setup"
+    assert connection.executed is False
 
 
 def test_a_deployment_with_no_published_graph_fails_closed() -> None:
@@ -879,6 +930,26 @@ def test_naming_one_clock_and_not_the_other_is_refused(
                     f"(%s, 2, NULL, {valid_at}, {believed_at})".encode(),
                     (edges[0][1],),
                 ).fetchone()
+
+
+def test_graph_helper_comments_publish_the_paired_clock_failure(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """Database discovery must say that callers supply both clocks or neither."""
+    url, _ = graph
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        rows = connection.execute(
+            "SELECT p.proname, obj_description(p.oid, 'pg_proc')"
+            " FROM pg_proc p"
+            " JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE n.nspname = 'memory_v1'"
+            "   AND p.proname IN ('graph_neighborhood', 'graph_path')"
+            " ORDER BY p.proname"
+        ).fetchall()
+    assert [name for name, _comment in rows] == ["graph_neighborhood", "graph_path"]
+    for _name, comment in rows:
+        assert "supply both" in comment
+        assert "exactly one raises invalid_parameter_value" in comment
 
 
 def test_only_documented_query_functions_are_executable(

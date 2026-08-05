@@ -362,6 +362,16 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "volatility": "stable",
                 "security": "invoker",
                 "parallel": "safe",
+                "comment": (
+                    "Traverse the live graph when both clocks are omitted, or the"
+                    " half-open historical graph when both valid_at and believed_at"
+                    " are supplied. Supplying exactly one clock fails with"
+                    " invalid_parameter_value."
+                ),
+                "example": (
+                    "SELECT * FROM memory_v1.graph_neighborhood("
+                    "$1, 2, NULL, $2, $3, 100)"
+                ),
                 "columns": [
                     "path_id",
                     "hop",
@@ -435,6 +445,16 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "volatility": "stable",
                 "security": "invoker",
                 "parallel": "safe",
+                "comment": (
+                    "Return bounded simple paths over the live graph when both clocks"
+                    " are omitted, or the half-open historical graph when both"
+                    " valid_at and believed_at are supplied. Supplying exactly one"
+                    " clock fails with invalid_parameter_value."
+                ),
+                "example": (
+                    "SELECT * FROM memory_v1.graph_path("
+                    "$1, $2, 4, NULL, $3, $4, 3, 100)"
+                ),
                 "columns": [
                     "path_id",
                     "path_length",
@@ -480,6 +500,15 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "execution_options": {"confirm": {"type": "boolean", "default": False}},
                 "result_contract": "QueryResult/v1",
                 "grade": "snapshot_graph",
+                "comment": (
+                    "Execute one bounded read against the disclosed P2 snapshot;"
+                    " confirm defaults false and checks only top-level typed Entity"
+                    " and RELATES values. The engine-internal id(...) function is"
+                    " rejected, including coerced results."
+                ),
+                "example": (
+                    "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20"
+                ),
                 "columns": ["result"],
                 "column_types": ["QueryResult/v1"],
             },
@@ -500,6 +529,12 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 ],
                 "result_contract": "QueryResult/v1",
                 "grade": "snapshot_graph",
+                "comment": (
+                    "Return the bounded engine plan for one accepted read without"
+                    " executing it. The same dialect gate applies, including refusal"
+                    " of the engine-internal id(...) function."
+                ),
+                "example": "MATCH (e:Entity) RETURN e.name LIMIT 20",
                 "columns": ["result"],
                 "column_types": ["QueryResult/v1"],
             },
@@ -689,6 +724,7 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
         "read_openings": list(sorted(cypher.READ_OPENINGS)),
         "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
         "engine_rejected_mutations": list(sorted(cypher.ENGINE_REJECTED_MUTATIONS)),
+        "rejected_functions": list(sorted(cypher.REJECTED_FUNCTIONS)),
         "text_bytes_max": CYPHER_TEXT_BYTES_MAX,
         # Pinned engine-native recursive upper bound. The executor does not
         # duplicate this grammar in a text walker.

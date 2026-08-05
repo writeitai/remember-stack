@@ -3129,6 +3129,9 @@ is engine-native. Graph type/property references are null until the engine suppl
 parse metadata; `confirm=true` checks only top-level engine-typed `NODE`/`REL` values labelled
 `Entity`/`RELATES` and warns when none were confirmable. Forgeable structs and scalar UUID
 projections remain snapshot-scoped, and engine `INTERNAL_ID` offsets are never public.
+The engine-internal `id(...)` function is refused before execution because the
+pinned engine can coerce its physical address into a `STRING`; ordinary public
+`e.id` properties remain available.
 
 The P2 rebuild reads the same D48/D54-bearing `memory_v1` relations as the live query surface,
 and reader caches are keyed and verified by deployment plus immutable snapshot identity and a
@@ -3138,13 +3141,14 @@ projection-backed functions need the no-login definer bridge.
 Their paired-clock refusal is internal to the two documented helpers; PUBLIC
 has no function EXECUTE privilege in `memory_v1`, and the routed query role is
 granted only the manifest-enumerated functions. Nested engine `INTERNAL_ID`
-types are refused just like scalar physical IDs.
+types are refused just like scalar physical IDs. A failure to install the
+engine statement timeout fails closed before execution.
 
 `question_context` v4 adds default-false `include_facts` and `include_entities` flags. Facts
 reuse `current_context`'s semantic nomination, D48/D41 confirmation, both-stance evidence,
 30-fact cap, fixed evidence depth 3, and 60-association budget. Entities combine exact
 resolution before semantic nomination, deduplicate by survivor ID, confirm once through
-`memory_v1.entities_current`, and return at most 20. P1 and PostgreSQL are the existing
+`memory_v1.entities_current`, then cap the live survivors at 20. P1 and PostgreSQL are the existing
 authorities; graph expansion is not silently added to either context operation.
 
 **Rationale.** The removed Cypher walker repeatedly guessed structural meaning incorrectly.

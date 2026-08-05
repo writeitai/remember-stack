@@ -439,8 +439,10 @@ def upgrade() -> None:
             _NEIGHBORHOOD_DDL,
             _NEIGHBORHOOD_SIGNATURE,
             "Relations within max_depth hops of an entity, traversed"
-            " undirected over both D41 clocks (each half-open, each defaulting"
-            f" to now()). Depth is clamped to {_NEIGHBORHOOD_DEPTH_MAX} and"
+            " undirected over both half-open D41 clocks. Omit both clocks for"
+            " statement_timestamp(), or supply both; supplying exactly one"
+            " raises invalid_parameter_value. Depth is clamped to"
+            f" {_NEIGHBORHOOD_DEPTH_MAX} and"
             f" edges to {_NEIGHBORHOOD_EDGES_MAX}; neither a relation nor an"
             " entity is revisited within one branch.",
         ),
@@ -448,8 +450,10 @@ def upgrade() -> None:
             _PATH_DDL,
             _PATH_SIGNATURE,
             "Simple paths between two entities, traversed undirected over both"
-            " D41 clocks (each half-open, each defaulting to now()). Depth is"
-            f" clamped to {_PATH_DEPTH_MAX}, paths to {_PATH_PATHS_MAX}, and"
+            " half-open D41 clocks. Omit both clocks for statement_timestamp(),"
+            " or supply both; supplying exactly one raises"
+            " invalid_parameter_value. Depth is clamped to"
+            f" {_PATH_DEPTH_MAX}, paths to {_PATH_PATHS_MAX}, and"
             f" edges to {_PATH_EDGES_MAX}; an entity appears at most once in a"
             " path.",
         ),

@@ -2042,10 +2042,8 @@ class QueryEngine:
                 continue
             seen.add(item[0])
             deduplicated.append(item)
-        truncated = len(deduplicated) > QUESTION_CONTEXT_ENTITY_CAP
-        selected = deduplicated[:QUESTION_CONTEXT_ENTITY_CAP]
-        if not selected:
-            return (), malformed, truncated, len(deduplicated)
+        if not deduplicated:
+            return (), malformed, False, 0
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -2054,14 +2052,14 @@ class QueryEngine:
                     _CONFIRM_CONTEXT_ENTITIES,
                     {
                         "deployment_id": deployment_id,
-                        "entity_ids": [item[0] for item in selected],
+                        "entity_ids": [item[0] for item in deduplicated],
                     },
                 )
                 .mappings()
                 .all()
             )
         confirmed = {row["entity_id"]: row for row in rows}
-        entities = tuple(
+        confirmed_entities = tuple(
             EntityCandidate(
                 entity_id=entity_id,
                 canonical_name=str(confirmed[entity_id]["canonical_name"]),
@@ -2069,11 +2067,13 @@ class QueryEngine:
                 tier=tier,
                 context_hits=context_hits,
             )
-            for entity_id, tier, context_hits in selected
+            for entity_id, tier, context_hits in deduplicated
             if entity_id in confirmed
         )
-        dropped = malformed + len(selected) - len(entities)
-        return entities, dropped, truncated, len(deduplicated)
+        truncated = len(confirmed_entities) > QUESTION_CONTEXT_ENTITY_CAP
+        entities = confirmed_entities[:QUESTION_CONTEXT_ENTITY_CAP]
+        dropped = malformed + len(deduplicated) - len(confirmed_entities)
+        return entities, dropped, truncated, len(confirmed_entities)
 
     def _resolve_recipe_entity(
         self, *, deployment_id: UUID, entity: str, grain: Grain

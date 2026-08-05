@@ -34,6 +34,8 @@ from rememberstack.spine.query_space import surface_manifest_hash
 from rememberstack.spine.query_space import VIEW_CONTRACTS
 from rememberstack.spine.query_space.canonical import CanonicalizationError
 from rememberstack.spine.query_space.deletion_matrix import MATRIX_PATH
+from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
+from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 
 
 def _golden() -> dict[str, object]:
@@ -180,6 +182,25 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         assert isinstance(entry, dict)
         assert entry["arguments_min"] >= 1
         assert entry["columns"]
+    batch_d_functions = {
+        entry["name"]: entry
+        for entry in published
+        if entry["name"]
+        in {"graph_neighborhood", "graph_path", "query_cypher", "explain_cypher"}
+    }
+    assert set(batch_d_functions) == {
+        "graph_neighborhood",
+        "graph_path",
+        "query_cypher",
+        "explain_cypher",
+    }
+    assert all(entry["comment"] for entry in batch_d_functions.values())
+    assert all(entry["example"] for entry in batch_d_functions.values())
+    for name in ("graph_neighborhood", "graph_path"):
+        assert "invalid_parameter_value" in batch_d_functions[name]["comment"]
+        assert validate_sql(batch_d_functions[name]["example"])
+    for name in ("query_cypher", "explain_cypher"):
+        assert validate_cypher(batch_d_functions[name]["example"])
     core = members["core_operation_descriptors"]
     assert isinstance(core, dict)
     assert core["contract"] == "memory_v1.core_operations/1"
@@ -216,6 +237,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     assert cypher["text_bytes_max"] == 32 * 1024
     assert cypher["read_openings"] == ["match", "optional", "return", "unwind", "with"]
     assert cypher["engine_rejected_mutations"] == ["create", "delete", "merge", "set"]
+    assert cypher["rejected_functions"] == ["id"]
     projection = limits["p2_projection"]
     assert isinstance(projection, dict)
     assert projection["contract_version"] == "p2-rebuild-2026.07"
@@ -367,10 +389,7 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     assert sum(1 for surface in private if surface["compiles_deletion"]) == 3
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
-    assert {target.target_id for target in deferred} == {
-        "p1_candidate",
-        "corpus_body",
-    }
+    assert {target.target_id for target in deferred} == {"p1_candidate", "corpus_body"}
     assert len(EXECUTED_TARGETS) + len(deferred) == len(DELETION_TARGETS)
     for target in deferred:
         assert target.executed_in in {"C", "D"}

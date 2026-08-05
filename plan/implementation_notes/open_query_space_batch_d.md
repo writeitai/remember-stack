@@ -33,7 +33,9 @@ does only the two jobs it can do exactly without rebuilding a parser:
   `WITH`, `UNWIND`, or `RETURN` as the first unquoted token; and
 - it rejects the pinned external-action, extension, session, maintenance,
   attachment, and plan-control tokens wherever they occur outside strings,
-  quoted identifiers, and the engine's `//` or `/* */` comments.
+  quoted identifiers, and the engine's `//` or `/* */` comments; and
+- it rejects the engine-internal `id(...)` function, including spacing/comment
+  variants, because the pinned engine can coerce its physical address to text.
 
 One statement and 32 KiB of Cypher text remain hard request bounds. The scan
 does not treat `--` as a comment because the pinned engine does not.
@@ -45,8 +47,9 @@ file/extension actions that read-only does not block die in the lexical gate,
 while the engine enforces its own write grammar.
 
 The engine's 30-hop recursive ceiling is engine-native. Timeout, row, and byte
-caps are separate executor resource bounds. The removed hop/bracket/reference
-walker is not reintroduced.
+caps are separate executor resource bounds; failure to install the timeout
+fails before execution with a content-free engine fault class. The removed
+hop/bracket/reference walker is not reintroduced.
 
 ## No nominal worker boundary
 
@@ -75,7 +78,9 @@ Every Cypher result has grade `snapshot_graph`, no SQL schema name, and the
 snapshot ID/version/build instant/age that actually served it. Engine physical
 offsets (`_ID`, `_SRC`, `_DST`, matched case-insensitively) are stripped from
 structural values, and a scalar engine `INTERNAL_ID` result is refused rather
-than publishing its physical `{offset, table}` address. Snapshot identity is
+than publishing its physical `{offset, table}` address. `id(...)` is refused
+before execution so casting that address cannot hide its engine type; ordinary
+public `e.id` properties remain available. Snapshot identity is
 pinned with the connection, failures after pinning retain that identity,
 snapshot age is measured at execution start and clamped nonnegative, and an
 age over 3600 seconds emits the bound freshness warning.
@@ -116,8 +121,9 @@ or together:
   confirmation, both evidence stances, fixed evidence depth 3, 30-fact ceiling,
   and 60-association budget; and
 - entities take exact resolution candidates first, then semantic description
-  nominations, deduplicate by survivor ID, confirm the combined set once
-  through `memory_v1.entities_current`, and return at most 20.
+  nominations, deduplicate by survivor ID, confirm the full bounded combined
+  set once through `memory_v1.entities_current`, and then return at most 20 live
+  survivors.
 
 Claims, chunks, facts, fact/evidence links, totals, and entities remain in their
 existing typed Envelope fields. `current_context` stays v1. Graph expansion is
@@ -155,14 +161,18 @@ Current-context and graph-context evidence hydration now join
 document cannot authorize evidence. The Batch D retrieval fixture carries
 honest surviving provenance for withdrawn and isolated cases.
 
-Nested LadybugDB `INTERNAL_ID` logical types are refused, while caller-authored
-field names remain data. Failures after snapshot pinning retain the stale-age
-warning, and audit events carry snapshot freshness, confirmation counts, graph
-caps, and a content-free engine fault class.
+Nested LadybugDB `INTERNAL_ID` logical types and the coercible `id(...)`
+function are refused, while caller-authored field names and public `.id`
+properties remain data. Timeout installation fails closed. Failures after
+snapshot pinning retain the stale-age warning, and audit events carry snapshot
+freshness, confirmation counts, graph caps, and a content-free engine fault
+class.
 
 The graph migration inlines the paired-clock error in the two public helpers,
 revokes PUBLIC function execution and its schema default, and grants the routed
-query role only documented functions. The P2 deletion target is no longer
+query role only documented functions. Its comments and manifest examples now
+state the both-or-neither clock rule and `invalid_parameter_value` failure. The
+P2 deletion target is no longer
 deferred: the SQL matrix executes it and a worker fixture proves that the edge
 remains only in the old disclosed snapshot and disappears after rebuild. The
 manifest and OSS API reference now publish the actual Cypher openings,
