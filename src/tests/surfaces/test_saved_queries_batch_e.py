@@ -30,6 +30,8 @@ from rememberstack.surfaces.query_sandbox.saved_queries import publish_surface_h
 from rememberstack.surfaces.query_sandbox.saved_queries import revalidate
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
 from rememberstack.surfaces.query_sandbox.saved_queries import SurfaceMoved
+from rememberstack.surfaces.query_sandbox.saved_queries import VALIDATION_FIXTURES
+from rememberstack.surfaces.query_sandbox.saved_queries import ValidationReport
 from rememberstack.surfaces.query_sandbox.saved_queries import VERSIONS_PER_IDENTITY_MAX
 
 _DEPLOYMENT = UUID("e0000000-0000-0000-0000-00000000000e")
@@ -83,6 +85,13 @@ def registry(registry_url: str) -> Iterator[SavedQueryRegistry]:
 
 def _unique(prefix: str = "q") -> str:
     return f"{prefix}_{uuid4().hex[:10]}"
+
+
+def _passing_report(manifest_hash: str = _HASH) -> ValidationReport:
+    """A report in which every §5 fixture ran and passed."""
+    return ValidationReport(
+        manifest_hash=manifest_hash, fixtures=dict.fromkeys(VALIDATION_FIXTURES, True)
+    )
 
 
 # --- authoring ---------------------------------------------------------------
@@ -149,7 +158,13 @@ def test_oversized_sql_is_refused(registry: SavedQueryRegistry) -> None:
 def test_an_activated_version_executes(registry: SavedQueryRegistry) -> None:
     """Activation is what makes a saved query runnable."""
     name = _unique()
-    saved = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
+    saved = registry.draft(
+        namespace="team",
+        name=name,
+        sql=_SQL,
+        principal="agent-1",
+        report=_passing_report(),
+    )
     registry.activate(
         query_id=saved.query_id,
         version=saved.version,
@@ -164,7 +179,11 @@ def test_an_activated_version_executes(registry: SavedQueryRegistry) -> None:
 def test_an_author_cannot_approve_their_own_query(registry: SavedQueryRegistry) -> None:
     """An approval the author can grant themselves attests to nothing."""
     saved = registry.draft(
-        namespace="team", name=_unique(), sql=_SQL, principal="agent-1"
+        namespace="team",
+        name=_unique(),
+        sql=_SQL,
+        principal="agent-1",
+        report=_passing_report(),
     )
     with pytest.raises(SandboxRejection) as rejection:
         registry.activate(
@@ -218,7 +237,11 @@ def test_publishing_a_new_surface_suspends_every_active_version(
         )
         name = _unique()
         saved = registry.draft(
-            namespace="team", name=name, sql=_SQL, principal="agent-1"
+            namespace="team",
+            name=name,
+            sql=_SQL,
+            principal="agent-1",
+            report=_passing_report(),
         )
         registry.activate(
             query_id=saved.query_id,
@@ -248,7 +271,13 @@ def test_publishing_a_new_surface_suspends_every_active_version(
 def test_disabling_stops_execution_at_admission(registry: SavedQueryRegistry) -> None:
     """Disabled means it does not run, and says so by name."""
     name = _unique()
-    saved = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
+    saved = registry.draft(
+        namespace="team",
+        name=name,
+        sql=_SQL,
+        principal="agent-1",
+        report=_passing_report(),
+    )
     registry.activate(
         query_id=saved.query_id,
         version=saved.version,
@@ -317,7 +346,13 @@ def _suspended(connection: psycopg.Connection) -> tuple[UUID, int, str]:
         connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
     )
     name = _unique()
-    saved = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
+    saved = registry.draft(
+        namespace="team",
+        name=name,
+        sql=_SQL,
+        principal="agent-1",
+        report=_passing_report(),
+    )
     registry.activate(
         query_id=saved.query_id,
         version=saved.version,
@@ -471,3 +506,43 @@ def test_a_validation_report_passes_only_when_every_fixture_did() -> None:
     silent = ValidationReport(manifest_hash=_HASH, fixtures={"positive": True})
     assert not silent.passed
     assert silent.as_json()["fixtures"]["tombstone"] is False
+
+
+def test_a_version_nobody_validated_cannot_be_activated(
+    registry: SavedQueryRegistry,
+) -> None:
+    """§5 puts a validation between authoring and activation.
+
+    Activating an unvalidated version would publish something nobody checked
+    while it looked exactly like something somebody had.
+    """
+    saved = registry.draft(
+        namespace="team", name=_unique(), sql=_SQL, principal="agent-1"
+    )
+    with pytest.raises(SandboxRejection) as rejection:
+        registry.activate(
+            query_id=saved.query_id,
+            version=saved.version,
+            approver="operator-1",
+            author="agent-1",
+        )
+    assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
+
+
+def test_a_partial_validation_does_not_activate(registry: SavedQueryRegistry) -> None:
+    """Three fixtures out of four is not a validation."""
+    partial = ValidationReport(
+        manifest_hash=_HASH,
+        fixtures={name: name != "tombstone" for name in VALIDATION_FIXTURES},
+    )
+    saved = registry.draft(
+        namespace="team", name=_unique(), sql=_SQL, principal="agent-1", report=partial
+    )
+    with pytest.raises(SandboxRejection) as rejection:
+        registry.activate(
+            query_id=saved.query_id,
+            version=saved.version,
+            approver="operator-1",
+            author="agent-1",
+        )
+    assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE

@@ -100,6 +100,7 @@ class SavedQueryRegistry:
         description: str | None = None,
         origin: str = "agent",
         declared_interpretation: str | None = None,
+        report: "ValidationReport | None" = None,
     ) -> SavedQueryVersion:
         """Write a new draft version, creating the identity if it is new.
 
@@ -143,10 +144,10 @@ class SavedQueryRegistry:
             b"INSERT INTO saved_query_versions (deployment_id, query_id, version,"
             b" sql, query_hash, parameter_schema, declared_interpretation,"
             b" query_space_major, validated_surface_manifest_hash, status,"
-            b" author_principal)"
+            b" author_principal, validation_report)"
             b" VALUES (%(deployment)s, %(query)s, %(version)s, %(sql)s, %(hash)s,"
             b" %(schema)s::jsonb, %(interpretation)s, 'memory_v1', %(manifest)s,"
-            b" 'draft', %(principal)s)",
+            b" 'draft', %(principal)s, %(report)s::jsonb)",
             {
                 "deployment": str(self._deployment_id),
                 "query": str(query_id),
@@ -157,6 +158,7 @@ class SavedQueryRegistry:
                 "interpretation": declared_interpretation,
                 "manifest": self._manifest_hash,
                 "principal": principal,
+                "report": _json(report.as_json() if report else {}),
             },
         )
         self._connection.execute(
@@ -192,7 +194,7 @@ class SavedQueryRegistry:
                 message="a saved query is approved by someone other than its author",
             )
         row = self._connection.execute(
-            b"SELECT status, validated_surface_manifest_hash"
+            b"SELECT status, validated_surface_manifest_hash, validation_report"
             b" FROM saved_query_versions WHERE query_id = %(query)s"
             b"   AND version = %(version)s",
             {"query": str(query_id), "version": version},
@@ -209,6 +211,19 @@ class SavedQueryRegistry:
             raise SandboxRejection(
                 code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
                 message="this version was validated against a different surface",
+            )
+        # §5: activation follows a validation that executed every fixture. A
+        # version whose report is absent or partial has not been checked, and
+        # activating it would publish something nobody verified while looking
+        # exactly like something somebody did.
+        report = row[2] if isinstance(row[2], dict) else {}
+        if not report.get("passed"):
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+                message=(
+                    "this version has no passing validation report; every §5"
+                    " fixture must run before it can be activated"
+                ),
             )
         self._connection.execute(
             b"UPDATE saved_query_versions"
