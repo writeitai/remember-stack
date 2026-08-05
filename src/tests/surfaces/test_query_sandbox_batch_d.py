@@ -43,6 +43,7 @@ from rememberstack.surfaces.query_sandbox.cypher_executor import P2_STALE_WARNIN
 from rememberstack.surfaces.query_sandbox.cypher_executor import READ_ONLY_REFUSAL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.result import GraphConfirmation
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
 
@@ -140,6 +141,40 @@ def _reachable(edges: list[tuple[str, str, str]], start: str, depth: int) -> set
 def _rows(url: str, statement: str, parameters: tuple[object, ...]) -> list[tuple]:
     with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
         return connection.execute(statement.encode(), parameters).fetchall()
+
+
+def test_graph_helpers_run_through_the_sql_sandbox_without_projection(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """Both PostgreSQL-native graph helpers bypass the Lance bridge."""
+    url, edges = graph
+    executor = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+        search=None,
+        embed=None,
+    )
+    queries = (
+        (
+            "SELECT count(*) FROM graph_neighborhood($1::uuid, 1)",
+            [edges[0][1]],
+        ),
+        (
+            "SELECT count(*) FROM graph_path($1::uuid, $2::uuid, 1)",
+            [edges[0][1], edges[0][2]],
+        ),
+    )
+
+    for query, parameters in queries:
+        outcome = executor.query_sql(sql=query, parameters=parameters)
+        assert outcome.termination_reason == "completed", outcome.error_message
+        row_count = outcome.rows[0][0]
+        assert isinstance(row_count, int)
+        assert row_count > 0
+
+        explained = executor.explain_sql(sql=query, parameters=parameters)
+        assert explained.termination_reason == "completed", explained.error_message
+        assert explained.rows
 
 
 # --- graph_neighborhood ------------------------------------------------------
