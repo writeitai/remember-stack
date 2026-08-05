@@ -150,8 +150,11 @@ AS $$
       -- then, as we believe it now" is a third thing, and returning it under
       -- the caller's one-clock request would misreport what it means.
       memory_v1.require_paired_clocks(valid_at, believed_at) AS clocks_checked,
-      coalesce(valid_at, now()) AS as_of_valid,
-      coalesce(believed_at, now()) AS as_of_believed
+      -- `statement_timestamp()`, not `now()`. `now()` is transaction start,
+      -- while `graph_edges_current` evaluates at statement time, so a row
+      -- selected by one instant was being labelled with an earlier one.
+      coalesce(valid_at, statement_timestamp()) AS as_of_valid,
+      coalesce(believed_at, statement_timestamp()) AS as_of_believed
   ),
   edges AS (\n@@EDGE_SOURCE@@\n  ),
   walk AS (
@@ -268,8 +271,11 @@ AS $$
       -- then, as we believe it now" is a third thing, and returning it under
       -- the caller's one-clock request would misreport what it means.
       memory_v1.require_paired_clocks(valid_at, believed_at) AS clocks_checked,
-      coalesce(valid_at, now()) AS as_of_valid,
-      coalesce(believed_at, now()) AS as_of_believed
+      -- `statement_timestamp()`, not `now()`. `now()` is transaction start,
+      -- while `graph_edges_current` evaluates at statement time, so a row
+      -- selected by one instant was being labelled with an earlier one.
+      coalesce(valid_at, statement_timestamp()) AS as_of_valid,
+      coalesce(believed_at, statement_timestamp()) AS as_of_believed
   ),
   edges AS (\n@@EDGE_SOURCE@@\n  ),
   walk AS (

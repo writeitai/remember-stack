@@ -194,6 +194,7 @@ class ProjectionCatalog:
                     "deployment_id": deployment_id,
                     "plane": plane,
                     "snapshot_id": snapshot_id,
+                    "built_at": built_at,
                 },
             ).scalar_one_or_none()
             if newer is not None:
@@ -674,7 +675,11 @@ _SELECT_NEWER_LATEST = text(
       AND cur.plane = CAST(:plane AS projection_plane)
       AND cur.is_latest
       AND mine.snapshot_id = :snapshot_id
-      AND cur.built_at > mine.built_at
+      -- Compare against the cut this candidate is ABOUT to record, not the
+      -- registry-insert time it still carries: the row is stamped with its
+      -- export cut by the publish below, and reading the stale value here
+      -- superseded a genuinely newer snapshot.
+      AND cur.built_at > coalesce(CAST(:built_at AS timestamptz), mine.built_at)
     """
 )
 
