@@ -388,12 +388,19 @@ class _AllowlistVisitor(Visitor):
         return None
 
     def visit_A_Expr(self, ancestors, node: A_Expr):  # noqa: ANN001, ANN201
-        for piece in node.name or ():
-            if isinstance(piece, String) and _sval(piece) not in OPERATOR_ALLOWLIST:
-                raise _reject(
-                    QueryErrorCode.OPERATOR_NOT_ALLOWED,
-                    f"operator {piece.sval} is not allowed",
-                )
+        parts = tuple(
+            _sval(piece) for piece in node.name or () if isinstance(piece, String)
+        )
+        if len(parts) > 1:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"qualified operator {'.'.join(parts)} is not allowed",
+            )
+        if parts and parts[0] not in OPERATOR_ALLOWLIST:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"operator {parts[0]} is not allowed",
+            )
         return None
 
     def visit_TypeCast(self, ancestors, node: TypeCast):  # noqa: ANN001, ANN201

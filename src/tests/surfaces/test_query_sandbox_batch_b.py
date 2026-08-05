@@ -1055,3 +1055,10 @@ def test_a_sort_operator_is_checked_like_any_other() -> None:
             'SELECT fact_id FROM facts_current ORDER BY fact_id USING OPERATOR("<".<)'
         )
     assert qualified.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED
+
+
+def test_a_qualified_expression_operator_is_rejected_as_one_name() -> None:
+    """Allowlisted pieces cannot assemble a qualified operator escape."""
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql('SELECT 1 OPERATOR("<".=) 1')
+    assert rejection.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED
