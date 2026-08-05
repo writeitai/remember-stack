@@ -692,10 +692,41 @@ def test_the_disclosed_cut_is_the_export_transactions_own_instant(
         catalog = ProjectionCatalog(engine=engine)
         with catalog.graph_export() as export:
             cut = export.built_at
-            later = export.watermark()
+            # A second read of the same transaction's timestamp is the same
+            # instant: the cut is the transaction's, not a moving clock.
+            again = export.built_at
         assert cut is not None
-        # The cut belongs to the transaction that read the data, so anything
-        # the export observed cannot postdate it.
-        assert later is None or later <= cut or True
+        assert cut == again
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A `*` inside an inline recursive predicate is multiplication.
+        "MATCH p=(a)-[r:RELATES*1..3 (r,n | WHERE r.confidence * 100 > 50)]->(b)"
+        " RETURN p",
+        # ... and so is one inside a property map.
+        "MATCH (a)-[r:RELATES {confidence: 2 * 31}]->(b) RETURN r",
+        # A comment may sit between the `*` and the range it bounds.
+        "MATCH p=(a)-[r:RELATES* /* comment */ 1..3]->(b) RETURN p",
+        # A terminal semicolon with a trailing comment is one statement.
+        "RETURN 1; // trailing comment",
+    ],
+)
+def test_the_gate_accepts_what_the_pinned_engine_accepts(statement: str) -> None:
+    """Over-refusing is a real failure too: it makes legal queries impossible.
+
+    Every one of these parses in the pinned engine, and each was refused by an
+    earlier version of this scan.
+    """
+    assert validate_cypher(statement).text
+
+
+def test_extension_management_is_refused_by_name(snapshot: _Snapshot) -> None:
+    """The engine ACCEPTS `UNINSTALL`, so the gate must refuse it as a
+    construct rather than let it look like bad syntax."""
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_cypher("UNINSTALL fts")
+    assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED

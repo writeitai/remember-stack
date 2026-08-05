@@ -43,7 +43,14 @@ assumed.
 
 The scan is deliberately blunt in one direction: a caller who names something
 `create` is inconvenienced, and a caller who hides `CREATE` anywhere is
-stopped. After the gate, the pinned engine's own parser decides whether what
+stopped. Blunt is not the same as careless, though, and over-refusing is its
+own failure — it makes legal queries impossible. A `*` counts as a hop bound
+only in the pattern itself, never inside a property map or an inline recursive
+predicate where it is multiplication; a comment may sit between the `*` and its
+range; and a terminal semicolon followed only by a comment is one statement,
+which is how the engine reads it too. Each of those was refused by an earlier
+version of this scan and is now covered by a test that names the engine as the
+authority. After the gate, the pinned engine's own parser decides whether what
 remains is a query it implements — syntax it does not implement fails
 `cypher_parse_error` rather than being rewritten into a different query.
 

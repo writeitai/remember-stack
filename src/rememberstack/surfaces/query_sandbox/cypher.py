@@ -95,6 +95,7 @@ _EXTERNAL: Final = frozenset(
         "attach",
         "detach_database",
         "install",
+        "uninstall",
         "force",
         "extension",
         "extract",
@@ -235,6 +236,10 @@ def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
     unbounded = False
     word = ""
     brackets = 0
+    # A relationship pattern can carry a property map `{...}` or an inline
+    # recursive predicate `(r, n | WHERE ...)`, and inside those a `*` is
+    # multiplication. Only a `*` in the pattern itself is a hop bound.
+    nested = 0
     index = 0
     length = len(text)
     while index < length:
@@ -260,16 +265,22 @@ def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
             word = ""
         if character == "[":
             brackets += 1
+            nested = 0
         elif character == "]":
             brackets = max(0, brackets - 1)
-        elif character == "*" and brackets:
+            nested = 0
+        elif brackets and character in ("{", "("):
+            nested += 1
+        elif brackets and character in ("}", ")"):
+            nested = max(0, nested - 1)
+        elif character == "*" and brackets and not nested:
             upper, index = _range_upper_bound(text, index + 1)
             if upper is None:
                 unbounded = True
             else:
                 max_hops = max(max_hops or 0, upper)
             continue
-        if character == _STATEMENT_SEPARATOR and text[index + 1 :].strip():
+        if character == _STATEMENT_SEPARATOR and _has_statement_after(text, index + 1):
             statements += 1
         index += 1
     if word:
@@ -299,8 +310,19 @@ def _range_upper_bound(text: str, start: int) -> tuple[int | None, int]:
         return (int(text[position:end]) if end > position else None), end
 
     while True:
-        while index < length and text[index].isspace():
-            index += 1
+        while index < length:
+            if text[index].isspace():
+                index += 1
+                continue
+            if text.startswith("/*", index):
+                closing = text.find("*/", index + 2)
+                index = length if closing < 0 else closing + 2
+                continue
+            if text.startswith("//", index):
+                newline = text.find("\n", index)
+                index = length if newline < 0 else newline + 1
+                continue
+            break
         end = index
         while end < length and (text[end].isalpha() or text[end] == "_"):
             end += 1
@@ -320,6 +342,32 @@ def _range_upper_bound(text: str, start: int) -> tuple[int | None, int]:
         return upper, index
     # No range operator: a bare count is its own bound, and a bare `*` is not.
     return lower, index
+
+
+def _has_statement_after(text: str, start: int) -> bool:
+    """Whether anything but whitespace and comments follows a `;`.
+
+    A terminal semicolon with a trailing comment is one statement, and the
+    engine reads it as one. Counting the comment as a second statement refused
+    a legal query.
+    """
+    index = start
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character.isspace():
+            index += 1
+            continue
+        if text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = length if closing < 0 else closing + 2
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = length if newline < 0 else newline + 1
+            continue
+        return True
+    return False
 
 
 def _skip_quoted(text: str, start: int) -> int:

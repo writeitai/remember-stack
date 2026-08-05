@@ -942,6 +942,7 @@
           "sequence",
           "set",
           "transaction",
+          "uninstall",
           "update",
           "use"
         ],
@@ -29169,5 +29170,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "c8c1a6c414d23e51039158b07ebab9880a675a0cab85bdb0d43a42ce8af00b0f"
+  "surface_manifest_hash": "81623c8328d73644db137c8082c500ddabf0998d259b9a9ba0cfa3b4aa1565a3"
 }
