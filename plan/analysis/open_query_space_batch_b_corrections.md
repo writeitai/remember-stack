@@ -1,7 +1,7 @@
 # Batch B contract corrections: authority reconciliation
 
-**Status:** non-binding implementation analysis  
-**Date:** 2026-08-05  
+**Status:** non-binding implementation analysis
+**Date:** 2026-08-05
 **Binding inputs:** `plan/designs/open_query_space_design.md` §4 and §6; D68 in
 `decisions.md`; the shipped Batch B migration and executor
 
@@ -23,7 +23,7 @@ should follow.
 
 | Finding | Local evidence | Authority and narrow correction |
 |---|---|---|
-| Temporary-file cap | `src/rememberstack/spine/migrations/versions/p9_02_0023_query_space_roles.py` pins `temp_file_limit = 65536kB` on the single deployment query login, while `src/rememberstack/surfaces/query_sandbox/limits.py` advertises 1 GiB for analytical requests. | The durable role setting is the enforceable authority. Keep one role and one 64 MiB cap; do not invent an analytical login solely for a larger temp allowance. Amend §4.3's analytical value and `ANALYTICAL_LIMITS` to 64 MiB. |
+| Temporary-file cap | `src/rememberstack/spine/migrations/versions/p9_02_0023_query_space_roles.py` pins `temp_file_limit = 65536kB` on the single deployment query login, while `src/rememberstack/surfaces/query_sandbox/limits.py` advertises 1 GiB for analytical requests. | The durable role setting is the enforceable authority. Keep one role and one 64 MiB cap; do not invent an analytical login solely for a larger temp allowance. Amend the complete §4.3 temporary-file row and `ANALYTICAL_LIMITS` to 64 MiB. |
 | NUL input | `src/rememberstack/surfaces/query_sandbox/grammar.py::_assert_single_readonly_statement` calls `pglast.parse_sql` before checking the raw text. A NUL can make the parser ignore the suffix. | Raw request bytes are the authority before parsing. Reject `\x00` as `parse_error` before `parse_sql`; do not build a second lexer. |
 | Failure emptiness | `QueryResult.empty_result` defaults false, and both failure constructors in `src/rememberstack/surfaces/query_sandbox/executor.py` omit it even though failures contain zero rows. | The serialized result is the authority. Every rejected/failed response has no rows and must say `empty_result=true`; this does not turn it into a D49 negative. |
 | Discovery limits | `src/rememberstack/surfaces/query_sandbox/discovery.py` manually selects six fields from the 19-field `TierLimits` dataclass. The manifest already enumerates the dataclass fields. | `TierLimits` is the one limit authority. Serialize it with `dataclasses.asdict`; do not maintain a second list. |

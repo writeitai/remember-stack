@@ -828,7 +828,7 @@ the applicable default/hard class and cites this table.
 | SQL or Cypher returned rows | 200 | 1,000 | 10,000 |
 | SQL or Cypher returned encoded bytes | 1 MiB | 8 MiB | 64 MiB |
 | `work_mem` | 16 MiB | 32 MiB | 64 MiB |
-| Temporary files | 64 MiB | 256 MiB | 64 MiB |
+| Temporary files | 64 MiB | 64 MiB | 64 MiB |
 | Recursive CTEs / maximum depth | 1 / 4 | 1 / 6 | 1 / 6 |
 | `facts_as_of` returned rows | 200 | 1,000 | 1,000 |
 | Semantic or lexical nomination SRF calls / `k` each / total nominations | 1 / 20 / 100 | 3 / 100 / 200 | 3 / 100 / 200 |
