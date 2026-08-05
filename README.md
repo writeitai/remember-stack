@@ -152,6 +152,7 @@
 | src/rememberstack/spine/migrations/versions/p8\_01\_0021\_d80\_embedding\_input.py            |       16 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/versions/p8\_01\_0022\_d80\_packaging\_fields.py           |       12 |        0 |        4 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/versions/p9\_01\_0022\_memory\_v1\_query\_space.py         |       31 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/spine/migrations/versions/p9\_02\_0023\_query\_space\_roles.py              |       55 |        0 |       12 |        0 |    100.0% |           |
 | src/rememberstack/spine/observation\_adjudication.py                                          |      159 |       21 |       34 |       11 |     82.4% |132, 230-249, 257-276, 328-346, 443-\>315, 477-494, 513, 521-533, 550, 688, 693 |
 | src/rememberstack/spine/operations.py                                                         |       76 |        1 |        4 |        1 |     97.5% |       151 |
 | src/rememberstack/spine/projection.py                                                         |      140 |       15 |       10 |        0 |     87.3% |49-50, 276-283, 289-292, 340-341, 352-353 |
@@ -160,7 +161,7 @@
 | src/rememberstack/spine/query\_space/canonical.py                                             |       71 |        2 |       32 |        1 |     97.1% |   89, 137 |
 | src/rememberstack/spine/query\_space/catalog.py                                               |       31 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/query\_space/deletion\_matrix.py                                      |       80 |        2 |       18 |        1 |     96.9% |  540, 546 |
-| src/rememberstack/spine/query\_space/manifest.py                                              |      126 |       13 |       34 |       11 |     85.0% |216, 222, 230, 315, 332, 339-342, 347, 352, 363, 374, 507, 509 |
+| src/rememberstack/spine/query\_space/manifest.py                                              |      132 |       14 |       34 |       11 |     84.9% |173, 255, 261, 269, 354, 371, 378-381, 386, 391, 402, 413, 546, 548 |
 | src/rememberstack/spine/query\_space/quarantine.py                                            |       20 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/query\_space/source\_definitions.py                                   |       71 |        2 |       24 |        2 |     95.8% |  130, 133 |
 | src/rememberstack/spine/readiness.py                                                          |       52 |        1 |       10 |        1 |     96.8% |        58 |
@@ -178,6 +179,14 @@
 | src/rememberstack/surfaces/http\_api.py                                                       |      145 |        7 |       22 |        2 |     93.4% |199, 316, 331-343, 375-376 |
 | src/rememberstack/surfaces/mcp.py                                                             |       15 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_engine.py                                                   |      699 |       24 |      212 |       22 |     94.7% |149-150, 209, 441, 686, 743, 822-\>829, 831, 839, 876, 1215, 1279, 1352-1354, 1390, 1431, 1575, 1650-\>1652, 1653, 1928, 2188, 2231, 2252, 2456, 2460 |
+| src/rememberstack/surfaces/query\_sandbox/\_\_init\_\_.py                                     |        8 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/surfaces/query\_sandbox/audit.py                                            |       92 |        7 |       14 |        4 |     89.6% |101-\>108, 145-146, 149-150, 170, 195, 199 |
+| src/rememberstack/surfaces/query\_sandbox/discovery.py                                        |       41 |        3 |       14 |        3 |     89.1% |72, 122, 135 |
+| src/rememberstack/surfaces/query\_sandbox/errors.py                                           |       36 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/surfaces/query\_sandbox/executor.py                                         |      200 |       24 |       56 |       14 |     84.4% |79-85, 125, 133, 136-137, 139, 148, 150, 152, 154, 157-159, 219, 283, 303, 322-327, 461-462 |
+| src/rememberstack/surfaces/query\_sandbox/grammar.py                                          |      478 |       35 |      180 |       23 |     90.0% |212, 216, 221, 258, 276, 324, 342-343, 385-\>384, 409, 426-427, 430-439, 462, 545, 551, 603, 607-608, 615, 625, 727-736, 750-753, 759-\>756, 803-\>801, 874-\>876, 920-\>918, 939, 943-\>949, 992 |
+| src/rememberstack/surfaces/query\_sandbox/limits.py                                           |       15 |        0 |        2 |        0 |    100.0% |           |
+| src/rememberstack/surfaces/query\_sandbox/result.py                                           |       48 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/recipe\_executor.py                                                |      119 |       15 |       48 |        9 |     83.2% |110, 112, 115, 124, 140, 165, 180-186, 202, 206, 208, 262 |
 | src/rememberstack/surfaces/recipe\_surface.py                                                 |       98 |       18 |       40 |        3 |     76.1% |62-68, 78-83, 176-\>184, 222, 235-243 |
 | src/rememberstack/surfaces/remote\_mcp.py                                                     |       62 |       12 |       24 |        7 |     77.9% |57-58, 65, 71-72, 88, 98, 107, 113, 116, 121, 129 |
@@ -203,7 +212,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **16270** | **1261** | **3706** |  **635** | **89.6%** |           |
+| **TOTAL**                                                                                     | **17249** | **1331** | **3984** |  **679** | **89.6%** |           |
 
 
 ## Setup coverage badge
