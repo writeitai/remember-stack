@@ -143,6 +143,15 @@ class ProjectionCatalog:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
+            # The coordinate-complete invariant views expand into a deep plan.
+            # LLVM JIT compilation of that plan can consume enough memory to
+            # kill PostgreSQL before the first row is returned. The rebuild is
+            # a bounded sequential export, so keep planning literal and avoid
+            # multiplying its memory across parallel workers.
+            connection.exec_driver_sql("SET LOCAL jit = off")
+            connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
             connection.execute(_CREATE_SURVIVOR_MAP, {"deployment_id": deployment_id})
             connection.execute(_INDEX_SURVIVOR_MAP)
             try:

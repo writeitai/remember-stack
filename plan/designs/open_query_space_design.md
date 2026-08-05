@@ -582,7 +582,10 @@ The P2 rebuild opens one PostgreSQL `REPEATABLE READ` export snapshot, applies
 D48 visibility inside it, and records that export cut as `built_at` — bound
 concretely as the export transaction's PostgreSQL `transaction_timestamp()`,
 captured once at export start and stored immutably with the published
-generation (never a wall clock read at publish or query time). The
+generation (never a wall clock read at publish or query time). The export
+transaction disables PostgreSQL JIT and parallel workers and preserves the
+written join order so the coordinate-complete invariant views cannot turn one
+rebuild into an unbounded planner/compilation memory event. The
 published LadybugDB generation is therefore one consistent projection of
 memory at that instant, not a partially refreshed graph. It excludes lineages
 tombstoned by `built_at`; later ingests, deletions, withdrawals, identity

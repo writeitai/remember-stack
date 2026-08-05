@@ -258,6 +258,13 @@ written join order with query-local `join_collapse_limit` and
 already-confirmed edge set once and reads base entity rows only for names and
 types after the graph view has authorized both endpoints.
 
+The closing export review found the same plan family on the P2 rebuild path:
+LLVM JIT compilation of the coordinate-complete historical edge view could be
+OOM-killed before its server-side cursor returned a row. The rebuild's existing
+repeatable-read transaction now disables JIT and parallel workers and preserves
+written join order. A direct probe of the same authoritative view completed
+without splitting or reimplementing its D48/D54 predicates.
+
 These are planner boundaries around the existing authorities. They add no
 RLS, visibility rule, cache, parser, or result behavior.
 

@@ -189,7 +189,10 @@ honest surviving provenance for withdrawn and isolated cases.
 preserves the hydration query's written join order with transaction-local
 planner settings. After the graph view has authorized both endpoints, base
 entity rows supply names and types only. The same planner settings bound the
-SQL sandbox's expansion of the invariant-compiled views.
+SQL sandbox's expansion of the invariant-compiled views. The P2 export keeps
+the same authoritative graph view and repeatable-read cut, while disabling JIT
+and parallel workers in that transaction so compiling the deep view cannot
+exhaust the database before its server-side cursor returns.
 
 Nested LadybugDB `INTERNAL_ID` logical types and the observed physical-address
 function family are refused, while caller-authored field names and public `.id`

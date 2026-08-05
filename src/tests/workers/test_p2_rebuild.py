@@ -319,6 +319,26 @@ def test_rebuild_publishes_a_validated_snapshot(
     assert str(corpus.forgotten_relation) not in relation_rows
 
 
+def test_graph_export_bounds_the_deep_invariant_plan(corpus: _InvariantCorpus) -> None:
+    """The authoritative history export cannot invoke PostgreSQL JIT/parallelism."""
+    catalog = ProjectionCatalog(engine=corpus.engine)
+    with catalog.graph_export(deployment_id=_DEPLOYMENT_ID) as export:
+        settings = export._connection.execute(  # noqa: SLF001 - gate the transaction
+            text(
+                "SELECT current_setting('jit'),"
+                " current_setting('join_collapse_limit'),"
+                " current_setting('from_collapse_limit'),"
+                " current_setting('max_parallel_workers_per_gather')"
+            )
+        ).one()
+        assert settings == ("off", "1", "1", "0")
+        relation_ids = {str(row.relation_id) for row in export.rows(table="RELATES")}
+
+    assert str(corpus.live_relation) in relation_ids
+    assert str(corpus.retracted_relation) in relation_ids
+    assert str(corpus.forgotten_relation) not in relation_ids
+
+
 def test_deleted_edge_survives_only_in_the_pre_deletion_snapshot(
     corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:
