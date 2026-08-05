@@ -820,3 +820,14 @@ def test_current_helper_rows_report_the_instant_that_selected_them(
     applied, statement_at, transaction_at = row
     assert applied > transaction_at
     assert abs((applied - statement_at).total_seconds()) < 1
+
+
+def test_extension_update_is_denied_like_the_rest_of_its_family() -> None:
+    """`UPDATE fts` RUNS on a read-only database — verified on the engine.
+
+    It updates an extension, which is the same family as INSTALL and exactly
+    what `read_only=True` does not stop, so it has to die in the deny-scan.
+    """
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_cypher("UPDATE fts")
+    assert rejection.value.code == QueryErrorCode.CYPHER_NOT_ALLOWED

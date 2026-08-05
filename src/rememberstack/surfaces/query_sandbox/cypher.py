@@ -72,7 +72,20 @@ READ_CLAUSES: Final = frozenset(
 #: refuses them itself, and the executor maps that refusal to
 #: `cypher_not_allowed`.
 REJECTED_KEYWORDS: Final = frozenset(
-    {"copy", "load", "install", "uninstall", "attach", "import", "export", "call"}
+    {
+        "copy",
+        "load",
+        "install",
+        "uninstall",
+        # `UPDATE fts` updates an extension and RUNS on a read-only database —
+        # verified against the pinned engine. It is the same family as INSTALL
+        # and was missing from the first list.
+        "update",
+        "attach",
+        "import",
+        "export",
+        "call",
+    }
 )
 
 #: The engine's v0.18.2 recursive upper bound. Recorded in the surface

@@ -180,3 +180,26 @@ are not yet wired to this surface.
 
 Both are Batch D scope by §11, so this slice does not close Batch D. Saying so
 here is cheaper than a reader discovering it from the diff.
+
+
+## The process-isolated worker: decided against, not deferred
+
+§11 lists a process-isolated engine worker. It is not built, and this records
+that as a decision rather than as debt.
+
+The evidence that prompted it was the engine faulting mid-traversal (INT128
+overflow, issue #144). Re-examined, that fault RAISES — it is caught and mapped
+like any other engine error, and it does not wedge the process. A runaway
+traversal is bounded by the engine's own query timeout and by the row and byte
+caps. A supervisor, an RPC boundary, and snapshot-path plumbing would therefore
+be defending against a failure mode nobody has observed, which is the
+speculative hardening this project has ruled out elsewhere.
+
+Two observations would change the answer, and either should reopen it:
+
+- an engine fault that HANGS rather than raising, so a timeout is the only
+  thing that ends it and the API process is occupied until then; or
+- a fault that corrupts state shared with the API process, rather than failing
+  the one query.
+
+Until then, the timeout and the caps are the bound.
