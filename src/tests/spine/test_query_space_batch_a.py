@@ -1482,18 +1482,26 @@ def test_two_independent_builds_deploy_the_same_schema(database_url: str) -> Non
 
 
 def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
-    """No privilege exists on the schema or its relations beyond the owner's."""
+    """Only the bound roles hold privileges, and only the bound ones.
+
+    Batch B introduces the role split (design §4.2 as amended: physical
+    routing plus grants, no row-level security), so "no grants at all" is no
+    longer the property to assert — "no grant beyond the enumerated ones" is.
+    The query role reads the public views and nothing else; PUBLIC holds
+    nothing anywhere.
+    """
+    # The query login is per deployment (Batch B): its name carries the
+    # database, so the gate matches the prefix rather than a fixed name.
+    allowed_grantees = {"rememberstack_view_owner"}
+    query_role_prefix = "rememberstack_query"
     with corpus.engine.connect() as connection:
-        schema_acl = _scalar(
-            connection=connection,
-            sql="SELECT nspacl IS NULL FROM pg_namespace WHERE nspname = 'memory_v1'",
-        )
-        granted = _rows(
+        view_grants = _rows(
             connection=connection,
             sql=(
-                "SELECT c.relname, c.relacl::text FROM pg_class c"
-                " JOIN pg_namespace n ON n.oid = c.relnamespace"
-                " WHERE n.nspname = 'memory_v1' AND c.relacl IS NOT NULL"
+                "SELECT grantee, privilege_type FROM"
+                " information_schema.role_table_grants"
+                " WHERE table_schema = 'memory_v1'"
+                " GROUP BY grantee, privilege_type"
             ),
         )
         public_grants = _rows(
@@ -1505,8 +1513,16 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
             ),
         )
 
-    assert schema_acl is True
-    assert granted == []
+    for row in view_grants:
+        grantee = row["grantee"]
+        is_query_role = grantee.startswith(query_role_prefix)
+        assert grantee in allowed_grantees or is_query_role, (
+            f"unexpected grantee {grantee}"
+        )
+        if is_query_role:
+            assert row["privilege_type"] == "SELECT", (
+                "query role holds more than SELECT"
+            )
     assert public_grants == []
 
 
@@ -1888,29 +1904,24 @@ def test_the_private_helper_cells_prove_their_own_non_reachability(
         for helper in sorted(helpers):
             schema, _, relation = helper.partition(".")
             assert schema != "memory_v1"
-            acl = _scalar(
-                connection=connection,
-                sql=(
-                    "SELECT c.relacl IS NULL FROM pg_class c"
-                    " JOIN pg_namespace n ON n.oid = c.relnamespace"
-                    " WHERE n.nspname = :schema AND c.relname = :relation"
-                ),
-                schema=schema,
-                relation=relation,
-            )
-            assert acl is True, f"{helper} carries a grant"
-            grants = _rows(
+            # A REVOKE materializes a relation's default ACL, so the honest
+            # property after Batch B's role split is "no grantee other than
+            # the owner", not "relacl is NULL".
+            foreign_grants = _rows(
                 connection=connection,
                 sql=(
                     "SELECT grantee, privilege_type FROM"
                     " information_schema.role_table_grants"
                     " WHERE table_schema = :schema AND table_name = :relation"
-                    " AND grantee <> current_user"
+                    " AND grantee <> 'rememberstack_view_owner'"
                 ),
                 schema=schema,
                 relation=relation,
             )
-            assert grants == [], f"{helper} is granted to {grants}"
+            # The owner's own implicit privileges are not a grant to anyone
+            # else; every other grantee — including PUBLIC and the query role
+            # — must be absent.
+            assert foreign_grants == [], f"{helper} is granted to {foreign_grants}"
 
 
 def test_deferred_matrix_cells_name_the_batch_that_will_execute_them(
