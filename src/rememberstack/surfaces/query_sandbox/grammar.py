@@ -62,6 +62,23 @@ PUBLIC_SRF_NAMES: Final = frozenset(
 )
 SRF_INVOCATIONS_MAX: Final = 3
 
+#: §4.3 caps the nomination calls and the body-fetch calls SEPARATELY, at three
+#: each. Counting them together would reject a statement that is inside both
+#: caps, which is a different (and stricter) rule than the one that was
+#: published.
+SRF_CATEGORIES: Final[dict[str, str]] = {
+    "semantic_claims": "nomination",
+    "semantic_chunks": "nomination",
+    "semantic_facts": "nomination",
+    "semantic_entities": "nomination",
+    "lexical_claims": "nomination",
+    "lexical_chunks": "nomination",
+    "fetch_chunk_bodies": "body_fetch",
+    "facts_as_of": "bitemporal",
+    "graph_neighborhood": "graph",
+    "graph_path": "graph",
+}
+
 FUNCTION_ALLOWLIST: Final = frozenset(
     {
         "count",
@@ -880,23 +897,63 @@ class _ParamScan(Visitor):
         return None
 
 
-def _to_named_placeholders(sql: str, *, count: int) -> str:
+def _to_named_placeholders(sql: str, *, count: int, escape: bool = True) -> str:
     """Rewrite PostgreSQL `$n` placeholders into psycopg named placeholders.
 
-    psycopg binds `%(p1)s`-style names, so the deparsed statement is
-    translated once, here, and the executor binds a matching mapping. Literal
-    percent signs are escaped first so they survive that binding.
+    psycopg binds `%(p1)s`-style names, so the deparsed statement is translated
+    once, here, and the executor binds a matching mapping.
+
+    The rewrite walks the statement rather than replacing text globally,
+    because both things it touches also occur inside string literals and mean
+    something else there: `SELECT '$1'` asks for two characters of text, and
+    `SELECT '100%'` asks for four. Rewriting either inside its quotes changes
+    what the caller asked for — and produces a statement psycopg then fails to
+    bind.
     """
-    if count == 0:
-        # With no mapping bound, psycopg performs no placeholder interpolation,
-        # so a literal percent must survive untouched — escaping it here turned
-        # `5 % 2` into a syntax error and `'%a%'` into `'%%a%%'`.
+    if count == 0 and not escape:
         return sql
-    translated = sql.replace("%", "%%")
-    # Longest index first, so $10 is not rewritten as $1 followed by "0".
-    for index in range(count, 0, -1):
-        translated = translated.replace(f"${index}", f"%(p{index})s")
-    return translated
+    out: list[str] = []
+    index = 0
+    length = len(sql)
+    while index < length:
+        character = sql[index]
+        if character == "'":
+            closing = _end_of_literal(sql, index)
+            literal = sql[index:closing]
+            # A percent inside a literal still passes through psycopg's binder,
+            # so it is escaped; a `$n` inside one is text and is not.
+            out.append(literal.replace("%", "%%") if escape else literal)
+            index = closing
+            continue
+        if character == "%" and escape:
+            out.append("%%")
+            index += 1
+            continue
+        if character == "$" and count:
+            digits = index + 1
+            while digits < length and sql[digits].isdigit():
+                digits += 1
+            number = sql[index + 1 : digits]
+            if number and 1 <= int(number) <= count:
+                out.append(f"%(p{int(number)})s")
+                index = digits
+                continue
+        out.append(character)
+        index += 1
+    return "".join(out)
+
+
+def _end_of_literal(sql: str, start: int) -> int:
+    """The index just past the single-quoted literal beginning at `start`."""
+    index = start + 1
+    while index < len(sql):
+        if sql[index] == "'":
+            if index + 1 < len(sql) and sql[index + 1] == "'":
+                index += 2
+                continue
+            return index + 1
+        index += 1
+    return len(sql)
 
 
 def _rewrite_srf_invocations(
@@ -955,6 +1012,16 @@ def _rewrite_srf_invocations(
     return rewritten
 
 
+class _Unrepresentable:
+    """An argument literal the extractor cannot turn into a Python value."""
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return "<unrepresentable literal>"
+
+
+UNREPRESENTABLE: Final = _Unrepresentable()
+
+
 def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
     """The argument list as literals and parameter positions.
 
@@ -984,9 +1051,12 @@ def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
             elif isinstance(value, Float):
                 arguments.append(float(str(getattr(value, "fval", "0"))))
             else:
-                arguments.append(None)
+                # A literal this extractor cannot represent is NOT the same as
+                # an omitted argument: reading `true::jsonb` as "no filters"
+                # would run a different query than the caller wrote.
+                arguments.append(UNREPRESENTABLE)
         else:  # pragma: no cover - the placement rule forbids reaching here
-            arguments.append(None)
+            arguments.append(UNREPRESENTABLE)
     return tuple(arguments)
 
 
@@ -1034,11 +1104,16 @@ def validate_sql(
                 QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED,
                 "public functions are callable only as top-level FROM items",
             )
-    if len(gate.srf_calls) > SRF_INVOCATIONS_MAX:
-        raise _reject(
-            QueryErrorCode.QUOTA_EXCEEDED,
-            f"at most {SRF_INVOCATIONS_MAX} public function invocations per statement",
-        )
+    counts: dict[str, int] = {}
+    for call in gate.srf_calls:
+        category = SRF_CATEGORIES.get(_func_name(call), "nomination")
+        counts[category] = counts.get(category, 0) + 1
+    for category, used in sorted(counts.items()):
+        if used > SRF_INVOCATIONS_MAX:
+            raise _reject(
+                QueryErrorCode.QUOTA_EXCEEDED,
+                f"at most {SRF_INVOCATIONS_MAX} {category} invocations per statement",
+            )
 
     params = _ParamScan()
     params(statement)
@@ -1065,6 +1140,12 @@ def validate_sql(
     # The deparser emits PostgreSQL's `$n`; psycopg binds client-side named
     # placeholders. Translating here (rather than in the executor) keeps one
     # definition of the executable text — the same text that is hashed.
+    #
+    # Percent signs are escaped unconditionally, and the executor always binds
+    # a mapping, so the escaping rule does not depend on whether this
+    # particular statement happened to have parameters — the bridge can add
+    # them later, and a rule that changed under it would break exactly the
+    # statements that mix caller parameters with confirmed rows.
     normalized = _to_named_placeholders(deparsed, count=params.max_index)
     digest = hashlib.sha256(
         f"{normalized}|params={params.max_index}".encode()

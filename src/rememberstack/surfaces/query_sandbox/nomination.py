@@ -91,10 +91,16 @@ EMPTY_CONTRACTS: Final[dict[str, tuple[tuple[str, ...], tuple[int, ...]]]] = {
             "section_id",
             "chunk_content_hash",
             "embedding_text_hash",
-            "source_text",
+            # `source_text` is spliced in by the body path, which is the one
+            # place that decides whether a body may be published at all; a
+            # second declaration here would put the column in twice.
             "location_header",
+            "embedding_input_policy_version",
+            "policy_generation",
+            "embedder_generation",
+            "created_at",
         ),
-        (23, 701, 25, 2950, 2950, 2950, 2950, 2950, 25, 25, 25, 25),
+        (23, 701, 25, 2950, 2950, 2950, 2950, 2950, 25, 25, 25, 25, 25, 25, 1184),
     ),
     "facts": (
         (
@@ -160,6 +166,7 @@ class BridgeSettings:
     total_nominations_max: int = 200
     chunk_ids_max: int = 50
     nominations_used: int = field(default=0, init=False)
+    chunk_text_bytes_used: int = field(default=0, init=False)
 
 
 def validate_filters(*, target: str, filters: object) -> dict[str, Any]:
@@ -170,6 +177,11 @@ def validate_filters(*, target: str, filters: object) -> dict[str, Any]:
     """
     if filters is None:
         return {}
+    if type(filters).__name__ == "_Unrepresentable":
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message="filters must be a JSON object",
+        )
     if isinstance(filters, (str, bytes)):
         # The argument arrives as JSON text from a `::jsonb` literal or a
         # bound parameter; both spell the same object.
@@ -332,7 +344,9 @@ _CONFIRM_SQL: Final[dict[str, str]] = {
     "chunks": (
         "SELECT c.chunk_id::text AS id{extra}, c.chunk_id, c.doc_id, c.version_id,"
         " c.representation_id, c.section_id, c.chunk_content_hash,"
-        " c.embedding_text_hash, c.location_header"
+        " c.embedding_text_hash, c.location_header,"
+        " c.embedding_input_policy_version, c.policy_generation,"
+        " c.embedder_generation, c.created_at"
         " FROM memory_v1.chunks_live AS c"
         " JOIN memory_v1.documents_live AS d"
         "   ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id"
@@ -366,6 +380,7 @@ class Confirmation:
     type_oids: tuple[int, ...]
     dropped_stale: int = 0
     dropped_filtered: int = 0
+    dropped_ambiguous: int = 0
 
 
 def confirm(
@@ -411,13 +426,26 @@ def confirm(
     description = cursor.description or ()
     columns = tuple(column.name for column in description)
     type_oids = tuple(column.type_code for column in description)
-    by_id = {str(row[0]): row for row in cursor.fetchall()}
+    # A fact's identity is (fact_kind, fact_id), so one id can name two rows.
+    # Publishing either would be a guess about which one the projection meant,
+    # and a guess is exactly what confirmation exists to avoid.
+    candidates: dict[str, list[tuple[Any, ...]]] = {}
+    for row in cursor.fetchall():
+        candidates.setdefault(str(row[0]), []).append(row)
+    by_id = {
+        identifier: rows[0] for identifier, rows in candidates.items() if len(rows) == 1
+    }
+    ambiguous = {identifier for identifier, rows in candidates.items() if len(rows) > 1}
 
     payload = 2 if predicates else 1
     rows: list[tuple[Any, ...]] = []
     dropped_stale = 0
     dropped_filtered = 0
+    dropped_ambiguous = 0
     for nomination in nominations:
+        if nomination.item_id in ambiguous:
+            dropped_ambiguous += 1
+            continue
         confirmed = by_id.get(nomination.item_id)
         if confirmed is None:
             dropped_stale += 1
@@ -443,6 +471,7 @@ def confirm(
         type_oids=result_types,
         dropped_stale=dropped_stale,
         dropped_filtered=dropped_filtered,
+        dropped_ambiguous=dropped_ambiguous,
     )
 
 
@@ -507,6 +536,13 @@ def _filter_predicates(
 #: More than this many ids in one call fails before any store is read.
 CHUNK_IDS_MAX: Final = 50
 
+#: §4.3 chunk source-text byte caps. Bodies are the one part of a result whose
+#: size the caller does not control by asking for fewer rows — one chunk can be
+#: a whole page — so they are bounded on their own, per invocation and across
+#: the statement.
+CHUNK_TEXT_BYTES_PER_INVOCATION: Final = 512 * 1024
+CHUNK_TEXT_BYTES_PER_STATEMENT: Final = 4 * 1024 * 1024
+
 _BODY_SQL: Final = (
     "SELECT chunk_id::text AS id, chunk_id, doc_id, version_id,"
     " representation_id, section_id, chunk_content_hash, embedding_text_hash,"
@@ -569,7 +605,6 @@ class BodyConfirmation:
     absent_current: int = 0
     absent_projection: int = 0
     mismatch_hash: int = 0
-    mismatch_prefix: int = 0
 
     @property
     def absent(self) -> int:
@@ -579,10 +614,10 @@ class BodyConfirmation:
     @property
     def mismatched(self) -> int:
         """Every id whose text disagreed with what PostgreSQL recorded."""
-        return self.mismatch_hash + self.mismatch_prefix
+        return self.mismatch_hash
 
 
-def chunk_id_list(value: object) -> tuple[str, ...]:
+def chunk_id_list(value: object) -> tuple[tuple[int, str], ...]:
     """The `uuid[]` argument, de-duplicated to first position (§3.4).
 
     The argument arrives either as a bound list or as a PostgreSQL array
@@ -605,8 +640,17 @@ def chunk_id_list(value: object) -> tuple[str, ...]:
             code=QueryErrorCode.INVALID_PARAMETER,
             message="chunk_ids must be a uuid[] value",
         )
-    ordered: list[str] = []
-    for item in items:
+    # The cap counts what was ASKED, before de-duplication: fifty-one copies of
+    # one id is still a fifty-one-id request, and letting it through because it
+    # collapses to one would make the bound depend on the caller's repetition.
+    if len(items) > CHUNK_IDS_MAX:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=f"fetch_chunk_bodies takes at most {CHUNK_IDS_MAX} chunk ids",
+        )
+    ordered: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for position, item in enumerate(items):
         try:
             identifier = str(UUID(str(item)))
         except (ValueError, AttributeError, TypeError) as error:
@@ -614,79 +658,93 @@ def chunk_id_list(value: object) -> tuple[str, ...]:
                 code=QueryErrorCode.INVALID_PARAMETER,
                 message="chunk_ids must contain only UUIDs",
             ) from error
-        if identifier not in ordered:
-            ordered.append(identifier)
-    if len(ordered) > CHUNK_IDS_MAX:
-        raise SandboxRejection(
-            code=QueryErrorCode.INVALID_PARAMETER,
-            message=f"fetch_chunk_bodies takes at most {CHUNK_IDS_MAX} chunk ids",
-        )
+        if identifier not in seen:
+            seen.add(identifier)
+            # §3.4: a duplicate collapses to the position it FIRST occupied,
+            # so `input_ordinal` still points into the caller's own list.
+            ordered.append((position, identifier))
     return tuple(ordered)
 
 
-def confirm_bodies(
-    *,
-    connection: psycopg.Connection,
-    chunk_ids: Sequence[str],
-    deployment_id: UUID,
-    texts: dict[str, Any],
-) -> BodyConfirmation:
-    """Confirm each id's current coordinate, then verify the bytes against it.
+def confirm_chunk_coordinates(
+    *, connection: psycopg.Connection, chunk_ids: Sequence[str], deployment_id: UUID
+) -> dict[str, tuple[Any, ...]]:
+    """What PostgreSQL currently publishes for each requested chunk id.
 
-    PostgreSQL decides which chunks still exist and what their current
-    coordinate, hashes, and D80 header are; only then is projection text
-    admitted, and only if it hashes to what the spine recorded and still
-    carries exactly the header the spine generated. Text that fails either
-    check is dropped rather than returned with a caveat.
+    This runs BEFORE any projection read. PostgreSQL decides which chunks
+    exist, what their current coordinate is, which D80 header belongs to them,
+    and what the embedded text hashed to; the projection is then asked only
+    about ids that survived, and only to supply bytes.
     """
     if not chunk_ids:
-        return BodyConfirmation(rows=[], requested=0)
+        return {}
     cursor = connection.execute(
         _BODY_SQL.encode(), {"deployment": str(deployment_id), "ids": list(chunk_ids)}
     )
-    by_id = {str(row[0]): row for row in cursor.fetchall()}
-    generations = {
-        (row[10], row[11]) for row in by_id.values()
-    }  # (policy_generation, embedder_generation)
+    confirmed = {str(row[0]): row for row in cursor.fetchall()}
+    generations = {(row[10], row[11]) for row in confirmed.values()}
     if len(generations) > 1:
         raise SandboxRejection(
             code=QueryErrorCode.INVALID_PARAMETER,
             message="the requested chunks span more than one D80 generation",
         )
+    return confirmed
 
+
+def verify_bodies(
+    *,
+    requested: Sequence[tuple[int, str]],
+    coordinates: dict[str, tuple[Any, ...]],
+    texts: dict[str, Any],
+    budget: BridgeSettings | None = None,
+) -> BodyConfirmation:
+    """Admit projection bytes only where they match what the spine recorded.
+
+    P1 stores the chunk BODY; PostgreSQL stores the D80 header separately and
+    the hash of the text that was actually embedded, which the policy composes
+    as header, blank line, body. Recomposing it here and hashing the result is
+    what proves the two halves belong together — it verifies the separation
+    rather than assuming it, and it is why `source_text` can be returned as the
+    body alone with the header in its own column.
+    """
     rows: list[tuple[Any, ...]] = []
+    spent = 0
     absent_current = 0
     absent_projection = 0
     mismatch_hash = 0
-    mismatch_prefix = 0
-    for ordinal, chunk_id in enumerate(chunk_ids):
-        confirmed = by_id.get(chunk_id)
+    for ordinal, chunk_id in requested:
+        confirmed = coordinates.get(chunk_id)
         if confirmed is None:
             absent_current += 1
             continue
-        text = texts.get(chunk_id)
-        indexed = getattr(text, "indexed_text", None)
-        if not isinstance(indexed, str):
+        body = getattr(texts.get(chunk_id), "indexed_text", None)
+        if not isinstance(body, str):
             absent_projection += 1
             continue
-        header = confirmed[8] or ""
-        if not indexed.startswith(header):
-            mismatch_prefix += 1
-            continue
+        header = confirmed[8]
+        embedded = f"{header}\n\n{body}" if header else body
         expected = confirmed[7]
-        # A chunk with no recorded embedding-text hash cannot have its body
-        # verified, and unverifiable text does not get returned as though it
-        # had been checked. The whole point of this path is that PostgreSQL
-        # decides; with nothing to decide against, the answer is no.
-        if not expected or embedding_text_hash(indexed) != expected:
+        # A chunk with no recorded hash cannot have its body verified, and
+        # unverifiable text is not returned as though it had been checked.
+        if not expected or embedding_text_hash(embedded) != expected:
             mismatch_hash += 1
             continue
-        rows.append((ordinal, *confirmed[1:8], indexed[len(header) :], *confirmed[8:]))
+        spent += len(body.encode())
+        if spent > CHUNK_TEXT_BYTES_PER_INVOCATION or (
+            budget is not None
+            and budget.chunk_text_bytes_used + spent > CHUNK_TEXT_BYTES_PER_STATEMENT
+        ):
+            raise SandboxRejection(
+                code=QueryErrorCode.RESOURCE_LIMIT,
+                message="the request asked for more chunk text than §4.3 allows",
+            )
+        rows.append((ordinal, *confirmed[1:8], body, *confirmed[8:]))
+    if budget is not None:
+        budget.chunk_text_bytes_used += spent
     return BodyConfirmation(
         rows=rows,
-        requested=len(chunk_ids),
+        requested=len(requested),
         absent_current=absent_current,
         absent_projection=absent_projection,
         mismatch_hash=mismatch_hash,
-        mismatch_prefix=mismatch_prefix,
     )

@@ -113,6 +113,21 @@ never held fails the same way, because searching for it and finding nothing
 would read as "your query matched no chunks" when it means "the thing you
 pinned to is not here".
 
+## Confirmation and execution share one snapshot
+
+Both run in the SAME transaction. Confirming in a separate one would freeze
+rows that were live then into a statement that runs now, and a lineage
+tombstoned in between would come back in a result the live views no longer
+publish — exactly the D48 leak confirmation exists to prevent.
+
+## A fact's identity is (fact_kind, fact_id)
+
+Relations and observations carry independent identifiers, so one UUID can name
+two current facts. Neither is published: choosing one would be a guess about
+what the projection meant, and a guess is what confirmation exists to avoid.
+The count appears as `dropped_ambiguous` rather than being folded into
+staleness, because nothing about it is stale.
+
 ## Bodies are confirmed before they are read
 
 The chunk channels and the body fetch share one path, so a nominated chunk
@@ -121,9 +136,24 @@ carries its verified source text out with it: `semantic_chunks` and
 chunk whose text fails verification keeps its metadata row out of the result
 rather than appearing with an empty body.
 
+P1 stores the chunk BODY; PostgreSQL stores the D80 header separately and the
+hash of the text that was actually embedded, which the policy composes as
+header, blank line, body. The verifier recomposes that text and hashes it,
+which is what proves the two halves belong together — it verifies the
+separation rather than assuming it, and it is why `source_text` is returned as
+the body alone with the header in its own column. An earlier version of this
+path expected P1 to hold the composed text; it could not have verified a
+single row written by the real pipeline.
+
 A chunk with no recorded embedding-text hash has nothing to verify against, so
 its body is not returned. Unverifiable is not the same as verified, and this
 path exists precisely so that PostgreSQL decides.
+
+PostgreSQL is asked first and the projection second, in both the direct fetch
+and the chunk channels, and each body is verified against the same PostgreSQL
+row its metadata came from. Reading the store first, or confirming twice, would
+leave a window in which the coordinate a body was verified against is not the
+coordinate the row reports.
 
 `fetch_chunk_bodies(chunk_ids)` is the body path minus nomination. PostgreSQL
 decides which chunks still exist and what their current coordinate, hashes, and

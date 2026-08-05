@@ -171,6 +171,26 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
     from rememberstack.surfaces.query_sandbox.bridge import FUNCTION_TARGETS
     from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
 
+    #: The declared parameter list of each nomination function, in order.
+    #: Arity alone does not tell a caller what the third argument means.
+    nomination_arguments: list[CanonicalValue] = [
+        {"name": "query", "type": "text", "required": True},
+        {"name": "k", "type": "integer", "required": True},
+        {"name": "filters", "type": "jsonb", "required": False, "default": "{}"},
+        {
+            "name": "embedding_input_policy_version",
+            "type": "text",
+            "required": False,
+            "default": None,
+        },
+        {
+            "name": "embedder_generation",
+            "type": "text",
+            "required": False,
+            "default": None,
+        },
+    ]
+
     functions: list[CanonicalValue] = []
     for name in sorted(SIGNATURES):
         target, channel = FUNCTION_TARGETS[name]
@@ -183,6 +203,9 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "channel": channel,
                 "arguments_min": least,
                 "arguments_max": most,
+                "arguments": nomination_arguments[:most],
+                "volatility": "stable",
+                "security": "invoker",
                 "filters": list(sorted(nomination.FILTER_ALLOWLISTS[target])),
                 "projection_filters": list(
                     sorted(nomination.LANCE_FILTER_COLUMNS[target])
@@ -199,6 +222,18 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "channel": "bitemporal",
             "arguments_min": 2,
             "arguments_max": 3,
+            "arguments": [
+                {"name": "valid_at", "type": "timestamptz", "required": True},
+                {"name": "believed_at", "type": "timestamptz", "required": True},
+                {
+                    "name": "max_rows",
+                    "type": "integer",
+                    "required": False,
+                    "default": 200,
+                },
+            ],
+            "volatility": "stable",
+            "security": "invoker",
             "filters": [],
             "projection_filters": [],
             "columns": list(FACTS_AS_OF_COLUMNS),
@@ -212,13 +247,21 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "channel": "body",
             "arguments_min": 1,
             "arguments_max": 1,
+            "arguments": [{"name": "chunk_ids", "type": "uuid[]", "required": True}],
+            "volatility": "stable",
+            "security": "invoker",
             "filters": [],
             "projection_filters": [],
             "columns": list(nomination.BODY_COLUMNS),
             "chunk_ids_max": nomination.CHUNK_IDS_MAX,
         }
     )
-    return {"contract": "memory_v1.functions/1", "functions": functions}
+    return {
+        "contract": "memory_v1.functions/1",
+        # Globally sorted: a reader comparing two manifests should see a
+        # difference only where the surface differs.
+        "functions": sorted(functions, key=lambda entry: entry["name"]),  # type: ignore[index,arg-type]
+    }
 
 
 def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:

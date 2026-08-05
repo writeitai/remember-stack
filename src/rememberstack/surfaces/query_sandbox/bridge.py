@@ -30,10 +30,11 @@ from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import confirm
-from rememberstack.surfaces.query_sandbox.nomination import confirm_bodies
+from rememberstack.surfaces.query_sandbox.nomination import confirm_chunk_coordinates
 from rememberstack.surfaces.query_sandbox.nomination import Confirmation
 from rememberstack.surfaces.query_sandbox.nomination import projection_filters
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
+from rememberstack.surfaces.query_sandbox.nomination import verify_bodies
 from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
 
 #: Which confirmation target and channel each public function answers with.
@@ -51,6 +52,24 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
 #: executor leaves their invocation in place and the planner sees straight
 #: through it; only the Lance-backed ones are resolved and substituted.
 SQL_NATIVE_FUNCTIONS: Final = frozenset({"facts_as_of"})
+
+#: Which adapter each public function actually needs. `facts_as_of` needs
+#: neither, the lexical channels and the body fetch never embed anything, and
+#: refusing those because an embedder is unconfigured would fail requests that
+#: would have worked.
+NEEDS_PROJECTION: Final = frozenset(FUNCTION_TARGETS)
+NEEDS_EMBEDDER: Final = frozenset(
+    name for name, (_, channel) in FUNCTION_TARGETS.items() if channel == "semantic"
+)
+
+
+def required_adapters(
+    bindings: Sequence[tuple[str, str, tuple[object, ...]]],
+) -> tuple[bool, bool]:
+    """Whether this statement needs the projection and the embedder."""
+    functions = {function for _, function, _ in bindings}
+    return (bool(functions & NEEDS_PROJECTION), bool(functions & NEEDS_EMBEDDER))
+
 
 #: What `facts_as_of` answers with, and the row bound its migration clamps to.
 #: Declared here so the manifest can publish the whole public surface from one
@@ -105,7 +124,7 @@ def resolve_invocations(
     parameters: Sequence[object],
     connection: psycopg.Connection,
     search: object,
-    embed: EmbeddingSource,
+    embed: EmbeddingSource | None,
     settings: BridgeSettings,
 ) -> tuple[ResolvedInvocation, ...]:
     """Run every public-function invocation the statement contains."""
@@ -140,7 +159,7 @@ def _resolve_one(
     arguments: tuple[object, ...],
     connection: psycopg.Connection,
     search: object,
-    embed: EmbeddingSource,
+    embed: EmbeddingSource | None,
     settings: BridgeSettings,
 ) -> ResolvedInvocation:
     if function not in FUNCTION_TARGETS:
@@ -239,10 +258,7 @@ def _resolve_one(
         # a nominated chunk carries its verified source text out with it
         # rather than making the caller ask a second time.
         confirmation, body = _hydrate(
-            connection=connection,
-            confirmation=confirmation,
-            search=search,
-            settings=settings,
+            confirmation=confirmation, search=search, settings=settings
         )
 
     return ResolvedInvocation(
@@ -256,12 +272,12 @@ def _resolve_one(
             confirmed=len(confirmation.rows),
             dropped_stale=confirmation.dropped_stale,
             dropped_filtered=confirmation.dropped_filtered,
+            dropped_ambiguous=confirmation.dropped_ambiguous,
             dropped_absent=body.absent if body else 0,
             dropped_body_mismatch=body.mismatched if body else 0,
             dropped_absent_current=body.absent_current if body else 0,
             dropped_absent_projection=body.absent_projection if body else 0,
             dropped_hash_mismatch=body.mismatch_hash if body else 0,
-            dropped_prefix_mismatch=body.mismatch_prefix if body else 0,
             generation=embedder_generation or policy_generation,
             termination_reason="completed",
         ),
@@ -269,64 +285,88 @@ def _resolve_one(
 
 
 def _hydrate(
-    *,
-    connection: psycopg.Connection,
-    confirmation: Confirmation,
-    search: object,
-    settings: BridgeSettings,
+    *, confirmation: Confirmation, search: object, settings: BridgeSettings
 ) -> tuple[Confirmation, BodyConfirmation]:
-    """Attach verified source text to confirmed chunk rows (§3.4).
+    """Attach verified source text to already-confirmed chunk rows (§3.4).
 
-    The verification is the body path's, unchanged: the text must carry the
-    header PostgreSQL generated and hash to what PostgreSQL recorded. A chunk
-    whose text fails either check keeps its metadata row out of the result
-    entirely rather than appearing with an empty body, because a row that says
-    "this chunk exists but here is no text" reads as an answer when it is a
-    failure.
+    The metadata in `confirmation` came from PostgreSQL a moment ago in this
+    same transaction, so it IS the confirmation: asking PostgreSQL a second
+    time would only open a window in which the coordinate a body is verified
+    against differs from the coordinate the row reports.
     """
     identifier = confirmation.columns.index("chunk_id")
+    header = confirmation.columns.index("location_header")
     chunk_ids = tuple(str(row[identifier]) for row in confirmation.rows)
     if not chunk_ids:
-        return confirmation, BodyConfirmation(rows=[], requested=0)
+        # An empty answer still answers with the chunk contract. A result whose
+        # columns depend on how many rows survived is not a contract, and a
+        # caller selecting `source_text` would fail on exactly the queries that
+        # found nothing.
+        return _with_body_column(confirmation, header, []), BodyConfirmation(
+            rows=[], requested=0
+        )
+    texts = _chunk_texts(search=search, settings=settings, chunk_ids=chunk_ids)
+    # The nomination row already carries the columns the body path verifies
+    # against, in the order `_BODY_SQL` publishes them.
+    hashes = confirmation.columns.index("embedding_text_hash")
+    coordinates = {
+        str(row[identifier]): (
+            str(row[identifier]),
+            *((None,) * 6),
+            row[hashes],
+            row[header],
+        )
+        for row in confirmation.rows
+    }
+    body = verify_bodies(
+        requested=[(index, chunk_id) for index, chunk_id in enumerate(chunk_ids)],
+        coordinates=coordinates,
+        texts=texts,
+        budget=settings,
+    )
+    bodies = {chunk_ids[row[0]]: row[8] for row in body.rows}
+    rows = [
+        (*row[:header], bodies[str(row[identifier])], *row[header:])
+        for row in confirmation.rows
+        if str(row[identifier]) in bodies
+    ]
+    return _with_body_column(confirmation, header, rows), body
+
+
+def _chunk_texts(
+    *, search: object, settings: BridgeSettings, chunk_ids: Sequence[str]
+) -> dict[str, Any]:
+    """Projection bodies for ids PostgreSQL has already confirmed."""
     try:
         texts = search.chunk_texts(  # type: ignore[attr-defined]
-            deployment_id=str(settings.deployment_id), chunk_ids=chunk_ids
+            deployment_id=str(settings.deployment_id), chunk_ids=tuple(chunk_ids)
         )
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
             code=QueryErrorCode.LANCE_UNAVAILABLE,
             message="chunk bodies could not be read",
         ) from error
-    body = confirm_bodies(
-        connection=connection,
-        chunk_ids=chunk_ids,
-        deployment_id=settings.deployment_id,
-        texts={str(key): value for key, value in texts.items()},
-    )
-    # The body path answers by chunk id; splice its verified text into the
-    # nomination rows, which carry rank/score/channel the body path never sees.
-    bodies = {str(row[1]): row[8] for row in body.rows}
-    header = confirmation.columns.index("location_header")
-    rows = [
-        (*row[:header], bodies[str(row[identifier])], *row[header:])
-        for row in confirmation.rows
-        if str(row[identifier]) in bodies
-    ]
-    columns = (
-        *confirmation.columns[:header],
-        "source_text",
-        *confirmation.columns[header:],
-    )
-    type_oids = (*confirmation.type_oids[:header], 25, *confirmation.type_oids[header:])
-    return (
-        Confirmation(
-            columns=columns,
-            rows=rows,
-            type_oids=type_oids,
-            dropped_stale=confirmation.dropped_stale,
-            dropped_filtered=confirmation.dropped_filtered,
+    return {str(key): value for key, value in texts.items()}
+
+
+def _with_body_column(
+    confirmation: Confirmation, header: int, rows: list[tuple[Any, ...]]
+) -> Confirmation:
+    """The same confirmation with `source_text` in front of the D80 header."""
+    return Confirmation(
+        columns=(
+            *confirmation.columns[:header],
+            "source_text",
+            *confirmation.columns[header:],
         ),
-        body,
+        rows=rows,
+        type_oids=(
+            *confirmation.type_oids[:header],
+            25,
+            *confirmation.type_oids[header:],
+        ),
+        dropped_stale=confirmation.dropped_stale,
+        dropped_filtered=confirmation.dropped_filtered,
     )
 
 
@@ -374,13 +414,24 @@ def _nominator(
     function: str,
     target: str,
     search: object,
-    embed: EmbeddingSource,
+    embed: EmbeddingSource | None,
     settings: BridgeSettings,
     policy_generation: str | None = None,
     embedder_generation: str | None = None,
 ) -> Callable[[str, int, dict[str, Any]], Sequence[Any]]:
     """Bind one function to its channel on the scored search port."""
     deployment = str(settings.deployment_id)
+
+    def vector(query: str) -> tuple[float, ...]:
+        # The executor refuses a semantic statement without an embedder, so
+        # this is unreachable; it is here so the impossible case still fails
+        # as a stated refusal rather than as an attribute error.
+        if embed is None:
+            raise SandboxRejection(
+                code=QueryErrorCode.LANCE_UNAVAILABLE,
+                message="no embedder is configured for this deployment",
+            )
+        return embed(query=query)
 
     def narrow(filters: dict[str, Any]) -> dict[str, str]:
         # Filters the projection understands are applied there, before top-k,
@@ -390,7 +441,7 @@ def _nominator(
     def semantic_claims(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_claims_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
-            vector=embed(query=query),
+            vector=vector(query),
             k=k,
             current_only=True,
             equality_filters=narrow(filters),
@@ -408,7 +459,7 @@ def _nominator(
     def semantic_chunks(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_chunks_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
-            vector=embed(query=query),
+            vector=vector(query),
             k=k,
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
@@ -428,7 +479,7 @@ def _nominator(
     def semantic_facts(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_facts_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
-            vector=embed(query=query),
+            vector=vector(query),
             k=k,
             kind=filters.get("fact_kind"),
         )
@@ -436,7 +487,7 @@ def _nominator(
     def semantic_entities(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_entities_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
-            vector=embed(query=query),
+            vector=vector(query),
             k=k,
             entity_type=filters.get("entity_type"),
         )
@@ -577,22 +628,12 @@ def _resolve_bodies(
             code=QueryErrorCode.INVALID_PARAMETER,
             message="fetch_chunk_bodies takes exactly one uuid[] argument",
         )
-    chunk_ids = chunk_id_list(arguments[0])
+    requested = chunk_id_list(arguments[0])
     try:
-        texts = search.chunk_texts(  # type: ignore[attr-defined]
-            deployment_id=str(settings.deployment_id), chunk_ids=chunk_ids
-        )
-    except Exception as error:  # the projection is a separate process
-        raise SandboxRejection(
-            code=QueryErrorCode.LANCE_UNAVAILABLE,
-            message="chunk bodies could not be read",
-        ) from error
-    try:
-        confirmation = confirm_bodies(
+        coordinates = confirm_chunk_coordinates(
             connection=connection,
-            chunk_ids=chunk_ids,
+            chunk_ids=[chunk_id for _, chunk_id in requested],
             deployment_id=settings.deployment_id,
-            texts={str(key): value for key, value in texts.items()},
         )
     except SandboxRejection:
         raise
@@ -601,6 +642,15 @@ def _resolve_bodies(
             code=QueryErrorCode.CONFIRMATION_FAILED,
             message="chunk coordinates could not be confirmed",
         ) from error
+    # Only ids PostgreSQL still publishes are ever asked of the projection.
+    texts = (
+        _chunk_texts(search=search, settings=settings, chunk_ids=tuple(coordinates))
+        if coordinates
+        else {}
+    )
+    confirmation = verify_bodies(
+        requested=requested, coordinates=coordinates, texts=texts, budget=settings
+    )
     return ResolvedInvocation(
         cte_name=cte_name,
         columns=BODY_COLUMNS,
@@ -618,7 +668,6 @@ def _resolve_bodies(
             dropped_absent_current=confirmation.absent_current,
             dropped_absent_projection=confirmation.absent_projection,
             dropped_hash_mismatch=confirmation.mismatch_hash,
-            dropped_prefix_mismatch=confirmation.mismatch_prefix,
             termination_reason="completed",
         ),
     )

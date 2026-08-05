@@ -6,6 +6,7 @@ are the counts that actually happened.
 """
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 from pathlib import Path
 from uuid import UUID
@@ -28,6 +29,9 @@ from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
+from rememberstack.surfaces.query_sandbox.nomination import (
+    CHUNK_TEXT_BYTES_PER_INVOCATION,
+)
 from rememberstack.surfaces.query_sandbox.nomination import PROJECTION_ONLY_FILTERS
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 
@@ -503,6 +507,32 @@ def test_a_projection_cannot_overspend_the_budget(seeded: tuple[str, UUID]) -> N
 # --- signatures, filter reach, and honest drop categories --------------------
 
 
+@contextmanager
+def _embedding_hash(url: str, chunk_id: str, value: str | None) -> Iterator[None]:
+    """Set a chunk's recorded hash for one test, then put it back.
+
+    The corpus is built once for the module and the database outlives it, so a
+    test that leaves a chunk altered changes what every later test sees.
+    """
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT embedding_text_hash FROM chunks WHERE chunk_id = %s", (chunk_id,)
+        ).fetchone()
+        assert row is not None
+        connection.execute(
+            "UPDATE chunks SET embedding_text_hash = %s WHERE chunk_id = %s",
+            (value, chunk_id),
+        )
+    try:
+        yield
+    finally:
+        with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+            connection.execute(
+                "UPDATE chunks SET embedding_text_hash = %s WHERE chunk_id = %s",
+                (row[0], chunk_id),
+            )
+
+
 def _a_live_chunk(url: str) -> tuple[str, str, str]:
     """One current chunk: its id, its D80 header, and its document."""
     with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
@@ -588,20 +618,16 @@ def test_a_confirmed_body_separates_the_generated_header(
     url, _ = seeded
     chunk_id, header, _ = _a_live_chunk(url)
     body = "The measured value was 41 degrees."
-    indexed = f"{header}{body}"
-    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
-        connection.execute(
-            "UPDATE chunks SET embedding_text_hash = %s WHERE chunk_id = %s",
-            (embedding_text_hash(indexed), chunk_id),
+    embedded = f"{header}\n\n{body}"
+    with _embedding_hash(url, chunk_id, embedding_text_hash(embedded)):
+        search = _BodySearch({chunk_id: body})
+        outcome = _executor(url, search).query_sql(
+            sql=(
+                "SELECT input_ordinal, source_text, location_header"
+                " FROM fetch_chunk_bodies($1) ORDER BY input_ordinal"
+            ),
+            parameters=[[chunk_id]],
         )
-    search = _BodySearch({chunk_id: indexed})
-    outcome = _executor(url, search).query_sql(
-        sql=(
-            "SELECT input_ordinal, source_text, location_header"
-            " FROM fetch_chunk_bodies($1) ORDER BY input_ordinal"
-        ),
-        parameters=[[chunk_id]],
-    )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows == ((0, body, header),)
     invocation = outcome.semantic_invocations[0]
@@ -614,7 +640,7 @@ def test_a_body_that_does_not_hash_to_the_spine_is_dropped(
     """Projection text that disagrees with PostgreSQL never reaches a caller."""
     url, _ = seeded
     chunk_id, header, _ = _a_live_chunk(url)
-    search = _BodySearch({chunk_id: f"{header}text the spine never recorded"})
+    search = _BodySearch({chunk_id: "text the spine never recorded"})
     outcome = _executor(url, search).query_sql(
         sql="SELECT source_text FROM fetch_chunk_bodies($1)", parameters=[[chunk_id]]
     )
@@ -624,10 +650,13 @@ def test_a_body_that_does_not_hash_to_the_spine_is_dropped(
 
 
 def test_a_repeated_chunk_id_keeps_its_first_position(seeded: tuple[str, UUID]) -> None:
-    """Duplicates collapse to first input position (§3.4)."""
+    """A duplicate collapses to the position it FIRST occupied (§3.4)."""
     chunk = str(uuid4())
     other = str(uuid4())
-    assert chunk_id_list([chunk, other, chunk]) == (chunk, other)
+    assert chunk_id_list([chunk, other, chunk]) == ((0, chunk), (1, other))
+    # ... and a later first-occurrence keeps its own position rather than
+    # being renumbered into a dense list.
+    assert chunk_id_list([chunk, chunk, other]) == ((0, chunk), (2, other))
 
 
 def test_more_than_fifty_chunk_ids_fails_before_any_store_is_read(
@@ -642,6 +671,19 @@ def test_more_than_fifty_chunk_ids_fails_before_any_store_is_read(
     )
     assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
     assert search.asked == ()
+
+
+def test_the_id_cap_counts_what_was_asked_not_what_was_left(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Repetition does not buy a bigger request."""
+    url, _ = seeded
+    repeated = str(uuid4())
+    outcome = _executor(url, _BodySearch({})).query_sql(
+        sql="SELECT source_text FROM fetch_chunk_bodies($1)",
+        parameters=[[repeated] * 51],
+    )
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
 
 
 def test_the_bitemporal_srf_runs_in_postgresql(seeded: tuple[str, UUID]) -> None:
@@ -678,17 +720,13 @@ def test_a_nominated_chunk_carries_its_verified_body(seeded: tuple[str, UUID]) -
     url, _ = seeded
     chunk_id, header, _ = _a_live_chunk(url)
     body = "Rain fell for three days."
-    indexed = f"{header}{body}"
-    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
-        connection.execute(
-            "UPDATE chunks SET embedding_text_hash = %s WHERE chunk_id = %s",
-            (embedding_text_hash(indexed), chunk_id),
+    embedded = f"{header}\n\n{body}"
+    with _embedding_hash(url, chunk_id, embedding_text_hash(embedded)):
+        search = _BodySearch({chunk_id: body}, (_nomination(chunk_id),))
+        outcome = _executor(url, search).query_sql(
+            sql="SELECT rank, source_text, location_header FROM semantic_chunks($1, 5)",
+            parameters=["weather"],
         )
-    search = _BodySearch({chunk_id: indexed}, (_nomination(chunk_id),))
-    outcome = _executor(url, search).query_sql(
-        sql="SELECT rank, source_text, location_header FROM semantic_chunks($1, 5)",
-        parameters=["weather"],
-    )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows == ((1, body, header),)
 
@@ -699,15 +737,12 @@ def test_a_body_the_spine_cannot_vouch_for_is_not_returned(
     """With no recorded hash there is nothing to verify against, so no row."""
     url, _ = seeded
     chunk_id, header, _ = _a_live_chunk(url)
-    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
-        connection.execute(
-            "UPDATE chunks SET embedding_text_hash = NULL WHERE chunk_id = %s",
-            (chunk_id,),
+    with _embedding_hash(url, chunk_id, None):
+        search = _BodySearch({chunk_id: "anything at all"})
+        outcome = _executor(url, search).query_sql(
+            sql="SELECT source_text FROM fetch_chunk_bodies($1)",
+            parameters=[[chunk_id]],
         )
-    search = _BodySearch({chunk_id: f"{header}anything at all"})
-    outcome = _executor(url, search).query_sql(
-        sql="SELECT source_text FROM fetch_chunk_bodies($1)", parameters=[[chunk_id]]
-    )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.rows == ()
     assert outcome.semantic_invocations[0].dropped_hash_mismatch == 1
@@ -753,3 +788,148 @@ def test_tied_scores_rank_by_stable_id() -> None:
         "00000000-0000-0000-0000-000000000002",
         "ffffffff-0000-0000-0000-000000000001",
     ]
+
+
+def test_the_chunk_contract_does_not_depend_on_what_survived(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A result whose columns vary with its row count is not a contract."""
+    url, _ = seeded
+    for nominations in ((), (_nomination(uuid4()),)):
+        outcome = _executor(url, _BodySearch({}, nominations)).query_sql(
+            sql="SELECT source_text, location_header FROM semantic_chunks($1, 5)",
+            parameters=["weather"],
+        )
+        assert outcome.termination_reason == "completed", outcome.error_message
+        assert outcome.rows == ()
+        assert [column.name for column in outcome.columns] == [
+            "source_text",
+            "location_header",
+        ]
+
+
+def test_a_fact_with_no_recorded_start_is_still_a_fact(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A null endpoint is an open interval, not a comparison that fails."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        current = connection.execute(
+            "SELECT count(*) FROM memory_v1.facts_current"
+            " WHERE deployment_id = %s AND valid_from IS NULL",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        as_of = connection.execute(
+            "SELECT count(*) FROM memory_v1.facts_as_of(now(), now(), 1000)"
+            " WHERE deployment_id = %s AND valid_from IS NULL",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    assert current is not None and as_of is not None
+    assert as_of[0] == current[0]
+
+
+def test_the_chunk_channels_report_the_generation_they_read(
+    seeded: tuple[str, UUID],
+) -> None:
+    """§3.4 lists generation and freshness columns on the chunk results."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    embedded = f"{header}\n\nsome body"
+    with _embedding_hash(url, chunk_id, embedding_text_hash(embedded)):
+        outcome = _executor(
+            url, _BodySearch({chunk_id: "some body"}, (_nomination(chunk_id),))
+        ).query_sql(
+            sql=(
+                "SELECT embedding_input_policy_version, policy_generation,"
+                " embedder_generation, created_at FROM semantic_chunks($1, 5)"
+            ),
+            parameters=["weather"],
+        )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert len(outcome.rows) == 1
+
+
+def test_more_chunk_text_than_the_cap_allows_fails_the_request(
+    seeded: tuple[str, UUID],
+) -> None:
+    """§4.3 bounds body bytes on their own: one chunk can be a whole page."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    oversized = "x" * (CHUNK_TEXT_BYTES_PER_INVOCATION + 1)
+    embedded = f"{header}\n\n{oversized}"
+    with _embedding_hash(url, chunk_id, embedding_text_hash(embedded)):
+        outcome = _executor(url, _BodySearch({chunk_id: oversized})).query_sql(
+            sql="SELECT source_text FROM fetch_chunk_bodies($1)",
+            parameters=[[chunk_id]],
+        )
+    assert outcome.error_code == QueryErrorCode.RESOURCE_LIMIT
+
+
+def test_a_percent_sign_in_caller_text_stays_a_percent_sign(
+    seeded: tuple[str, UUID],
+) -> None:
+    """`'100%'` is four characters of text, not a placeholder."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT '100%' AS literal, rank FROM semantic_claims($1, 5)",
+        parameters=["memory"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows[0][0] == "100%"
+
+
+def test_a_dollar_one_inside_quotes_is_text_not_a_parameter(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Rewriting inside a literal would change what the caller asked for."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT '$1' AS literal, rank FROM semantic_claims($1, 5)",
+        parameters=["memory"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows[0][0] == "$1"
+
+
+def test_a_filter_that_is_not_an_object_is_rejected(seeded: tuple[str, UUID]) -> None:
+    """Reading `true::jsonb` as "no filters" would run a different query."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5, true::jsonb)",
+        parameters=["memory"],
+    )
+    assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+
+
+def test_a_native_function_does_not_need_a_projection(seeded: tuple[str, UUID]) -> None:
+    """`facts_as_of` reads PostgreSQL; an absent projection is irrelevant."""
+    url, _ = seeded
+    executor = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+        search=None,
+        embed=None,
+    )
+    outcome = executor.query_sql(
+        sql="SELECT count(*) FROM facts_as_of($1::timestamptz, $2::timestamptz, 10)",
+        parameters=["2999-01-01T00:00:00+00:00", "2999-01-01T00:00:00+00:00"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+
+
+def test_two_facts_sharing_an_id_are_both_withheld(seeded: tuple[str, UUID]) -> None:
+    """A fact's identity is (fact_kind, fact_id); one id can name two rows."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fact_id::text FROM memory_v1.facts_current"
+            " WHERE deployment_id = %s GROUP BY fact_id HAVING count(*) > 1 LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    if row is None:
+        pytest.skip("the corpus holds no id shared across both fact kinds")
+    outcome = _executor(url, _FakeSearch((_nomination(row[0]),))).query_sql(
+        sql="SELECT fact_id FROM semantic_facts($1, 5)", parameters=["memory"]
+    )
+    assert outcome.rows == ()
+    assert outcome.semantic_invocations[0].dropped_ambiguous == 1

@@ -560,11 +560,11 @@ class LanceChunkIndex:
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         table = self._connection.open_table(_CHUNK_TABLE)
         columns = {field.name for field in table.schema}
-        _require_generation(
-            table=table, column="policy_generation", value=policy_generation
-        )
-        _require_generation(
-            table=table, column="embedder_generation", value=embedder_generation
+        _require_generations(
+            table=table,
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
         )
         where = _chunk_search_where(
             deployment_id=deployment_id,
@@ -604,11 +604,11 @@ class LanceChunkIndex:
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         table = self._connection.open_table(_CHUNK_TABLE)
         columns = {field.name for field in table.schema}
-        _require_generation(
-            table=table, column="policy_generation", value=policy_generation
-        )
-        _require_generation(
-            table=table, column="embedder_generation", value=embedder_generation
+        _require_generations(
+            table=table,
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
         )
         where = _chunk_search_where(
             deployment_id=deployment_id,
@@ -1019,25 +1019,38 @@ def _nomination_score(row: dict) -> float:
     return 0.0
 
 
-def _require_generation(*, table: Table, column: str, value: str | None) -> None:
-    """Fail when a requested generation is not one this dataset holds.
+def _require_generations(
+    *,
+    table: Table,
+    deployment_id: str,
+    policy_generation: str | None,
+    embedder_generation: str | None,
+) -> None:
+    """Fail when the requested generations are not ones this deployment holds.
 
-    Silently searching a projection that has never seen the pinned generation
-    returns an empty result that reads as "nothing matched your query" when it
-    actually means "the thing you pinned to does not exist here".
+    The two pins are checked TOGETHER, and inside the deployment: a policy that
+    exists and an embedder that exists do not mean the pair was ever produced,
+    and a generation another deployment holds is not one this caller can pin
+    to. Searching anyway would return an empty result that reads as "nothing
+    matched your query" when it means "what you pinned to is not here".
     """
-    if value is None:
+    if policy_generation is None and embedder_generation is None:
         return
-    if column not in {field.name for field in table.schema}:
-        raise LookupError(f"the projection records no {column}")
-    rows = (
-        table.search()
-        .where(f"{column} = '{_escape_literal(value)}'", prefilter=True)
-        .limit(1)
-        .to_list()
-    )
-    if not rows:
-        raise LookupError(f"the projection holds no {column} {value!r}")
+    columns = {field.name for field in table.schema}
+    where = f"deployment_id = '{_escape_literal(deployment_id)}'"
+    for column, value in (
+        ("policy_generation", policy_generation),
+        ("embedder_generation", embedder_generation),
+    ):
+        if value is None:
+            continue
+        if column not in columns:
+            raise LookupError(f"the projection records no {column}")
+        where += f" AND {column} = '{_escape_literal(value)}'"
+    if not table.search().where(where, prefilter=True).limit(1).to_list():
+        raise LookupError(
+            "the projection holds no chunk under the requested generations"
+        )
 
 
 def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) -> str:

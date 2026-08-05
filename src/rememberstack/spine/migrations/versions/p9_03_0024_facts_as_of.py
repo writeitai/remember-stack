@@ -86,9 +86,12 @@ AS $$
     facts_as_of.believed_at,
     'current'::text
   FROM memory_v1.facts_visible_history AS f
-  WHERE f.ingested_at <= facts_as_of.believed_at
+  -- A null endpoint is an OPEN interval, not a comparison that fails: a fact
+  -- with no recorded start held for as long as anyone knows, and treating that
+  -- as "started after every instant" would hide it from every as-of question.
+  WHERE (f.ingested_at IS NULL OR f.ingested_at <= facts_as_of.believed_at)
     AND (f.invalidated_at IS NULL OR f.invalidated_at > facts_as_of.believed_at)
-    AND f.valid_from <= facts_as_of.valid_at
+    AND (f.valid_from IS NULL OR f.valid_from <= facts_as_of.valid_at)
     AND (f.valid_until IS NULL OR f.valid_until > facts_as_of.valid_at)
   ORDER BY f.fact_kind, f.fact_id
   -- Zero means zero. Clamping an explicit 0 up to 1 would answer a question

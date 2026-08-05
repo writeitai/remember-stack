@@ -64,6 +64,7 @@ class SemanticInvocation(BaseModel):
     confirmed: int
     dropped_stale: int
     dropped_filtered: int = 0
+    dropped_ambiguous: int = 0
     dropped_absent: int = 0
     dropped_body_mismatch: int = 0
     # The body path names which side was missing and which check failed, so a
@@ -71,7 +72,6 @@ class SemanticInvocation(BaseModel):
     dropped_absent_current: int = 0
     dropped_absent_projection: int = 0
     dropped_hash_mismatch: int = 0
-    dropped_prefix_mismatch: int = 0
     generation: str | None = None
     termination_reason: str | None = None
 
