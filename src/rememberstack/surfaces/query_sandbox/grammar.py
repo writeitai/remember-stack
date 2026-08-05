@@ -1050,9 +1050,23 @@ def apply_cast(value: object, casts: Sequence[str]) -> object:
     for name in reversed(list(casts)):
         if name == "_array":
             continue
-        if name in ("int2", "int4", "int8", "integer", "bigint", "smallint"):
+        if name in ("bool", "boolean"):
+            # PostgreSQL's integer-to-boolean cast is "nonzero is true", and
+            # `(2::boolean)::integer` is 1, not 2. Dropping the inner cast sent
+            # the projection a different k than PostgreSQL was asked for.
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in ("t", "true", "yes", "on", "1"):
+                    value = True
+                elif lowered in ("f", "false", "no", "off", "0"):
+                    value = False
+                else:
+                    return UNREPRESENTABLE
+            else:
+                value = bool(value)
+        elif name in ("int2", "int4", "int8", "integer", "bigint", "smallint"):
             try:
-                value = int(str(value))
+                value = int(value) if isinstance(value, bool) else int(str(value))
             except (TypeError, ValueError):
                 return UNREPRESENTABLE
         elif name in ("text", "varchar", "bpchar", "jsonb", "json", "uuid"):

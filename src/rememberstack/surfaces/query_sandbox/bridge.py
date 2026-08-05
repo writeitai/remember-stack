@@ -351,6 +351,7 @@ def _resolve_one(
             nominations=nominations,
             deployment_id=settings.deployment_id,
             filters=filters,
+            generations=(policy_generation, embedder_generation),
         )
     except psycopg.Error as error:
         raise SandboxRejection(
@@ -502,6 +503,8 @@ def _with_body_column(
         ),
         dropped_stale=confirmation.dropped_stale,
         dropped_filtered=confirmation.dropped_filtered,
+        dropped_ambiguous=confirmation.dropped_ambiguous,
+        pg_confirmed_at=confirmation.pg_confirmed_at,
     )
 
 

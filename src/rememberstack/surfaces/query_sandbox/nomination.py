@@ -400,6 +400,11 @@ class Confirmation:
     pg_confirmed_at: datetime | None = None
 
 
+def payload_index(columns: Sequence[str], name: str) -> int:
+    """Where a column sits in a confirmation row, whatever precedes it."""
+    return list(columns).index(name)
+
+
 def confirm(
     *,
     connection: psycopg.Connection,
@@ -407,6 +412,7 @@ def confirm(
     nominations: Sequence[P1Nomination],
     deployment_id: UUID,
     filters: dict[str, Any],
+    generations: tuple[str | None, str | None] = (None, None),
 ) -> Confirmation:
     """Confirm nominated ids against the invariant views; drop what fails.
 
@@ -429,6 +435,11 @@ def confirm(
             pg_confirmed_at=empty_at[0] if empty_at else None,
         )
     ids = [nomination.item_id for nomination in nominations]
+    # Facts are identified by (kind, id). Confirming an id alone would let a
+    # nomination the projection still remembers as a relation be answered with
+    # a current observation that happens to share the id — the caller would get
+    # a real row carrying a score that was computed for a different fact.
+    qualified = target == "facts"
     statement = _CONFIRM_SQL[target]
     authorization_filters = {
         key: value
@@ -438,10 +449,23 @@ def confirm(
     predicates, parameters = _filter_predicates(
         target=target, filters=authorization_filters
     )
+    statement = _CONFIRM_SQL[target]
     # The filters are asked as a question, not used to hide rows: a row that
     # fails one is a filter drop, while a row the view no longer publishes at
     # all is a staleness drop, and calling both "stale" would misreport why the
     # projection's memory and PostgreSQL disagree.
+    # A nomination made under one generation is confirmed under that same one.
+    # During a cutover the projection can still hold a chunk under the old
+    # pair while PostgreSQL has moved it to the new one; confirming on id
+    # alone would return current metadata carrying a score computed in a
+    # different vector space.
+    if target == "chunks" and generations[0] is not None:
+        statement += (
+            " AND c.policy_generation = %(g_policy)s"
+            " AND c.embedder_generation = %(g_embedder)s"
+        )
+        parameters["g_policy"] = generations[0]
+        parameters["g_embedder"] = generations[1]
     extra = f", ({' AND '.join(predicates)}) AS filter_pass" if predicates else ""
     statement = statement.replace("{extra}", extra)
     confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
@@ -457,6 +481,14 @@ def confirm(
     candidates: dict[str, list[tuple[Any, ...]]] = {}
     for row in cursor.fetchall():
         candidates.setdefault(str(row[0]), []).append(row)
+    if qualified:
+        # `fact_kind` is the first payload column of the facts statement.
+        kind = payload_index(columns, "fact_kind")
+        candidates = {
+            f"{row[kind]}:{identifier}": [row]
+            for identifier, rows in candidates.items()
+            for row in rows
+        }
     by_id = {
         identifier: rows[0] for identifier, rows in candidates.items() if len(rows) == 1
     }
@@ -468,10 +500,15 @@ def confirm(
     dropped_filtered = 0
     dropped_ambiguous = 0
     for nomination in nominations:
-        if nomination.item_id in ambiguous:
+        key = (
+            f"{nomination.qualifier}:{nomination.item_id}"
+            if qualified and nomination.qualifier
+            else nomination.item_id
+        )
+        if key in ambiguous:
             dropped_ambiguous += 1
             continue
-        confirmed = by_id.get(nomination.item_id)
+        confirmed = by_id.get(key)
         if confirmed is None:
             dropped_stale += 1
             continue
@@ -738,7 +775,10 @@ def confirm_chunk_coordinates(
     about ids that survived, and only to supply bytes.
     """
     if not chunk_ids:
-        return {}, None
+        # Nothing to confirm, but the decision was still made at an instant,
+        # and an invocation that reports none reads as one that never ran.
+        empty_at = connection.execute("SELECT statement_timestamp()").fetchone()
+        return {}, (empty_at[0] if empty_at else None)
     confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
     cursor = connection.execute(
         _BODY_SQL.encode(), {"deployment": str(deployment_id), "ids": list(chunk_ids)}

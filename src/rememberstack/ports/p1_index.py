@@ -156,6 +156,11 @@ class P1Nomination:
     rank: int
     score: float
     channel: str
+    #: The rest of the item's identity, where its id is not the whole of it. A
+    #: fact is identified by (kind, id), so nominating an id alone lets a stale
+    #: relation be confirmed against a current observation that happens to
+    #: share it. Empty for channels whose id IS the identity.
+    qualifier: str | None = None
 
 
 @runtime_checkable

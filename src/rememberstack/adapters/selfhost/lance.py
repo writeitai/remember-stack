@@ -449,7 +449,13 @@ class LanceChunkIndex:
     # -- scored nomination for the public query surface (design §3.4) --------
 
     @staticmethod
-    def _nominations(rows: list[dict], *, id_column: str, channel: str) -> tuple:
+    def _nominations(
+        rows: list[dict],
+        *,
+        id_column: str,
+        channel: str,
+        qualifier_column: str | None = None,
+    ) -> tuple:
         """Carry out the score the channel already computed.
 
         Lance reports `_distance` for a vector search and `_score` for BM25.
@@ -648,7 +654,10 @@ class LanceChunkIndex:
             .limit(k)
         )
         return self._nominations(
-            query.to_list(), id_column="fact_id", channel="semantic"
+            query.to_list(),
+            id_column="fact_id",
+            channel="semantic",
+            qualifier_column="kind",
         )
 
     def search_entities_scored(

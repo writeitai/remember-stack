@@ -281,8 +281,21 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "parallel": "unsafe",
         }
     )
+    published = {entry["name"] for entry in functions}  # type: ignore[index]
     return {
         "contract": "memory_v1.functions/1",
+        # A function the grammar admits but this build cannot resolve is named
+        # here rather than left for a caller to discover by calling it.
+        "declared_without_signatures": list(
+            sorted(
+                name
+                for name in __import__(
+                    "rememberstack.surfaces.query_sandbox.grammar",
+                    fromlist=["PUBLIC_SRF_NAMES"],
+                ).PUBLIC_SRF_NAMES
+                if name not in published
+            )
+        ),
         # Globally sorted: a reader comparing two manifests should see a
         # difference only where the surface differs.
         "functions": sorted(functions, key=lambda entry: entry["name"]),  # type: ignore[index,arg-type]
@@ -330,7 +343,13 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
         "operators": list(sorted(grammar.OPERATOR_ALLOWLIST)),
         "cast_types": list(sorted(grammar.CAST_TYPE_ALLOWLIST)),
         "public_functions": list(sorted(grammar.PUBLIC_SRF_NAMES)),
-        "srf_invocations_max": grammar.SRF_INVOCATIONS_MAX,
+        # The cap is PER CATEGORY, not per statement: three nomination calls
+        # and three body fetches are both inside it. Publishing one number
+        # described a stricter surface than the one that ships.
+        "srf_invocations_max_per_category": grammar.SRF_INVOCATIONS_MAX,
+        "srf_categories": {
+            name: category for name, category in sorted(grammar.SRF_CATEGORIES.items())
+        },
         "recursion_depth_max": grammar.RECURSION_DEPTH_MAX,
     }
     resource_limits: dict[str, CanonicalValue] = {

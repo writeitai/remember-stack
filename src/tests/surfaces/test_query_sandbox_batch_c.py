@@ -1163,3 +1163,46 @@ def test_a_body_fetch_reports_when_postgresql_confirmed(
         )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.semantic_invocations[0].pg_confirmed_at is not None
+
+
+def test_a_fact_nomination_confirms_the_kind_it_nominated(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A fact is (kind, id); confirming the id alone answers a different fact."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fact_id::text, fact_kind FROM memory_v1.facts_current"
+            " WHERE deployment_id = %s LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    assert row is not None
+    other = "observation" if row[1] == "relation" else "relation"
+
+    stale = P1Nomination(
+        item_id=row[0], rank=1, score=1.0, channel="semantic", qualifier=other
+    )
+    outcome = _executor(url, _FakeSearch((stale,))).query_sql(
+        sql="SELECT fact_id FROM semantic_facts($1, 5)", parameters=["memory"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    # The projection nominated the other kind; PostgreSQL holds this one, and
+    # answering with it would carry a score computed for a different fact.
+    assert outcome.rows == ()
+    assert outcome.semantic_invocations[0].dropped_stale == 1
+
+    live = P1Nomination(
+        item_id=row[0], rank=1, score=1.0, channel="semantic", qualifier=row[1]
+    )
+    confirmed = _executor(url, _FakeSearch((live,))).query_sql(
+        sql="SELECT fact_id FROM semantic_facts($1, 5)", parameters=["memory"]
+    )
+    assert confirmed.rows == ((UUID(row[0]),),)
+
+
+def test_a_boolean_cast_is_applied(seeded: tuple[str, UUID]) -> None:
+    """PostgreSQL reads `(2::boolean)::integer` as 1, so k is 1."""
+    from rememberstack.surfaces.query_sandbox.grammar import apply_cast
+
+    assert apply_cast(2, ["integer", "boolean"]) == 1
+    assert apply_cast(0, ["integer", "boolean"]) == 0

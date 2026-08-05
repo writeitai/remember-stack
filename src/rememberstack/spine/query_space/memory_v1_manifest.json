@@ -277,6 +277,10 @@
     },
     "function_signatures": {
       "contract": "memory_v1.functions/1",
+      "declared_without_signatures": [
+        "graph_neighborhood",
+        "graph_path"
+      ],
       "functions": [
         {
           "arguments": [
@@ -1012,7 +1016,19 @@
           "semantic_facts"
         ],
         "recursion_depth_max": 6,
-        "srf_invocations_max": 3
+        "srf_categories": {
+          "facts_as_of": "bitemporal",
+          "fetch_chunk_bodies": "body_fetch",
+          "graph_neighborhood": "graph",
+          "graph_path": "graph",
+          "lexical_chunks": "nomination",
+          "lexical_claims": "nomination",
+          "semantic_chunks": "nomination",
+          "semantic_claims": "nomination",
+          "semantic_entities": "nomination",
+          "semantic_facts": "nomination"
+        },
+        "srf_invocations_max_per_category": 3
       }
     },
     "views_schema": {
@@ -24960,5 +24976,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/1",
-  "surface_manifest_hash": "0e4ceec3f9c3c9149927f172acb19759d20549e6d2ed1218e1194f21b9587244"
+  "surface_manifest_hash": "81a6d4ca67f3558ba623dde57f5f01e9d84757561680ea11f0a0f732f3b1c64e"
 }
