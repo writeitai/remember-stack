@@ -390,8 +390,14 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
         "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,
         "grade": "snapshot_graph",
         # `confirm=true` checks live membership of projected entity/relation
-        # ids; it does not make any other part of the result live.
+        # ids; it does not make any other part of the result live. Naming the
+        # types alone read as a promise about any projection of them, which is
+        # wider than what the code does — a scalar `RETURN e.id` is not
+        # checked, and saying so here is the difference between a documented
+        # limit and an overclaim.
         "confirmable_types": ["Entity", "RELATES"],
+        "confirmable_projections": ["typed_node_value", "typed_relationship_value"],
+        "unconfirmed_projections": ["scalar_id_projection"],
     }
 
 

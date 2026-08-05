@@ -104,6 +104,15 @@ class CypherSandboxExecutor:
         connect: Callable[[], psycopg.Connection] | None = None,
         analytical_entitlement: bool = False,
     ) -> None:
+        # The reader serves ONE deployment's snapshot. Taking it and the
+        # deployment id as independent arguments let a mismatched pair serve
+        # one deployment's graph while labelling the result as another's, which
+        # no amount of care at the call site makes safe.
+        served = getattr(reader, "deployment_id", None)
+        if served is not None and UUID(str(served)) != UUID(str(deployment_id)):
+            raise ValueError(
+                "this reader serves a different deployment than the one asked for"
+            )
         self._deployment_id = deployment_id
         self._manifest_hash = str(load_manifest()["surface_manifest_hash"])
         self._reader = reader
@@ -176,13 +185,19 @@ class CypherSandboxExecutor:
         request_id = uuid4()
         limits_model = ResultLimits(
             row_cap=limits.returned_rows_hard,
-            byte_cap=limits.returned_bytes_hard,
+            # §4.3 gives a default and a hard cap; a request that names neither
+            # runs under the DEFAULT. Disclosing and enforcing the hard cap
+            # would let an unremarkable query return eight times what the tier
+            # says it returns.
+            byte_cap=limits.returned_bytes_default,
             statement_timeout_ms=limits.statement_timeout_ms_default,
             analytical_tier=tier is LimitTier.ANALYTICAL,
         )
-        row_cap = min(
-            max_rows or limits.returned_rows_default, limits.returned_rows_hard
-        )
+        # A negative bound is not a smaller bound: `min(-1, 1000)` is -1, and
+        # `rows[:-1]` keeps almost everything. Clamp into the range the cap
+        # actually describes before it is used as one.
+        requested_rows = limits.returned_rows_default if not max_rows else max_rows
+        row_cap = max(0, min(requested_rows, limits.returned_rows_hard))
 
         try:
             self._check_request(cypher=cypher, parameters=parameters, limits=limits)
@@ -223,7 +238,7 @@ class CypherSandboxExecutor:
             )
         )
         rows, truncated, byte_truncated = _bounded(
-            result.rows, row_cap=row_cap, byte_cap=limits.returned_bytes_hard
+            result.rows, row_cap=row_cap, byte_cap=limits.returned_bytes_default
         )
         confirmation: GraphConfirmation | None = None
         if confirm:
@@ -376,18 +391,34 @@ class CypherSandboxExecutor:
             per_row.append(found)
 
         nominated = len(wanted["entity"]) + len(wanted["relation"])
+        # `requested` counts the confirmable IDS that were asked about, not the
+        # rows they arrived in: §3.5 describes unique confirmable-ID counts,
+        # and counting rows made `requested` and `nominated` disagree for any
+        # row projecting more than one.
+        requested = nominated
         if nominated == 0:
+            # PostgreSQL is still consulted, so a caller who asked for
+            # confirmation learns whether it could have happened. Returning
+            # zeros without touching the database would report the same thing
+            # whether the database was reachable or not.
+            confirmed_at = self._confirmation_instant()
             return list(rows), GraphConfirmation(
-                requested=len(rows),
+                requested=0,
                 nominated=0,
                 confirmed=0,
                 dropped_stale=0,
-                pg_confirmed_at=None,
+                pg_confirmed_at=confirmed_at,
             )
         assert self._connect is not None
         live: dict[str, set[str]] = {"entity": set(), "relation": set()}
         try:
             with self._connect() as connection:
+                # One snapshot for the whole confirmation. Under READ COMMITTED
+                # each statement takes a new one, so a commit between the
+                # entity check and the relation check could keep a row whose
+                # two halves were never simultaneously live at the instant this
+                # result claims to have checked.
+                connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
                 confirmed_at = connection.execute(
                     "SELECT transaction_timestamp()"
                 ).fetchone()
@@ -404,6 +435,7 @@ class CypherSandboxExecutor:
                             },
                         ).fetchall()
                     }
+                connection.commit()
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
@@ -416,12 +448,30 @@ class CypherSandboxExecutor:
                 kept.append(row)
         confirmed = sum(len(live[kind]) for kind in live)
         return kept, GraphConfirmation(
-            requested=len(rows),
+            requested=requested,
             nominated=nominated,
             confirmed=confirmed,
             dropped_stale=nominated - confirmed,
             pg_confirmed_at=confirmed_at[0] if confirmed_at else None,
         )
+
+    def _confirmation_instant(self) -> datetime | None:
+        """Reach PostgreSQL even when there was nothing to confirm.
+
+        A caller who asked for confirmation and got zeros should be able to
+        tell "nothing in this result was confirmable" from "the database was
+        not reachable", and only actually asking distinguishes them.
+        """
+        assert self._connect is not None
+        try:
+            with self._connect() as connection:
+                row = connection.execute("SELECT statement_timestamp()").fetchone()
+        except psycopg.Error as error:
+            raise SandboxRejection(
+                code=QueryErrorCode.PG_UNAVAILABLE,
+                message="live membership could not be checked",
+            ) from error
+        return row[0] if row else None
 
     @staticmethod
     def _failure(

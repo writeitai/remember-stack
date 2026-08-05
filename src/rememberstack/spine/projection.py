@@ -12,6 +12,7 @@ execution shape (`plan/analysis/p2_spike_battery.md`, finding 2).
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Final
 from uuid import UUID
 from uuid import uuid4
@@ -36,6 +37,19 @@ class GraphExport:
     def __init__(self, *, connection: Connection) -> None:
         """Bind to the export connection (the temp survivor table exists)."""
         self._connection = connection
+        # §3.5 binds `built_at` to THIS transaction's timestamp, captured once
+        # at export start. It is the instant the whole snapshot is a consistent
+        # cut of, and it is what every answer from that snapshot is scoped to —
+        # so it comes from the transaction that took the cut, never from a
+        # row-insert default or a wall clock read at publish or query time.
+        self._built_at = connection.execute(
+            text("SELECT transaction_timestamp()")
+        ).scalar_one()
+
+    @property
+    def built_at(self) -> datetime:
+        """The export transaction's timestamp: the cut this snapshot projects."""
+        return self._built_at
 
     def rows(self, *, table: str) -> Iterator[Row]:
         """Stream one graph table's rows (server-side cursor)."""
@@ -159,6 +173,7 @@ class ProjectionCatalog:
         row_counts: dict[str, int],
         validation: dict[str, object],
         built_from_watermark: object,
+        built_at: object = None,
     ) -> bool:
         """Publish and swap the latest pointer — serialized and order-guarded.
 
@@ -202,6 +217,9 @@ class ProjectionCatalog:
                     "row_counts": row_counts,
                     "validation": validation,
                     "built_from_watermark": built_from_watermark,
+                    # The cut the export actually took, not the instant the
+                    # registry row happened to be inserted.
+                    "built_at": built_at,
                 },
             )
         return True
@@ -492,6 +510,7 @@ _PUBLISH_SNAPSHOT = text(
     UPDATE projection_snapshots
     SET status = 'published', is_latest = true, row_counts = :row_counts,
         validation = :validation, built_from_watermark = :built_from_watermark,
+        built_at = coalesce(:built_at, built_at),
         published_at = now()
     WHERE snapshot_id = :snapshot_id
     """

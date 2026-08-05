@@ -54,9 +54,17 @@ itself, so `explain_cypher` cannot be reached by smuggling one into a query.
 
 A snapshot answer is exactly correct for its cut and says nothing about what
 has happened since, so `built_at` travels with every result along with the
-grade `snapshot_graph`. `built_at` is the export transaction's timestamp, not
-the publish time and not a wall clock read at query time; the reader now
-surfaces it, having previously read it from the registry and dropped it.
+grade `snapshot_graph`.
+
+`built_at` is now the EXPORT TRANSACTION's own `transaction_timestamp()`,
+captured once when the repeatable-read export opens and carried through
+publication. It was previously the registry row's `DEFAULT now()`, written
+before the export began — so the disclosed cut preceded the data it described,
+and every answer was scoped to an instant the snapshot had not yet reached.
+That is the guarantee the whole `snapshot_graph` grade rests on, so it is taken
+from the transaction that read the data rather than reconstructed afterwards.
+The reader surfaces it, having previously read it from the registry and
+dropped it.
 
 No published snapshot fails `p2_unavailable`. An empty graph and an absent
 graph are different answers and must not read the same.

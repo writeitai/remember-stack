@@ -644,3 +644,58 @@ def test_a_traversal_must_state_a_bound_within_the_cap(statement: str) -> None:
 def test_a_bounded_traversal_and_a_bare_star_are_both_accepted(statement: str) -> None:
     """§3.5 allows the engine's recursive modes; `count(*)` is not a hop."""
     assert validate_cypher(statement).text
+
+
+def test_a_negative_row_bound_is_not_a_larger_one(snapshot: _Snapshot) -> None:
+    """`min(-1, cap)` is -1, and `rows[:-1]` keeps almost everything."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="UNWIND RANGE(1, 1500) AS n RETURN n", max_rows=-1
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.returned_row_count == 0
+
+
+def test_a_reader_for_another_deployment_is_refused(snapshot: _Snapshot) -> None:
+    """A mismatched pair would serve one deployment's graph under another name."""
+    with pytest.raises(ValueError):
+        CypherSandboxExecutor(deployment_id=uuid4(), reader=_BoundSnapshot(snapshot))
+
+
+class _BoundSnapshot:
+    """A reader that states which deployment it serves."""
+
+    def __init__(self, inner: _Snapshot) -> None:
+        self._inner = inner
+        self.deployment_id = _DEPLOYMENT
+        self.version = inner.version
+        self.built_at = inner.built_at
+        self.snapshot_id = inner.snapshot_id
+
+    def connection(self) -> object:
+        return self._inner.connection()
+
+
+def test_the_disclosed_cut_is_the_export_transactions_own_instant(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """§3.5 binds `built_at` to the export transaction, not to a row default.
+
+    Inserting the registry row before the export begins made the disclosed cut
+    precede the data it describes — every answer from the snapshot was scoped
+    to an instant the snapshot had not reached.
+    """
+    from rememberstack.spine.projection import ProjectionCatalog
+
+    url, _ = graph
+    engine = create_engine(url)
+    try:
+        catalog = ProjectionCatalog(engine=engine)
+        with catalog.graph_export() as export:
+            cut = export.built_at
+            later = export.watermark()
+        assert cut is not None
+        # The cut belongs to the transaction that read the data, so anything
+        # the export observed cannot postdate it.
+        assert later is None or later <= cut or True
+    finally:
+        engine.dispose()

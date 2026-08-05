@@ -246,6 +246,11 @@ class GraphRebuildWorker:
                     " corrupt redirect chain)"
                 )
             watermark = export.watermark()  # on-snapshot (Codex review)
+            # The instant this export is a consistent cut of. Every Cypher
+            # answer from the published snapshot is scoped to it, so it is
+            # carried from the export transaction rather than reconstructed
+            # later from a row default or a wall clock.
+            built_at = export.built_at
             for table in (*GRAPH_NODE_TABLES, *GRAPH_REL_TABLES):
                 counts[table] = self._write_parquet(
                     export_rows=export.rows(table=table),
@@ -278,6 +283,7 @@ class GraphRebuildWorker:
             row_counts=counts,
             validation={"gate": "passed", "files": len(manifest)},
             built_from_watermark=watermark,
+            built_at=built_at,
         )
         if published:
             # analytics persist ONLY for a snapshot that actually published:
@@ -402,6 +408,16 @@ class GraphSnapshotReader:
     def version(self) -> str | None:
         """The snapshot version currently served (None before the first)."""
         return self._version
+
+    @property
+    def deployment_id(self) -> UUID:
+        """The one deployment this reader serves.
+
+        Published so a caller pairing a reader with a deployment id can be
+        checked rather than trusted: a mismatched pair would serve one
+        deployment's graph under another's name.
+        """
+        return self._deployment_id
 
     @property
     def built_at(self) -> datetime | None:
