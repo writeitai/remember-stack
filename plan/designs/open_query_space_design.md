@@ -404,11 +404,14 @@ the flag.
 ### 3.4 SQL-callable functions
 
 Only the functions below are public. Each is schema-qualified, bounded inside
-the function independently of an outer `LIMIT`, `SECURITY DEFINER`,
-`PARALLEL UNSAFE`, owned by a no-login bridge owner, and defined with an
-immutable internal `search_path`. The bridge owner has only the exact PG reads
-and local projection RPC capability required by the function; callers cannot
-supply URLs, relation names, code, or raw filter expressions.
+the function independently of an outer `LIMIT`, and defined with an immutable
+internal `search_path`. Projection-backed semantic, lexical, and body bridges
+are `SECURITY DEFINER`, `PARALLEL UNSAFE`, and owned by a no-login bridge owner
+with only the exact PG reads and local projection RPC capability they need.
+The PostgreSQL-only `facts_as_of`, `graph_neighborhood`, and `graph_path`
+helpers are `SECURITY INVOKER`, `PARALLEL SAFE`, and owned by the no-login view
+owner; they need no privilege bridge and adding one would only widen authority.
+Callers cannot supply URLs, relation names, code, or raw filter expressions.
 
 `facts_as_of`, `graph_neighborhood`, and `graph_path` are `STABLE` within the
 PG statement snapshot. The four semantic functions, two lexical functions,
@@ -427,8 +430,8 @@ optimization.
 | `fetch_chunk_bodies` | `(chunk_ids uuid[])` → `input_ordinal`, confirmed `chunk_id`, current document/version/representation/section coordinate, source/embedding hashes, separately labeled `source_text` and D80 `location_header`, policy/embedder generations, and freshness columns; no nomination or ranking columns |
 | `semantic_facts` | `(query text, k int, filters jsonb DEFAULT '{}', embedding_input_policy_version text DEFAULT NULL, embedder_generation text DEFAULT NULL)` → confirmed `(fact_kind, fact_id)`, rank, score, channel and generation/freshness columns; confirmation is against `facts_current` |
 | `semantic_entities` | `(query text, k int, filters jsonb DEFAULT '{}')` → description/profile-vector search over `entities.lance`, returning PG-confirmed survivor `entity_id`, entity type/name/profile orientation fields, rank, score, channel and generation/freshness columns; confirmation is against `entities_current`. The scored entity-nomination method does not exist on the shared P1 port today and is ADDED by this change (the port exposes only id-addressed `entity_vectors`), parallel to the lexical score extension |
-| `graph_neighborhood` | `(start_entity_id uuid, max_depth int, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_edges int)` → deterministic `(path_id, hop, path_position, relation_id)` plus edge fields; default/hard traversal bounds are in §4.3 |
-| `graph_path` | `(from_entity_id uuid, to_entity_id uuid, max_depth int, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_paths int, max_edges int)` → deterministic `(path_id, path_length, path_position, relation_id)` plus edge fields; default/hard traversal bounds are in §4.3 |
+| `graph_neighborhood` | `(start_entity_id uuid, max_depth int, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_edges int)` → deterministic `(path_id, hop, path_position, relation_id)` plus edge fields; live-at-read support fields are explicitly suffixed `evidence_count_current`, `contradict_count_current`, and `support_state_current`; default/hard traversal bounds are in §4.3 |
+| `graph_path` | `(from_entity_id uuid, to_entity_id uuid, max_depth int, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_paths int, max_edges int)` → deterministic `(path_id, path_length, path_position, relation_id)` plus the same explicitly `_current` support fields; default/hard traversal bounds are in §4.3 |
 
 Semantic filters are typed JSON objects with target-specific allowlists:
 claims—and therefore `semantic_claims` and `lexical_claims` equally—permit

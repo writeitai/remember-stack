@@ -123,3 +123,35 @@ The focused gate is: lexical adversarial cases, real read-only engine canary,
 typed confirmation behavior, v4 flag independence/together, entity/fact
 PostgreSQL confirmation, descriptor/hash determinism, and the existing Batch D
 PostgreSQL helper fixtures. Broad interpreter matrices remain CI work.
+
+## Post-build contract audit
+
+The final Codex audit found four places where implementation had again used a
+shape as authority rather than carrying the existing authority through:
+
+- the P2 exporter still read legacy raw projection views, so active endpoints
+  could survive after their last D48/D54 provenance disappeared;
+- `confirm=true` trusted forgeable map labels without checking the engine's
+  `NODE`/`REL` result types, while scalar `INTERNAL_ID` values exposed physical
+  offsets;
+- historical helper rows renamed live-at-read support fields without their
+  `_current` suffix; and
+- a reader cache key named only a caller-supplied version rather than the
+  deployment and immutable registry snapshot identity.
+
+The minimal correction is to reuse `memory_v1.entities_current`,
+`documents_live`, `graph_edges_visible_history`,
+`entity_document_mentions`, and `document_crossrefs_live` in the export; use
+the engine's column types for confirmation and reject `INTERNAL_ID`; preserve
+the `_current` names; and key/verify the cache by deployment, snapshot ID, and
+a validated leaf version. No new visibility subsystem, parser, or retention
+policy is needed.
+
+The same audit found two contract-disclosure gaps. Cypher must share the SQL
+surface's existing kill-switch/admission/audit objects, and the manifest must
+publish the already-binding exhaustive P2 property table rather than only a
+contract label. Those are composition and disclosure corrections, not new
+features. Pure PostgreSQL graph helpers need no elevated bridge authority, so
+their existing `SECURITY INVOKER`/`PARALLEL SAFE` implementation is the smaller
+and safer binding; only projection-backed functions require the definer
+bridge.

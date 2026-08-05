@@ -656,9 +656,9 @@
             "invalidated_at",
             "contradiction_group",
             "confidence",
-            "evidence_count",
-            "contradict_count",
-            "support_state",
+            "evidence_count_current",
+            "contradict_count_current",
+            "support_state_current",
             "applied_valid_at",
             "applied_believed_at"
           ],
@@ -763,9 +763,9 @@
             "invalidated_at",
             "contradiction_group",
             "confidence",
-            "evidence_count",
-            "contradict_count",
-            "support_state",
+            "evidence_count_current",
+            "contradict_count_current",
+            "support_state_current",
             "applied_valid_at",
             "applied_believed_at"
           ],
@@ -1339,7 +1339,52 @@
         ]
       },
       "p2_projection": {
-        "contract": "memory_v1.p2/1"
+        "contract": "memory_v1.p2/1",
+        "contract_version": "p2-rebuild-2026.07",
+        "edge_types": {
+          "DOC_CROSSREF": {
+            "context": "STRING",
+            "from_doc_id": "UUID",
+            "kind": "STRING",
+            "to_doc_id": "UUID"
+          },
+          "IS_DOCUMENT": {},
+          "MENTIONED_IN": {
+            "first_seen": "TIMESTAMP",
+            "mention_count": "INT64"
+          },
+          "RELATES": {
+            "confidence": "DOUBLE",
+            "contradict_count": "INT64",
+            "contradiction_group": "UUID",
+            "evidence_count": "INT64",
+            "fact": "STRING",
+            "ingested_at": "TIMESTAMP",
+            "invalidated_at": "TIMESTAMP",
+            "object_id": "UUID",
+            "predicate": "STRING",
+            "relation_id": "UUID",
+            "subject_id": "UUID",
+            "valid_from": "TIMESTAMP",
+            "valid_until": "TIMESTAMP"
+          }
+        },
+        "node_types": {
+          "Document": {
+            "id": "UUID",
+            "published_at": "DATE",
+            "source_uri": "STRING",
+            "title": "STRING"
+          },
+          "Entity": {
+            "created_at": "TIMESTAMP",
+            "id": "UUID",
+            "name": "STRING",
+            "normalized_name": "STRING",
+            "summary": "STRING",
+            "type": "STRING"
+          }
+        }
       },
       "resource_limits": {
         "analytical": {
@@ -29558,5 +29603,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "2718068530e7a1ceb6c5df4e5940de7fa02236e41011bc9a1ad65deb6e5a5789"
+  "surface_manifest_hash": "96a6fa74ef06ddd36d8679da8efa73227aa1d50cc8dc516814a240aa59e479f8"
 }

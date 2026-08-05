@@ -18,7 +18,11 @@ object. A branch never reuses a relation or revisits an entity. The helpers
 clamp depth, path, and edge limits internally, order before cutting, and spend
 the path edge cap on whole paths so a partial route is never returned as a
 connection. Current helper rows disclose `statement_timestamp()`, the instant
-that selected them, rather than the transaction start.
+that selected them, rather than the transaction start. Their live-at-read
+support fields retain the `_current` suffix even on historical traversal rows,
+so a caller cannot mistake those values for a historical reconstruction. The
+helpers are pure PostgreSQL reads and therefore stay `SECURITY INVOKER` and
+`PARALLEL SAFE`; they do not inherit the projection bridge's elevated owner.
 
 ## The Cypher gate stays lexical
 
@@ -70,7 +74,11 @@ snapshot is `p2_unavailable`; it is not reported as an empty graph.
 Every Cypher result has grade `snapshot_graph`, no SQL schema name, and the
 snapshot ID/version/build instant/age that actually served it. Engine physical
 offsets (`_ID`, `_SRC`, `_DST`, matched case-insensitively) are stripped from
-structural values.
+structural values, and a scalar engine `INTERNAL_ID` result is refused rather
+than publishing its physical `{offset, table}` address. Snapshot identity is
+pinned with the connection, failures after pinning retain that identity,
+snapshot age is measured at execution start and clamped nonnegative, and an
+age over 3600 seconds emits the bound freshness warning.
 
 The engine exposes no structural parse metadata for exact graph label/property
 dependency extraction. `referenced_graph_types` and
@@ -80,11 +88,18 @@ than empty arrays that would assert a known-empty dependency set.
 ## `confirm=true` is explicit and narrow
 
 Confirmation defaults false. When requested, it checks unique IDs carried by
-top-level structural `Entity` and `RELATES` values in one PostgreSQL
+top-level engine-typed `NODE`/`REL` values labelled `Entity` and `RELATES` in one PostgreSQL
 repeatable-read transaction and drops a row if any recognized ID is no longer
 live. `Document`, `MENTIONED_IN`, `DOC_CROSSREF`, aggregates, collections, and
-scalar UUID projections stay snapshot-scoped. Inferring authority from a
-column name or UUID shape would misclassify values and is forbidden.
+scalar UUID projections stay snapshot-scoped. A caller-authored struct carrying
+the same label keys is not a typed node or relationship and is not nominated.
+Inferring authority from a column name, UUID shape, or forgeable map content
+would misclassify values and is forbidden.
+
+Cypher and SQL share the same kill-switch, concurrency, rolling-quota, and
+content-free audit components when composed for a deployment. Admission wraps
+snapshot execution and optional confirmation; every admitted attempt releases
+its slot and records its spend on success or failure.
 
 The result always retains grade `snapshot_graph`. It reports requested,
 nominated, confirmed, dropped-stale, and the PostgreSQL confirmation instant.

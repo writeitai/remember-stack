@@ -47,6 +47,8 @@ from uuid import uuid4
 import psycopg
 
 from rememberstack.spine.query_space.manifest import load_manifest
+from rememberstack.surfaces.query_sandbox.audit import AuditTrail
+from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -61,6 +63,12 @@ from rememberstack.surfaces.query_sandbox.result import ResultLimits
 #: §4.3: Cypher text is capped lower than SQL — the graph language is denser,
 #: and a 32 KiB query is already far past anything an agent composes by hand.
 CYPHER_TEXT_BYTES_MAX: Final = 32 * 1024
+
+P2_FRESHNESS_WARNING_SECONDS: Final = 3600.0
+P2_STALE_WARNING: Final = (
+    "the published graph snapshot is more than 3600 seconds old;"
+    " later changes are not represented"
+)
 
 NO_CONFIRMABLE_VALUES_WARNING: Final = (
     "confirm=true found no top-level Entity or RELATES value to check;"
@@ -116,6 +124,8 @@ class CypherSandboxExecutor:
         deployment_id: Any,
         reader: Any,
         connect: Callable[[], psycopg.Connection] | None = None,
+        audit: AuditTrail | None = None,
+        kill_switches: KillSwitches | None = None,
         analytical_entitlement: bool = False,
     ) -> None:
         # The reader serves ONE deployment's snapshot. Taking it and the
@@ -127,10 +137,12 @@ class CypherSandboxExecutor:
             raise ValueError(
                 "this reader serves a different deployment than the one asked for"
             )
-        self._deployment_id = deployment_id
+        self._deployment_id = UUID(str(deployment_id))
         self._manifest_hash = str(load_manifest()["surface_manifest_hash"])
         self._reader = reader
         self._connect = connect
+        self._audit = audit or AuditTrail.disabled()
+        self._kills = kill_switches or KillSwitches()
         self._analytical_entitlement = analytical_entitlement
 
     def query_cypher(
@@ -216,10 +228,20 @@ class CypherSandboxExecutor:
             statement_timeout_ms=limits.statement_timeout_ms_default,
             analytical_tier=tier is LimitTier.ANALYTICAL,
         )
-
+        statement_hash = ""
+        snapshot: P2Snapshot | None = None
+        admitted = False
         try:
             self._check_request(cypher=cypher, parameters=parameters, limits=limits)
+            if self._kills.blocked(
+                deployment_id=self._deployment_id, principal=principal
+            ):
+                raise SandboxRejection(
+                    code=QueryErrorCode.QUOTA_EXCEEDED,
+                    message="the open query surface is disabled by the operator",
+                )
             statement = validate_cypher(cypher)
+            statement_hash = _statement_hash(statement.text, parameters)
             if confirm and self._connect is None:
                 raise SandboxRejection(
                     code=QueryErrorCode.PG_UNAVAILABLE,
@@ -228,7 +250,30 @@ class CypherSandboxExecutor:
                         " surface has none"
                     ),
                 )
-            connection, snapshot = self._pinned_snapshot()
+            admission = self._kills.admit(
+                deployment_id=self._deployment_id,
+                principal=principal,
+                per_principal=limits.concurrent_per_principal,
+                per_deployment=limits.concurrent_per_deployment,
+                principal_seconds_per_minute=(
+                    limits.principal_statement_seconds_per_minute
+                ),
+                deployment_seconds_per_minute=(
+                    limits.deployment_statement_seconds_per_minute
+                ),
+            )
+            if admission is not None:
+                raise SandboxRejection(
+                    code=(
+                        QueryErrorCode.QUOTA_EXCEEDED
+                        if "quota" in admission
+                        else QueryErrorCode.CONCURRENCY_EXCEEDED
+                    ),
+                    message=admission,
+                )
+            admitted = True
+
+            connection, snapshot = self._pinned_snapshot(started_at=started)
             text = f"EXPLAIN {statement.text}" if explain else statement.text
             result = self._execute(
                 connection=connection,
@@ -238,8 +283,62 @@ class CypherSandboxExecutor:
                 row_cap=row_cap,
                 byte_cap=limits.returned_bytes_default,
             )
+            columns = tuple(
+                ResultColumn(name=name, type=kind, nullable=True)
+                for name, kind in zip(
+                    result.column_names, result.column_types, strict=False
+                )
+            )
+            rows, truncated, byte_truncated = _bounded(
+                result.rows, row_cap=row_cap, byte_cap=limits.returned_bytes_default
+            )
+            confirmation: GraphConfirmation | None = None
+            if confirm:
+                rows, confirmation = self._confirm(rows=rows, columns=columns)
+
+            encoded = sum(
+                len(json.dumps(list(row), default=str).encode()) for row in rows
+            )
+            warnings: list[str] = []
+            if snapshot.age_seconds > P2_FRESHNESS_WARNING_SECONDS:
+                warnings.append(P2_STALE_WARNING)
+            if confirmation is not None and confirmation.nominated == 0:
+                warnings.append(NO_CONFIRMABLE_VALUES_WARNING)
+            outcome = QueryResult(
+                request_id=request_id,
+                deployment_id=self._deployment_id,
+                surface_manifest_hash=self._manifest_hash,
+                query_hash=statement_hash,
+                grade="snapshot_graph",
+                query_language="cypher",
+                # §4.4: a Cypher answer did not read the memory_v1 SQL schema,
+                # and the engine exposes no authoritative structural parse
+                # result for graph-reference metadata.
+                query_space_schema=None,
+                referenced_graph_types=None,
+                referenced_graph_properties=None,
+                execution_started_at=started,
+                elapsed_ms=(time.monotonic() - clock) * 1000,
+                columns=columns,
+                rows=tuple(tuple(row) for row in rows),
+                returned_row_count=len(rows),
+                returned_byte_count=encoded,
+                pg_snapshot_at=(
+                    confirmation.pg_confirmed_at if confirmation is not None else None
+                ),
+                truncated=truncated or byte_truncated,
+                truncation_reason=(
+                    "byte_cap" if byte_truncated else ("row_cap" if truncated else None)
+                ),
+                empty_result=not rows,
+                termination_reason="completed",
+                warnings=tuple(warnings),
+                limits=limits_model,
+                p2_snapshot=snapshot,
+                confirmation=confirmation,
+            )
         except SandboxRejection as rejection:
-            return self._failure(
+            outcome = self._failure(
                 rejection,
                 self._deployment_id,
                 self._manifest_hash,
@@ -247,74 +346,20 @@ class CypherSandboxExecutor:
                 started,
                 clock,
                 limits_model,
-                principal,
+                query_hash=statement_hash,
+                p2_snapshot=snapshot,
             )
-
-        columns = tuple(
-            ResultColumn(name=name, type=kind, nullable=True)
-            for name, kind in zip(
-                result.column_names, result.column_types, strict=False
-            )
-        )
-        rows, truncated, byte_truncated = _bounded(
-            result.rows, row_cap=row_cap, byte_cap=limits.returned_bytes_default
-        )
-        confirmation: GraphConfirmation | None = None
-        if confirm:
-            try:
-                rows, confirmation = self._confirm(rows=rows, columns=columns)
-            except SandboxRejection as rejection:
-                return self._failure(
-                    rejection,
-                    self._deployment_id,
-                    self._manifest_hash,
-                    request_id,
-                    started,
-                    clock,
-                    limits_model,
-                    principal,
+        finally:
+            if admitted:
+                self._kills.record_spend(
+                    deployment_id=self._deployment_id,
+                    principal=principal,
+                    seconds=time.monotonic() - clock,
                 )
-
-        encoded = sum(len(json.dumps(list(row), default=str).encode()) for row in rows)
-        outcome = QueryResult(
-            request_id=request_id,
-            deployment_id=self._deployment_id,
-            surface_manifest_hash=self._manifest_hash,
-            query_hash=_statement_hash(statement.text, parameters),
-            grade="snapshot_graph",
-            query_language="cypher",
-            # §4.4: a Cypher answer did not read the memory_v1 SQL schema, and
-            # naming it would tell a caller their rows came from views they
-            # never queried. Graph-reference metadata is unavailable rather
-            # than known-empty: the engine exposes no structural parse result,
-            # and a text guesser is not an authority.
-            query_space_schema=None,
-            referenced_graph_types=None,
-            referenced_graph_properties=None,
-            execution_started_at=started,
-            elapsed_ms=(time.monotonic() - clock) * 1000,
-            columns=columns,
-            rows=tuple(tuple(row) for row in rows),
-            returned_row_count=len(rows),
-            returned_byte_count=encoded,
-            pg_snapshot_at=(
-                confirmation.pg_confirmed_at if confirmation is not None else None
-            ),
-            truncated=truncated or byte_truncated,
-            truncation_reason=(
-                "byte_cap" if byte_truncated else ("row_cap" if truncated else None)
-            ),
-            empty_result=not rows,
-            termination_reason="completed",
-            warnings=(
-                (NO_CONFIRMABLE_VALUES_WARNING,)
-                if confirmation is not None and confirmation.nominated == 0
-                else ()
-            ),
-            limits=limits_model,
-            p2_snapshot=snapshot,
-            confirmation=confirmation,
-        )
+                self._kills.release(
+                    deployment_id=self._deployment_id, principal=principal
+                )
+        self._audit.emit(outcome=outcome, principal=principal)
         return outcome
 
     @staticmethod
@@ -339,20 +384,17 @@ class CypherSandboxExecutor:
                 message="the bound parameters exceed their encoded byte cap",
             )
 
-    def _pinned_snapshot(self) -> tuple[Any, P2Snapshot | None]:
+    def _pinned_snapshot(self, *, started_at: datetime) -> tuple[Any, P2Snapshot]:
         """The served connection and the provenance describing THAT generation.
 
         Read as one act, so a refresh between them cannot produce rows from one
         generation labelled with another's cut.
         """
         try:
-            if hasattr(self._reader, "pinned"):
-                connection, snapshot_id, version, built_at = self._reader.pinned()
-                return connection, self._describe(snapshot_id, version, built_at)
-            # A reader without the paired accessor still serves, but its
-            # provenance cannot be pinned to the connection; say nothing rather
-            # than say something that might describe a different generation.
-            return self._reader.connection(), self._provenance()
+            connection, snapshot_id, version, built_at = self._reader.pinned()
+            return connection, self._describe(
+                snapshot_id, version, built_at, started_at=started_at
+            )
         except SandboxRejection:
             raise
         except Exception as error:
@@ -363,29 +405,22 @@ class CypherSandboxExecutor:
 
     @staticmethod
     def _describe(
-        snapshot_id: Any, version: Any, built_at: datetime | None
-    ) -> P2Snapshot | None:
+        snapshot_id: Any,
+        version: Any,
+        built_at: datetime | None,
+        *,
+        started_at: datetime,
+    ) -> P2Snapshot:
         if snapshot_id is None or version is None or built_at is None:
-            return None
+            raise SandboxRejection(
+                code=QueryErrorCode.P2_UNAVAILABLE,
+                message="the published graph snapshot has incomplete provenance",
+            )
         return P2Snapshot(
             snapshot_id=snapshot_id,
             snapshot_version=str(version),
             built_at=built_at,
-            age_seconds=(datetime.now(tz=UTC) - built_at).total_seconds(),
-        )
-
-    def _provenance(self) -> P2Snapshot | None:
-        """What the snapshot is, and how old the cut it projects is."""
-        version = getattr(self._reader, "version", None)
-        built_at = getattr(self._reader, "built_at", None)
-        snapshot_id = getattr(self._reader, "snapshot_id", None)
-        if version is None or built_at is None or snapshot_id is None:
-            return None
-        return P2Snapshot(
-            snapshot_id=snapshot_id,
-            snapshot_version=str(version),
-            built_at=built_at,
-            age_seconds=(datetime.now(tz=UTC) - built_at).total_seconds(),
+            age_seconds=max(0.0, (started_at - built_at).total_seconds()),
         )
 
     @staticmethod
@@ -441,6 +476,11 @@ class CypherSandboxExecutor:
             ) from error
         names = tuple(answer.get_column_names())
         types = tuple(str(kind) for kind in answer.get_column_data_types())
+        if any(_is_internal_id_type(kind) for kind in types):
+            raise SandboxRejection(
+                code=QueryErrorCode.CYPHER_NOT_ALLOWED,
+                message="engine-internal identifiers are not public graph values",
+            )
         rows: list[list[object]] = []
         spent = 0
         # STOP at the caps rather than draining and trimming afterwards.
@@ -469,8 +509,8 @@ class CypherSandboxExecutor:
         per_row: list[dict[str, set[str]]] = []
         for row in rows:
             found: dict[str, set[str]] = {"entity": set(), "relation": set()}
-            for value in row:
-                kind, identifier = _confirmable(value)
+            for value, column in zip(row, columns, strict=False):
+                kind, identifier = _confirmable(value, logical_type=column.type)
                 if kind is not None and identifier is not None:
                     found[kind].add(identifier)
                     wanted[kind].add(identifier)
@@ -568,13 +608,15 @@ class CypherSandboxExecutor:
         started: datetime,
         clock: float,
         limits_model: ResultLimits,
-        principal: str,
+        *,
+        query_hash: str = "",
+        p2_snapshot: P2Snapshot | None = None,
     ) -> QueryResult:
         return QueryResult(
             request_id=request_id,
             deployment_id=deployment_id,
             surface_manifest_hash=manifest_hash,
-            query_hash="",
+            query_hash=query_hash,
             grade="snapshot_graph",
             query_language="cypher",
             # §4.4: a Cypher answer did not read the memory_v1 SQL schema, and
@@ -590,12 +632,15 @@ class CypherSandboxExecutor:
                     QueryErrorCode.CYPHER_NOT_ALLOWED,
                     QueryErrorCode.CYPHER_PARSE_ERROR,
                     QueryErrorCode.RESOURCE_LIMIT,
+                    QueryErrorCode.QUOTA_EXCEEDED,
+                    QueryErrorCode.CONCURRENCY_EXCEEDED,
                 )
                 else "failed"
             ),
             error_code=rejection.code,
             error_message=rejection.message,
             limits=limits_model,
+            p2_snapshot=p2_snapshot,
         )
 
 
@@ -642,16 +687,22 @@ def _public_value(value: object) -> object:
     return value
 
 
-def _confirmable(value: object) -> tuple[str | None, str | None]:
+def _confirmable(value: object, *, logical_type: str) -> tuple[str | None, str | None]:
     """The confirmable kind and id of one projected value, if it has one."""
     if not isinstance(value, dict):
         return None, None
+    engine_kind = logical_type.strip().upper()
     label = next((value[key] for key in _LABEL_KEYS if key in value), None)
-    if label == "Entity":
+    if engine_kind == "NODE" and label == "Entity":
         return "entity", _identifier(value.get("id"))
-    if label == "RELATES":
+    if engine_kind == "REL" and label == "RELATES":
         return "relation", _identifier(value.get("relation_id"))
     return None, None
+
+
+def _is_internal_id_type(logical_type: str) -> bool:
+    """Whether an engine result column is a physical graph address."""
+    return logical_type.strip().upper() == "INTERNAL_ID"
 
 
 def _identifier(value: object) -> str | None:

@@ -3126,8 +3126,15 @@ not a handwritten parser: it default-denies statement openings and rejects the p
 external-action/session/maintenance family anywhere outside quotes and real engine comments.
 LadybugDB `read_only=True` remains the mutation authority. The pinned engine's 30-hop ceiling
 is engine-native. Graph type/property references are null until the engine supplies structural
-parse metadata; `confirm=true` checks only top-level typed `Entity`/`RELATES` values and warns
-when none were confirmable. Scalar UUID projections remain snapshot-scoped.
+parse metadata; `confirm=true` checks only top-level engine-typed `NODE`/`REL` values labelled
+`Entity`/`RELATES` and warns when none were confirmable. Forgeable structs and scalar UUID
+projections remain snapshot-scoped, and engine `INTERNAL_ID` offsets are never public.
+
+The P2 rebuild reads the same D48/D54-bearing `memory_v1` relations as the live query surface,
+and reader caches are keyed and verified by deployment plus immutable snapshot identity and a
+validated leaf version. Cypher shares SQL's kill-switch/admission/audit objects. Pure
+PostgreSQL graph helpers remain invoker-security, parallel-safe functions; only
+projection-backed functions need the no-login definer bridge.
 
 `question_context` v4 adds default-false `include_facts` and `include_entities` flags. Facts
 reuse `current_context`'s semantic nomination, D48/D41 confirmation, both-stance evidence,
@@ -3145,10 +3152,12 @@ worker would therefore add complexity without meeting its security claim.
 
 **Consequences.** External actions that read-only does not stop remain load-bearing pre-engine
 rejections. Mutations may reach the read-only engine but can never commit and map to
-`cypher_not_allowed`. Reopen true process confinement only when the hosting layer can provide
-it or observed engine behavior requires a fault boundary. The three assured descriptors,
-Cypher/graph signatures, and `surface_manifest_hash` roll atomically with v4. D81 is assigned
-to the stacked Batch B contract-correction decision that precedes this branch at merge time.
+`cypher_not_allowed`. Snapshot failures after pinning retain snapshot provenance and snapshots
+older than 3600 seconds warn. Reopen true process confinement only when the hosting layer can
+provide it or observed engine behavior requires a fault boundary. The three assured
+descriptors, exhaustive P2 schema, Cypher/graph signatures, and `surface_manifest_hash` roll
+atomically with v4. D81 is assigned to the stacked Batch B contract-correction decision that
+precedes this branch at merge time.
 
 **Rejected.** A second Cypher parser; UUID/column-name authority guessing; empty arrays for
 unavailable dependency metadata; a confinement-free subprocess described as a sandbox;

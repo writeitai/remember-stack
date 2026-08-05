@@ -6,8 +6,9 @@ one per deployment/plane — the object store holds only immutable snapshot
 bytes, never a mutable pointer). The export executes the spike battery's
 bound strategy: the survivor map materializes ONCE into an indexed temp
 table per export connection, and every edge read joins against it — the
-`v_graph_*` views remain the semantic contract, the catalog owns the
-execution shape (`plan/analysis/p2_spike_battery.md`, finding 2).
+`memory_v1` invariant views are the semantic export contract. The catalog
+retains the indexed survivor map only for the corruption/cycle abort gate
+(`plan/analysis/p2_spike_battery.md`, finding 2).
 """
 
 from collections.abc import Iterator
@@ -32,11 +33,12 @@ resolves endpoints against node PKs and throws on a missing endpoint)."""
 
 
 class GraphExport:
-    """One export pass over a single connection with the survivor map ready."""
+    """One deployment's invariant-filtered export on a consistent connection."""
 
-    def __init__(self, *, connection: Connection) -> None:
+    def __init__(self, *, connection: Connection, deployment_id: UUID) -> None:
         """Bind to the export connection (the temp survivor table exists)."""
         self._connection = connection
+        self._deployment_id = deployment_id
         # §3.5 binds `built_at` to THIS transaction's timestamp, captured once
         # at export start. It is the instant the whole snapshot is a consistent
         # cut of, and it is what every answer from that snapshot is scoped to —
@@ -55,7 +57,9 @@ class GraphExport:
         """Stream one graph table's rows (server-side cursor)."""
         statement = _EXPORT_SQL[table]
         return iter(
-            self._connection.execution_options(yield_per=10_000).execute(statement)
+            self._connection.execution_options(yield_per=10_000).execute(
+                statement, {"deployment_id": self._deployment_id}
+            )
         )
 
     def count(self, *, table: str) -> int:
@@ -63,7 +67,8 @@ class GraphExport:
         statement = _EXPORT_SQL[table]
         return int(
             self._connection.execute(
-                text(f"SELECT count(*) FROM ({statement.text}) export")  # noqa: S608
+                text(f"SELECT count(*) FROM ({statement.text}) export"),  # noqa: S608
+                {"deployment_id": self._deployment_id},
             ).scalar_one()
         )
 
@@ -73,7 +78,9 @@ class GraphExport:
         Read on the export connection, so it can never advertise a relation
         the consistent cut cannot contain.
         """
-        return self._connection.execute(_SELECT_WATERMARK).scalar_one_or_none()
+        return self._connection.execute(
+            _SELECT_WATERMARK, {"deployment_id": self._deployment_id}
+        ).scalar_one_or_none()
 
     def unresolved_survivors(self) -> tuple[UUID, ...]:
         """Return entities omitted by terminal survivor resolution.
@@ -81,7 +88,11 @@ class GraphExport:
         A cycle or dangling redirect has no terminal row in ``graph_survivor``.
         Any omission aborts the snapshot and is recorded for the operator.
         """
-        return tuple(self._connection.execute(_SELECT_UNRESOLVED_SURVIVORS).scalars())
+        return tuple(
+            self._connection.execute(
+                _SELECT_UNRESOLVED_SURVIVORS, {"deployment_id": self._deployment_id}
+            ).scalars()
+        )
 
 
 class CorpusExport:
@@ -122,7 +133,7 @@ class ProjectionCatalog:
         self._engine = engine
 
     @contextmanager
-    def graph_export(self) -> Iterator[GraphExport]:
+    def graph_export(self, *, deployment_id: UUID) -> Iterator[GraphExport]:
         """One consistent export pass (single transaction, survivor map once).
 
         Everything the snapshot reads happens inside one REPEATABLE READ
@@ -132,10 +143,10 @@ class ProjectionCatalog:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
-            connection.execute(_CREATE_SURVIVOR_MAP)
+            connection.execute(_CREATE_SURVIVOR_MAP, {"deployment_id": deployment_id})
             connection.execute(_INDEX_SURVIVOR_MAP)
             try:
-                yield GraphExport(connection=connection)
+                yield GraphExport(connection=connection, deployment_id=deployment_id)
             finally:
                 connection.rollback()  # temp table + snapshot cut end together
 
@@ -396,7 +407,11 @@ class ProjectionCatalog:
 _CREATE_SURVIVOR_MAP = text(
     """
     CREATE TEMP TABLE graph_survivor ON COMMIT DROP AS
-    SELECT * FROM v_graph_survivor
+    SELECT s.entity_id, s.survivor
+    FROM v_graph_survivor AS s
+    JOIN entities AS e
+      ON e.entity_id = s.entity_id
+     AND e.deployment_id = :deployment_id
     """
 )
 
@@ -405,63 +420,69 @@ _INDEX_SURVIVOR_MAP = text("CREATE INDEX ON graph_survivor (entity_id)")
 _EXPORT_SQL: Final[dict[str, TextClause]] = {
     "Entity": text(
         """
-        SELECT id, type, name, normalized_name, summary, created_at
-        FROM v_graph_entities
+        SELECT entity_id AS id, entity_type AS type,
+               canonical_name AS name, normalized_name,
+               profile_summary AS summary,
+               (created_at AT TIME ZONE 'UTC') AS created_at
+        FROM memory_v1.entities_current
+        WHERE deployment_id = :deployment_id
         """
     ),
     "Document": text(
         """
-        SELECT id, title, source_uri, published_at FROM v_graph_documents
+        SELECT doc_id AS id, title, source_uri,
+               (published_at AT TIME ZONE 'UTC')::date AS published_at
+        FROM memory_v1.documents_live
+        WHERE deployment_id = :deployment_id
         """
     ),
     "RELATES": text(
         """
-        SELECT s1.survivor AS from_id, s2.survivor AS to_id,
-               r.relation_id, s1.survivor AS subject_id, s2.survivor AS object_id,
+        SELECT r.subject_entity_id AS from_id, r.object_entity_id AS to_id,
+               r.relation_id, r.subject_entity_id AS subject_id,
+               r.object_entity_id AS object_id,
                r.predicate, r.fact_label AS fact,
-               r.evidence_count::bigint AS evidence_count,
-               r.contradict_count::bigint AS contradict_count,
+               r.evidence_count_current AS evidence_count,
+               r.contradict_count_current AS contradict_count,
                r.confidence::float8 AS confidence, r.contradiction_group,
                (r.valid_from AT TIME ZONE 'UTC') AS valid_from,
                (r.valid_until AT TIME ZONE 'UTC') AS valid_until,
                (r.ingested_at AT TIME ZONE 'UTC') AS ingested_at,
                (r.invalidated_at AT TIME ZONE 'UTC') AS invalidated_at
-        FROM relations r
-        JOIN graph_survivor s1 ON s1.entity_id = r.subject_entity_id
-        JOIN graph_survivor s2 ON s2.entity_id = r.object_entity_id
-        JOIN entities e1 ON e1.entity_id = s1.survivor AND e1.status = 'active'
-        JOIN entities e2 ON e2.entity_id = s2.survivor AND e2.status = 'active'
+        FROM memory_v1.graph_edges_visible_history AS r
+        WHERE r.deployment_id = :deployment_id
         """
     ),
     "MENTIONED_IN": text(
         """
-        SELECT s.survivor AS from_id, m.doc_id AS to_id,
-               COUNT(*)::bigint AS mention_count,
-               (MIN(m.created_at) AT TIME ZONE 'UTC') AS first_seen
-        FROM mentions m
-        JOIN resolution_decisions rd
-          ON rd.mention_id = m.mention_id AND rd.superseded_by IS NULL
-        JOIN graph_survivor s ON s.entity_id = rd.entity_id
-        JOIN entities e ON e.entity_id = s.survivor AND e.status = 'active'
-        WHERE EXISTS (SELECT 1 FROM documents d
-                      WHERE d.doc_id = m.doc_id AND d.deleted_at IS NULL)
-        GROUP BY s.survivor, m.doc_id
+        SELECT entity_id AS from_id, doc_id AS to_id, mention_count,
+               (first_mentioned_at AT TIME ZONE 'UTC') AS first_seen
+        FROM memory_v1.entity_document_mentions
+        WHERE deployment_id = :deployment_id
         """
     ),
     "DOC_CROSSREF": text(
         """
-        SELECT "from" AS from_id, "to" AS to_id,
-               "from" AS from_doc_id, "to" AS to_doc_id, kind, context
-        FROM v_graph_crossref
+        SELECT from_doc_id AS from_id, to_doc_id AS to_id,
+               from_doc_id, to_doc_id, kind, context
+        FROM memory_v1.document_crossrefs_live
+        WHERE deployment_id = :deployment_id
         """
     ),
     "IS_DOCUMENT": text(
         """
-        SELECT s.survivor AS from_id, d.doc_id AS to_id
-        FROM documents d
-        JOIN graph_survivor s ON s.entity_id = d.document_entity_id
-        JOIN entities e ON e.entity_id = s.survivor AND e.status = 'active'
-        WHERE d.document_entity_id IS NOT NULL AND d.deleted_at IS NULL
+        SELECT entity.entity_id AS from_id, document.doc_id AS to_id
+        FROM memory_v1.documents_live AS document
+        JOIN documents AS raw
+          ON raw.deployment_id = document.deployment_id
+         AND raw.doc_id = document.doc_id
+        JOIN v_memory_entity_survivor AS survivor
+          ON survivor.deployment_id = raw.deployment_id
+         AND survivor.entity_id = raw.document_entity_id
+        JOIN memory_v1.entities_current AS entity
+          ON entity.deployment_id = survivor.deployment_id
+         AND entity.entity_id = survivor.survivor_entity_id
+        WHERE document.deployment_id = :deployment_id
         """
     ),
 }
@@ -472,7 +493,8 @@ _SELECT_UNRESOLVED_SURVIVORS = text(
     FROM entities AS e
     LEFT JOIN graph_survivor AS resolved
       ON resolved.entity_id = e.entity_id
-    WHERE resolved.entity_id IS NULL
+    WHERE e.deployment_id = :deployment_id
+      AND resolved.entity_id IS NULL
     ORDER BY e.entity_id
     """
 )
@@ -640,7 +662,9 @@ _SELECT_LATEST = text(
 
 _SELECT_WATERMARK = text(
     """
-    SELECT max(ingested_at) FROM relations
+    SELECT max(ingested_at)
+    FROM memory_v1.graph_edges_visible_history
+    WHERE deployment_id = :deployment_id
     """
 )
 

@@ -9,6 +9,7 @@ Cypher gate is checked by what it refuses, because that is the whole job.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
@@ -27,6 +28,9 @@ from sqlalchemy import text
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces.query_sandbox.audit import AuditEvent
+from rememberstack.surfaces.query_sandbox.audit import AuditTrail
+from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.cypher_executor import CYPHER_TEXT_BYTES_MAX
 from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
@@ -34,9 +38,12 @@ from rememberstack.surfaces.query_sandbox.cypher_executor import is_read_only_re
 from rememberstack.surfaces.query_sandbox.cypher_executor import (
     NO_CONFIRMABLE_VALUES_WARNING,
 )
+from rememberstack.surfaces.query_sandbox.cypher_executor import P2_STALE_WARNING
 from rememberstack.surfaces.query_sandbox.cypher_executor import READ_ONLY_REFUSAL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.result import GraphConfirmation
+from rememberstack.surfaces.query_sandbox.result import ResultColumn
 
 _DEPLOYMENT = UUID("d0000000-0000-0000-0000-00000000000d")
 _PAST = datetime(2024, 1, 1, tzinfo=UTC)
@@ -166,6 +173,23 @@ def test_the_neighborhood_walks_both_directions(
         (obj,),
     )
     assert subject in {str(row[0]) for row in rows}
+
+
+def test_the_neighborhood_never_revisits_an_intermediate_entity(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """Parallel star edges cannot turn a two-hop branch into a cyclic walk."""
+    url, edges = graph
+    degree: dict[str, int] = {}
+    for _, subject, obj in edges:
+        degree[subject] = degree.get(subject, 0) + 1
+        degree[obj] = degree.get(obj, 0) + 1
+    leaf = min(degree, key=degree.__getitem__)
+    rows = _rows(
+        url, "SELECT max(hop) FROM memory_v1.graph_neighborhood(%s, 4)", (leaf,)
+    )
+    assert rows[0][0] is not None
+    assert rows[0][0] <= 2
 
 
 def test_a_predicate_filter_narrows_the_walk(
@@ -362,6 +386,10 @@ class _Snapshot:
     def connection(self) -> object:
         return self._connection
 
+    def pinned(self) -> tuple[object, UUID, str, datetime]:
+        """Return one connection with the provenance that describes it."""
+        return self._connection, self.snapshot_id, self.version, self.built_at
+
 
 class _NoSnapshot:
     """A deployment whose graph has never been published."""
@@ -370,7 +398,8 @@ class _NoSnapshot:
     built_at = None
     snapshot_id = None
 
-    def connection(self) -> object:
+    def pinned(self) -> object:
+        """Fail as a reader with no published generation."""
         raise RuntimeError("no published P2 snapshot exists yet")
 
 
@@ -457,6 +486,15 @@ def test_a_projected_node_loses_the_engines_physical_offsets(
     # while every offset was still being published.
     assert not [key for key in node if key.lower() in ("_id", "_src", "_dst")]
     assert node["name"] in ("Ada", "Grace")
+
+
+def test_a_scalar_engine_internal_id_is_never_published(snapshot: _Snapshot) -> None:
+    """`id(e)` is a physical address, not the public Entity UUID."""
+    outcome = _cypher(snapshot).query_cypher(
+        cypher="MATCH (e:Entity) RETURN id(e) LIMIT 1"
+    )
+    assert outcome.error_code == QueryErrorCode.CYPHER_NOT_ALLOWED
+    assert outcome.rows == ()
 
 
 def test_a_mutation_is_reported_as_not_allowed_not_as_execution_error(
@@ -598,7 +636,82 @@ def test_confirmation_reports_zero_when_nothing_is_confirmable(
     assert outcome.confirmation is not None
     assert (outcome.confirmation.nominated, outcome.confirmation.confirmed) == (0, 0)
     assert outcome.rows == ((2,),)
-    assert outcome.warnings == (NO_CONFIRMABLE_VALUES_WARNING,)
+    assert NO_CONFIRMABLE_VALUES_WARNING in outcome.warnings
+
+
+def test_a_forged_struct_is_not_a_confirmable_node(
+    snapshot: _Snapshot, graph: tuple[str, list[tuple[str, str, str]]]
+) -> None:
+    """Map labels are caller data; only engine-typed NODE/REL values nominate."""
+    url, _ = graph
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(
+        cypher="RETURN {_LABEL: 'Entity', id: $id} AS forged",
+        parameters={"id": uuid4()},
+        confirm=True,
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.confirmation is not None
+    assert outcome.confirmation.nominated == 0
+    assert outcome.returned_row_count == 1
+
+
+def test_an_old_snapshot_warns_at_the_bound_instant(snapshot: _Snapshot) -> None:
+    """A graph more than one hour old stays usable but cannot look fresh."""
+    outcome = _cypher(snapshot).query_cypher(cypher="RETURN 1")
+    assert P2_STALE_WARNING in outcome.warnings
+
+
+class _ConfirmationFailure(CypherSandboxExecutor):
+    """Force the post-snapshot confirmation failure path."""
+
+    def _confirm(
+        self, *, rows: Sequence[Sequence[object]], columns: Sequence[ResultColumn]
+    ) -> tuple[list[Sequence[object]], GraphConfirmation]:
+        """Fail after the P2 snapshot has already been pinned."""
+        del rows, columns
+        raise SandboxRejection(
+            code=QueryErrorCode.PG_UNAVAILABLE,
+            message="live membership could not be checked",
+        )
+
+
+def test_a_failure_after_pinning_keeps_snapshot_provenance(
+    snapshot: _Snapshot, graph: tuple[str, list[tuple[str, str, str]]]
+) -> None:
+    """A PostgreSQL failure does not erase which graph generation ran."""
+    url, _ = graph
+    executor = _ConfirmationFailure(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(cypher="RETURN 1", confirm=True)
+    assert outcome.error_code == QueryErrorCode.PG_UNAVAILABLE
+    assert outcome.p2_snapshot is not None
+    assert outcome.p2_snapshot.snapshot_id == snapshot.snapshot_id
+
+
+def test_cypher_uses_the_shared_kill_switch_and_audit(snapshot: _Snapshot) -> None:
+    """Cypher participates in the same admission and content-free audit path."""
+    switches = KillSwitches()
+    trail = AuditTrail(capacity=2)
+    switches.block_principal("blocked-agent")
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT, reader=snapshot, kill_switches=switches, audit=trail
+    )
+    outcome = executor.query_cypher(cypher="RETURN 1", principal="blocked-agent")
+    assert outcome.error_code == QueryErrorCode.QUOTA_EXCEEDED
+
+    events: list[AuditEvent] = []
+    assert trail.drain(sink=events.append) == 1
+    assert events[0].principal == "blocked-agent"
+    assert events[0].query_language == "cypher"
+    assert events[0].admission == "rejected"
 
 
 def test_a_path_is_returned_whole_or_not_at_all(
@@ -677,6 +790,10 @@ class _BoundSnapshot:
     def connection(self) -> object:
         return self._inner.connection()
 
+    def pinned(self) -> tuple[object, UUID, str, datetime]:
+        """Forward the inner generation and its provenance atomically."""
+        return self._inner.pinned()
+
 
 def test_the_disclosed_cut_is_the_export_transactions_own_instant(
     graph: tuple[str, list[tuple[str, str, str]]],
@@ -693,7 +810,7 @@ def test_the_disclosed_cut_is_the_export_transactions_own_instant(
     engine = create_engine(url)
     try:
         catalog = ProjectionCatalog(engine=engine)
-        with catalog.graph_export() as export:
+        with catalog.graph_export(deployment_id=_DEPLOYMENT) as export:
             cut = export.built_at
             # A second read of the same transaction's timestamp is the same
             # instant: the cut is the transaction's, not a moving clock.

@@ -51,7 +51,7 @@ class P2Snapshot(BaseModel):
     snapshot_id: UUID
     snapshot_version: str
     built_at: datetime
-    age_seconds: float
+    age_seconds: float = Field(ge=0)
 
 
 class GraphConfirmation(BaseModel):

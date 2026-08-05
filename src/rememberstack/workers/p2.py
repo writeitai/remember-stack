@@ -20,6 +20,7 @@ from datetime import UTC
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 from threading import Lock
 from typing import Final
@@ -41,6 +42,55 @@ from rememberstack.workers.p2_analytics import GraphAnalyticsWorker
 
 P2_REBUILD_VERSION: Final = "p2-rebuild-2026.07"
 """The rebuild worker's component version (D12)."""
+
+P2_PROJECTION_SCHEMA: Final = {
+    "contract": "memory_v1.p2/1",
+    "contract_version": P2_REBUILD_VERSION,
+    "node_types": {
+        "Document": {
+            "id": "UUID",
+            "published_at": "DATE",
+            "source_uri": "STRING",
+            "title": "STRING",
+        },
+        "Entity": {
+            "created_at": "TIMESTAMP",
+            "id": "UUID",
+            "name": "STRING",
+            "normalized_name": "STRING",
+            "summary": "STRING",
+            "type": "STRING",
+        },
+    },
+    "edge_types": {
+        "DOC_CROSSREF": {
+            "context": "STRING",
+            "from_doc_id": "UUID",
+            "kind": "STRING",
+            "to_doc_id": "UUID",
+        },
+        "IS_DOCUMENT": {},
+        "MENTIONED_IN": {"first_seen": "TIMESTAMP", "mention_count": "INT64"},
+        "RELATES": {
+            "confidence": "DOUBLE",
+            "contradict_count": "INT64",
+            "contradiction_group": "UUID",
+            "evidence_count": "INT64",
+            "fact": "STRING",
+            "ingested_at": "TIMESTAMP",
+            "invalidated_at": "TIMESTAMP",
+            "object_id": "UUID",
+            "predicate": "STRING",
+            "relation_id": "UUID",
+            "subject_id": "UUID",
+            "valid_from": "TIMESTAMP",
+            "valid_until": "TIMESTAMP",
+        },
+    },
+}
+"""The exhaustive public graph types/properties for this projection version."""
+
+_VERSION_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 GRAPH_DDL: Final = (
     # the D44 COPY contract (translation SYNTHESIS §1): analytics columns are
@@ -189,6 +239,7 @@ class GraphRebuildWorker:
     ) -> dict[str, object]:
         """Run one rebuild cycle end to end; abort loudly on any gate."""
         version = version or datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%f")
+        _validate_version(version)
         prefix = f"{self._settings.snapshot_prefix}/{deployment_id}/{version}"
         snapshot_id = self._catalog.open_snapshot(
             deployment_id=deployment_id,
@@ -227,10 +278,11 @@ class GraphRebuildWorker:
         workdir: Path,
     ) -> dict[str, object]:
         """The pipeline body; every exit is a recorded registry state."""
-        parquet_dir = workdir / version / "parquet"
+        build_root = workdir / str(deployment_id) / str(snapshot_id) / version
+        parquet_dir = build_root / "parquet"
         parquet_dir.mkdir(parents=True, exist_ok=True)
         counts: dict[str, int] = {}
-        with self._catalog.graph_export() as export:
+        with self._catalog.graph_export(deployment_id=deployment_id) as export:
             offenders = export.unresolved_survivors()
             if offenders:
                 validation = {
@@ -257,7 +309,7 @@ class GraphRebuildWorker:
                     table=table,
                     path=parquet_dir / f"{table}.parquet",
                 )
-        graph_dir = workdir / version / "graph"
+        graph_dir = build_root / "graph"
         loaded, computed = _load_graph(
             parquet_dir=parquet_dir,
             graph_dir=graph_dir,
@@ -275,7 +327,13 @@ class GraphRebuildWorker:
             raise SnapshotValidationError(
                 f"snapshot {version} aborted: graph/export count mismatch {mismatched}"
             )
-        manifest = self._upload(prefix=prefix, version=version, graph_dir=graph_dir)
+        manifest = self._upload(
+            deployment_id=deployment_id,
+            snapshot_id=snapshot_id,
+            prefix=prefix,
+            version=version,
+            graph_dir=graph_dir,
+        )
         published = self._catalog.publish(
             deployment_id=deployment_id,
             snapshot_id=snapshot_id,
@@ -335,7 +393,15 @@ class GraphRebuildWorker:
                 )
         return total
 
-    def _upload(self, *, prefix: str, version: str, graph_dir: Path) -> list[str]:
+    def _upload(
+        self,
+        *,
+        deployment_id: UUID,
+        snapshot_id: UUID,
+        prefix: str,
+        version: str,
+        graph_dir: Path,
+    ) -> list[str]:
         """Ship the immutable snapshot files + a digest manifest.
 
         Per-file sha256 digests let readers verify a download before
@@ -353,7 +419,14 @@ class GraphRebuildWorker:
             files[relative] = hashlib.sha256(content).hexdigest()
         self._snapshot_store.write_bytes(
             key=ObjectKey(f"{prefix}/MANIFEST.json"),
-            content=json.dumps({"version": version, "files": files}).encode(),
+            content=json.dumps(
+                {
+                    "deployment_id": str(deployment_id),
+                    "snapshot_id": str(snapshot_id),
+                    "version": version,
+                    "files": files,
+                }
+            ).encode(),
         )
         return sorted(files)
 
@@ -449,16 +522,22 @@ class GraphSnapshotReader:
         latest = self._catalog.latest_snapshot(
             deployment_id=self._deployment_id, plane="P2_graph"
         )
-        if latest is None or latest["version"] == self._version:
+        if latest is None:
             return False
         version = str(latest["version"])
+        _validate_version(version)
+        identity = UUID(str(latest["snapshot_id"]))
+        if identity == self._snapshot_id and version == self._version:
+            return False
         prefix = str(latest["gcs_uri"])
-        local = self._cache_dir / version
+        cache_parent = self._cache_dir / str(self._deployment_id) / str(identity)
+        local = cache_parent / version
         if not local.exists():
             # stage → verify → atomic rename: a half-downloaded or corrupt
             # transfer must never be mistaken for a complete snapshot on a
             # later refresh (Codex review)
-            staging = self._cache_dir / f".staging-{version}"
+            cache_parent.mkdir(parents=True, exist_ok=True)
+            staging = cache_parent / f".staging-{version}"
             if staging.exists():
                 shutil.rmtree(staging)
             manifest = json.loads(
@@ -471,7 +550,12 @@ class GraphSnapshotReader:
                     f"snapshot manifest names version {manifest['version']!r},"
                     f" registry says {version!r}"
                 )
+            if manifest.get("deployment_id") != str(self._deployment_id):
+                raise RuntimeError("snapshot manifest names a different deployment")
+            if manifest.get("snapshot_id") != str(identity):
+                raise RuntimeError("snapshot manifest names a different snapshot")
             for relative, digest in manifest["files"].items():
+                target = _snapshot_target(root=staging, relative=relative)
                 content = self._snapshot_store.read_bytes(
                     key=ObjectKey(f"{prefix}/files/{relative}")
                 )
@@ -479,7 +563,6 @@ class GraphSnapshotReader:
                     raise RuntimeError(
                         f"snapshot file {relative!r} failed its digest check"
                     )
-                target = staging / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(content)
             staging.rename(local)
@@ -490,8 +573,7 @@ class GraphSnapshotReader:
         self._published_at = published if isinstance(published, datetime) else None
         built = latest.get("built_at")
         self._built_at = built if isinstance(built, datetime) else None
-        identity = latest.get("snapshot_id")
-        self._snapshot_id = identity if isinstance(identity, UUID) else None
+        self._snapshot_id = identity
         return True
 
     def connection(self) -> ladybug.Connection:
@@ -533,6 +615,26 @@ class GraphSnapshotReader:
         if self._database is None:
             raise RuntimeError("no published P2 snapshot exists yet")
         return ladybug.Connection(self._database)
+
+
+def _validate_version(version: str) -> None:
+    """Reject ambiguous or path-bearing snapshot version labels."""
+    if _VERSION_PATTERN.fullmatch(version) is None:
+        raise ValueError("snapshot version must be a 1-128 character ASCII leaf name")
+
+
+def _snapshot_target(*, root: Path, relative: object) -> Path:
+    """Resolve one manifest file beneath its staging root, never outside it."""
+    if not isinstance(relative, str):
+        raise RuntimeError("snapshot manifest file names must be strings")
+    path = Path(relative)
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in ("", ".", "..") for part in path.parts)
+    ):
+        raise RuntimeError(f"unsafe snapshot file name {relative!r}")
+    return root.joinpath(*path.parts)
 
 
 def _load_graph(

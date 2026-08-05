@@ -49,9 +49,9 @@ _EDGE_COLUMNS = """
   invalidated_at timestamptz,
   contradiction_group uuid,
   confidence real,
-  evidence_count bigint,
-  contradict_count bigint,
-  support_state text
+  evidence_count_current bigint,
+  contradict_count_current bigint,
+  support_state_current text
 """
 
 # The edge source is chosen by the question, not by convenience. With no
@@ -65,7 +65,9 @@ _EDGE_SOURCE = """
       c.deployment_id, c.relation_id, c.subject_entity_id, c.object_entity_id,
       c.predicate, c.fact_label, c.valid_from, c.valid_until, c.ingested_at,
       NULL::timestamptz AS invalidated_at, c.contradiction_group, c.confidence,
-      c.evidence_count, c.contradict_count, c.support_state
+      c.evidence_count AS evidence_count_current,
+      c.contradict_count AS contradict_count_current,
+      c.support_state AS support_state_current
     FROM memory_v1.graph_edges_current AS c
     WHERE {function}.valid_at IS NULL
       AND {function}.believed_at IS NULL
@@ -166,7 +168,14 @@ AS $$
         WHEN e.subject_entity_id = graph_neighborhood.start_entity_id
         THEN e.object_entity_id ELSE e.subject_entity_id
       END AS to_entity_id,
-      ARRAY[e.relation_id] AS seen
+      ARRAY[e.relation_id] AS seen_relations,
+      ARRAY[
+        graph_neighborhood.start_entity_id,
+        CASE
+          WHEN e.subject_entity_id = graph_neighborhood.start_entity_id
+          THEN e.object_entity_id ELSE e.subject_entity_id
+        END
+      ] AS seen_nodes
     FROM edges AS e
     WHERE graph_neighborhood.start_entity_id
       IN (e.subject_entity_id, e.object_entity_id)
@@ -179,7 +188,11 @@ AS $$
         WHEN e.subject_entity_id = w.to_entity_id
         THEN e.object_entity_id ELSE e.subject_entity_id
       END,
-      w.seen || e.relation_id
+      w.seen_relations || e.relation_id,
+      w.seen_nodes || CASE
+        WHEN e.subject_entity_id = w.to_entity_id
+        THEN e.object_entity_id ELSE e.subject_entity_id
+      END
     FROM walk AS w
     JOIN edges AS e
       ON w.to_entity_id IN (e.subject_entity_id, e.object_entity_id)
@@ -187,15 +200,16 @@ AS $$
     -- A relation is walked at most once per branch: without this the walk
     -- oscillates across the same edge forever and the depth bound is the only
     -- thing that ends it, at exponential cost.
-    WHERE NOT (e.relation_id = ANY(w.seen))
+    WHERE NOT (e.relation_id = ANY(w.seen_relations))
       AND w.hop < b.depth_cap
-      -- The start is not its own neighbour. Every relation incident to it is
-      -- already a hop-1 row, so walking back to it can only repeat what the
-      -- caller has, one hop further away than it really is.
-      AND CASE
-            WHEN e.subject_entity_id = w.to_entity_id
-            THEN e.object_entity_id ELSE e.subject_entity_id
-          END <> graph_neighborhood.start_entity_id
+      -- Simple branches only: distinct parallel edges do not make revisiting
+      -- an entity a new route, and cycles must not multiply the neighborhood.
+      AND NOT (
+        CASE
+          WHEN e.subject_entity_id = w.to_entity_id
+          THEN e.object_entity_id ELSE e.subject_entity_id
+        END = ANY(w.seen_nodes)
+      )
   ),
   bounded AS (
     SELECT w.*, row_number() OVER (
@@ -222,9 +236,9 @@ AS $$
     e.invalidated_at,
     e.contradiction_group,
     e.confidence,
-    e.evidence_count,
-    e.contradict_count,
-    e.support_state,
+    e.evidence_count_current,
+    e.contradict_count_current,
+    e.support_state_current,
     b.as_of_valid,
     b.as_of_believed
   FROM bounded
@@ -376,9 +390,9 @@ AS $$
     e.invalidated_at,
     e.contradiction_group,
     e.confidence,
-    e.evidence_count,
-    e.contradict_count,
-    e.support_state,
+    e.evidence_count_current,
+    e.contradict_count_current,
+    e.support_state_current,
     b.as_of_valid,
     b.as_of_believed
   FROM steps AS s

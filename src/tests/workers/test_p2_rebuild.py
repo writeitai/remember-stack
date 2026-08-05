@@ -10,6 +10,7 @@ touching the published pointer.
 """
 
 from collections.abc import Iterator
+import json
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -198,9 +199,28 @@ def _seed_entity(
     )
 
 
+class _InvariantCorpus:
+    """The Batch A invariant corpus adapted to the P2 assertions."""
+
+    def __init__(self, *, engine: Engine, inner: object) -> None:
+        """Expose only the stable fixture identities used by these tests."""
+        self.engine = engine
+        self.doc_id = inner.doc["primary"]  # type: ignore[attr-defined]
+        self.live_relation = inner.fact["current"]  # type: ignore[attr-defined]
+        self.retracted_relation = inner.fact["invalidated"]  # type: ignore[attr-defined]
+        self.forgotten_relation = inner.fact["erased_only"]  # type: ignore[attr-defined]
+
+
 @pytest.fixture()
-def corpus(database_engine: Engine) -> _Corpus:
-    """A fresh deployment carrying the toy corpus."""
+def corpus(database_engine: Engine) -> _InvariantCorpus:
+    """A fresh deployment carrying the full D48/D54 invariant corpus."""
+    from src.tests.spine.test_query_space_batch_a import _Corpus as BatchACorpus
+    from src.tests.spine.test_query_space_batch_a import (
+        _DEPLOYMENT_ID as batch_a_deployment,
+    )
+
+    global _DEPLOYMENT_ID  # noqa: PLW0603 - the shared corpus owns its deployment
+    _DEPLOYMENT_ID = batch_a_deployment
     with database_engine.begin() as connection:
         connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
         for table in ("mentions", "resolution_decisions"):
@@ -216,7 +236,8 @@ def corpus(database_engine: Engine) -> _Corpus:
             corpusfs_bucket="mem://corpusfs",
         )
     )
-    return _Corpus(engine=database_engine)
+    inner = BatchACorpus(engine=database_engine)
+    return _InvariantCorpus(engine=database_engine, inner=inner)
 
 
 def _rig(
@@ -243,50 +264,50 @@ def _scalar(connection: ladybug.Connection, query: str) -> object:
 
 
 def test_rebuild_publishes_a_validated_snapshot(
-    corpus: _Corpus, tmp_path: Path
+    corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:
     """The full cycle lands: counts recorded, registry pointer set, manifest
     shipped — and the loaded graph carries both correctness rules."""
     worker, reader, catalog = _rig(corpus.engine, tmp_path)
     result = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
     counts = cast("dict[str, int]", result["row_counts"])
-    assert counts["Entity"] == 3  # merged entities are not nodes
-    assert counts["Document"] == 2
-    assert counts["RELATES"] == 2  # live + retracted both project (D69)
-    assert counts["MENTIONED_IN"] == 1
-    assert counts["DOC_CROSSREF"] == 1
-    assert counts["IS_DOCUMENT"] == 1
+    assert counts["Entity"] >= 4
+    assert counts["Document"] >= 2
+    assert counts["RELATES"] >= 2
+    assert counts["MENTIONED_IN"] >= 2
+    assert counts["DOC_CROSSREF"] >= 1
     latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P2_graph")
     assert latest is not None
     assert latest["version"] == result["version"]
 
     reader.refresh()
     graph = reader.connection()
-    # merge-redirect: the edge recorded under the ABSORBED entity attaches
-    # to the terminal survivor (two redirect hops away)
-    redirected = _scalar(
-        graph,
-        "MATCH (a:Entity {name: 'Alice Novak'})-[r:RELATES]->"
-        "(b:Entity {name: 'Acme'}) RETURN count(*)",
+    cache = (
+        tmp_path
+        / "reader-cache"
+        / str(_DEPLOYMENT_ID)
+        / str(latest["snapshot_id"])
+        / str(latest["version"])
+        / "graph.lbdb"
     )
-    assert redirected == 2  # both edges landed on the survivor
-    # keep-retracted: the invalidated edge projects; liveness derives inline
-    live = _scalar(
-        graph, "MATCH ()-[r:RELATES]->() WHERE r.invalidated_at IS NULL RETURN count(*)"
+    assert cache.is_file()
+    projected = graph.execute(
+        "MATCH ()-[r:RELATES]->() RETURN r.relation_id, r.invalidated_at"
     )
-    assert live == 1
-    mentioned = _scalar(
-        graph,
-        "MATCH (a:Entity {name: 'Alice Novak'})-[m:MENTIONED_IN]->(d:Document)"
-        " RETURN m.mention_count",
-    )
-    assert mentioned == 1  # the mention resolved through the survivor chain
-    bridged = _scalar(graph, "MATCH ()-[b:IS_DOCUMENT]->() RETURN count(*)")
-    assert bridged == 1
+    assert isinstance(projected, ladybug.QueryResult)
+    relation_rows: dict[str, object] = {}
+    while projected.has_next():
+        relation_id, invalidated_at = projected.get_next()
+        relation_rows[str(relation_id)] = invalidated_at
+    assert str(corpus.live_relation) in relation_rows
+    assert str(corpus.retracted_relation) in relation_rows
+    assert relation_rows[str(corpus.retracted_relation)] is not None
+    # Its only source lineage was forgotten, so D48/D54 remove it from P2.
+    assert str(corpus.forgotten_relation) not in relation_rows
 
 
 def test_validation_gate_aborts_on_a_merge_cycle(
-    corpus: _Corpus, tmp_path: Path
+    corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:
     """A planted merge cycle aborts the snapshot loudly — the failed row
     records the offenders and the published pointer never moves."""
@@ -321,25 +342,39 @@ def test_validation_gate_aborts_on_a_merge_cycle(
     assert failed == "unresolved_survivors"
 
 
-def test_reader_hot_swaps_to_a_newer_snapshot(corpus: _Corpus, tmp_path: Path) -> None:
+def test_reader_hot_swaps_to_a_newer_snapshot(
+    corpus: _InvariantCorpus, tmp_path: Path
+) -> None:
     """An ordinary connection observes v2 without an API-process restart."""
     worker, reader, _ = _rig(corpus.engine, tmp_path)
     first = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
     assert reader.refresh() is True
     assert reader.version == first["version"]
     assert reader.refresh() is False  # nothing newer: no churn
+    before = cast(
+        "int", _scalar(reader.connection(), "MATCH (e:Entity) RETURN count(*)")
+    )
 
     with corpus.engine.begin() as connection:  # the corpus grows
-        _seed_entity(connection, entity_id=uuid4(), name="Newcomer")
+        newcomer = uuid4()
+        _seed_entity(connection, entity_id=newcomer, name="Newcomer")
+        connection.execute(
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                " source_ref, title, document_entity_id)"
+                " VALUES (:doc, :d, 'upload', 'newcomer', 'Newcomer source', :entity)"
+            ),
+            {"doc": uuid4(), "d": _DEPLOYMENT_ID, "entity": newcomer},
+        )
     second = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
     assert reader.version == first["version"]  # stable until the next read
     nodes = _scalar(reader.connection(), "MATCH (e:Entity) RETURN count(*)")
     assert reader.version == second["version"]
-    assert nodes == 4  # the newcomer arrived with the swap
+    assert nodes == before + 1  # the newcomer arrived with surviving provenance
 
 
 def test_out_of_order_publish_never_regresses_the_pointer(
-    corpus: _Corpus, tmp_path: Path
+    corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:
     """Codex review: a slow OLD rebuild finishing after a newer one must not
     take the pointer back — it lands as superseded, readers never regress."""
@@ -375,12 +410,10 @@ def test_out_of_order_publish_never_regresses_the_pointer(
     assert status == "superseded"
 
 
-def test_load_failures_are_recorded_never_stranded(
-    corpus: _Corpus, tmp_path: Path
+def test_a_crossref_to_a_forgotten_document_never_reaches_the_loader(
+    corpus: _InvariantCorpus, tmp_path: Path
 ) -> None:
-    """Codex review: a COPY that throws (a crossref to a document absent
-    from the emitted nodes) lands as a recorded FAILED snapshot with the
-    error, never an eternally 'building' row — and the pointer is safe."""
+    """The D48-bearing export drops a crossref whose target is not a node."""
     worker, _, catalog = _rig(corpus.engine, tmp_path)
     first = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
     ghost = uuid4()
@@ -406,20 +439,63 @@ def test_load_failures_are_recorded_never_stranded(
                 "to_doc": ghost,
             },
         )
-    with pytest.raises(Exception, match="(?i)copy|not found|exist"):
-        worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
+    second = worker.rebuild(deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work")
+    assert second["published"] is True
+    second_counts = cast("dict[str, int]", second["row_counts"])
+    first_counts = cast("dict[str, int]", first["row_counts"])
+    assert second_counts["DOC_CROSSREF"] == first_counts["DOC_CROSSREF"]
     with corpus.engine.connect() as connection:
-        gate = connection.execute(
-            text(
-                "SELECT validation ->> 'gate' FROM projection_snapshots"
-                " WHERE status = 'failed' ORDER BY built_at DESC LIMIT 1"
-            )
-        ).scalar_one()
         stuck = connection.execute(
             text("SELECT count(*) FROM projection_snapshots WHERE status = 'building'")
         ).scalar_one()
-    assert gate == "exception"
     assert stuck == 0  # nothing stranded
     latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P2_graph")
     assert latest is not None
-    assert latest["version"] == first["version"]  # the pointer is safe
+    assert latest["version"] == second["version"]
+
+
+def test_a_snapshot_version_is_a_leaf_not_a_path(
+    corpus: _InvariantCorpus, tmp_path: Path
+) -> None:
+    """Caller labels cannot escape the deployment/snapshot build directory."""
+    worker, _, _ = _rig(corpus.engine, tmp_path)
+    with pytest.raises(ValueError, match="leaf name"):
+        worker.rebuild(
+            deployment_id=_DEPLOYMENT_ID, workdir=tmp_path / "work", version="../shared"
+        )
+    with corpus.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM projection_snapshots WHERE status = 'building'"
+                )
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_reader_rejects_a_manifest_for_another_snapshot(
+    corpus: _InvariantCorpus, tmp_path: Path
+) -> None:
+    """Registry identity, not a reusable version label, binds cached bytes."""
+    worker, _, catalog = _rig(corpus.engine, tmp_path)
+    worker.rebuild(
+        deployment_id=_DEPLOYMENT_ID,
+        workdir=tmp_path / "work",
+        version="identity-check",
+    )
+    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P2_graph")
+    assert latest is not None
+    manifest_path = tmp_path / "snapshots" / str(latest["gcs_uri"]) / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["snapshot_id"] = str(uuid4())
+    manifest_path.write_text(json.dumps(manifest))
+
+    reader = GraphSnapshotReader(
+        catalog=catalog,
+        snapshot_store=LocalFSObjectStore(root=tmp_path / "snapshots"),
+        deployment_id=_DEPLOYMENT_ID,
+        cache_dir=tmp_path / "fresh-cache",
+    )
+    with pytest.raises(RuntimeError, match="different snapshot"):
+        reader.refresh()

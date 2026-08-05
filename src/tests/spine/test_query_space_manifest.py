@@ -211,6 +211,32 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         "resource_limits",
         "sql_grammar",
     ]
+    projection = limits["p2_projection"]
+    assert isinstance(projection, dict)
+    assert projection["contract_version"] == "p2-rebuild-2026.07"
+    assert set(projection["node_types"]) == {"Entity", "Document"}  # type: ignore[arg-type]
+    assert set(projection["edge_types"]) == {  # type: ignore[arg-type]
+        "RELATES",
+        "MENTIONED_IN",
+        "DOC_CROSSREF",
+        "IS_DOCUMENT",
+    }
+    relates = projection["edge_types"]["RELATES"]  # type: ignore[index]
+    assert set(relates) == {  # type: ignore[arg-type]
+        "relation_id",
+        "subject_id",
+        "object_id",
+        "predicate",
+        "fact",
+        "evidence_count",
+        "contradict_count",
+        "confidence",
+        "contradiction_group",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at",
+    }
 
 
 def test_manifest_definitions_are_parse_trees_and_never_sql_text() -> None:

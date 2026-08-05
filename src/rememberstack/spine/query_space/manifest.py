@@ -296,9 +296,9 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
         "invalidated_at",
         "contradiction_group",
         "confidence",
-        "evidence_count",
-        "contradict_count",
-        "support_state",
+        "evidence_count_current",
+        "contradict_count_current",
+        "support_state_current",
     ]
     graph_edge_types = [
         "uuid",
@@ -635,6 +635,7 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
     """
     from rememberstack.surfaces.query_sandbox import grammar
     from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
+    from rememberstack.workers.p2 import P2_PROJECTION_SCHEMA
 
     sql_grammar: dict[str, CanonicalValue] = {
         "statement_node_classes": list(sorted(grammar.STATEMENT_NODE_ALLOWLIST)),
@@ -662,7 +663,7 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
         "sql_grammar": sql_grammar,
         "resource_limits": resource_limits,
         "cypher_dialect": _cypher_dialect(),
-        "p2_projection": {"contract": "memory_v1.p2/1"},
+        "p2_projection": cast("dict[str, CanonicalValue]", P2_PROJECTION_SCHEMA),
     }
 
 
