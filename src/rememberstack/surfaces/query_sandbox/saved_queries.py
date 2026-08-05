@@ -523,3 +523,40 @@ SHIPPED_EXAMPLES: Final[tuple[tuple[str, str], ...]] = (
 def declared_examples() -> Sequence[tuple[str, str]]:
     """The `examples.*` names this build ships, as (name, purpose) pairs."""
     return SHIPPED_EXAMPLES
+
+
+#: The fixture classes §5 requires a saving validator to execute. They are
+#: named here so a validator cannot quietly run fewer than the contract says.
+VALIDATION_FIXTURES: Final = ("positive", "empty", "tombstone", "cap")
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    """What a saving validation observed, fixture by fixture.
+
+    A saved query is validated once and then trusted by everyone who runs it,
+    so the report records which fixtures ran and what each concluded rather
+    than a single pass/fail — "it validated" is not something a later reader
+    can check, and a report that cannot be checked is a claim rather than
+    evidence.
+    """
+
+    manifest_hash: str
+    fixtures: dict[str, bool]
+    diagnostics: tuple[str, ...] = ()
+
+    @property
+    def passed(self) -> bool:
+        """True only when EVERY required fixture ran and passed."""
+        return all(self.fixtures.get(name, False) for name in VALIDATION_FIXTURES)
+
+    def as_json(self) -> dict[str, Any]:
+        """The shape stored in `saved_query_versions.validation_report`."""
+        return {
+            "manifest_hash": self.manifest_hash,
+            "fixtures": {
+                name: self.fixtures.get(name, False) for name in VALIDATION_FIXTURES
+            },
+            "diagnostics": list(self.diagnostics),
+            "passed": self.passed,
+        }

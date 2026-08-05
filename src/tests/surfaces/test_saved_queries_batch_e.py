@@ -442,3 +442,32 @@ def test_every_declared_example_has_a_body_that_validates() -> None:
     for name, (purpose, sql) in EXAMPLE_QUERIES.items():
         assert purpose, f"{name} ships without saying what it answers"
         validate_sql(sql)
+
+
+def test_a_validation_report_passes_only_when_every_fixture_did() -> None:
+    """§5 names four fixture classes; a report is not a pass without all four.
+
+    "It validated" is not something a later reader can check, so the report
+    records each fixture — and a validator that ran three of them does not get
+    to call that a pass.
+    """
+    from rememberstack.surfaces.query_sandbox.saved_queries import VALIDATION_FIXTURES
+    from rememberstack.surfaces.query_sandbox.saved_queries import ValidationReport
+
+    complete = ValidationReport(
+        manifest_hash=_HASH, fixtures=dict.fromkeys(VALIDATION_FIXTURES, True)
+    )
+    assert complete.passed
+    assert complete.as_json()["passed"] is True
+
+    for missing in VALIDATION_FIXTURES:
+        partial = ValidationReport(
+            manifest_hash=_HASH,
+            fixtures={name: name != missing for name in VALIDATION_FIXTURES},
+        )
+        assert not partial.passed, f"a report missing {missing} claimed to pass"
+
+    # A report that simply omits a fixture is not a pass either.
+    silent = ValidationReport(manifest_hash=_HASH, fixtures={"positive": True})
+    assert not silent.passed
+    assert silent.as_json()["fixtures"]["tombstone"] is False
