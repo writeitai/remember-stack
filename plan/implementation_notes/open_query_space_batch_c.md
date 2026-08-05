@@ -36,6 +36,16 @@ revised. `facts_as_of` is the exception: it needs no projection, so it ships as
 an ordinary PostgreSQL function (migration `p9_03_0024`) and behaves the same
 either way.
 
+## Function attributes differ from §3.4, and less privilege is why
+
+§3.4 describes the SQL-callable functions as `SECURITY DEFINER` and
+`PARALLEL UNSAFE`. `facts_as_of` ships `SECURITY INVOKER` and `PARALLEL SAFE`:
+the query role already holds `SELECT` on `facts_visible_history`, so definer
+rights would add an escalation path that buys nothing, and the function reads
+views with no side effects, so forbidding parallelism would only make it
+slower. The `SECURITY DEFINER` language in §3.4 was written for a bridge that
+needed to reach objects the caller cannot; this function does not.
+
 ## Signatures are enforced, not assumed
 
 `SIGNATURES` in `bridge.py` is the arity contract: `query` and `k` are both
@@ -93,7 +103,27 @@ per target is declared in `EMPTY_CONTRACTS` beside the confirmation statements,
 so a zero-result search produces a typed empty relation and the caller's join
 still type-checks.
 
+## Generation pins bind, or the request fails
+
+Only the chunk projection is stamped with a D80 generation triple. A pin on
+`semantic_claims` or `semantic_facts` is therefore refused with
+`generation_unavailable` rather than accepted, ignored, and then disclosed as
+though it had been applied. A chunk pin naming a generation the projection has
+never held fails the same way, because searching for it and finding nothing
+would read as "your query matched no chunks" when it means "the thing you
+pinned to is not here".
+
 ## Bodies are confirmed before they are read
+
+The chunk channels and the body fetch share one path, so a nominated chunk
+carries its verified source text out with it: `semantic_chunks` and
+`lexical_chunks` answer with `source_text` beside `location_header`, and a
+chunk whose text fails verification keeps its metadata row out of the result
+rather than appearing with an empty body.
+
+A chunk with no recorded embedding-text hash has nothing to verify against, so
+its body is not returned. Unverifiable is not the same as verified, and this
+path exists precisely so that PostgreSQL decides.
 
 `fetch_chunk_bodies(chunk_ids)` is the body path minus nomination. PostgreSQL
 decides which chunks still exist and what their current coordinate, hashes, and

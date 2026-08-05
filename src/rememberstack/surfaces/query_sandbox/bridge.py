@@ -25,11 +25,13 @@ from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.nomination import BODY_COLUMNS
 from rememberstack.surfaces.query_sandbox.nomination import BODY_TYPE_OIDS
+from rememberstack.surfaces.query_sandbox.nomination import BodyConfirmation
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import confirm
 from rememberstack.surfaces.query_sandbox.nomination import confirm_bodies
+from rememberstack.surfaces.query_sandbox.nomination import Confirmation
 from rememberstack.surfaces.query_sandbox.nomination import projection_filters
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
@@ -49,6 +51,33 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
 #: executor leaves their invocation in place and the planner sees straight
 #: through it; only the Lance-backed ones are resolved and substituted.
 SQL_NATIVE_FUNCTIONS: Final = frozenset({"facts_as_of"})
+
+#: What `facts_as_of` answers with, and the row bound its migration clamps to.
+#: Declared here so the manifest can publish the whole public surface from one
+#: place; the migration is the thing that enforces them.
+FACTS_AS_OF_COLUMNS: Final = (
+    "deployment_id",
+    "fact_kind",
+    "fact_id",
+    "subject_entity_id",
+    "predicate",
+    "object_entity_id",
+    "statement",
+    "fact_label",
+    "valid_from",
+    "valid_until",
+    "ingested_at",
+    "invalidated_at",
+    "contradiction_group",
+    "confidence",
+    "evidence_count_current",
+    "contradict_count_current",
+    "support_state_current",
+    "applied_valid_at",
+    "applied_believed_at",
+    "identity_regime",
+)
+FACTS_AS_OF_ROWS_MAX: Final = 1000
 
 
 class EmbeddingSource(Protocol):
@@ -149,6 +178,18 @@ def _resolve_one(
             code=QueryErrorCode.INVALID_PARAMETER,
             message="generation pins apply to the semantic channels only",
         )
+    if (policy_generation or embedder_generation) and target != "chunks":
+        # Only the chunk projection is stamped with a D80 generation triple.
+        # Accepting a pin on a channel that cannot honour it — and then
+        # disclosing it as though it had been applied — would tell the caller
+        # their query was pinned when it was not.
+        raise SandboxRejection(
+            code=QueryErrorCode.GENERATION_UNAVAILABLE,
+            message=(
+                f"the {target} channel carries no D80 generation stamp,"
+                " so it cannot be pinned to one"
+            ),
+        )
 
     nominate = _nominator(
         function=function,
@@ -163,6 +204,10 @@ def _resolve_one(
         nominations = nominate(query_text, k, filters)
     except SandboxRejection:
         raise
+    except LookupError as error:  # a pin the projection cannot honour
+        raise SandboxRejection(
+            code=QueryErrorCode.GENERATION_UNAVAILABLE, message=str(error)
+        ) from error
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
             code=QueryErrorCode.LANCE_UNAVAILABLE,
@@ -188,6 +233,18 @@ def _resolve_one(
             message="nominated rows could not be confirmed",
         ) from error
 
+    body: BodyConfirmation | None = None
+    if target == "chunks":
+        # §3.4: the chunk channels and the body fetch share one body path, so
+        # a nominated chunk carries its verified source text out with it
+        # rather than making the caller ask a second time.
+        confirmation, body = _hydrate(
+            connection=connection,
+            confirmation=confirmation,
+            search=search,
+            settings=settings,
+        )
+
     return ResolvedInvocation(
         cte_name=cte_name,
         columns=confirmation.columns,
@@ -199,9 +256,77 @@ def _resolve_one(
             confirmed=len(confirmation.rows),
             dropped_stale=confirmation.dropped_stale,
             dropped_filtered=confirmation.dropped_filtered,
+            dropped_absent=body.absent if body else 0,
+            dropped_body_mismatch=body.mismatched if body else 0,
+            dropped_absent_current=body.absent_current if body else 0,
+            dropped_absent_projection=body.absent_projection if body else 0,
+            dropped_hash_mismatch=body.mismatch_hash if body else 0,
+            dropped_prefix_mismatch=body.mismatch_prefix if body else 0,
             generation=embedder_generation or policy_generation,
             termination_reason="completed",
         ),
+    )
+
+
+def _hydrate(
+    *,
+    connection: psycopg.Connection,
+    confirmation: Confirmation,
+    search: object,
+    settings: BridgeSettings,
+) -> tuple[Confirmation, BodyConfirmation]:
+    """Attach verified source text to confirmed chunk rows (§3.4).
+
+    The verification is the body path's, unchanged: the text must carry the
+    header PostgreSQL generated and hash to what PostgreSQL recorded. A chunk
+    whose text fails either check keeps its metadata row out of the result
+    entirely rather than appearing with an empty body, because a row that says
+    "this chunk exists but here is no text" reads as an answer when it is a
+    failure.
+    """
+    identifier = confirmation.columns.index("chunk_id")
+    chunk_ids = tuple(str(row[identifier]) for row in confirmation.rows)
+    if not chunk_ids:
+        return confirmation, BodyConfirmation(rows=[], requested=0)
+    try:
+        texts = search.chunk_texts(  # type: ignore[attr-defined]
+            deployment_id=str(settings.deployment_id), chunk_ids=chunk_ids
+        )
+    except Exception as error:  # the projection is a separate process
+        raise SandboxRejection(
+            code=QueryErrorCode.LANCE_UNAVAILABLE,
+            message="chunk bodies could not be read",
+        ) from error
+    body = confirm_bodies(
+        connection=connection,
+        chunk_ids=chunk_ids,
+        deployment_id=settings.deployment_id,
+        texts={str(key): value for key, value in texts.items()},
+    )
+    # The body path answers by chunk id; splice its verified text into the
+    # nomination rows, which carry rank/score/channel the body path never sees.
+    bodies = {str(row[1]): row[8] for row in body.rows}
+    header = confirmation.columns.index("location_header")
+    rows = [
+        (*row[:header], bodies[str(row[identifier])], *row[header:])
+        for row in confirmation.rows
+        if str(row[identifier]) in bodies
+    ]
+    columns = (
+        *confirmation.columns[:header],
+        "source_text",
+        *confirmation.columns[header:],
+    )
+    type_oids = (*confirmation.type_oids[:header], 25, *confirmation.type_oids[header:])
+    return (
+        Confirmation(
+            columns=columns,
+            rows=rows,
+            type_oids=type_oids,
+            dropped_stale=confirmation.dropped_stale,
+            dropped_filtered=confirmation.dropped_filtered,
+        ),
+        body,
     )
 
 
@@ -490,6 +615,10 @@ def _resolve_bodies(
             dropped_stale=0,
             dropped_absent=confirmation.absent,
             dropped_body_mismatch=confirmation.mismatched,
+            dropped_absent_current=confirmation.absent_current,
+            dropped_absent_projection=confirmation.absent_projection,
+            dropped_hash_mismatch=confirmation.mismatch_hash,
+            dropped_prefix_mismatch=confirmation.mismatch_prefix,
             termination_reason="completed",
         ),
     )

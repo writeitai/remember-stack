@@ -91,8 +91,11 @@ AS $$
     AND f.valid_from <= facts_as_of.valid_at
     AND (f.valid_until IS NULL OR f.valid_until > facts_as_of.valid_at)
   ORDER BY f.fact_kind, f.fact_id
+  -- Zero means zero. Clamping an explicit 0 up to 1 would answer a question
+  -- the caller did not ask, which §4.3 forbids: clamp, or reject, but never
+  -- change what was asked into something else.
   LIMIT least(
-    greatest(coalesce(facts_as_of.max_rows, {_MAX_ROWS_DEFAULT}), 1),
+    greatest(coalesce(facts_as_of.max_rows, {_MAX_ROWS_DEFAULT}), 0),
     {_MAX_ROWS_HARD_CAP}
   )
 $$;

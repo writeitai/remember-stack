@@ -144,9 +144,18 @@ class _RecordingSearch(_FakeSearch):
 class _BodySearch:
     """A projection that holds text for the chunks it was given."""
 
-    def __init__(self, texts: dict[str, str]) -> None:
+    def __init__(
+        self, texts: dict[str, str], nominations: tuple[P1Nomination, ...] = ()
+    ) -> None:
         self.texts = texts
         self.asked: tuple[str, ...] = ()
+        self.nominations = nominations
+
+    def _answer(self, **_: object) -> tuple[P1Nomination, ...]:
+        return self.nominations
+
+    search_chunks_scored = _answer
+    search_chunks_lexical_scored = _answer
 
     def chunk_texts(
         self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
@@ -662,3 +671,85 @@ def test_the_bitemporal_srf_cannot_be_asked_for_more_than_the_cap(
         ).fetchone()
     assert row is not None
     assert row[0] <= 1000
+
+
+def test_a_nominated_chunk_carries_its_verified_body(seeded: tuple[str, UUID]) -> None:
+    """§3.4: the chunk channels and the body fetch share one body path."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    body = "Rain fell for three days."
+    indexed = f"{header}{body}"
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        connection.execute(
+            "UPDATE chunks SET embedding_text_hash = %s WHERE chunk_id = %s",
+            (embedding_text_hash(indexed), chunk_id),
+        )
+    search = _BodySearch({chunk_id: indexed}, (_nomination(chunk_id),))
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT rank, source_text, location_header FROM semantic_chunks($1, 5)",
+        parameters=["weather"],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ((1, body, header),)
+
+
+def test_a_body_the_spine_cannot_vouch_for_is_not_returned(
+    seeded: tuple[str, UUID],
+) -> None:
+    """With no recorded hash there is nothing to verify against, so no row."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        connection.execute(
+            "UPDATE chunks SET embedding_text_hash = NULL WHERE chunk_id = %s",
+            (chunk_id,),
+        )
+    search = _BodySearch({chunk_id: f"{header}anything at all"})
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT source_text FROM fetch_chunk_bodies($1)", parameters=[[chunk_id]]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.rows == ()
+    assert outcome.semantic_invocations[0].dropped_hash_mismatch == 1
+
+
+def test_a_pin_on_a_channel_that_carries_no_generation_is_refused(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Accepting a pin the channel cannot honour would misreport the query."""
+    url, claim_id = seeded
+    outcome = _executor(url, _FakeSearch((_nomination(claim_id),))).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5, '{}'::jsonb, $2, $3)",
+        parameters=["memory", "policy-1", "embed-1"],
+    )
+    assert outcome.error_code == QueryErrorCode.GENERATION_UNAVAILABLE
+
+
+def test_asking_the_bitemporal_srf_for_no_rows_returns_none(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Clamping an explicit zero up to one would answer a different question."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT count(*) FROM memory_v1.facts_as_of(now(), now(), 0)"
+        ).fetchone()
+    assert row is not None
+    assert row[0] == 0
+
+
+def test_tied_scores_rank_by_stable_id() -> None:
+    """Two rows the channel scored identically rank the same way every run."""
+    from rememberstack.adapters.selfhost.lance import LanceChunkIndex
+
+    rows = [
+        {"chunk_id": "ffffffff-0000-0000-0000-000000000001", "_distance": 0.5},
+        {"chunk_id": "00000000-0000-0000-0000-000000000002", "_distance": 0.5},
+    ]
+    nominations = LanceChunkIndex._nominations(  # noqa: SLF001
+        rows, id_column="chunk_id", channel="semantic"
+    )
+    assert [nomination.item_id for nomination in nominations] == [
+        "00000000-0000-0000-0000-000000000002",
+        "ffffffff-0000-0000-0000-000000000001",
+    ]

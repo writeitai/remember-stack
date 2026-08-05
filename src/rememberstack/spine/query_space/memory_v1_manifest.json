@@ -293,6 +293,7 @@
             "section_id",
             "chunk_content_hash",
             "embedding_text_hash",
+            "source_text",
             "location_header"
           ],
           "filters": [
@@ -356,6 +357,7 @@
             "section_id",
             "chunk_content_hash",
             "embedding_text_hash",
+            "source_text",
             "location_header"
           ],
           "filters": [
@@ -453,6 +455,38 @@
             "support_state"
           ],
           "name": "semantic_facts",
+          "projection_filters": [],
+          "target": "facts"
+        },
+        {
+          "arguments_max": 3,
+          "arguments_min": 2,
+          "channel": "bitemporal",
+          "columns": [
+            "deployment_id",
+            "fact_kind",
+            "fact_id",
+            "subject_entity_id",
+            "predicate",
+            "object_entity_id",
+            "statement",
+            "fact_label",
+            "valid_from",
+            "valid_until",
+            "ingested_at",
+            "invalidated_at",
+            "contradiction_group",
+            "confidence",
+            "evidence_count_current",
+            "contradict_count_current",
+            "support_state_current",
+            "applied_valid_at",
+            "applied_believed_at",
+            "identity_regime"
+          ],
+          "filters": [],
+          "max_rows_hard_cap": 1000,
+          "name": "facts_as_of",
           "projection_filters": [],
           "target": "facts"
         },
@@ -24599,5 +24633,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/1",
-  "surface_manifest_hash": "51c3a6280368371c1196599453f893df7c7f26370c245dd40bd2aa5778e360db"
+  "surface_manifest_hash": "2f61ea81ab56e0307154fc3fc7b00644de27d2dd50a96575a9270e4eabe1b872"
 }

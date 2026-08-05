@@ -166,6 +166,8 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
     those rolls `surface_manifest_hash` — the point of putting them here.
     """
     from rememberstack.surfaces.query_sandbox import nomination
+    from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_COLUMNS
+    from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_ROWS_MAX
     from rememberstack.surfaces.query_sandbox.bridge import FUNCTION_TARGETS
     from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
 
@@ -188,6 +190,21 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "columns": list(columns),
             }
         )
+    functions.append(
+        {
+            # Pure SQL: it needs no projection, so PostgreSQL runs it directly
+            # and its arity is enforced by the function itself.
+            "name": "facts_as_of",
+            "target": "facts",
+            "channel": "bitemporal",
+            "arguments_min": 2,
+            "arguments_max": 3,
+            "filters": [],
+            "projection_filters": [],
+            "columns": list(FACTS_AS_OF_COLUMNS),
+            "max_rows_hard_cap": FACTS_AS_OF_ROWS_MAX,
+        }
+    )
     functions.append(
         {
             "name": "fetch_chunk_bodies",

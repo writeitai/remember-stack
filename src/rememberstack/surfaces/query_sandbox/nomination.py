@@ -91,9 +91,10 @@ EMPTY_CONTRACTS: Final[dict[str, tuple[tuple[str, ...], tuple[int, ...]]]] = {
             "section_id",
             "chunk_content_hash",
             "embedding_text_hash",
+            "source_text",
             "location_header",
         ),
-        (23, 701, 25, 2950, 2950, 2950, 2950, 2950, 25, 25, 25),
+        (23, 701, 25, 2950, 2950, 2950, 2950, 2950, 25, 25, 25, 25),
     ),
     "facts": (
         (
@@ -554,12 +555,31 @@ BODY_TYPE_OIDS: Final = (
 
 @dataclass(frozen=True)
 class BodyConfirmation:
-    """Confirmed bodies, and the count of ids each rejection category ate."""
+    """Confirmed bodies, and the count of ids each rejection category ate.
+
+    The categories are separate because they mean different things to whoever
+    reads the disclosure: a chunk PostgreSQL no longer publishes is a deletion
+    or a supersession, a chunk the projection has not got is a rebuild lag, and
+    text that disagrees with the recorded hash or header is a corruption or a
+    stale generation — three different things to go and look at.
+    """
 
     rows: list[tuple[Any, ...]]
     requested: int
-    absent: int = 0
-    mismatched: int = 0
+    absent_current: int = 0
+    absent_projection: int = 0
+    mismatch_hash: int = 0
+    mismatch_prefix: int = 0
+
+    @property
+    def absent(self) -> int:
+        """Every id that produced no row for want of one side or the other."""
+        return self.absent_current + self.absent_projection
+
+    @property
+    def mismatched(self) -> int:
+        """Every id whose text disagreed with what PostgreSQL recorded."""
+        return self.mismatch_hash + self.mismatch_prefix
 
 
 def chunk_id_list(value: object) -> tuple[str, ...]:
@@ -635,24 +655,38 @@ def confirm_bodies(
         )
 
     rows: list[tuple[Any, ...]] = []
-    absent = 0
-    mismatched = 0
+    absent_current = 0
+    absent_projection = 0
+    mismatch_hash = 0
+    mismatch_prefix = 0
     for ordinal, chunk_id in enumerate(chunk_ids):
         confirmed = by_id.get(chunk_id)
-        text = texts.get(chunk_id)
-        if confirmed is None or text is None:
-            absent += 1
+        if confirmed is None:
+            absent_current += 1
             continue
+        text = texts.get(chunk_id)
         indexed = getattr(text, "indexed_text", None)
+        if not isinstance(indexed, str):
+            absent_projection += 1
+            continue
         header = confirmed[8] or ""
-        if not isinstance(indexed, str) or not indexed.startswith(header):
-            mismatched += 1
+        if not indexed.startswith(header):
+            mismatch_prefix += 1
             continue
         expected = confirmed[7]
-        if expected and embedding_text_hash(indexed) != expected:
-            mismatched += 1
+        # A chunk with no recorded embedding-text hash cannot have its body
+        # verified, and unverifiable text does not get returned as though it
+        # had been checked. The whole point of this path is that PostgreSQL
+        # decides; with nothing to decide against, the answer is no.
+        if not expected or embedding_text_hash(indexed) != expected:
+            mismatch_hash += 1
             continue
         rows.append((ordinal, *confirmed[1:8], indexed[len(header) :], *confirmed[8:]))
     return BodyConfirmation(
-        rows=rows, requested=len(chunk_ids), absent=absent, mismatched=mismatched
+        rows=rows,
+        requested=len(chunk_ids),
+        absent_current=absent_current,
+        absent_projection=absent_projection,
+        mismatch_hash=mismatch_hash,
+        mismatch_prefix=mismatch_prefix,
     )

@@ -456,24 +456,18 @@ class LanceChunkIndex:
         A distance is inverted into a similarity so that, within a channel,
         larger is always better; the two scales still never compare across
         channels, which is why the channel travels with the score.
+
+        Ties break by item id, so two rows the channel scored identically get
+        the same two ranks on every run. Without it the rank a caller sees for
+        a tied row depends on scan order, and a saved query answers differently
+        on Tuesday for no reason it can see.
         """
-        nominations = []
-        for position, row in enumerate(rows, start=1):
-            if "_score" in row and row["_score"] is not None:
-                score = float(row["_score"])
-            elif "_distance" in row and row["_distance"] is not None:
-                score = 1.0 / (1.0 + float(row["_distance"]))
-            else:
-                score = 0.0
-            nominations.append(
-                P1Nomination(
-                    item_id=str(row[id_column]),
-                    rank=position,
-                    score=score,
-                    channel=channel,
-                )
-            )
-        return tuple(nominations)
+        scored = [(_nomination_score(row), str(row[id_column])) for row in rows]
+        scored.sort(key=lambda entry: (-entry[0], entry[1]))
+        return tuple(
+            P1Nomination(item_id=item_id, rank=position, score=score, channel=channel)
+            for position, (score, item_id) in enumerate(scored, start=1)
+        )
 
     def search_claims_scored(
         self,
@@ -564,9 +558,14 @@ class LanceChunkIndex:
         if not self._has_table(table_name=_CHUNK_TABLE):
             return ()
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
-        columns = {
-            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
-        }
+        table = self._connection.open_table(_CHUNK_TABLE)
+        columns = {field.name for field in table.schema}
+        _require_generation(
+            table=table, column="policy_generation", value=policy_generation
+        )
+        _require_generation(
+            table=table, column="embedder_generation", value=embedder_generation
+        )
         where = _chunk_search_where(
             deployment_id=deployment_id,
             policy_generation=policy_generation,
@@ -603,9 +602,14 @@ class LanceChunkIndex:
             return ()
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
-        columns = {
-            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
-        }
+        table = self._connection.open_table(_CHUNK_TABLE)
+        columns = {field.name for field in table.schema}
+        _require_generation(
+            table=table, column="policy_generation", value=policy_generation
+        )
+        _require_generation(
+            table=table, column="embedder_generation", value=embedder_generation
+        )
         where = _chunk_search_where(
             deployment_id=deployment_id,
             policy_generation=policy_generation,
@@ -1004,6 +1008,36 @@ class LanceChunkIndex:
 def _escape_literal(value: str) -> str:
     """Escape single quotes for Lance filter string literals."""
     return value.replace("'", "''")
+
+
+def _nomination_score(row: dict) -> float:
+    """The channel's own score for one row, as a larger-is-better number."""
+    if row.get("_score") is not None:
+        return float(row["_score"])
+    if row.get("_distance") is not None:
+        return 1.0 / (1.0 + float(row["_distance"]))
+    return 0.0
+
+
+def _require_generation(*, table: Table, column: str, value: str | None) -> None:
+    """Fail when a requested generation is not one this dataset holds.
+
+    Silently searching a projection that has never seen the pinned generation
+    returns an empty result that reads as "nothing matched your query" when it
+    actually means "the thing you pinned to does not exist here".
+    """
+    if value is None:
+        return
+    if column not in {field.name for field in table.schema}:
+        raise LookupError(f"the projection records no {column}")
+    rows = (
+        table.search()
+        .where(f"{column} = '{_escape_literal(value)}'", prefilter=True)
+        .limit(1)
+        .to_list()
+    )
+    if not rows:
+        raise LookupError(f"the projection holds no {column} {value!r}")
 
 
 def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) -> str:
