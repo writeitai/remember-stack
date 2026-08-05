@@ -9,6 +9,7 @@ seeded, deterministic).
 
 from collections.abc import Callable
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 import random
 from typing import cast
@@ -33,6 +34,7 @@ from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
+from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 
 _ROOT = Path(__file__).parents[3]
 _DEPLOYMENT = UUID("5b000000-0000-0000-0000-00000000000b")
@@ -303,6 +305,7 @@ def test_query_role_settings_are_pinned_by_the_migration(migrated: str) -> None:
             )
         }
     assert settings["temp_file_limit"] == "64MB"
+    assert {caps.temp_file_kib for caps in TIER_LIMITS.values()} == {65_536}
     assert settings["max_parallel_workers_per_gather"] == "0"
     assert settings["default_transaction_read_only"] == "on"
 
@@ -358,6 +361,7 @@ def test_a_public_function_needs_a_projection(migrated: str) -> None:
     )
     assert outcome.termination_reason == "failed"
     assert outcome.error_code == QueryErrorCode.LANCE_UNAVAILABLE
+    assert outcome.empty_result is True
 
 
 def test_executor_parameter_count_mismatch(migrated: str) -> None:
@@ -365,6 +369,7 @@ def test_executor_parameter_count_mismatch(migrated: str) -> None:
         sql="SELECT count(*) FROM claims_live", parameters=["stray"]
     )
     assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+    assert outcome.empty_result is True
 
 
 def test_executor_evaluated_at_rule(migrated: str) -> None:
@@ -437,6 +442,7 @@ def test_executor_error_mapping(error: Exception, code: QueryErrorCode) -> None:
     assert outcome.termination_reason == "failed"
     assert outcome.error_code == code
     assert outcome.error_message is not None
+    assert outcome.empty_result is True
     assert "claims" not in (outcome.error_message or "")
 
 
@@ -499,6 +505,9 @@ def test_discovery_serves_manifest_and_headline() -> None:
     assert len(description.views) == 24
     assert description.headline == TWO_LAYER_HEADLINE
     assert set(description.functions) == PUBLIC_SRF_NAMES
+    assert description.limits == {
+        tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()
+    }
     assert description.examples == ()
 
 
@@ -1022,6 +1031,13 @@ def test_a_construct_nobody_considered_is_refused(statement: str) -> None:
     with pytest.raises(SandboxRejection) as rejection:
         validate_sql(statement)
     assert rejection.value.code == QueryErrorCode.STATEMENT_NOT_ALLOWED
+
+
+def test_a_nul_byte_is_rejected_before_the_parser_can_truncate() -> None:
+    """Raw SQL cannot hide a suffix after pglast's string terminator."""
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql("SELECT 1\x00; DELETE FROM claims")
+    assert rejection.value.code == QueryErrorCode.PARSE_ERROR
 
 
 @pytest.mark.parametrize(

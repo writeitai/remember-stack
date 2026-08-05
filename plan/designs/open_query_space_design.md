@@ -631,6 +631,10 @@ allowed. `explain_sql` alone accepts `EXPLAIN (FORMAT JSON)` and never
 `ANALYZE`. Every value originating outside the saved statement uses typed
 positional parameters; interpolation is forbidden.
 
+Raw SQL containing U+0000 is rejected with `parse_error` before the PostgreSQL
+parser is called; a parser's treatment of a string terminator cannot authorize
+or hide any suffix of the submitted request.
+
 `DISTINCT` and `DISTINCT ON` are allowed, as is aggregate `FILTER (WHERE ...)`.
 `TABLESAMPLE`, `WITHIN GROUP`, and all ordered-set aggregates are rejected with
 `statement_not_allowed`. A CTE name that shadows any `memory_v1` relation name
@@ -700,8 +704,11 @@ or unsupported text uses `cypher_parse_error`. `p2_unavailable` is public for
 both Cypher entry points; an engine process fault or Cypher execution timeout
 maps to it with no partial rows. It remains internal to a core operation when
 that operation completes through its PostgreSQL fallback. Zero rows is success
-with `empty_result = true`, never an error and never a D49 negative. The store
-codes and fallback behavior cross-reference the §7 failure matrix.
+with `empty_result = true`, never an error and never a D49 negative. Rejected
+and failed results also carry zero rows and set `empty_result = true`; their
+termination reason and error code distinguish them from a successful empty
+read. The store codes and fallback behavior cross-reference the §7 failure
+matrix.
 
 ### 4.2 Ownership, tenancy, and trust boundaries
 
@@ -750,15 +757,29 @@ and performs no projection RPC. The §9.5 adversarial suite targets this
 model: routing, grants, pool reuse, and bridge-derivation — not policies.
 
 A client-writable custom GUC is not an authority; `SET` and `set_config` are
-unavailable. `PUBLIC` has no create, usage, table, function, or default
-privileges. The query role has no base-schema usage, role membership, outbound
+unavailable. In every provisioned deployment database, `PUBLIC` has no
+`CONNECT` or `TEMPORARY`, no access to the private product schema, and no
+execute privilege on product routines in `public`. The `pg_catalog` baseline
+remains available, with the parsed function/operator allowlists deciding what
+caller SQL may invoke. Provisioning must revoke the database's default
+`PUBLIC` privileges before deployment content or a query credential exists,
+then grant `CONNECT` only to that database's derived query login. PostgreSQL
+privileges are additive — a direct revoke from one login cannot override a
+`PUBLIC` grant — so an unprovisioned or administrative database is not claimed
+to have a per-login deny ACL; it MUST contain no deployment content and the
+pool/HBA route MUST NOT offer it to a deployment login. See PostgreSQL
+[Privileges](https://www.postgresql.org/docs/current/ddl-priv.html) and
+[REVOKE](https://www.postgresql.org/docs/current/sql-revoke.html), retrieved
+2026-08-05. The query role has no base-schema usage, role membership, outbound
 network, server-file, large-object, or operator-table capability.
 
 Every checkout resets all session state and reapplies role, `search_path`,
 timeouts, memory, temp, parallelism, and read-only transaction state before use;
 every check-in rolls back and discards the session on reset failure. Query
-transactions use `READ ONLY, READ COMMITTED` and have one statement unless an
-internal SRF bridge performs its bounded nomination, confirmation, or body work.
+transactions use `READ ONLY, REPEATABLE READ`: bounded nomination confirmation
+and the caller statement share one PostgreSQL snapshot even when one public
+request needs several internal statements. The caller still submits exactly one
+statement.
 
 The adversarial CI suite runs under the real query and bridge roles. It MUST
 cover two deployments with distinguishable sentinels; direct qualification,
@@ -807,7 +828,7 @@ the applicable default/hard class and cites this table.
 | SQL or Cypher returned rows | 200 | 1,000 | 10,000 |
 | SQL or Cypher returned encoded bytes | 1 MiB | 8 MiB | 64 MiB |
 | `work_mem` | 16 MiB | 32 MiB | 64 MiB |
-| Temporary files | 64 MiB | 256 MiB | 1 GiB |
+| Temporary files | 64 MiB | 64 MiB | 64 MiB |
 | Recursive CTEs / maximum depth | 1 / 4 | 1 / 6 | 1 / 6 |
 | `facts_as_of` returned rows | 200 | 1,000 | 1,000 |
 | Semantic or lexical nomination SRF calls / `k` each / total nominations | 1 / 20 / 100 | 3 / 100 / 200 | 3 / 100 / 200 |
@@ -1119,6 +1140,9 @@ examples in that manifest. Neither reads tenant content or exposes arbitrary
 `pg_catalog`. A runtime/manifest mismatch disables open SQL for that deployment
 with `schema_version_mismatch`; a P2 dialect/property-contract mismatch disables
 both Cypher entry points with the same code before worker execution.
+Discovery publishes every named field of each tier's authoritative limit
+record; it does not maintain a shorter hand-selected presentation that can
+drift from the hashed `limits` member.
 
 After its mandatory two-layer opening, the consumption skill presents the same
 choice plainly: Cypher for native graph power with point-in-time semantics, SQL

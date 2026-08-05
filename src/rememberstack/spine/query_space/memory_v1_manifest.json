@@ -877,7 +877,7 @@
           "sql_text_bytes": 65536,
           "statement_timeout_ms_default": 60000,
           "statement_timeout_ms_hard": 60000,
-          "temp_file_kib": 1048576,
+          "temp_file_kib": 65536,
           "work_mem_kib": 65536
         },
         "interactive": {
@@ -29075,5 +29075,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "248c195d32c9afcac240664d335280ee2a28dd6fa36fd6ee8a960ba4f4a8f8ae"
+  "surface_manifest_hash": "72dd7f51ab1b4b057f99fc4e1735be138befdb76d32bcd5dfc0e359b8a3b0ea6"
 }

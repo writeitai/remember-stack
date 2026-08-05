@@ -288,6 +288,7 @@ class QuerySandboxExecutor:
                 else "failed",
                 error_code=code,
                 error_message=message,
+                empty_result=True,
             )
             self._audit.emit(outcome=outcome, principal=principal)
             return outcome
@@ -615,6 +616,7 @@ class QuerySandboxExecutor:
             termination_reason="failed",
             error_code=code,
             error_message=message,
+            empty_result=True,
         )
         self._audit.emit(outcome=outcome, principal=principal)
         return outcome
