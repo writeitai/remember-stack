@@ -68,3 +68,27 @@ engine's physical offsets, which are stable only inside one built generation.
 The pinned engine spells these keys in upper case (`_ID`, `_LABEL`); a
 case-sensitive strip silently published all of them, and the confirmation path
 silently matched nothing, which is how the test found it.
+
+## Not built in this slice, and why
+
+§11 lists two more things under Batch D. Neither is done, and neither is
+hidden here:
+
+**The process-isolated engine worker.** The design puts the parse gate first
+as the mandatory control and the worker second as defense-in-depth, and the
+gate is built. The worker is not: Cypher still executes in the API process,
+bounded by the engine's own query timeout. This matters more than a
+belt-and-braces argument usually would, because we have *observed* the pinned
+engine fault mid-traversal (INT128 overflow, issue #144) rather than merely
+imagined it — an engine that can fault is an engine worth putting behind a
+supervisor that can outlive it. It is a substantial change (snapshot path
+plumbing, an RPC boundary, a supervisor deadline) and is called out rather
+than half-built.
+
+**`question_context` v4.** The existing context operations do not yet gain the
+fact-backing and entity-candidate channels, the two default-false flags, or
+P2-confirmed acceleration with PostgreSQL fallback. They work as they did; they
+are not yet wired to this surface.
+
+Both are Batch D scope by §11, so this slice does not close Batch D. Saying so
+here is cheaper than a reader discovering it from the diff.
