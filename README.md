@@ -163,7 +163,7 @@
 | src/rememberstack/spine/query\_space/canonical.py                                             |       71 |        2 |       32 |        1 |     97.1% |   89, 137 |
 | src/rememberstack/spine/query\_space/catalog.py                                               |       31 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/query\_space/deletion\_matrix.py                                      |       80 |        2 |       18 |        1 |     96.9% |  543, 549 |
-| src/rememberstack/spine/query\_space/manifest.py                                              |      151 |       15 |       36 |       11 |     86.1% |157, 316, 404, 410, 418, 503, 520, 527-530, 535, 540, 551, 562, 702, 704 |
+| src/rememberstack/spine/query\_space/manifest.py                                              |      151 |       15 |       36 |       11 |     86.1% |157, 316, 409, 415, 423, 508, 525, 532-535, 540, 545, 556, 567, 707, 709 |
 | src/rememberstack/spine/query\_space/quarantine.py                                            |       20 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/query\_space/source\_definitions.py                                   |       88 |        3 |       28 |        3 |     94.8% |155, 158, 180 |
 | src/rememberstack/spine/readiness.py                                                          |       52 |        1 |       10 |        1 |     96.8% |        58 |
@@ -184,10 +184,10 @@
 | src/rememberstack/surfaces/query\_sandbox/\_\_init\_\_.py                                     |        8 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_sandbox/audit.py                                            |       92 |        7 |       14 |        4 |     89.6% |101-\>108, 145-146, 149-150, 170, 195, 199 |
 | src/rememberstack/surfaces/query\_sandbox/bridge.py                                           |      254 |       28 |       80 |       13 |     87.1% |196, 198, 206-207, 214, 260, 276, 290, 331, 333, 356-357, 480-481, 557-558, 577, 593, 618, 630-631, 724, 750, 833, 844-847 |
-| src/rememberstack/surfaces/query\_sandbox/discovery.py                                        |       41 |        3 |       14 |        3 |     89.1% |72, 122, 135 |
+| src/rememberstack/surfaces/query\_sandbox/discovery.py                                        |       42 |        3 |       14 |        3 |     89.3% |73, 113, 126 |
 | src/rememberstack/surfaces/query\_sandbox/errors.py                                           |       36 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/surfaces/query\_sandbox/executor.py                                         |      226 |       21 |       62 |       13 |     87.5% |85-91, 131, 139, 145, 154, 156, 158, 160, 163-165, 296, 316, 335-340, 542-543 |
-| src/rememberstack/surfaces/query\_sandbox/grammar.py                                          |      585 |       55 |      236 |       33 |     87.8% |233, 237, 242, 279, 297, 345, 363-364, 406-\>405, 430, 447-448, 451-460, 483, 566, 572, 624, 628-629, 636, 646, 748-757, 771-774, 780-\>777, 824-\>822, 895-\>897, 915, 939-\>943, 959-960, 963, 988-\>986, 995, 1019, 1024-\>1030, 1052, 1058-1064, 1070-1071, 1075-1078, 1110, 1127, 1180 |
+| src/rememberstack/surfaces/query\_sandbox/executor.py                                         |      226 |       21 |       62 |       13 |     87.5% |85-91, 131, 139, 145, 154, 156, 158, 160, 163-165, 297, 317, 336-341, 543-544 |
+| src/rememberstack/surfaces/query\_sandbox/grammar.py                                          |      602 |       55 |      244 |       33 |     88.2% |233, 237, 242, 375, 400, 448, 468-469, 511-\>510, 535, 552-553, 556-565, 588, 671, 677, 729, 733-734, 741, 751, 853-862, 876-879, 885-\>882, 929-\>927, 1000-\>1002, 1020, 1044-\>1048, 1064-1065, 1068, 1093-\>1091, 1100, 1124, 1129-\>1135, 1157, 1163-1169, 1175-1176, 1180-1183, 1215, 1232, 1285 |
 | src/rememberstack/surfaces/query\_sandbox/limits.py                                           |       15 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_sandbox/nomination.py                                       |      263 |       28 |       90 |       14 |     87.5% |206-207, 212, 281-289, 296, 516-517, 580, 582, 584, 698-704, 710, 727-728, 765, 787-788, 796, 828-829, 852-\>854 |
 | src/rememberstack/surfaces/query\_sandbox/result.py                                           |       58 |        0 |        0 |        0 |    100.0% |           |
@@ -216,7 +216,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **18145** | **1492** | **4290** |  **719** | **89.1%** |           |
+| **TOTAL**                                                                                     | **18163** | **1492** | **4298** |  **719** | **89.1%** |           |
 
 
 ## Setup coverage badge
