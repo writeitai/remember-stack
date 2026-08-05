@@ -27,6 +27,8 @@ from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+from rememberstack.surfaces.query_sandbox.bridge import resolve_invocations
+from rememberstack.surfaces.query_sandbox.bridge import substitute
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
@@ -35,9 +37,11 @@ from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
+from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
 from rememberstack.surfaces.query_sandbox.result import ResultLimits
+from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
 
 # The only relations whose reference permits a non-null `evaluated_at` (§4.4:
 # every referenced relation must be current/as-of fact/graph surface).
@@ -176,7 +180,14 @@ class QuerySandboxExecutor:
         audit: AuditTrail | None = None,
         kill_switches: KillSwitches | None = None,
         analytical_entitlement: bool = False,
+        search: object | None = None,
+        embed: Callable[..., tuple[float, ...]] | None = None,
     ) -> None:
+        # The public functions need a projection to nominate from and a way to
+        # embed a query; without them the statement still parses, and a call
+        # fails with the store-phase code rather than a confusing SQL error.
+        self._search = search
+        self._embed = embed
         self._deployment_id = deployment_id
         # §4.3: the analytical tier requires an operator entitlement and its
         # own pool. A caller asking for it without one runs interactive.
@@ -364,9 +375,48 @@ class QuerySandboxExecutor:
         principal: str,
     ) -> QueryResult:
         limits = TIER_LIMITS[tier]
-        statement = (
-            f"EXPLAIN (FORMAT JSON) {validated.sql}" if explain else validated.sql
-        )
+        semantic_invocations: tuple[SemanticInvocation, ...] = ()
+        executable = validated.sql
+        if validated.srf_bindings and not explain:
+            if self._search is None or self._embed is None:
+                return self._failure(
+                    QueryErrorCode.LANCE_UNAVAILABLE,
+                    "the projection is not configured for this deployment",
+                    request_id,
+                    started,
+                    clock,
+                    limits_model,
+                    principal,
+                )
+            try:
+                with self._transaction(limits_ms=limits) as bridge_cursor:
+                    resolutions = resolve_invocations(
+                        bindings=validated.srf_bindings,
+                        parameters=parameters,
+                        connection=bridge_cursor.connection,
+                        search=self._search,
+                        embed=self._embed,
+                        settings=BridgeSettings(deployment_id=self._deployment_id),
+                    )
+            except SandboxRejection as rejection:
+                return self._failure(
+                    rejection.code,
+                    rejection.message,
+                    request_id,
+                    started,
+                    clock,
+                    limits_model,
+                    principal,
+                    query_hash=_hash_with_parameter_types(
+                        validated.query_hash, parameters
+                    ),
+                )
+            executable = substitute(validated.sql, resolutions)
+            semantic_invocations = tuple(
+                resolution.invocation for resolution in resolutions
+            )
+
+        statement = f"EXPLAIN (FORMAT JSON) {executable}" if explain else executable
         try:
             with self._transaction(limits_ms=limits) as cursor:
                 pg_snapshot_at = self._snapshot_instant(cursor)
@@ -507,6 +557,7 @@ class QuerySandboxExecutor:
             evaluated_at=evaluated_at,
             pg_snapshot_at=pg_snapshot_at,
             elapsed_ms=(time.monotonic() - clock) * 1000,
+            semantic_invocations=semantic_invocations,
         )
         self._audit.emit(outcome=outcome, principal=principal)
         return outcome

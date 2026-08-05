@@ -347,12 +347,17 @@ def test_executor_row_cap_truncates_honestly(migrated: str) -> None:
         assert outcome.truncated is (outcome.truncation_reason == "row_cap")
 
 
-def test_executor_rejects_undefined_srf_at_execution(migrated: str) -> None:
+def test_a_public_function_needs_a_projection(migrated: str) -> None:
+    """Batch C resolves these calls; without a projection the call says so.
+
+    Before the bridge existed this surfaced as a generic execution error,
+    which told the caller nothing actionable.
+    """
     outcome = _executor(migrated).query_sql(
         sql="SELECT * FROM semantic_claims($1)", parameters=["q"]
     )
     assert outcome.termination_reason == "failed"
-    assert outcome.error_code == QueryErrorCode.EXECUTION_ERROR
+    assert outcome.error_code == QueryErrorCode.LANCE_UNAVAILABLE
 
 
 def test_executor_parameter_count_mismatch(migrated: str) -> None:

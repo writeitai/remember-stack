@@ -973,7 +973,8 @@ def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
         while isinstance(node, TypeCast):
             node = node.arg
         if isinstance(node, ParamRef):
-            arguments.append(("$", int(node.number or 0)))
+            number = node.number if isinstance(node.number, int) else 0
+            arguments.append(("$", number))
         elif isinstance(node, A_Const):
             value = node.val
             if isinstance(value, Integer):
