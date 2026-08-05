@@ -185,6 +185,9 @@ class ValidatedQuery:
     srf_invocations: int
     ordered_result: bool
     parameter_count: int
+    #: `__srf_N` → (function name, literal/parameter argument list). The
+    #: executor resolves these before planning; see `nomination.py`.
+    srf_bindings: tuple[tuple[str, str, tuple[object, ...]], ...] = ()
     is_recursive: bool = False
     rewritten: bool = False
 
@@ -911,6 +914,7 @@ def _rewrite_srf_invocations(
 
     counter = 0
     new_ctes: list[CommonTableExpr] = []
+    bindings: list[tuple[str, str, tuple[object, ...]]] = []
 
     class _Rewriter(Visitor):
         def visit_RangeFunction(self, ancestors, node: RangeFunction):  # noqa: ANN001, ANN201
@@ -920,6 +924,7 @@ def _rewrite_srf_invocations(
                 if isinstance(call, FuncCall) and _func_name(call) in PUBLIC_SRF_NAMES:
                     name = f"__srf_{counter}"
                     counter += 1
+                    bindings.append((name, _func_name(call), _literal_arguments(call)))
                     body = SelectStmt(
                         targetList=(_star_target(),),
                         fromClause=(node,),
@@ -940,6 +945,7 @@ def _rewrite_srf_invocations(
 
     rewritten = _Rewriter()(statement)
     assert isinstance(rewritten, SelectStmt)
+    _rewrite_srf_invocations.bindings = tuple(bindings)  # type: ignore[attr-defined]
     if new_ctes:
         existing = list(rewritten.withClause.ctes) if rewritten.withClause else []
         recursive = bool(rewritten.withClause and rewritten.withClause.recursive)
@@ -947,6 +953,40 @@ def _rewrite_srf_invocations(
             ctes=tuple(new_ctes + existing), recursive=recursive
         )
     return rewritten
+
+
+def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
+    """The argument list as literals and parameter positions.
+
+    A `$n` argument becomes `("$", n)` so the executor can substitute the
+    bound value; a literal becomes its Python value. Nothing else can appear
+    here — the placement rule already required literals or parameters.
+    """
+    from pglast.ast import A_Const
+    from pglast.ast import Float
+    from pglast.ast import Integer
+    from pglast.ast import String as PgString
+
+    arguments: list[object] = []
+    for argument in call.args or ():
+        node = argument
+        while isinstance(node, TypeCast):
+            node = node.arg
+        if isinstance(node, ParamRef):
+            arguments.append(("$", int(node.number or 0)))
+        elif isinstance(node, A_Const):
+            value = node.val
+            if isinstance(value, Integer):
+                arguments.append(_ival(value))
+            elif isinstance(value, PgString):
+                arguments.append(_sval(value))
+            elif isinstance(value, Float):
+                arguments.append(float(str(getattr(value, "fval", "0"))))
+            else:
+                arguments.append(None)
+        else:  # pragma: no cover - the placement rule forbids reaching here
+            arguments.append(None)
+    return tuple(arguments)
 
 
 def _star_target():  # noqa: ANN202
@@ -1007,8 +1047,10 @@ def validate_sql(
     )
 
     rewritten = False
+    srf_bindings: tuple[tuple[str, str, tuple[object, ...]], ...] = ()
     if gate.srf_calls:
         statement = _rewrite_srf_invocations(statement, gate.srf_calls)
+        srf_bindings = getattr(_rewrite_srf_invocations, "bindings", ())
         rewritten = True
 
     deparsed = RawStream()(statement)
@@ -1033,6 +1075,7 @@ def validate_sql(
         referenced_views=tuple(sorted(gate.views)),
         referenced_functions=tuple(sorted(gate.functions)),
         srf_invocations=len(gate.srf_calls),
+        srf_bindings=srf_bindings,
         ordered_result=ordered,
         parameter_count=params.max_index,
         is_recursive=is_recursive,

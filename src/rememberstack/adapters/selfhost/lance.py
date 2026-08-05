@@ -22,6 +22,7 @@ from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
+from rememberstack.ports.p1_index import P1Nomination
 
 _CHUNK_TABLE = "chunks"
 _CLAIM_TABLE = "claims"
@@ -443,6 +444,223 @@ class LanceChunkIndex:
             .limit(k)
         )
         return tuple(row["fact_id"] for row in query.to_list())
+
+    # -- scored nomination for the public query surface (design §3.4) --------
+
+    @staticmethod
+    def _nominations(rows: list[dict], *, id_column: str, channel: str) -> tuple:
+        """Carry out the score the channel already computed.
+
+        Lance reports `_distance` for a vector search and `_score` for BM25.
+        A distance is inverted into a similarity so that, within a channel,
+        larger is always better; the two scales still never compare across
+        channels, which is why the channel travels with the score.
+        """
+        nominations = []
+        for position, row in enumerate(rows, start=1):
+            if "_score" in row and row["_score"] is not None:
+                score = float(row["_score"])
+            elif "_distance" in row and row["_distance"] is not None:
+                score = 1.0 / (1.0 + float(row["_distance"]))
+            else:
+                score = 0.0
+            nominations.append(
+                P1Nomination(
+                    item_id=str(row[id_column]),
+                    rank=position,
+                    score=score,
+                    channel=channel,
+                )
+            )
+        return tuple(nominations)
+
+    def search_claims_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        current_only: bool,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored claim nominations from the semantic channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CLAIM_TABLE):
+            return ()
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_CLAIM_TABLE)
+                .search(list(vector))
+                .where(
+                    f"deployment_id = '{deployment_id}'"
+                    + (" AND is_current_testimony" if current_only else ""),
+                    prefilter=True,
+                ),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="claim_id", channel="semantic"
+        )
+
+    def search_claims_lexical_scored(
+        self, *, deployment_id: str, query: str, k: int, current_only: bool
+    ) -> tuple[P1Nomination, ...]:
+        """Scored claim nominations from the BM25 channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CLAIM_TABLE):
+            return ()
+        self._ensure_text_index(table_name=_CLAIM_TABLE)
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
+        where = f"deployment_id = '{deployment_id}'"
+        if current_only:
+            where += " AND is_current_testimony"
+        rows = (
+            self._connection.open_table(_CLAIM_TABLE)
+            .search(query, query_type="fts", fts_columns="text")
+            .where(where, prefilter=True)
+            .limit(k)
+            .to_list()
+        )
+        return self._nominations(rows, id_column="claim_id", channel="bm25")
+
+    def search_chunks_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored source-chunk nominations from the semantic channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CHUNK_TABLE):
+            return ()
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
+        where = _chunk_search_where(
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+            columns=columns,
+        )
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_CHUNK_TABLE)
+                .search(list(vector))
+                .where(where, prefilter=True),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="chunk_id", channel="semantic"
+        )
+
+    def search_chunks_lexical_scored(
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored source-chunk nominations from the BM25 channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CHUNK_TABLE):
+            return ()
+        self._ensure_text_index(table_name=_CHUNK_TABLE)
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        columns = {
+            field.name for field in self._connection.open_table(_CHUNK_TABLE).schema
+        }
+        where = _chunk_search_where(
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+            columns=columns,
+        )
+        rows = (
+            self._connection.open_table(_CHUNK_TABLE)
+            .search(query, query_type="fts", fts_columns="indexed_text")
+            .where(where, prefilter=True)
+            .limit(k)
+            .to_list()
+        )
+        return self._nominations(rows, id_column="chunk_id", channel="bm25")
+
+    def search_facts_scored(
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
+    ) -> tuple[P1Nomination, ...]:
+        """Scored fact nominations from the facts channel."""
+        deployment_id = str(UUID(deployment_id))
+        if kind is not None and kind not in ("relation", "observation"):
+            raise ValueError(f"unknown facts-channel kind {kind!r}")
+        if not self._has_table(table_name=_FACT_TABLE):
+            return ()
+        where = f"deployment_id = '{deployment_id}'"
+        if kind is not None:
+            where += f" AND kind = '{kind}'"
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_FACT_TABLE)
+                .search(list(vector))
+                .where(where, prefilter=True),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="fact_id", channel="semantic"
+        )
+
+    def search_entities_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        entity_type: str | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored entity nominations over the profile/description vectors."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_ENTITY_TABLE):
+            return ()
+        self._ensure_scalar_index(table_name=_ENTITY_TABLE, column="deployment_id")
+        where = f"deployment_id = '{deployment_id}'"
+        if entity_type is not None:
+            # The value reaches a filter string, so it is constrained to the
+            # shape an identifier can take rather than trusted.
+            if not entity_type.replace("_", "").isalnum():
+                raise ValueError(f"unusable entity type {entity_type!r}")
+            where += f" AND type = '{entity_type}'"
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_ENTITY_TABLE)
+                .search(list(vector))
+                .where(where, prefilter=True),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="entity_id", channel="semantic"
+        )
 
     def build_search_indexes(self) -> None:
         """Build the measured scalar + IVF_FLAT indexes after a bulk load.
