@@ -339,7 +339,7 @@ def test_affected_recipe_versions_and_disclosures_are_visible_in_catalog() -> No
     } == {
         "claims_hybrid_rrf": 6,
         "chunks_hybrid_rrf": 3,
-        "question_context": 3,
+        "question_context": 4,
         "multi_hop_context": 2,
     }
     assert all(

@@ -17,6 +17,7 @@ from datetime import datetime
 from datetime import UTC
 from itertools import batched
 import math
+from typing import cast
 from typing import Final
 from typing import Literal
 from typing import TYPE_CHECKING
@@ -63,6 +64,7 @@ from rememberstack.model import Truncation
 from rememberstack.model import Validity
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.entity_registry import normalized_lemma
 
@@ -117,6 +119,15 @@ MULTI_HOP_QUESTION_CONTEXT_K: Final = 50
 
 MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K: Final = 200
 """The existing question-context recipe's per-channel nomination cap."""
+
+QUESTION_CONTEXT_ENTITY_CAP: Final = 20
+"""Maximum confirmed entity candidates in `question_context` v4."""
+
+QUESTION_CONTEXT_FACT_CAP: Final = 30
+"""Maximum current facts in the opt-in v4 fact channel."""
+
+QUESTION_CONTEXT_EVIDENCE_PER_FACT: Final = 3
+"""The v4 fact channel reuses `current_context`'s fixed default depth."""
 
 _EVIDENCE_STANCES: Final = ("supports", "contradicts")
 """Stable two-stance order for selection and exact-total disclosure."""
@@ -643,6 +654,122 @@ class QueryEngine:
                 workaround=(
                     "broaden the query or search claims and source passages for testimony"
                 ),
+            ),
+        )
+
+    def question_context(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 50,
+        candidate_k: int = 200,
+        include_facts: bool = False,
+        include_entities: bool = False,
+    ) -> Envelope:
+        """High-recall claim/chunk context with two opt-in v4 channels.
+
+        The default remains the v3 hybrid claim/chunk answer. Facts reuse the
+        existing `current_context` authority instead of duplicating its D48,
+        both-stance, and 60-association rules. Entity resolution and semantic
+        nominations are deduplicated, then confirmed together through
+        `memory_v1.entities_current` before any candidate is returned.
+        """
+        _validate_question_context_bounds(k=k, candidate_k=candidate_k)
+        base = self._question_context_retrieval(
+            deployment_id=deployment_id, query=query, k=k, candidate_k=candidate_k
+        )
+        fact_context = (
+            self.current_context(
+                deployment_id=deployment_id,
+                query=query,
+                k=min(k, QUESTION_CONTEXT_FACT_CAP),
+                evidence_per_fact=QUESTION_CONTEXT_EVIDENCE_PER_FACT,
+            )
+            if include_facts
+            else None
+        )
+        entities: tuple[EntityCandidate, ...] = ()
+        entity_drops = 0
+        entity_truncated = False
+        entity_estimated = 0
+        if include_entities:
+            (entities, entity_drops, entity_truncated, entity_estimated) = (
+                self._question_context_entities(
+                    deployment_id=deployment_id, query=query
+                )
+            )
+
+        evidence_by_id = {record.claim_id: record for record in base.evidence}
+        if fact_context is not None:
+            for record in fact_context.evidence:
+                evidence_by_id.setdefault(record.claim_id, record)
+        evidence = tuple(evidence_by_id.values())
+        facts = fact_context.facts if fact_context is not None else ()
+        fact_evidence = fact_context.fact_evidence if fact_context is not None else ()
+        evidence_totals = (
+            fact_context.evidence_totals if fact_context is not None else ()
+        )
+
+        base_truncated = bool(base.truncation and base.truncation.truncated)
+        fact_truncated = bool(
+            fact_context
+            and fact_context.truncation
+            and fact_context.truncation.truncated
+        )
+        truncated = base_truncated or fact_truncated or entity_truncated
+        returned = len(evidence) + len(base.chunks) + len(facts) + len(entities)
+        estimated = returned
+        exact = True
+        if base.truncation is not None:
+            estimated += max(
+                0, base.truncation.estimated_total - base.truncation.returned
+            )
+            exact = exact and base.truncation.total_is_exact
+        if fact_context is not None and fact_context.truncation is not None:
+            estimated += max(
+                0,
+                fact_context.truncation.estimated_total
+                - fact_context.truncation.returned,
+            )
+            exact = exact and fact_context.truncation.total_is_exact
+        if include_entities:
+            estimated += max(0, entity_estimated - len(entities))
+            exact = exact and not entity_truncated
+
+        has_payload = bool(evidence or base.chunks or facts or entities)
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            entities=entities,
+            facts=facts,
+            evidence=evidence,
+            fact_evidence=fact_evidence,
+            evidence_totals=evidence_totals,
+            chunks=base.chunks,
+            freshness=_freshness(),
+            truncation=(
+                Truncation(
+                    truncated=True,
+                    returned=returned,
+                    estimated_total=max(estimated, returned + 1),
+                    total_is_exact=exact,
+                )
+                if truncated
+                else None
+            ),
+            dropped_by_hydration=(
+                base.dropped_by_hydration
+                + (fact_context.dropped_by_hydration if fact_context else 0)
+                + entity_drops
+            ),
+            negative=(
+                None
+                if has_payload
+                else Negative(
+                    kind=NegativeKind.KNOWN_EMPTY,
+                    explanation=f"no question context confirms for {query!r}",
+                    workaround="broaden the query or inspect source artifacts",
+                )
             ),
         )
 
@@ -1810,7 +1937,12 @@ class QueryEngine:
             connection.close()
 
     def _question_context_retrieval(
-        self, *, deployment_id: UUID, query: str
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = MULTI_HOP_QUESTION_CONTEXT_K,
+        candidate_k: int = MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
     ) -> Envelope:
         """Run the stock question-context mechanics inside a compound op.
 
@@ -1825,14 +1957,11 @@ class QueryEngine:
             semantic = self.nominate_claims(
                 deployment_id=deployment_id,
                 query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                k=candidate_k,
                 channel="semantic",
             )
             lexical = self.nominate_claims(
-                deployment_id=deployment_id,
-                query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
-                channel="bm25",
+                deployment_id=deployment_id, query=query, k=candidate_k, channel="bm25"
             )
             fused = self.fuse(
                 rankings=(
@@ -1845,7 +1974,7 @@ class QueryEngine:
                 deployment_id=deployment_id,
                 claim_ids=tuple(item.item_id for item in fused.ranking),
                 ranking=fused.ranking,
-                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+                limit=k,
                 group_exact_text=True,
             )
 
@@ -1853,14 +1982,11 @@ class QueryEngine:
             semantic = self.nominate_chunks(
                 deployment_id=deployment_id,
                 query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                k=candidate_k,
                 channel="semantic",
             )
             lexical = self.nominate_chunks(
-                deployment_id=deployment_id,
-                query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
-                channel="bm25",
+                deployment_id=deployment_id, query=query, k=candidate_k, channel="bm25"
             )
             fused = self.fuse(
                 rankings=(
@@ -1873,12 +1999,81 @@ class QueryEngine:
                 deployment_id=deployment_id,
                 chunk_ids=tuple(item.item_id for item in fused.ranking),
                 ranking=fused.ranking,
-                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+                limit=k,
             )
 
         return self.combine_evidence(
             inputs=(hydrate_claim_context(), hydrate_chunk_context())
         )
+
+    def _question_context_entities(
+        self, *, deployment_id: UUID, query: str
+    ) -> tuple[tuple[EntityCandidate, ...], int, bool, int]:
+        """Resolution-first semantic entities, confirmed once in PostgreSQL."""
+        resolved = self.resolve(deployment_id=deployment_id, name=query)
+        search = getattr(self._search_index, "search_entities_scored", None)
+        if not callable(search):
+            raise RuntimeError(
+                "include_entities needs the semantic entity nomination channel"
+            )
+        nominations = cast(
+            "tuple[P1Nomination, ...]",
+            search(
+                deployment_id=str(deployment_id),
+                vector=self._embed(query=query),
+                k=QUESTION_CONTEXT_ENTITY_CAP + 1,
+                entity_type=None,
+            ),
+        )
+        ordered: list[tuple[UUID, str, int]] = [
+            (candidate.entity_id, candidate.tier, candidate.context_hits)
+            for candidate in resolved.entities
+        ]
+        malformed = 0
+        for nomination in nominations:
+            try:
+                ordered.append((UUID(str(nomination.item_id)), "semantic", 0))
+            except (AttributeError, ValueError):
+                malformed += 1
+        deduplicated: list[tuple[UUID, str, int]] = []
+        seen: set[UUID] = set()
+        for item in ordered:
+            if item[0] in seen:
+                continue
+            seen.add(item[0])
+            deduplicated.append(item)
+        truncated = len(deduplicated) > QUESTION_CONTEXT_ENTITY_CAP
+        selected = deduplicated[:QUESTION_CONTEXT_ENTITY_CAP]
+        if not selected:
+            return (), malformed, truncated, len(deduplicated)
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            rows = (
+                connection.execute(
+                    _CONFIRM_CONTEXT_ENTITIES,
+                    {
+                        "deployment_id": deployment_id,
+                        "entity_ids": [item[0] for item in selected],
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        confirmed = {row["entity_id"]: row for row in rows}
+        entities = tuple(
+            EntityCandidate(
+                entity_id=entity_id,
+                canonical_name=str(confirmed[entity_id]["canonical_name"]),
+                type=str(confirmed[entity_id]["entity_type"]),
+                tier=tier,
+                context_hits=context_hits,
+            )
+            for entity_id, tier, context_hits in selected
+            if entity_id in confirmed
+        )
+        dropped = malformed + len(selected) - len(entities)
+        return entities, dropped, truncated, len(deduplicated)
 
     def _resolve_recipe_entity(
         self, *, deployment_id: UUID, entity: str, grain: Grain
@@ -2258,6 +2453,14 @@ def _validate_current_context_bounds(*, k: int, evidence_per_fact: int) -> None:
         raise ValueError("current_context k must be between 1 and 30")
     if not 1 <= evidence_per_fact <= 5:
         raise ValueError("evidence_per_fact must be between 1 and 5")
+
+
+def _validate_question_context_bounds(*, k: int, candidate_k: int) -> None:
+    """Enforce the retained question-context v4 public bounds."""
+    if not 1 <= k <= 100:
+        raise ValueError("question_context k must be between 1 and 100")
+    if not 1 <= candidate_k <= 400:
+        raise ValueError("question_context candidate_k must be between 1 and 400")
 
 
 def _validate_multi_hop_context_bounds(
@@ -2703,6 +2906,15 @@ _RESOLVE_T0 = text(
     FROM matched
     WHERE status = 'active'
       AND (CAST(:entity_type AS text) IS NULL OR type = :entity_type)
+    """
+)
+
+_CONFIRM_CONTEXT_ENTITIES = text(
+    """
+    SELECT entity_id, canonical_name, entity_type
+    FROM memory_v1.entities_current
+    WHERE deployment_id = :deployment_id
+      AND entity_id = ANY(:entity_ids)
     """
 )
 

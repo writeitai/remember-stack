@@ -26,6 +26,7 @@ from rememberstack.model import FactSupport
 from rememberstack.model import Grain
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine.settings import load_database_settings
@@ -60,10 +61,20 @@ def database_engine() -> Iterator[Engine]:
 class _QuestionIndex:
     """Question-context nominations with deliberate cross-channel duplicates."""
 
-    def __init__(self, *, claim_id: UUID, chunk_id: UUID, chunk_text: P1ChunkText):
+    def __init__(
+        self,
+        *,
+        claim_id: UUID,
+        chunk_id: UUID,
+        chunk_text: P1ChunkText,
+        fact_id: UUID,
+        entity_id: UUID,
+    ) -> None:
         self.claim_id = str(claim_id)
         self.chunk_id = str(chunk_id)
         self.chunk_text = chunk_text
+        self.fact_id = str(fact_id)
+        self.entity_id = str(entity_id)
 
     def search_claims(self, **_: object) -> tuple[str, ...]:
         return (self.claim_id,)
@@ -88,7 +99,12 @@ class _QuestionIndex:
         return {self.chunk_id: self.chunk_text} if self.chunk_id in chunk_ids else {}
 
     def search_facts(self, **_: object) -> tuple[str, ...]:
-        return ()
+        return (self.fact_id,)
+
+    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        return (
+            P1Nomination(item_id=self.entity_id, rank=1, score=0.9, channel="semantic"),
+        )
 
 
 class _Corpus:
@@ -442,6 +458,8 @@ class _Corpus:
             claim_id=self.claims["alice_beacon-support-0"],
             chunk_id=self.query_chunk_id,
             chunk_text=self.query_chunk_text,
+            fact_id=self.relations["alice_beacon"],
+            entity_id=self.entities["acme"],
         )
         return QueryEngine(
             engine=self.engine,
@@ -494,6 +512,66 @@ def _answer(corpus: tuple[_Corpus, GraphQueries], **arguments: Any):  # noqa: AN
         entity_a="Alice",
         **arguments,
     )
+
+
+def test_question_context_v4_flags_default_false(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice"
+    )
+
+    assert answer.evidence
+    assert answer.chunks
+    assert answer.facts == ()
+    assert answer.entities == ()
+
+
+def test_question_context_v4_fact_channel_reuses_current_context(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", include_facts=True
+    )
+
+    assert {fact.fact_id for fact in answer.facts} == {seeded.relations["alice_beacon"]}
+    assert answer.fact_evidence
+    assert answer.evidence_totals
+    assert len(answer.fact_evidence) <= 60
+
+
+def test_question_context_v4_entity_channel_is_resolution_first_and_confirmed(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", include_entities=True
+    )
+
+    assert [candidate.entity_id for candidate in answer.entities] == [
+        seeded.entities["alice"],
+        seeded.entities["acme"],
+    ]
+    assert [candidate.tier for candidate in answer.entities] == ["T0", "semantic"]
+
+
+def test_question_context_v4_flags_work_together(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="Alice",
+        include_facts=True,
+        include_entities=True,
+    )
+
+    assert answer.facts
+    assert answer.entities
+    assert answer.evidence
+    assert answer.chunks
 
 
 def test_two_entity_path_has_both_stances_and_exact_totals(

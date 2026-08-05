@@ -1,213 +1,133 @@
-# Batch D — the graph surface
+# Batch D — graph surface implementation
 
-Two ways to ask the graph a question, and one rule about what an answer means.
+Batch D adds the PostgreSQL graph helpers, the read-only Cypher surface, and
+`question_context` v4. The binding contract is
+`plan/designs/open_query_space_design.md`; the reconciliation rationale is in
+`plan/analysis/open_query_space_batch_d_reconciliation.md`.
 
-## Bounded helpers read the same graph the views publish
+## PostgreSQL helpers read the same graph as direct SQL
 
-`graph_neighborhood` and `graph_path` are PostgreSQL functions over the
-`memory_v1` edge views. With no instants they read `graph_edges_current`, so a
-traversal and a direct read of the current graph cannot disagree about what is
-current — a helper that walked relations the current view adjudicates away
-would contradict the very view it is a shortcut for. With `valid_at` or
-`believed_at` supplied they read `graph_edges_visible_history` under both D41
-clocks, each half-open, and each null endpoint treated as an open interval.
+`memory_v1.graph_neighborhood` and `memory_v1.graph_path` traverse
+`graph_edges_current` when neither instant is supplied. When a caller supplies
+time, both `valid_at` and `believed_at` are required and the helpers traverse
+`graph_edges_visible_history` with half-open D41 intervals. Null endpoints are
+open intervals.
 
-Traversal is undirected: a relation is an assertion about two entities, and
-answering only from the subject side would silently answer half the question.
-The rows keep their real subject and object, so direction is still visible.
+Traversal is undirected but every returned edge keeps its stored subject and
+object. A branch never reuses a relation or revisits an entity. The helpers
+clamp depth, path, and edge limits internally, order before cutting, and spend
+the path edge cap on whole paths so a partial route is never returned as a
+connection. Current helper rows disclose `statement_timestamp()`, the instant
+that selected them, rather than the transaction start.
 
-A relation is walked at most once per branch, a path never revisits an entity,
-and the start is not reported as its own neighbour — every relation incident to
-it is already a hop-1 row, so walking back to it can only repeat what the
-caller has, one hop further away than it really is. Every bound is clamped
-inside the function and each walk is ordered before it is cut, so a bound means
-one thing rather than a different subgraph per run.
+## The Cypher gate stays lexical
 
-## The Cypher gate is a deny-scan for what `read_only` does not stop
+The pinned LadybugDB engine is the Cypher syntax authority. The pre-engine gate
+does only the two jobs it can do exactly without rebuilding a parser:
 
-Two measured facts about the pinned engine (`ladybug==0.18.2`) define the
-control split:
+- it default-denies the statement kind by accepting only `MATCH`, `OPTIONAL`,
+  `WITH`, `UNWIND`, or `RETURN` as the first unquoted token; and
+- it rejects the pinned external-action, extension, session, maintenance,
+  attachment, and plan-control tokens wherever they occur outside strings,
+  quoted identifiers, and the engine's `//` or `/* */` comments.
 
-1. `Database(..., read_only=True)` refuses every mutation form on its own —
-   SET, DELETE, CREATE, MERGE — with
-   `Connection exception: Cannot execute write operations in a read-only database!`.
-   The gate does not need to detect mutations to be safe.
-2. `read_only=True` does **not** block the file/network/extension family.
-   Those are the only constructs that must die before the engine sees the text.
+One statement and 32 KiB of Cypher text remain hard request bounds. The scan
+does not treat `--` as a comment because the pinned engine does not.
 
-So the pre-engine scan refuses, by name, only: `COPY`, `LOAD`, `INSTALL`,
-`UNINSTALL`, `ATTACH`, `IMPORT`, `EXPORT`, `CALL`. Detection is a token scan
-that ignores text inside single quotes, double quotes, backticks, `//` line
-comments and `/* */` block comments — and NOT `--`, which this engine does not
-treat as a comment (verified). One statement per request still holds (a
-trailing `;` followed only by whitespace or comments is one statement), and
-the 32 KiB text cap still holds.
+Mutations are not guessed from text. The snapshot opens with
+`Database(..., read_only=True)`, whose exact mutation refusal is pinned by a
+live canary and mapped to `cypher_not_allowed`. This division is important:
+file/extension actions that read-only does not block die in the lexical gate,
+while the engine enforces its own write grammar.
 
-Mutations that reach the engine are mapped from that pinned connection
-exception to `cypher_not_allowed`, so the caller gets a stated refusal rather
-than a raw engine message. The wording is pinned in one place
-(`READ_ONLY_REFUSAL` / `is_read_only_refusal`) with a test that asserts the
-live engine still produces it for a known mutation — a version bump that
-changes the string fails loudly instead of reclassifying writes as execution
-errors. Other engine errors keep their current mapping (parse/binder →
-`cypher_parse_error`, else `execution_error`).
+The engine's 30-hop recursive ceiling is engine-native. Timeout, row, and byte
+caps are separate executor resource bounds. The removed hop/bracket/reference
+walker is not reintroduced.
 
-The scan deliberately does **not** compile with `EXPLAIN` first. A second
-compile was measured at 49–74% of a query's own runtime and buys nothing once
-`read_only` already refuses writes. `explain_cypher` still prepends `EXPLAIN`
-for the plan path; ordinary `query_cypher` executes directly.
+## No nominal worker boundary
 
-What was deleted from the earlier gate, and why: the hop-range parser, the
-relationship-bracket classifier, the recursive-mode keyword stepper, and the
-graph-reference walker. That machinery was a lexer doing a parser's job. Three
-review rounds found seven defects in it, four of them introduced by fixes to
-earlier ones (`--` treated as a comment when the engine does not; `*` inside
-property maps and inline predicates read as traversals; list literals and
-subtraction-before-a-list read as relationship brackets; a comment between `-`
-and `[` hiding a relationship pattern; label/property extraction matching
-inside quoted prose). The deny-scan has no structural understanding beyond
-tokens and comments, so those classes of defect have nowhere to live.
+The earlier accepted design named a process-isolated worker with filesystem
+and network confinement. This repository has no portable host sandbox that
+provides those controls. Spawning an ordinary Python process would add an RPC
+and snapshot-path seam while still permitting the access the contract claimed
+to prevent.
 
-## DEVIATION from design §3.5: the hop cap is a resource limit, not a syntax rule
+The binding design now records the narrower implementation honestly: the
+deployment-bound reader selects one snapshot server-side and opens it
+read-only; the lexical gate prevents the external-action family. The observed
+LadybugDB INT128 failure raises rather than hanging or corrupting the API
+process. Real process confinement is reopened only when the hosting layer can
+supply it or observed engine behavior requires a fault boundary.
 
-Design §3.5 calls the engine's 30-hop recursive upper bound "an executor hard
-cap" and describes refusing over-bound and unbounded variable-length patterns
-in the parser. That is no longer how this surface works.
+## Snapshot provenance is pinned to the connection
 
-The hop bound is now a **resource** limit, enforced the same way other cost is
-enforced: `connection.set_query_timeout(...)` (already called in
-`cypher_executor.py`) plus the existing row and byte caps. There is no syntax
-analysis of `*`, `*1..`, or `*1..N`. An unbounded traversal is not refused by
-name; it is bounded by the timeout and the result caps, and — when built — by
-the process-isolated worker.
+The graph rebuild records the export transaction's own
+`transaction_timestamp()` as `built_at`. The reader returns its connection and
+generation provenance under the same refresh lock, preventing rows from one
+generation being labelled with another generation's cut. No published
+snapshot is `p2_unavailable`; it is not reported as an empty graph.
 
-That makes the **process-isolated worker load-bearing rather than
-defence-in-depth**. Design §3.5 put the parser first as the mandatory control
-and the worker second as defence-in-depth. With hop cost no longer killed in
-the gate, an expensive traversal that runs in the API process is a real
-availability risk until the worker exists. The worker was already unbuilt
-(below); this deviation makes that gap sharper, not softer. State it plainly:
-this is not "the same cap, implemented elsewhere" — it is a different kind of
-bound, and the supervisor that can outlive an engine fault is now the thing
-that has to carry it.
+Every Cypher result has grade `snapshot_graph`, no SQL schema name, and the
+snapshot ID/version/build instant/age that actually served it. Engine physical
+offsets (`_ID`, `_SRC`, `_DST`, matched case-insensitively) are stripped from
+structural values.
 
-## Every answer carries the instant it projects
+The engine exposes no structural parse metadata for exact graph label/property
+dependency extraction. `referenced_graph_types` and
+`referenced_graph_properties` are therefore null, meaning unavailable, rather
+than empty arrays that would assert a known-empty dependency set.
 
-A snapshot answer is exactly correct for its cut and says nothing about what
-has happened since, so `built_at` travels with every result along with the
-grade `snapshot_graph`.
+## `confirm=true` is explicit and narrow
 
-`built_at` is now the EXPORT TRANSACTION's own `transaction_timestamp()`,
-captured once when the repeatable-read export opens and carried through
-publication. It was previously the registry row's `DEFAULT now()`, written
-before the export began — so the disclosed cut preceded the data it described,
-and every answer was scoped to an instant the snapshot had not yet reached.
-That is the guarantee the whole `snapshot_graph` grade rests on, so it is taken
-from the transaction that read the data rather than reconstructed afterwards.
-The reader surfaces it, having previously read it from the registry and
-dropped it.
+Confirmation defaults false. When requested, it checks unique IDs carried by
+top-level structural `Entity` and `RELATES` values in one PostgreSQL
+repeatable-read transaction and drops a row if any recognized ID is no longer
+live. `Document`, `MENTIONED_IN`, `DOC_CROSSREF`, aggregates, collections, and
+scalar UUID projections stay snapshot-scoped. Inferring authority from a
+column name or UUID shape would misclassify values and is forbidden.
 
-The connection and the provenance that describes it are read as one act, under
-the reader's refresh lock. Taking them separately left a window in which a
-refresh swapped generations between the two, so rows from one generation could
-be labelled with another's cut — and since provenance is the entire basis of
-this grade, a result that misdescribes its own generation is worse than one
-that returns nothing.
+The result always retains grade `snapshot_graph`. It reports requested,
+nominated, confirmed, dropped-stale, and the PostgreSQL confirmation instant.
+If no structural value was confirmable it still checks PostgreSQL availability,
+reports the required zeros, and warns that nothing in the result was checked.
 
-No published snapshot fails `p2_unavailable`. An empty graph and an absent
-graph are different answers and must not read the same.
+## `question_context` v4 reuses existing authorities
 
-A Cypher answer names no SQL schema (§4.4): it did not read the `memory_v1`
-views, and crediting them would tell a caller their rows came from somewhere
-they never queried.
+The default answer remains hybrid claims plus hybrid live source chunks.
+`include_facts` and `include_entities` both default false and work independently
+or together:
 
-## §4.4 graph references are empty (gap)
+- facts reuse `current_context`'s semantic nomination, PostgreSQL current-fact
+  confirmation, both evidence stances, fixed evidence depth 3, 30-fact ceiling,
+  and 60-association budget; and
+- entities take exact resolution candidates first, then semantic description
+  nominations, deduplicate by survivor ID, confirm the combined set once
+  through `memory_v1.entities_current`, and return at most 20.
 
-`referenced_graph_types` and `referenced_graph_properties` on `QueryResult`
-were populated by the graph-reference walker deleted with the hop/bracket
-scanner. They are left empty. Reintroducing text heuristics would re-open the
-quoted-prose false positives that walker had. Filling them correctly needs the
-engine's AST (or an equivalent structural source), not another scan. Until
-then the fields stay empty and this note is the record of the gap.
+Claims, chunks, facts, fact/evidence links, totals, and entities remain in their
+existing typed Envelope fields. `current_context` stays v1. Graph expansion is
+not silently added to either operation; the caller-visible
+`multi_hop_context` owns that behavior.
 
-## `confirm=true` is opt-in, narrow, and says so
+The canonical recipe and public descriptor are v4. The checked-in manifest now
+contains all three assured-operation descriptors plus the PostgreSQL graph
+helper and Cypher entry-point signatures, so the tool catalog and
+`surface_manifest_hash` roll atomically.
 
-It defaults to FALSE. The check costs a PostgreSQL round trip that most
-callers do not want on every query, and an agent that needs live membership can
-already get it by projecting ids and passing them to `query_sql` — this is the
-convenient form of a composition the design describes anyway, not the only way
-to have it. A result that was not asked to confirm reports no confirmation at
-all, rather than zeros a reader could mistake for "checked, nothing wrong".
+## Verification
 
+Focused verification covers:
 
-It checks live membership of top-level `Entity` and `RELATES` VALUES in
-PostgreSQL and drops rows whose ids fail, as units.
+- helper bounds, clocks, undirected traversal, whole-path cutting, and live
+  visibility;
+- gate placement attacks, read-only mutation mapping, parameter binding,
+  timeout/row/byte disclosure, and snapshot provenance;
+- structural confirmation, no-confirmable warnings, stale-row dropping, and
+  nullable graph-reference metadata;
+- both v4 flags default-false, independently enabled, and enabled together;
+- v4 fact/entity confirmation and channel caps; and
+- descriptor, function-signature, and manifest-hash determinism.
 
-It does NOT yet confirm a scalar projection of `Entity.id` or
-`RELATES.relation_id` — `RETURN e.id` comes back unconfirmed with all three
-counts at zero. §3.5 asks for those too, and doing it correctly needs the
-parsed Cypher AST to know that a particular UUID column derives from
-`Entity.id`; guessing from column names or from the value's shape would drop
-`Document` ids, which §3.5 says are never confirmed. Until the AST is
-available, the disclosure reports zero rather than reporting a confirmation
-that did not happen — but a caller who projects ids and reads
-`nominated = 0` as "all clear" would be misreading it, which is why it is
-written down here and in the surface documentation rather than left implicit. It does not re-run the
-plan, re-ground an aggregate, or make any other part of the result live, and
-the result keeps its `snapshot_graph` grade. Asking for it without a
-PostgreSQL connection is refused rather than ignored: a caller who asked for
-confirmation and did not get it would read the result as confirmed.
-
-## Engine offsets are not identifiers
-
-Structural values keep their labels and exposed properties and lose the
-engine's physical offsets, which are stable only inside one built generation.
-The pinned engine spells these keys in upper case (`_ID`, `_LABEL`); a
-case-sensitive strip silently published all of them, and the confirmation path
-silently matched nothing, which is how the test found it.
-
-## Not built in this slice, and why
-
-§11 lists two more things under Batch D. Neither is done, and neither is
-hidden here:
-
-**The process-isolated engine worker.** The design put the parse gate first as
-the mandatory control and the worker second as defense-in-depth. The worker is
-not built: Cypher still executes in the API process, bounded by the engine's
-own query timeout and the row/byte caps. After the hop-cap deviation above,
-that worker is **load-bearing** for expensive traversals and for surviving an
-engine fault mid-query — we have *observed* the pinned engine fault
-mid-traversal (INT128 overflow, issue #144) rather than merely imagined it.
-It is a substantial change (snapshot path plumbing, an RPC boundary, a
-supervisor deadline) and is called out rather than half-built.
-
-**`question_context` v4.** The existing context operations do not yet gain the
-fact-backing and entity-candidate channels, the two default-false flags, or
-P2-confirmed acceleration with PostgreSQL fallback. They work as they did; they
-are not yet wired to this surface.
-
-Both are Batch D scope by §11, so this slice does not close Batch D. Saying so
-here is cheaper than a reader discovering it from the diff.
-
-
-## The process-isolated worker: decided against, not deferred
-
-§11 lists a process-isolated engine worker. It is not built, and this records
-that as a decision rather than as debt.
-
-The evidence that prompted it was the engine faulting mid-traversal (INT128
-overflow, issue #144). Re-examined, that fault RAISES — it is caught and mapped
-like any other engine error, and it does not wedge the process. A runaway
-traversal is bounded by the engine's own query timeout and by the row and byte
-caps. A supervisor, an RPC boundary, and snapshot-path plumbing would therefore
-be defending against a failure mode nobody has observed, which is the
-speculative hardening this project has ruled out elsewhere.
-
-Two observations would change the answer, and either should reopen it:
-
-- an engine fault that HANGS rather than raising, so a timeout is the only
-  thing that ends it and the API process is occupied until then; or
-- a fault that corrupts state shared with the API process, rather than failing
-  the one query.
-
-Until then, the timeout and the caps are the bound.
+Broad supported-Python suites run in CI. The known LadybugDB INT128 traversal
+flake is rerun when it appears; it is not treated as evidence for unrelated
+code changes.

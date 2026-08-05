@@ -3118,3 +3118,38 @@ tests now name the same authorities. Cross-deployment acceptance tests prove iso
 provisioned deployment databases, while provisioning order and routing carry the boundary for
 the cluster around them. Changes to `TierLimits`, including the 64 MiB analytical temp cap,
 roll `surface_manifest_hash` through the existing manifest generator.
+
+## D82. The Cypher boundary stays lexical/read-only; unavailable graph metadata is null; question context v4 reuses existing authorities
+
+**Decision (2026-08-05).** The Cypher pre-engine gate remains a conservative token scanner,
+not a handwritten parser: it default-denies statement openings and rejects the pinned
+external-action/session/maintenance family anywhere outside quotes and real engine comments.
+LadybugDB `read_only=True` remains the mutation authority. The pinned engine's 30-hop ceiling
+is engine-native. Graph type/property references are null until the engine supplies structural
+parse metadata; `confirm=true` checks only top-level typed `Entity`/`RELATES` values and warns
+when none were confirmable. Scalar UUID projections remain snapshot-scoped.
+
+`question_context` v4 adds default-false `include_facts` and `include_entities` flags. Facts
+reuse `current_context`'s semantic nomination, D48/D41 confirmation, both-stance evidence,
+30-fact cap, fixed evidence depth 3, and 60-association budget. Entities combine exact
+resolution before semantic nomination, deduplicate by survivor ID, confirm once through
+`memory_v1.entities_current`, and return at most 20. P1 and PostgreSQL are the existing
+authorities; graph expansion is not silently added to either context operation.
+
+**Rationale.** The removed Cypher walker repeatedly guessed structural meaning incorrectly.
+Reintroducing it for hop bounds, scalar-ID provenance, or graph references would recreate the
+same defect family. An ordinary Python child process would add RPC and snapshot-path plumbing
+without the filesystem/network confinement the earlier worker contract claimed; the observed
+LadybugDB INT128 fault raises rather than hanging or corrupting shared state. Building a nominal
+worker would therefore add complexity without meeting its security claim.
+
+**Consequences.** External actions that read-only does not stop remain load-bearing pre-engine
+rejections. Mutations may reach the read-only engine but can never commit and map to
+`cypher_not_allowed`. Reopen true process confinement only when the hosting layer can provide
+it or observed engine behavior requires a fault boundary. The three assured descriptors,
+Cypher/graph signatures, and `surface_manifest_hash` roll atomically with v4. D81 is assigned
+to the stacked Batch B contract-correction decision that precedes this branch at merge time.
+
+**Rejected.** A second Cypher parser; UUID/column-name authority guessing; empty arrays for
+unavailable dependency metadata; a confinement-free subprocess described as a sandbox;
+implicit P2 neighbors in context operations with no caller-visible graph request.

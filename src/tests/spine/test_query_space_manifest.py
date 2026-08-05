@@ -163,10 +163,14 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     # vocabulary, and the columns it answers with, so a caller can read the
     # contract without executing anything.
     assert {entry["name"] for entry in published} == {  # type: ignore[index]
+        "explain_cypher",
         "facts_as_of",
         "fetch_chunk_bodies",
+        "graph_neighborhood",
+        "graph_path",
         "lexical_chunks",
         "lexical_claims",
+        "query_cypher",
         "semantic_chunks",
         "semantic_claims",
         "semantic_entities",
@@ -176,10 +180,28 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         assert isinstance(entry, dict)
         assert entry["arguments_min"] >= 1
         assert entry["columns"]
-    assert members["core_operation_descriptors"] == {
-        "contract": "memory_v1.core_operations/1",
-        "operations": [],
-    }
+    core = members["core_operation_descriptors"]
+    assert isinstance(core, dict)
+    assert core["contract"] == "memory_v1.core_operations/1"
+    operations = core["operations"]
+    assert isinstance(operations, list)
+    assert [operation["name"] for operation in operations] == [  # type: ignore[index]
+        "current_context",
+        "question_context",
+        "resolve_entity",
+    ]
+    question = next(
+        operation
+        for operation in operations
+        if isinstance(operation, dict) and operation["name"] == "question_context"
+    )
+    assert question["version"] == 4
+    schema = question["input_schema"]
+    assert isinstance(schema, dict)
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties["include_facts"]["default"] is False  # type: ignore[index]
+    assert properties["include_entities"]["default"] is False  # type: ignore[index]
     limits = members["limits"]
     assert isinstance(limits, dict)
     assert sorted(limits) == [

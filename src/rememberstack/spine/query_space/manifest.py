@@ -55,9 +55,11 @@ The file has two halves, and the split is deliberate.
   explicitly excluded from the hash, so a new index must not roll it.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from typing import cast
 from typing import Final
 
 from pydantic import BaseModel
@@ -66,6 +68,7 @@ from sqlalchemy import Connection
 from sqlalchemy import text
 
 from rememberstack.spine.query_space.ast_serializer import SERIALIZER_VERSION
+from rememberstack.spine.query_space.canonical import canonical_json_bytes
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.catalog import POSTGRESQL_MAJOR
@@ -281,6 +284,227 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "parallel": "unsafe",
         }
     )
+    graph_edge_columns = [
+        "relation_id",
+        "subject_entity_id",
+        "object_entity_id",
+        "predicate",
+        "fact_label",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at",
+        "contradiction_group",
+        "confidence",
+        "evidence_count",
+        "contradict_count",
+        "support_state",
+    ]
+    graph_edge_types = [
+        "uuid",
+        "uuid",
+        "uuid",
+        "text",
+        "text",
+        "timestamptz",
+        "timestamptz",
+        "timestamptz",
+        "timestamptz",
+        "uuid",
+        "real",
+        "bigint",
+        "bigint",
+        "text",
+    ]
+    functions.extend(
+        [
+            {
+                "name": "graph_neighborhood",
+                "target": "graph",
+                "channel": "postgresql",
+                "arguments_min": 1,
+                "arguments_max": 6,
+                "arguments": [
+                    {"name": "start_entity_id", "type": "uuid", "required": True},
+                    {
+                        "name": "max_depth",
+                        "type": "integer",
+                        "required": False,
+                        "default": 2,
+                        "hard_cap": 4,
+                    },
+                    {
+                        "name": "predicates",
+                        "type": "text[]",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "valid_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "believed_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "max_edges",
+                        "type": "integer",
+                        "required": False,
+                        "default": 100,
+                        "hard_cap": 500,
+                    },
+                ],
+                "volatility": "stable",
+                "security": "invoker",
+                "parallel": "safe",
+                "columns": [
+                    "path_id",
+                    "hop",
+                    "path_position",
+                    "from_entity_id",
+                    "to_entity_id",
+                    *graph_edge_columns,
+                    "applied_valid_at",
+                    "applied_believed_at",
+                ],
+                "column_types": [
+                    "bigint",
+                    "integer",
+                    "integer",
+                    "uuid",
+                    "uuid",
+                    *graph_edge_types,
+                    "timestamptz",
+                    "timestamptz",
+                ],
+            },
+            {
+                "name": "graph_path",
+                "target": "graph",
+                "channel": "postgresql",
+                "arguments_min": 2,
+                "arguments_max": 8,
+                "arguments": [
+                    {"name": "from_entity_id", "type": "uuid", "required": True},
+                    {"name": "to_entity_id", "type": "uuid", "required": True},
+                    {
+                        "name": "max_depth",
+                        "type": "integer",
+                        "required": False,
+                        "default": 4,
+                        "hard_cap": 6,
+                    },
+                    {
+                        "name": "predicates",
+                        "type": "text[]",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "valid_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "believed_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "max_paths",
+                        "type": "integer",
+                        "required": False,
+                        "default": 3,
+                        "hard_cap": 10,
+                    },
+                    {
+                        "name": "max_edges",
+                        "type": "integer",
+                        "required": False,
+                        "default": 100,
+                        "hard_cap": 500,
+                    },
+                ],
+                "volatility": "stable",
+                "security": "invoker",
+                "parallel": "safe",
+                "columns": [
+                    "path_id",
+                    "path_length",
+                    "path_position",
+                    "step_from_entity_id",
+                    "step_to_entity_id",
+                    *graph_edge_columns,
+                    "applied_valid_at",
+                    "applied_believed_at",
+                ],
+                "column_types": [
+                    "bigint",
+                    "integer",
+                    "integer",
+                    "uuid",
+                    "uuid",
+                    *graph_edge_types,
+                    "timestamptz",
+                    "timestamptz",
+                ],
+            },
+            {
+                "name": "query_cypher",
+                "target": "graph",
+                "channel": "cypher",
+                "arguments_min": 1,
+                "arguments_max": 3,
+                "arguments": [
+                    {"name": "cypher", "type": "text", "required": True},
+                    {
+                        "name": "parameters",
+                        "type": "json",
+                        "required": False,
+                        "default": {},
+                    },
+                    {
+                        "name": "max_rows",
+                        "type": "integer",
+                        "required": False,
+                        "default": None,
+                    },
+                ],
+                "execution_options": {"confirm": {"type": "boolean", "default": False}},
+                "result_contract": "QueryResult/v1",
+                "grade": "snapshot_graph",
+                "columns": ["result"],
+                "column_types": ["QueryResult/v1"],
+            },
+            {
+                "name": "explain_cypher",
+                "target": "graph",
+                "channel": "cypher",
+                "arguments_min": 1,
+                "arguments_max": 2,
+                "arguments": [
+                    {"name": "cypher", "type": "text", "required": True},
+                    {
+                        "name": "parameters",
+                        "type": "json",
+                        "required": False,
+                        "default": {},
+                    },
+                ],
+                "result_contract": "QueryResult/v1",
+                "grade": "snapshot_graph",
+                "columns": ["result"],
+                "column_types": ["QueryResult/v1"],
+            },
+        ]
+    )
     published = {entry["name"] for entry in functions}  # type: ignore[index]
     return {
         "contract": "memory_v1.functions/1",
@@ -305,6 +529,76 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
 def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
     """Return the bound, still-unpopulated assured-operation member."""
     return {"contract": "memory_v1.core_operations/1", "operations": []}
+
+
+def _core_operation_descriptors() -> dict[str, CanonicalValue]:
+    """The three assured operations, derived from their canonical recipes."""
+    from rememberstack.spine.recipes import CANONICAL_RECIPES
+
+    assured = {"resolve_entity", "question_context", "current_context"}
+    recipes = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
+    if set(recipes) & assured != assured:
+        raise SchemaManifestError("the canonical recipe set lacks an assured operation")
+    operations: list[CanonicalValue] = []
+    for name in sorted(assured):
+        recipe = recipes[name]
+        properties = cast(
+            "dict[str, CanonicalValue]",
+            {key: value for key, value in recipe.parameters.items()},
+        )
+        required = sorted(
+            key
+            for key, value in recipe.parameters.items()
+            if isinstance(value, dict) and value.get("required") is True
+        )
+        chain = cast(
+            "CanonicalValue", [step.model_dump(mode="json") for step in recipe.chain]
+        )
+        descriptor: dict[str, CanonicalValue] = {
+            "name": recipe.name,
+            "version": recipe.version,
+            "description": recipe.description,
+            "input_schema": cast(
+                "CanonicalValue",
+                {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": False,
+                },
+            ),
+            "envelope_contract": "D49",
+            "grain": recipe.output_grain.value,
+            "intent": recipe.answer_intent.value,
+            "implementation_chain_hash": hashlib.sha256(
+                canonical_json_bytes(chain)
+            ).hexdigest(),
+        }
+        if name == "question_context":
+            descriptor["channels"] = {
+                "claims": {"enabled": True, "grain": "evidence", "hybrid": True},
+                "chunks": {"enabled": True, "grain": "evidence", "hybrid": True},
+                "facts": {
+                    "enabled_by": "include_facts",
+                    "default": False,
+                    "grain": "fact",
+                    "nomination": "semantic",
+                    "confirmed_in": "postgresql",
+                    "max_facts": 30,
+                    "evidence_per_fact": 3,
+                    "evidence_budget": 60,
+                },
+                "entities": {
+                    "enabled_by": "include_entities",
+                    "default": False,
+                    "grain": "fact",
+                    "order": "exact_resolution_then_semantic",
+                    "confirmed_in": "postgresql",
+                    "max_candidates": 20,
+                },
+            }
+        operations.append(descriptor)
+    return {"contract": "memory_v1.core_operations/1", "operations": operations}
 
 
 def stub_limits() -> dict[str, CanonicalValue]:
@@ -389,10 +683,12 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
         "engine_version": "0.18.2",
         "read_clauses": list(sorted(cypher.READ_CLAUSES)),
         "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
-        # Engine recursive upper bound; cost is a runtime resource limit now,
-        # not a syntax refusal — see open_query_space_batch_d.md.
+        # Pinned engine-native recursive upper bound. The executor does not
+        # duplicate this grammar in a text walker.
         "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,
         "grade": "snapshot_graph",
+        "process_isolated": False,
+        "graph_reference_metadata": "unavailable",
         # `confirm=true` checks live membership of projected entity/relation
         # ids; it does not make any other part of the result live. Naming the
         # types alone read as a promise about any projection of them, which is
@@ -408,7 +704,7 @@ def _cypher_dialect() -> dict[str, CanonicalValue]:
 def build_hash_members() -> dict[str, CanonicalValue]:
     """Build the exact document `surface_manifest_hash` is taken over."""
     return {
-        "core_operation_descriptors": stub_core_operation_descriptors(),
+        "core_operation_descriptors": _core_operation_descriptors(),
         "function_signatures": _bridge_function_signatures(),
         "limits": _sandbox_limits_member(),
         "views_schema": _build_views_schema(),

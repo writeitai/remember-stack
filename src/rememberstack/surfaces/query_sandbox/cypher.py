@@ -9,12 +9,12 @@ transaction across requests), maintenance (`ANALYZE`, `CHECKPOINT`), database
 switching (`USE`, `DETACH`), extension management (`INSTALL`, `UPDATE`), and
 the file and attachment family (`COPY`, `LOAD`, `ATTACH`).
 
-Two successive deny-lists failed to name all of that — the first missed
-`UPDATE`, the second missed the whole session and maintenance family — so the
-gate no longer denies by name. A read statement can only BEGIN one of five
-ways, and requiring that refuses everything else at once, including the
-constructs nobody here has thought of. It also stops refusing ordinary reads
-that merely use one of those words as an alias.
+Two controls divide that job. A read statement can only BEGIN one of five
+ways, so the opening is default-deny. The external-action, session,
+maintenance, attachment, and plan-control family is also rejected wherever a
+token appears, so `MATCH ... CALL/LOAD/...` cannot hide a forbidden action
+behind an accepted opening. This is deliberately lexical and conservative;
+the pinned engine remains the syntax authority.
 
 The scan is a token scan, not a parser. It ignores text inside single quotes,
 double quotes, backticks, `//` line comments, and `/* */` block comments — and
@@ -76,33 +76,41 @@ READ_CLAUSES: Final = frozenset(
     }
 )
 
-#: File, network, attachment, and extension constructs. These are the only
-#: keywords the gate refuses by name: they are exactly the family
-#: `read_only=True` does not block. Mutations are not listed — the engine
-#: refuses them itself, and the executor maps that refusal to
-#: `cypher_not_allowed`.
 #: How a read statement may begin. Everything else — session control, engine
 #: maintenance, extension management, file and attachment constructs, and any
 #: form nobody here has considered — is refused by not being on this list,
 #: which is the only way to refuse what has not been thought of.
 READ_OPENINGS: Final = frozenset({"match", "optional", "with", "unwind", "return"})
 
-#: Retained for the surface manifest, which publishes what this gate refuses by
-#: name. Enforcement is by `READ_OPENINGS` above.
+#: Constructs `read_only=True` does not reliably stop, rejected wherever they
+#: appear outside data/identifier quotes and comments. Mutations are not listed:
+#: the engine refuses them, and the executor maps that refusal to
+#: `cypher_not_allowed`.
 REJECTED_KEYWORDS: Final = frozenset(
     {
+        "analyze",
+        "attach",
+        "begin",
+        "call",
+        "checkpoint",
+        "commit",
         "copy",
-        "load",
+        "detach",
+        "explain",
+        "export",
+        "force",
+        "import",
         "install",
+        "load",
+        "profile",
+        "rollback",
+        "transaction",
         "uninstall",
         # `UPDATE fts` updates an extension and RUNS on a read-only database —
         # verified against the pinned engine. It is the same family as INSTALL
         # and was missing from the first list.
         "update",
-        "attach",
-        "import",
-        "export",
-        "call",
+        "use",
     }
 )
 
@@ -133,7 +141,7 @@ def validate_cypher(text: str) -> CypherStatement:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_PARSE_ERROR, message="the statement is empty"
         )
-    opening, statements = _scan(text)
+    opening, statements, tokens = _scan(text)
     if statements > 1:
         raise SandboxRejection(
             code=QueryErrorCode.CYPHER_NOT_ALLOWED,
@@ -160,11 +168,18 @@ def validate_cypher(text: str) -> CypherStatement:
                 f" {opening or 'this'} is not something this surface runs"
             ),
         )
+    rejected = tokens & REJECTED_KEYWORDS
+    if rejected:
+        construct = sorted(rejected)[0]
+        raise SandboxRejection(
+            code=QueryErrorCode.CYPHER_NOT_ALLOWED,
+            message=f"{construct} is not available on the read surface",
+        )
     return CypherStatement(text=text.strip())
 
 
-def _scan(text: str) -> tuple[str, int]:
-    """The statement's opening word, lowercased, and how many statements it is.
+def _scan(text: str) -> tuple[str, int, frozenset[str]]:
+    """The opening, statement count, and unquoted lower-case word tokens.
 
     String literals, backtick-quoted identifiers, and comments contribute
     nothing: a keyword inside quoted prose is data, and a keyword inside a
@@ -177,6 +192,7 @@ def _scan(text: str) -> tuple[str, int]:
     """
     opening = ""
     statements = 1
+    tokens: set[str] = set()
     word = ""
     index = 0
     length = len(text)
@@ -199,14 +215,18 @@ def _scan(text: str) -> tuple[str, int]:
             index += 1
             continue
         if word:
-            opening = opening or word.lower()
+            token = word.lower()
+            opening = opening or token
+            tokens.add(token)
             word = ""
         if character == _STATEMENT_SEPARATOR and _has_statement_after(text, index + 1):
             statements += 1
         index += 1
     if word:
-        opening = opening or word.lower()
-    return opening, statements
+        token = word.lower()
+        opening = opening or token
+        tokens.add(token)
+    return opening, statements, frozenset(tokens)
 
 
 def _has_statement_after(text: str, start: int) -> bool:

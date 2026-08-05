@@ -117,10 +117,11 @@ class QueryResult(BaseModel):
     query_language: Literal["sql", "cypher"] = "sql"
     saved_query: dict[str, str] | None = None
     referenced_views: tuple[str, ...] = ()
-    #: The graph labels/types and properties a Cypher statement referenced, so
-    #: a caller can see which part of the projection contract it depended on.
-    referenced_graph_types: tuple[str, ...] = ()
-    referenced_graph_properties: tuple[str, ...] = ()
+    #: The graph labels/types and properties a Cypher statement referenced.
+    #: Null means the pinned engine supplied no structural parse metadata;
+    #: an empty tuple is reserved for a known-empty dependency set.
+    referenced_graph_types: tuple[str, ...] | None = None
+    referenced_graph_properties: tuple[str, ...] | None = None
     referenced_functions: tuple[str, ...] = ()
     source_grain_tags: tuple[str, ...] = ()
     columns: tuple[ResultColumn, ...] = ()

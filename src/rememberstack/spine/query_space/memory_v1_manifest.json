@@ -273,15 +273,179 @@
   "hash_members": {
     "core_operation_descriptors": {
       "contract": "memory_v1.core_operations/1",
-      "operations": []
+      "operations": [
+        {
+          "description": "What currently holds about the things this question mentions? Use this for question-driven current relations and observations, with current source testimony behind every returned fact. Semantic nomination is capped at k facts plus one truncation probe; each fact may carry up to evidence_per_fact supporting and contradicting claims within the hard 60-evidence-record envelope budget. It is never verbatim assertion history; use a claims recipe for what sources said without a current-fact verdict.",
+          "envelope_contract": "D49",
+          "grain": "fact",
+          "implementation_chain_hash": "7f848774d2b7f4e98467090fb870e5acdfd2a89ba1b8c209c15f65c23328b80d",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence_per_fact": {
+                "default": 3,
+                "maximum": 5,
+                "minimum": 1,
+                "required": false,
+                "type": "integer"
+              },
+              "k": {
+                "default": 15,
+                "maximum": 30,
+                "minimum": 1,
+                "required": false,
+                "type": "integer"
+              },
+              "query": {
+                "required": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "type": "object"
+          },
+          "intent": "current_facts",
+          "name": "current_context",
+          "version": 1
+        },
+        {
+          "channels": {
+            "chunks": {
+              "enabled": true,
+              "grain": "evidence",
+              "hybrid": true
+            },
+            "claims": {
+              "enabled": true,
+              "grain": "evidence",
+              "hybrid": true
+            },
+            "entities": {
+              "confirmed_in": "postgresql",
+              "default": false,
+              "enabled_by": "include_entities",
+              "grain": "fact",
+              "max_candidates": 20,
+              "order": "exact_resolution_then_semantic"
+            },
+            "facts": {
+              "confirmed_in": "postgresql",
+              "default": false,
+              "enabled_by": "include_facts",
+              "evidence_budget": 60,
+              "evidence_per_fact": 3,
+              "grain": "fact",
+              "max_facts": 30,
+              "nomination": "semantic"
+            }
+          },
+          "description": "High-recall question context: hybrid claim retrieval plus hybrid live-source retrieval. Optional facts reuse current_context's current, both-stance backing; optional entities combine exact resolution and semantic nominations before PostgreSQL confirmation. Both optional channels default off, and every payload stays in its typed Envelope field. Exact-text claims retain corroboration counts.",
+          "envelope_contract": "D49",
+          "grain": "evidence",
+          "implementation_chain_hash": "4c20133c3022ab0f787bf9a546144513385cd5e0f3fb1589f80eaf61f6c1d286",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "candidate_k": {
+                "default": 200,
+                "maximum": 400,
+                "minimum": 1,
+                "required": false,
+                "type": "integer"
+              },
+              "include_entities": {
+                "default": false,
+                "required": false,
+                "type": "boolean"
+              },
+              "include_facts": {
+                "default": false,
+                "required": false,
+                "type": "boolean"
+              },
+              "k": {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "required": false,
+                "type": "integer"
+              },
+              "query": {
+                "required": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "type": "object"
+          },
+          "intent": "assertion_history",
+          "name": "question_context",
+          "version": 4
+        },
+        {
+          "description": "Resolve a name to ranked current entity candidates before using UUID-addressed fact or graph tools. Returns every exact-name candidate rather than silently guessing.",
+          "envelope_contract": "D49",
+          "grain": "fact",
+          "implementation_chain_hash": "9db948916e1f4cf7ed1bfbfb6bc48a3e12a62ee8de3a81e7d4289d9d63441f65",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "required": false,
+                "type": "string"
+              },
+              "name": {
+                "required": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "intent": "orientation",
+          "name": "resolve_entity",
+          "version": 1
+        }
+      ]
     },
     "function_signatures": {
       "contract": "memory_v1.functions/1",
-      "declared_without_signatures": [
-        "graph_neighborhood",
-        "graph_path"
-      ],
+      "declared_without_signatures": [],
       "functions": [
+        {
+          "arguments": [
+            {
+              "name": "cypher",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "default": {},
+              "name": "parameters",
+              "required": false,
+              "type": "json"
+            }
+          ],
+          "arguments_max": 2,
+          "arguments_min": 1,
+          "channel": "cypher",
+          "column_types": [
+            "QueryResult/v1"
+          ],
+          "columns": [
+            "result"
+          ],
+          "grade": "snapshot_graph",
+          "name": "explain_cypher",
+          "result_contract": "QueryResult/v1",
+          "target": "graph"
+        },
         {
           "arguments": [
             {
@@ -408,6 +572,208 @@
           "security": "invoker",
           "target": "chunks",
           "volatility": "volatile"
+        },
+        {
+          "arguments": [
+            {
+              "name": "start_entity_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "default": 2,
+              "hard_cap": 4,
+              "name": "max_depth",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "default": null,
+              "name": "predicates",
+              "required": false,
+              "type": "text[]"
+            },
+            {
+              "default": null,
+              "name": "valid_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "believed_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": 100,
+              "hard_cap": 500,
+              "name": "max_edges",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "arguments_max": 6,
+          "arguments_min": 1,
+          "channel": "postgresql",
+          "column_types": [
+            "bigint",
+            "integer",
+            "integer",
+            "uuid",
+            "uuid",
+            "uuid",
+            "uuid",
+            "uuid",
+            "text",
+            "text",
+            "timestamptz",
+            "timestamptz",
+            "timestamptz",
+            "timestamptz",
+            "uuid",
+            "real",
+            "bigint",
+            "bigint",
+            "text",
+            "timestamptz",
+            "timestamptz"
+          ],
+          "columns": [
+            "path_id",
+            "hop",
+            "path_position",
+            "from_entity_id",
+            "to_entity_id",
+            "relation_id",
+            "subject_entity_id",
+            "object_entity_id",
+            "predicate",
+            "fact_label",
+            "valid_from",
+            "valid_until",
+            "ingested_at",
+            "invalidated_at",
+            "contradiction_group",
+            "confidence",
+            "evidence_count",
+            "contradict_count",
+            "support_state",
+            "applied_valid_at",
+            "applied_believed_at"
+          ],
+          "name": "graph_neighborhood",
+          "parallel": "safe",
+          "security": "invoker",
+          "target": "graph",
+          "volatility": "stable"
+        },
+        {
+          "arguments": [
+            {
+              "name": "from_entity_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "name": "to_entity_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "default": 4,
+              "hard_cap": 6,
+              "name": "max_depth",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "default": null,
+              "name": "predicates",
+              "required": false,
+              "type": "text[]"
+            },
+            {
+              "default": null,
+              "name": "valid_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "believed_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": 3,
+              "hard_cap": 10,
+              "name": "max_paths",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "default": 100,
+              "hard_cap": 500,
+              "name": "max_edges",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "arguments_max": 8,
+          "arguments_min": 2,
+          "channel": "postgresql",
+          "column_types": [
+            "bigint",
+            "integer",
+            "integer",
+            "uuid",
+            "uuid",
+            "uuid",
+            "uuid",
+            "uuid",
+            "text",
+            "text",
+            "timestamptz",
+            "timestamptz",
+            "timestamptz",
+            "timestamptz",
+            "uuid",
+            "real",
+            "bigint",
+            "bigint",
+            "text",
+            "timestamptz",
+            "timestamptz"
+          ],
+          "columns": [
+            "path_id",
+            "path_length",
+            "path_position",
+            "step_from_entity_id",
+            "step_to_entity_id",
+            "relation_id",
+            "subject_entity_id",
+            "object_entity_id",
+            "predicate",
+            "fact_label",
+            "valid_from",
+            "valid_until",
+            "ingested_at",
+            "invalidated_at",
+            "contradiction_group",
+            "confidence",
+            "evidence_count",
+            "contradict_count",
+            "support_state",
+            "applied_valid_at",
+            "applied_believed_at"
+          ],
+          "name": "graph_path",
+          "parallel": "safe",
+          "security": "invoker",
+          "target": "graph",
+          "volatility": "stable"
         },
         {
           "arguments": [
@@ -549,6 +915,46 @@
           "security": "invoker",
           "target": "claims",
           "volatility": "volatile"
+        },
+        {
+          "arguments": [
+            {
+              "name": "cypher",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "default": {},
+              "name": "parameters",
+              "required": false,
+              "type": "json"
+            },
+            {
+              "default": null,
+              "name": "max_rows",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "arguments_max": 3,
+          "arguments_min": 1,
+          "channel": "cypher",
+          "column_types": [
+            "QueryResult/v1"
+          ],
+          "columns": [
+            "result"
+          ],
+          "execution_options": {
+            "confirm": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "grade": "snapshot_graph",
+          "name": "query_cypher",
+          "result_contract": "QueryResult/v1",
+          "target": "graph"
         },
         {
           "arguments": [
@@ -864,6 +1270,8 @@
         "engine": "ladybug",
         "engine_version": "0.18.2",
         "grade": "snapshot_graph",
+        "graph_reference_metadata": "unavailable",
+        "process_isolated": false,
         "read_clauses": [
           "all",
           "and",
@@ -905,15 +1313,26 @@
         ],
         "recursive_hops_max": 30,
         "rejected_constructs": [
+          "analyze",
           "attach",
+          "begin",
           "call",
+          "checkpoint",
+          "commit",
           "copy",
+          "detach",
+          "explain",
           "export",
+          "force",
           "import",
           "install",
           "load",
+          "profile",
+          "rollback",
+          "transaction",
           "uninstall",
-          "update"
+          "update",
+          "use"
         ],
         "unconfirmed_projections": [
           "scalar_id_projection"
@@ -29139,5 +29558,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "93679fc0bb1eb99d07975bc76c6adf2a12ade70792681972fe68da2a4375044e"
+  "surface_manifest_hash": "2718068530e7a1ceb6c5df4e5940de7fa02236e41011bc9a1ad65deb6e5a5789"
 }

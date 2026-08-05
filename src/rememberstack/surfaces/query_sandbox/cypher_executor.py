@@ -62,6 +62,11 @@ from rememberstack.surfaces.query_sandbox.result import ResultLimits
 #: and a 32 KiB query is already far past anything an agent composes by hand.
 CYPHER_TEXT_BYTES_MAX: Final = 32 * 1024
 
+NO_CONFIRMABLE_VALUES_WARNING: Final = (
+    "confirm=true found no top-level Entity or RELATES value to check;"
+    " scalar IDs and all other values remain snapshot-scoped"
+)
+
 #: Keys the engine uses for its own physical addressing. They are stable only
 #: within one built generation, so publishing them would invite a caller to
 #: store one and use it against the next snapshot, where it means something
@@ -280,13 +285,12 @@ class CypherSandboxExecutor:
             query_language="cypher",
             # §4.4: a Cypher answer did not read the memory_v1 SQL schema, and
             # naming it would tell a caller their rows came from views they
-            # never queried. Graph type/property references are left empty:
-            # they used to come from a text walker the deny-scan no longer
-            # includes, and reintroducing heuristics would re-open the
-            # quoted-prose false positives that walker had.
+            # never queried. Graph-reference metadata is unavailable rather
+            # than known-empty: the engine exposes no structural parse result,
+            # and a text guesser is not an authority.
             query_space_schema=None,
-            referenced_graph_types=(),
-            referenced_graph_properties=(),
+            referenced_graph_types=None,
+            referenced_graph_properties=None,
             execution_started_at=started,
             elapsed_ms=(time.monotonic() - clock) * 1000,
             columns=columns,
@@ -302,6 +306,11 @@ class CypherSandboxExecutor:
             ),
             empty_result=not rows,
             termination_reason="completed",
+            warnings=(
+                (NO_CONFIRMABLE_VALUES_WARNING,)
+                if confirmation is not None and confirmation.nominated == 0
+                else ()
+            ),
             limits=limits_model,
             p2_snapshot=snapshot,
             confirmation=confirmation,

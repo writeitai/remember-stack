@@ -45,6 +45,7 @@ class InvalidArgumentError(Exception):
 # How a recipe's declared parameter type renders into JSON Schema, and how a
 # transport's text argument coerces back to what the primitives expect.
 _TYPE_SCHEMA: dict[str, dict[str, object]] = {
+    "boolean": {"type": "boolean"},
     "uuid": {"type": "string", "format": "uuid"},
     "string": {"type": "string"},
     "integer": {"type": "integer"},
@@ -68,6 +69,18 @@ def _coerce_integer(value: object) -> int:
     return int(str(value))
 
 
+def _coerce_boolean(value: object) -> bool:
+    """Coerce transport booleans without treating arbitrary text as true."""
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"expected true or false, got {value!r}")
+
+
 def _coerce_timestamp(value: object) -> datetime:
     """Coerce a transport argument to a UTC datetime (ISO 8601).
 
@@ -84,6 +97,7 @@ def _coerce_timestamp(value: object) -> datetime:
 
 
 _COERCERS: dict[str, Any] = {
+    "boolean": _coerce_boolean,
     "uuid": _coerce_uuid,
     "string": str,
     "integer": _coerce_integer,

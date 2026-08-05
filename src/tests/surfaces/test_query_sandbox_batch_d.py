@@ -31,6 +31,9 @@ from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.cypher_executor import CYPHER_TEXT_BYTES_MAX
 from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
 from rememberstack.surfaces.query_sandbox.cypher_executor import is_read_only_refusal
+from rememberstack.surfaces.query_sandbox.cypher_executor import (
+    NO_CONFIRMABLE_VALUES_WARNING,
+)
 from rememberstack.surfaces.query_sandbox.cypher_executor import READ_ONLY_REFUSAL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -294,6 +297,9 @@ def test_a_path_never_revisits_an_entity(
         "EXPORT DATABASE '/tmp/exp'",
         "MATCH (e) RETURN e; MATCH (d) RETURN d",
         "MATCH (e) RETURN e /* harmless */ ; COPY Entity TO '/tmp/x.csv'",
+        "MATCH (e) CALL db.schema() RETURN e",
+        "MATCH (e) WITH e LOAD FROM '/etc/passwd' RETURN e",
+        "RETURN 1 UNION ALL PROFILE MATCH (e) RETURN e",
     ],
 )
 def test_a_file_or_extension_construct_never_reaches_the_engine(statement: str) -> None:
@@ -592,6 +598,7 @@ def test_confirmation_reports_zero_when_nothing_is_confirmable(
     assert outcome.confirmation is not None
     assert (outcome.confirmation.nominated, outcome.confirmation.confirmed) == (0, 0)
     assert outcome.rows == ((2,),)
+    assert outcome.warnings == (NO_CONFIRMABLE_VALUES_WARNING,)
 
 
 def test_a_path_is_returned_whole_or_not_at_all(
@@ -776,16 +783,17 @@ def test_the_disclosed_cap_is_the_one_that_applied(snapshot: _Snapshot) -> None:
 def test_a_cypher_answer_names_no_sql_schema(snapshot: _Snapshot) -> None:
     """§4.4: naming memory_v1 would credit views the query never read.
 
-    Graph type/property references are empty: the walker that filled them was
-    deleted with the hop/bracket scanner, and heuristics are not reintroduced.
+    Graph type/property references are unavailable: the walker that filled
+    them was deleted with the hop/bracket scanner, and heuristics are not
+    reintroduced. Null must not be confused with a known-empty dependency set.
     """
     outcome = _cypher(snapshot).query_cypher(
         cypher="MATCH (e:Entity)-[r:RELATES]->(d:Entity) RETURN e.name, r.predicate"
     )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.query_space_schema is None
-    assert outcome.referenced_graph_types == ()
-    assert outcome.referenced_graph_properties == ()
+    assert outcome.referenced_graph_types is None
+    assert outcome.referenced_graph_properties is None
 
 
 def test_a_confirmed_result_dates_its_confirmation(
