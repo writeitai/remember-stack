@@ -468,11 +468,24 @@ class LanceChunkIndex:
         a tied row depends on scan order, and a saved query answers differently
         on Tuesday for no reason it can see.
         """
-        scored = [(_nomination_score(row), str(row[id_column])) for row in rows]
+        scored = [
+            (
+                _nomination_score(row),
+                str(row[id_column]),
+                str(row[qualifier_column]) if qualifier_column else None,
+            )
+            for row in rows
+        ]
         scored.sort(key=lambda entry: (-entry[0], entry[1]))
         return tuple(
-            P1Nomination(item_id=item_id, rank=position, score=score, channel=channel)
-            for position, (score, item_id) in enumerate(scored, start=1)
+            P1Nomination(
+                item_id=item_id,
+                rank=position,
+                score=score,
+                channel=channel,
+                qualifier=qualifier,
+            )
+            for position, (score, item_id, qualifier) in enumerate(scored, start=1)
         )
 
     def search_claims_scored(

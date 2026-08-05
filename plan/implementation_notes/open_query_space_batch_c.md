@@ -154,14 +154,17 @@ publish — exactly the D48 leak confirmation exists to prevent.
 ## A fact's identity is (fact_kind, fact_id)
 
 Relations and observations carry independent identifiers, so one UUID can name
-two facts. The nomination carries the kind it nominated, and confirmation
+two facts. The fact channel's nominations carry the kind, and confirmation
 matches on the pair: a projection that still remembers `(relation, X)` after
 the spine has moved on cannot be answered with a current `(observation, X)`
 that happens to share the id, which would hand the caller a real row carrying a
-score computed for a different fact. Where both kinds are current, neither is
-published — choosing one would be a guess — and the count appears as
-`dropped_ambiguous` rather than folded into staleness, because nothing about it
-is stale.
+score computed for a different fact.
+
+A nomination that arrives WITHOUT its kind is a different case, and the one
+`dropped_ambiguous` exists for: where the id names two current facts there is
+no way to tell which was meant, so neither is published. A qualified nomination
+is never ambiguous — it said which one it meant — so that counter fires only on
+the unqualified path.
 
 Chunk confirmation is qualified the same way, by the generation pair the search
 bound. During a cutover the projection can still hold a chunk under the old

@@ -1206,3 +1206,64 @@ def test_a_boolean_cast_is_applied(seeded: tuple[str, UUID]) -> None:
 
     assert apply_cast(2, ["integer", "boolean"]) == 1
     assert apply_cast(0, ["integer", "boolean"]) == 0
+
+
+def test_the_real_adapter_carries_the_fact_kind(seeded: tuple[str, UUID]) -> None:
+    """Through `LanceChunkIndex` itself, not a stand-in.
+
+    The fake search port returns whatever nomination a test hands it, so a
+    qualifier that the adapter never sets still arrives at confirmation. This
+    exercises the adapter's own builder, which is where the kind is either
+    carried or quietly dropped.
+    """
+    from rememberstack.adapters.selfhost.lance import LanceChunkIndex
+
+    rows = [
+        {"fact_id": "00000000-0000-0000-0000-000000000001", "kind": "relation"},
+        {"fact_id": "00000000-0000-0000-0000-000000000002", "kind": "observation"},
+    ]
+    nominations = LanceChunkIndex._nominations(  # noqa: SLF001
+        rows, id_column="fact_id", channel="semantic", qualifier_column="kind"
+    )
+    assert [nomination.qualifier for nomination in nominations] == [
+        "relation",
+        "observation",
+    ]
+    # A channel whose id IS its identity carries no qualifier.
+    plain = LanceChunkIndex._nominations(  # noqa: SLF001
+        [{"claim_id": "00000000-0000-0000-0000-000000000003"}],
+        id_column="claim_id",
+        channel="semantic",
+    )
+    assert plain[0].qualifier is None
+
+
+def test_an_unqualified_nomination_of_a_shared_id_is_ambiguous(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Without a kind there is no way to tell which of two facts was meant."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fact_id::text, fact_kind FROM memory_v1.facts_current"
+            " WHERE deployment_id = %s LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert row is not None
+        shared = connection.execute(
+            "SELECT fact_id::text FROM memory_v1.facts_current"
+            " WHERE deployment_id = %s GROUP BY fact_id HAVING count(*) > 1 LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    if shared is None:
+        # The corpus holds no id under both kinds; the unit-level proof above
+        # covers the adapter, and this one needs the collision to exist.
+        pytest.skip("no fact id is shared across both kinds in this corpus")
+    bare = P1Nomination(
+        item_id=shared[0], rank=1, score=1.0, channel="semantic", qualifier=None
+    )
+    outcome = _executor(url, _FakeSearch((bare,))).query_sql(
+        sql="SELECT fact_id FROM semantic_facts($1, 5)", parameters=["memory"]
+    )
+    assert outcome.rows == ()
+    assert outcome.semantic_invocations[0].dropped_ambiguous == 1

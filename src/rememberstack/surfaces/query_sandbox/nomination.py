@@ -481,8 +481,14 @@ def confirm(
     candidates: dict[str, list[tuple[Any, ...]]] = {}
     for row in cursor.fetchall():
         candidates.setdefault(str(row[0]), []).append(row)
+    # An id naming more than one row is ambiguous ON ITS OWN. That matters for
+    # a nomination that arrived WITHOUT its qualifier: there is no way to tell
+    # which of the two the projection meant, and answering with either would be
+    # a guess. A qualified nomination is not ambiguous — it said which one.
+    ambiguous = {identifier for identifier, rows in candidates.items() if len(rows) > 1}
     if qualified:
-        # `fact_kind` is the first payload column of the facts statement.
+        # `fact_kind` is a payload column of the facts statement, so a fact is
+        # keyed by the identity it actually has.
         kind = payload_index(columns, "fact_kind")
         candidates = {
             f"{row[kind]}:{identifier}": [row]
@@ -492,7 +498,6 @@ def confirm(
     by_id = {
         identifier: rows[0] for identifier, rows in candidates.items() if len(rows) == 1
     }
-    ambiguous = {identifier for identifier, rows in candidates.items() if len(rows) > 1}
 
     payload = 2 if predicates else 1
     rows: list[tuple[Any, ...]] = []
@@ -505,7 +510,9 @@ def confirm(
             if qualified and nomination.qualifier
             else nomination.item_id
         )
-        if key in ambiguous:
+        if (
+            qualified and not nomination.qualifier and nomination.item_id in ambiguous
+        ) or (not qualified and key in ambiguous):
             dropped_ambiguous += 1
             continue
         confirmed = by_id.get(key)
