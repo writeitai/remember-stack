@@ -15,9 +15,17 @@ the engine's read-only mode will catch — `read_only=True` blocks writes but
 not `COPY`/`LOAD`/`INSTALL`-class file and extension actions.
 
 `confirm=true` is a narrow, explicit option: it checks that top-level `Entity`
-and `RELATES` values still exist live in PostgreSQL and drops rows whose ids do
+and `RELATES` VALUES still exist live in PostgreSQL and drops rows whose ids do
 not. It does not re-run the plan, re-ground an aggregate, or make any other
 part of the result live, and the result stays `snapshot_graph`.
+
+It does NOT confirm a scalar projection of an id: `RETURN e.id` comes back with
+all three counts at zero, because knowing that a UUID column derives from
+`Entity.id` needs the parsed Cypher AST, and guessing from column names or from
+the value's shape would confirm `Document` ids, which §3.5 says are never
+confirmed. Zero is the honest report, but a caller who projects ids and reads
+`nominated = 0` as "all clear" is misreading it — project the node or the
+relationship itself to have it checked.
 """
 
 from __future__ import annotations
