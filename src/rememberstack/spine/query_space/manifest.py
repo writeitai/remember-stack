@@ -315,7 +315,11 @@ def stub_limits() -> dict[str, CanonicalValue]:
     """
     return {
         "contract": "memory_v1.limits/1",
-        "sql_grammar": {"operators": [], "pg_catalog_functions": []},
+        "sql_grammar": {
+            "operators": [],
+            "pg_catalog_functions": [],
+            "statement_node_classes": [],
+        },
         "cypher_dialect": {"allowed_clauses": [], "rejected_constructs": []},
         "p2_projection": {"contract_version": None, "node_types": {}, "edge_types": {}},
         "resource_limits": {
@@ -339,6 +343,7 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
     from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 
     sql_grammar: dict[str, CanonicalValue] = {
+        "statement_node_classes": list(sorted(grammar.STATEMENT_NODE_ALLOWLIST)),
         "functions": list(sorted(grammar.FUNCTION_ALLOWLIST)),
         "operators": list(sorted(grammar.OPERATOR_ALLOWLIST)),
         "cast_types": list(sorted(grammar.CAST_TYPE_ALLOWLIST)),
