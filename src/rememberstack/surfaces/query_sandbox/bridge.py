@@ -312,7 +312,7 @@ def _resolve_one(
         policy_generation, embedder_generation = _pinned_generations(
             connection=connection,
             settings=settings,
-            policy_generation=policy_generation,
+            policy_version=policy_generation,
             embedder_generation=embedder_generation,
         )
 
@@ -414,7 +414,18 @@ def _hydrate(
         return _with_body_column(confirmation, header, []), BodyConfirmation(
             rows=[], requested=0
         )
-    texts = _chunk_texts(search=search, settings=settings, chunk_ids=chunk_ids)
+    generations = confirmation.columns.index("policy_generation")
+    texts = _chunk_texts(
+        search=search,
+        settings=settings,
+        chunk_ids=chunk_ids,
+        policy_generation=(
+            confirmation.rows[0][generations] if confirmation.rows else None
+        ),
+        embedder_generation=(
+            confirmation.rows[0][generations + 1] if confirmation.rows else None
+        ),
+    )
     # The nomination row already carries the columns the body path verifies
     # against, in the order `_BODY_SQL` publishes them.
     hashes = confirmation.columns.index("embedding_text_hash")
@@ -444,12 +455,26 @@ def _hydrate(
 
 
 def _chunk_texts(
-    *, search: object, settings: BridgeSettings, chunk_ids: Sequence[str]
+    *,
+    search: object,
+    settings: BridgeSettings,
+    chunk_ids: Sequence[str],
+    policy_generation: str | None = None,
+    embedder_generation: str | None = None,
 ) -> dict[str, Any]:
-    """Projection bodies for ids PostgreSQL has already confirmed."""
+    """Projection bodies for ids PostgreSQL has already confirmed.
+
+    Scoped to the generation pair the coordinate was confirmed under: a chunk
+    that has been re-embedded exists under more than one pair, and an unscoped
+    read can hand back the wrong generation's text, which then fails its hash
+    and is withheld as a mismatch although the right body was there all along.
+    """
     try:
         texts = search.chunk_texts(  # type: ignore[attr-defined]
-            deployment_id=str(settings.deployment_id), chunk_ids=tuple(chunk_ids)
+            deployment_id=str(settings.deployment_id),
+            chunk_ids=tuple(chunk_ids),
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
         )
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
@@ -510,23 +535,20 @@ def _pinned_generations(
     *,
     connection: psycopg.Connection,
     settings: BridgeSettings,
-    policy_generation: str | None,
+    policy_version: str | None,
     embedder_generation: str | None,
 ) -> tuple[str | None, str | None]:
     """The one generation pair this search will run against.
 
-    A fully pinned request is taken as written. An unpinned one takes the pair
-    the spine currently stamps, so a corpus that has been re-embedded is
-    searched under one vector space rather than all of them at once. A partial
-    pin is completed only when the spine's current pair carries the pinned
-    half; otherwise the caller has named something this surface cannot resolve
-    on its own, and guessing which half they meant would be worse than saying
-    so.
+    An unpinned request takes the pair the spine currently stamps, so a corpus
+    that has been re-embedded is searched under one vector space rather than
+    all of them at once. A pin is honoured when it names that same current
+    generation, and refused otherwise: this surface can resolve what is current
+    but cannot reconstruct what was current before, and guessing would be worse
+    than saying so.
     """
-    if policy_generation is not None and embedder_generation is not None:
-        return policy_generation, embedder_generation
     try:
-        current_policy, current_embedder = current_chunk_generations(
+        current_version, current_policy, current_embedder = current_chunk_generations(
             connection=connection, deployment_id=settings.deployment_id
         )
     except psycopg.Error as error:
@@ -534,19 +556,29 @@ def _pinned_generations(
             code=QueryErrorCode.CONFIRMATION_FAILED,
             message="the current chunk generation could not be read",
         ) from error
-    if policy_generation is None and embedder_generation is None:
+    if policy_version is None and embedder_generation is None:
         return current_policy, current_embedder
-    if policy_generation is not None and current_policy == policy_generation:
-        return policy_generation, current_embedder
-    if embedder_generation is not None and current_embedder == embedder_generation:
-        return current_policy, embedder_generation
-    raise SandboxRejection(
-        code=QueryErrorCode.GENERATION_UNAVAILABLE,
-        message=(
-            "a partial generation pin can only be completed from the"
-            " generation the spine currently stamps; name both halves"
-        ),
-    )
+    # The caller pins by policy VERSION, which is the name §3.4 publishes; the
+    # projection is searched by the policy GENERATION that version was applied
+    # under, which is the label it actually indexes.
+    policy = current_policy if policy_version == current_version else None
+    if policy_version is not None and policy is None:
+        raise SandboxRejection(
+            code=QueryErrorCode.GENERATION_UNAVAILABLE,
+            message=(
+                f"embedding_input_policy_version {policy_version!r} is not the"
+                " policy this deployment currently stamps chunks with"
+            ),
+        )
+    if embedder_generation is not None and embedder_generation != current_embedder:
+        raise SandboxRejection(
+            code=QueryErrorCode.GENERATION_UNAVAILABLE,
+            message=(
+                f"embedder generation {embedder_generation!r} is not the"
+                " generation this deployment currently stamps chunks with"
+            ),
+        )
+    return (policy or current_policy), (embedder_generation or current_embedder)
 
 
 def _optional_text(arguments: tuple[object, ...], index: int, name: str) -> str | None:
@@ -814,8 +846,17 @@ def _resolve_bodies(
             message="chunk coordinates could not be confirmed",
         ) from error
     # Only ids PostgreSQL still publishes are ever asked of the projection.
+    # `confirm_chunk_coordinates` already refused a request spanning more than
+    # one generation, so any confirmed row names the pair to read under.
+    sample = next(iter(coordinates.values()), None)
     texts = (
-        _chunk_texts(search=search, settings=settings, chunk_ids=tuple(coordinates))
+        _chunk_texts(
+            search=search,
+            settings=settings,
+            chunk_ids=tuple(coordinates),
+            policy_generation=sample[10] if sample else None,
+            embedder_generation=sample[11] if sample else None,
+        )
         if coordinates
         else {}
     )

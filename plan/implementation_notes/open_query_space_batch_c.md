@@ -113,9 +113,19 @@ therefore binds exactly one `(policy_generation, embedder_generation)` pair.
 The pair is resolved BEFORE the query is embedded, and PostgreSQL is the
 authority: an unpinned search runs under the generation the spine currently
 stamps chunks with, not under whichever pair happens to sort highest among
-whatever the projection still holds. A partial pin is completed only when the
-spine's current pair carries the pinned half; otherwise it is refused, because
-guessing which half the caller meant is worse than saying it cannot be done.
+whatever the projection still holds. A pin is honoured when it names that same
+current generation and refused otherwise — this surface can resolve what is
+current but cannot reconstruct what was current before, and guessing would be
+worse than saying so.
+
+The pin is matched by the name §3.4 publishes. `embedding_input_policy_version`
+and `policy_generation` are two different values of the same chunk — the policy
+and the generation that policy was applied as — and matching the published pin
+against the second would refuse every caller who used the documented name and
+the column of that name. Bodies are then read under the same pair the
+coordinate was confirmed under: a re-embedded chunk exists under more than one
+pair, and an unscoped read hands back a body that fails its hash and is
+withheld as a mismatch although the right one was there all along.
 The resolved embedder generation is then passed to the embedder — comparing an
 old document vector to a new query vector is not a worse search, it is a
 meaningless one — and the projection refuses a pair it does not hold rather

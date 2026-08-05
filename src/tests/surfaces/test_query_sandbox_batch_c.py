@@ -472,8 +472,23 @@ def test_published_filters_reach_a_real_column(
 
 
 def test_generation_pins_reach_the_projection(seeded: tuple[str, UUID]) -> None:
-    """A pinned generation is passed down, not accepted and ignored."""
+    """A pinned generation is passed down, not accepted and ignored.
+
+    The pin names the policy VERSION, which is what §3.4 publishes; the
+    projection is searched under the policy GENERATION that version was applied
+    as. Both are read from the spine rather than invented here, because a pin
+    the spine does not stamp is refused.
+    """
     url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        current = connection.execute(
+            "SELECT embedding_input_policy_version, policy_generation,"
+            " embedder_generation FROM memory_v1.chunks_live"
+            " WHERE deployment_id = %s AND policy_generation IS NOT NULL"
+            " ORDER BY created_at DESC LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    assert current is not None
 
     seen: dict[str, object] = {}
 
@@ -485,12 +500,12 @@ def test_generation_pins_reach_the_projection(seeded: tuple[str, UUID]) -> None:
     executor = _executor(url, _RecordingSearch((_nomination(uuid4()),)))
     outcome = executor.query_sql(
         sql="SELECT rank FROM semantic_chunks($1, 5, '{}'::jsonb, $2, $3)",
-        parameters=["q", "policy-2026.08", "embedder-7"],
+        parameters=["q", current[0], current[2]],
     )
     assert outcome.termination_reason == "completed", outcome.error_message
-    assert seen["policy_generation"] == "policy-2026.08"
-    assert seen["embedder_generation"] == "embedder-7"
-    assert outcome.semantic_invocations[0].generation == "embedder-7"
+    assert seen["policy_generation"] == current[1]
+    assert seen["embedder_generation"] == current[2]
+    assert outcome.semantic_invocations[0].generation == current[2]
 
 
 def test_a_projection_cannot_overspend_the_budget(seeded: tuple[str, UUID]) -> None:
@@ -1049,16 +1064,76 @@ def test_a_search_runs_under_the_generation_the_spine_stamps(
     assert search.pins == (current[0], current[1])
 
 
-def test_a_partial_pin_the_spine_cannot_complete_is_refused(
-    seeded: tuple[str, UUID],
-) -> None:
-    """Guessing which half of a pin the caller meant is worse than refusing."""
+def test_a_pin_the_spine_cannot_honour_is_refused(seeded: tuple[str, UUID]) -> None:
+    """This surface knows what is current; it cannot reconstruct what was."""
     url, _ = seeded
     outcome = _executor(url, _BodySearch({})).query_sql(
         sql="SELECT rank FROM semantic_chunks($1, 5, '{}'::jsonb, $2, NULL)",
         parameters=["weather", "a-policy-nobody-stamps"],
     )
     assert outcome.error_code == QueryErrorCode.GENERATION_UNAVAILABLE
+
+
+def test_a_pin_uses_the_name_the_contract_publishes(seeded: tuple[str, UUID]) -> None:
+    """§3.4 publishes `embedding_input_policy_version`; that is what binds.
+
+    The policy VERSION and the policy GENERATION are different values of the
+    same chunk. Matching the published pin against the wrong one refuses every
+    caller who used the documented name and the column of that name.
+    """
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT embedding_input_policy_version, policy_generation"
+            " FROM memory_v1.chunks_live WHERE deployment_id = %s"
+            "   AND policy_generation IS NOT NULL LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+    assert row is not None and row[0] != row[1], (
+        "the corpus distinguishes the policy version from its generation"
+    )
+    outcome = _executor(url, _BodySearch({})).query_sql(
+        sql="SELECT rank FROM semantic_chunks($1, 5, '{}'::jsonb, $2, NULL)",
+        parameters=["weather", row[0]],
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+
+
+def test_an_empty_search_still_reports_when_it_asked(seeded: tuple[str, UUID]) -> None:
+    """A search that nominated nothing still consulted PostgreSQL."""
+    url, _ = seeded
+    outcome = _executor(url, _FakeSearch(())).query_sql(
+        sql="SELECT rank FROM semantic_claims($1, 5)", parameters=["memory"]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.semantic_invocations[0].pg_confirmed_at is not None
+
+
+def test_a_body_is_read_under_the_generation_it_was_confirmed_under(
+    seeded: tuple[str, UUID],
+) -> None:
+    """A re-embedded chunk has more than one body; the right one is asked for."""
+    url, _ = seeded
+    chunk_id, header, _ = _a_live_chunk(url)
+
+    class _Scoped(_BodySearch):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.pins: tuple[object, object] = (None, None)
+
+        def chunk_texts(self, **kwargs: object):  # noqa: ANN201
+            self.pins = (
+                kwargs.get("policy_generation"),
+                kwargs.get("embedder_generation"),
+            )
+            return {}
+
+    search = _Scoped()
+    outcome = _executor(url, search).query_sql(
+        sql="SELECT source_text FROM fetch_chunk_bodies($1)", parameters=[[chunk_id]]
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert search.pins != (None, None)
 
 
 def test_a_parameter_marker_inside_an_identifier_is_part_of_the_name(

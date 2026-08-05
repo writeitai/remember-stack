@@ -418,9 +418,16 @@ def confirm(
     """
     if not nominations:
         # A search that nominated nothing still has a shape: the caller wrote
-        # a join against these columns and it must still type-check.
+        # a join against these columns and it must still type-check. It also
+        # still consulted PostgreSQL, so it still reports when.
         columns, oids = EMPTY_CONTRACTS[target]
-        return Confirmation(columns=columns, rows=[], type_oids=oids)
+        empty_at = connection.execute("SELECT statement_timestamp()").fetchone()
+        return Confirmation(
+            columns=columns,
+            rows=[],
+            type_oids=oids,
+            pg_confirmed_at=empty_at[0] if empty_at else None,
+        )
     ids = [nomination.item_id for nomination in nominations]
     statement = _CONFIRM_SQL[target]
     authorization_filters = {
@@ -699,8 +706,8 @@ _CURRENT_GENERATIONS_SQL: Final = (
 
 def current_chunk_generations(
     *, connection: psycopg.Connection, deployment_id: UUID
-) -> tuple[str | None, str | None]:
-    """The D80 generation pair the spine currently stamps chunks with.
+) -> tuple[str | None, str | None, str | None]:
+    """The policy version, policy generation, and embedder generation in force.
 
     The spine decides which generation is current, not the projection: asking
     the projection would mean reading whichever pair happens to sort highest
@@ -711,8 +718,13 @@ def current_chunk_generations(
         _CURRENT_GENERATIONS_SQL.encode(), {"deployment": str(deployment_id)}
     ).fetchone()
     if row is None:
-        return None, None
-    return row[1], row[2]
+        return None, None, None
+    # The POLICY VERSION is what §3.4 publishes as a pin
+    # (`embedding_input_policy_version`); the POLICY GENERATION is the label the
+    # projection indexes that application under. They are different values of
+    # the same chunk, and matching a pin against the wrong one refuses every
+    # caller who used the documented name.
+    return row[0], row[1], row[2]
 
 
 def confirm_chunk_coordinates(
