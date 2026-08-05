@@ -22704,7 +22704,7 @@
               "type": "boolean"
             }
           ],
-          "comment": "One row per visible identity event, keyed by the synthetic pair (deployment_id, object_kind, event_id): each union arm names its own log in object_kind and supplies that log's own identifier, so the two identifier spaces cannot collide. Resolution events carry a mention and an outcome of linked or new_entity; merge events carry a counterpart entity and an outcome of merge or unmerge, where a split is recorded as the un-merge that reversed a merge. Source-only forgotten events are absent: a resolution event appears only while its mention still resolves to a non-tombstoned version of a live lineage, and every event requires its survivor entity to pass the entities_current provenance gate. Decision clocks are transaction time and carry no world-validity meaning; the view carries no counts and asserts no facts.",
+          "comment": "One row per visible identity event, keyed by the synthetic pair (deployment_id, object_kind, event_id): each union arm names its own log in object_kind and supplies that log's own identifier, so the two identifier spaces cannot collide. Resolution events carry a mention and an outcome of linked or new_entity; they appear only while that exact mention is present in mentions_live, which binds them to the current-content transcript and its complete visibility gate. Merge events carry a counterpart entity and an outcome of merge or unmerge, where a split is recorded as the un-merge that reversed a merge. Every event requires its survivor entity to pass the entities_current provenance gate. Decision clocks are transaction time and carry no world-validity meaning; the view carries no counts and asserts no facts.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -29032,5 +29032,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "4f7a5a69fda0cfdba698d4d71c4e9e54c7b432ccaa05f33e5872a4bd84345eff"
+  "surface_manifest_hash": "1ed06a4a31031553119c089c0fb243fde93f266a2d5e6219129a161a9a3a2e15"
 }

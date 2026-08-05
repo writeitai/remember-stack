@@ -481,6 +481,8 @@ JOIN v_memory_entity_survivor AS s
 JOIN memory_v1.entities_current AS ec
   ON ec.deployment_id = s.deployment_id
  AND ec.entity_id = s.survivor_entity_id;
+COMMENT ON VIEW memory_v1.identity_events_visible IS
+  'One row per visible identity event, keyed by the synthetic pair (deployment_id, object_kind, event_id): each union arm names its own log in object_kind and supplies that log''s own identifier, so the two identifier spaces cannot collide. Resolution events carry a mention and an outcome of linked or new_entity; they appear only while that exact mention is present in mentions_live, which binds them to the current-content transcript and its complete visibility gate. Merge events carry a counterpart entity and an outcome of merge or unmerge, where a split is recorded as the un-merge that reversed a merge. Every event requires its survivor entity to pass the entities_current provenance gate. Decision clocks are transaction time and carry no world-validity meaning; the view carries no counts and asserts no facts.';
 
 CREATE VIEW v_memory_fact_visible (
   deployment_id,
@@ -859,6 +861,7 @@ _REPLACED_INITIAL_VIEWS: tuple[str, ...] = (
 
 _REPLACED_VIEW_COMMENTS: tuple[str, ...] = (
     "v_memory_entity_survivor",
+    "memory_v1.identity_events_visible",
     "memory_v1.page_evidence_visible",
 )
 

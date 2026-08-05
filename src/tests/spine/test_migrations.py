@@ -469,24 +469,27 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
     config = _alembic_config(database_url=database_url)
 
     def metadata() -> dict[str, tuple[str, str | None, str]]:
-        """Read the owner, comment, and definition of the corrected helpers."""
+        """Read corrected view metadata that the downgrade must restore."""
         engine = create_engine(database_url)
         try:
             with engine.connect() as connection:
                 rows = connection.execute(
                     text(
-                        "SELECT c.relname, pg_get_userbyid(c.relowner) AS owner,"
+                        "SELECT n.nspname, c.relname,"
+                        " pg_get_userbyid(c.relowner) AS owner,"
                         " obj_description(c.oid, 'pg_class') AS comment,"
                         " pg_get_viewdef(c.oid, true) AS definition"
                         " FROM pg_class AS c"
                         " JOIN pg_namespace AS n ON n.oid = c.relnamespace"
-                        " WHERE n.nspname = 'public'"
+                        " WHERE (n.nspname = 'public'"
                         " AND c.relname IN"
-                        " ('v_graph_survivor', 'v_memory_entity_survivor')"
+                        " ('v_graph_survivor', 'v_memory_entity_survivor'))"
+                        " OR (n.nspname = 'memory_v1'"
+                        " AND c.relname = 'identity_events_visible')"
                     )
                 ).mappings()
                 return {
-                    str(row["relname"]): (
+                    f"{row['nspname']}.{row['relname']}": (
                         str(row["owner"]),
                         None if row["comment"] is None else str(row["comment"]),
                         str(row["definition"]),
@@ -499,7 +502,11 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
     command.downgrade(config=config, revision="base")
     command.upgrade(config=config, revision="p9_03_0024")
     expected = metadata()
-    assert set(expected) == {"v_graph_survivor", "v_memory_entity_survivor"}
+    assert set(expected) == {
+        "memory_v1.identity_events_visible",
+        "public.v_graph_survivor",
+        "public.v_memory_entity_survivor",
+    }
 
     try:
         command.upgrade(config=config, revision="head")
