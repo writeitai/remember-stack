@@ -267,7 +267,6 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "arguments_min": 1,
             "arguments_max": 1,
             "arguments": [{"name": "chunk_ids", "type": "uuid[]", "required": True}],
-            "volatility": "stable",
             "security": "invoker",
             "filters": [],
             "projection_filters": [],
