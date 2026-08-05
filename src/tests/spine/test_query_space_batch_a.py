@@ -1490,7 +1490,10 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
     The query role reads the public views and nothing else; PUBLIC holds
     nothing anywhere.
     """
-    allowed_grantees = {"rememberstack_query", "rememberstack_view_owner"}
+    # The query login is per deployment (Batch B): its name carries the
+    # database, so the gate matches the prefix rather than a fixed name.
+    allowed_grantees = {"rememberstack_view_owner"}
+    query_role_prefix = "rememberstack_query"
     with corpus.engine.connect() as connection:
         view_grants = _rows(
             connection=connection,
@@ -1512,8 +1515,11 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
 
     for row in view_grants:
         grantee = row["grantee"]
-        assert grantee in allowed_grantees, f"unexpected grantee {grantee}"
-        if grantee == "rememberstack_query":
+        is_query_role = grantee.startswith(query_role_prefix)
+        assert grantee in allowed_grantees or is_query_role, (
+            f"unexpected grantee {grantee}"
+        )
+        if is_query_role:
             assert row["privilege_type"] == "SELECT", (
                 "query role holds more than SELECT"
             )

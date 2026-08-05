@@ -24,10 +24,12 @@ from psycopg import sql as pgsql
 
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
+from rememberstack.spine.query_space.manifest import declared_views
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
@@ -42,6 +44,9 @@ from rememberstack.surfaces.query_sandbox.result import ResultLimits
 _EVALUATED_AT_RELATIONS: Final = frozenset(
     {"facts_current", "graph_edges_current", "contradiction_members_current"}
 )
+# As-of functions answer at an instant the caller names, which is equally a
+# single applied instant; every other public function is not instant-scoped.
+_AS_OF_FUNCTIONS: Final = frozenset({"facts_as_of"})
 
 _TYPE_NAMES: Final = {
     16: "boolean",
@@ -246,12 +251,14 @@ class QuerySandboxExecutor:
             analytical_tier=tier is LimitTier.ANALYTICAL,
         )
 
+        known_hash = ""
+
         def failed(code: QueryErrorCode, message: str) -> QueryResult:
             outcome = QueryResult(
                 request_id=request_id,
                 deployment_id=self._deployment_id,
                 surface_manifest_hash=self._manifest_hash,
-                query_hash="",
+                query_hash=known_hash,
                 limits=result_limits,
                 execution_started_at=started,
                 elapsed_ms=(time.monotonic() - clock) * 1000,
@@ -284,6 +291,7 @@ class QuerySandboxExecutor:
             validated = validate_sql(sql)
         except SandboxRejection as rejection:
             return failed(rejection.code, rejection.message)
+        known_hash = _hash_with_parameter_types(validated.query_hash, parameters)
 
         if len(parameters) != validated.parameter_count:
             return failed(
@@ -390,6 +398,7 @@ class QuerySandboxExecutor:
                 clock,
                 limits_model,
                 principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
         except psycopg.errors.LockNotAvailable:
             return self._failure(
@@ -400,6 +409,7 @@ class QuerySandboxExecutor:
                 clock,
                 limits_model,
                 principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
         except (
             psycopg.errors.ConfigurationLimitExceeded,
@@ -415,6 +425,7 @@ class QuerySandboxExecutor:
                 clock,
                 limits_model,
                 principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
         except psycopg.OperationalError:
             return self._failure(
@@ -425,6 +436,7 @@ class QuerySandboxExecutor:
                 clock,
                 limits_model,
                 principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
         except psycopg.Error:
             return self._failure(
@@ -435,6 +447,7 @@ class QuerySandboxExecutor:
                 clock,
                 limits_model,
                 principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
 
         truncated = len(raw) > row_cap
@@ -450,11 +463,26 @@ class QuerySandboxExecutor:
             encoded_bytes += row_bytes
             kept.append(tuple(row))
 
+        # §4.4: one applied instant may be reported only when EVERY referenced
+        # relation and function answers at one — a mixed statement has no
+        # single instant to name.
+        # Only the public functions decide the instant: an ordinary scalar
+        # like `count` says nothing about when the rows were true.
+        referenced = set(validated.referenced_views) | (
+            set(validated.referenced_functions) & PUBLIC_SRF_NAMES
+        )
         evaluated_at = None
-        if validated.referenced_views and set(validated.referenced_views) <= (
-            _EVALUATED_AT_RELATIONS
-        ):
+        if referenced and referenced <= (_EVALUATED_AT_RELATIONS | _AS_OF_FUNCTIONS):
             evaluated_at = pg_snapshot_at
+        grain_tags = tuple(
+            sorted(
+                {
+                    view.grain_tag
+                    for view in declared_views()
+                    if view.name in set(validated.referenced_views)
+                }
+            )
+        )
 
         outcome = QueryResult(
             request_id=request_id,
@@ -463,6 +491,7 @@ class QuerySandboxExecutor:
             query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             referenced_views=validated.referenced_views,
             referenced_functions=validated.referenced_functions,
+            source_grain_tags=grain_tags,
             columns=columns,
             rows=tuple(kept),
             returned_row_count=len(kept),

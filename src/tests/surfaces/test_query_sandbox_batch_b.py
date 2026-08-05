@@ -19,6 +19,7 @@ from alembic.config import Config
 import psycopg
 from pydantic import ValidationError
 import pytest
+from sqlalchemy.engine import make_url
 
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
@@ -54,12 +55,12 @@ def migrated(request: pytest.FixtureRequest) -> Iterator[str]:
     command.downgrade(config=config, revision="base")
     command.upgrade(config=config, revision="head")
     with psycopg.connect(_psycopg_url(database_url), autocommit=True) as connection:
+        role = _query_role(database_url)
         connection.execute(
-            f"ALTER ROLE rememberstack_query PASSWORD '{_QUERY_ROLE_PASSWORD}'"
+            f"ALTER ROLE {role} PASSWORD '{_QUERY_ROLE_PASSWORD}'".encode()
         )
-        connection.execute(
-            "GRANT rememberstack_query TO CURRENT_USER"
-        )  # lets the superuser SET ROLE for probes
+        # lets the superuser SET ROLE for probes
+        connection.execute(f"GRANT {role} TO CURRENT_USER".encode())
     yield database_url
 
 
@@ -67,13 +68,22 @@ def _psycopg_url(sqlalchemy_url: str) -> str:
     return sqlalchemy_url.replace("postgresql+psycopg://", "postgresql://")
 
 
+def _query_role(database_url: str) -> str:
+    """The deployment-scoped login for this database."""
+    from rememberstack.spine.migrations.versions.p9_02_0023_query_space_roles import (
+        query_role_name,
+    )
+
+    database = make_url(database_url).database or ""
+    return query_role_name(database)
+
+
 def _as_query_role(database_url: str) -> psycopg.Connection:
     base = _psycopg_url(database_url)
     prefix, _, tail = base.partition("://")
     _, _, hostpart = tail.partition("@")
-    return psycopg.connect(
-        f"{prefix}://rememberstack_query:{_QUERY_ROLE_PASSWORD}@{hostpart}"
-    )
+    role = _query_role(database_url)
+    return psycopg.connect(f"{prefix}://{role}:{_QUERY_ROLE_PASSWORD}@{hostpart}")
 
 
 # --- §4.1 grammar batteries -------------------------------------------------
@@ -912,3 +922,63 @@ def test_byte_truncation_reports_the_bytes_it_returned(migrated: str) -> None:
     outcome = _executor(migrated).query_sql(sql="SELECT count(*) AS n FROM claims_live")
     assert outcome.returned_byte_count <= outcome.limits.byte_cap
     assert outcome.returned_byte_count > 0
+
+
+def test_every_failure_after_validation_reports_its_hash(migrated: str) -> None:
+    """A statement that validated has a known hash; failures say so."""
+    executor = _executor(migrated)
+    bad_parameters = executor.query_sql(
+        sql="SELECT count(*) FROM claims_live", parameters=["stray"]
+    )
+    assert bad_parameters.error_code == QueryErrorCode.INVALID_PARAMETER
+    assert bad_parameters.query_hash != ""
+    # A statement rejected BEFORE validation has no hash to report.
+    rejected = executor.query_sql(sql="DELETE FROM claims")
+    assert rejected.query_hash == ""
+
+
+def test_large_object_apis_are_withdrawn(migrated: str) -> None:
+    """Server-side file handles have no place on a read-only surface."""
+    with _as_query_role(migrated) as connection:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("SELECT lo_import('/etc/passwd')")
+        connection.rollback()
+
+
+def test_a_deployment_login_cannot_reach_another_deployment(migrated: str) -> None:
+    """Roles are cluster-global; the login must not be.
+
+    PostgreSQL grants CONNECT on every database to PUBLIC, so one shared
+    `rememberstack_query` login would reach every deployment's database in the
+    cluster — and would accumulate each migration's grants. The login is
+    therefore per deployment, and this proves the boundary rather than
+    asserting it.
+    """
+    neighbour = "remember_neighbour"
+    admin_url = _psycopg_url(migrated)
+    with psycopg.connect(admin_url, autocommit=True) as admin:
+        admin.execute(f'DROP DATABASE IF EXISTS "{neighbour}" WITH (FORCE)'.encode())
+        admin.execute(f'CREATE DATABASE "{neighbour}"'.encode())
+    try:
+        config = Config(str(_ROOT / "alembic.ini"))
+        neighbour_url = (
+            make_url(migrated).set(database=neighbour).render_as_string(False)
+        )
+        config.set_main_option("sqlalchemy.url", neighbour_url)
+        command.upgrade(config=config, revision="head")
+
+        # Each database got its own login, and neither can enter the other.
+        assert _query_role(migrated) != _query_role(neighbour_url)
+        prefix, _, tail = admin_url.partition("://")
+        _, _, hostpart = tail.partition("@")
+        host, _, _ = hostpart.partition("/")
+        with pytest.raises(psycopg.OperationalError):
+            psycopg.connect(
+                f"{prefix}://{_query_role(migrated)}:{_QUERY_ROLE_PASSWORD}"
+                f"@{host}/{neighbour}"
+            )
+    finally:
+        with psycopg.connect(admin_url, autocommit=True) as admin:
+            admin.execute(
+                f'DROP DATABASE IF EXISTS "{neighbour}" WITH (FORCE)'.encode()
+            )
