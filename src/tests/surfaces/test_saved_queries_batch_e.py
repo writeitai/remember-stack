@@ -24,9 +24,12 @@ from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.saved_queries import declared_examples
 from rememberstack.surfaces.query_sandbox.saved_queries import IDENTITIES_PER_HOUR_MAX
 from rememberstack.surfaces.query_sandbox.saved_queries import publish_surface_hash
+from rememberstack.surfaces.query_sandbox.saved_queries import revalidate
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
+from rememberstack.surfaces.query_sandbox.saved_queries import SurfaceMoved
 from rememberstack.surfaces.query_sandbox.saved_queries import VERSIONS_PER_IDENTITY_MAX
 
 _DEPLOYMENT = UUID("e0000000-0000-0000-0000-00000000000e")
@@ -303,3 +306,139 @@ def test_a_principal_cannot_open_unbounded_identities_in_an_hour(
     with pytest.raises(SandboxRejection) as rejection:
         registry.draft(namespace="team", name=_unique(), sql=_SQL, principal="prolific")
     assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+
+
+# --- revalidation ------------------------------------------------------------
+
+
+def _suspended(connection: psycopg.Connection) -> tuple[UUID, int, str]:
+    """One active version, then suspended by a surface change."""
+    registry = SavedQueryRegistry(
+        connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
+    )
+    name = _unique()
+    saved = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
+    registry.activate(
+        query_id=saved.query_id,
+        version=saved.version,
+        approver="operator-1",
+        author="agent-1",
+    )
+    publish_surface_hash(
+        connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_OTHER_HASH
+    )
+    return saved.query_id, saved.version, name
+
+
+def test_a_clean_revalidation_restores_a_suspended_version(registry_url: str) -> None:
+    """§5 allows automatic restoration when the surface is minor-compatible."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        query_id, version, name = _suspended(connection)
+        outcome = revalidate(
+            connection=connection,
+            query_id=query_id,
+            version=version,
+            started_against=_OTHER_HASH,
+            now_in_force=_OTHER_HASH,
+            fixtures_passed=True,
+            minor_compatible=True,
+            actor="validator",
+        )
+        assert outcome == "active"
+        moved = SavedQueryRegistry(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_OTHER_HASH
+        )
+        assert moved.resolve(namespace="team", name=name).status == "active"
+        connection.rollback()
+
+
+def test_a_validation_of_a_surface_that_moved_again_cannot_activate(
+    registry_url: str,
+) -> None:
+    """The compare-and-swap: a slow validator cannot activate blind.
+
+    Its answer describes a surface nobody is running, so the version stays
+    suspended and waits for a fresh validation.
+    """
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        query_id, version, name = _suspended(connection)
+        with pytest.raises(SurfaceMoved):
+            revalidate(
+                connection=connection,
+                query_id=query_id,
+                version=version,
+                started_against=_OTHER_HASH,
+                now_in_force="c" * 64,
+                fixtures_passed=True,
+                minor_compatible=True,
+                actor="validator",
+            )
+        still = SavedQueryRegistry(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_OTHER_HASH
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            still.resolve(namespace="team", name=name)
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING
+        connection.rollback()
+
+
+@pytest.mark.parametrize(
+    ("minor_compatible", "fixtures_passed"),
+    [(False, True), (True, False), (False, False)],
+)
+def test_a_failed_revalidation_marks_the_version_broken(
+    registry_url: str, minor_compatible: bool, fixtures_passed: bool
+) -> None:
+    """An incompatible major or a failed fixture is somebody's problem to look
+    at, not a state a version can drift out of."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        query_id, version, name = _suspended(connection)
+        outcome = revalidate(
+            connection=connection,
+            query_id=query_id,
+            version=version,
+            started_against=_OTHER_HASH,
+            now_in_force=_OTHER_HASH,
+            fixtures_passed=fixtures_passed,
+            minor_compatible=minor_compatible,
+            actor="validator",
+        )
+        assert outcome == "broken"
+        moved = SavedQueryRegistry(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_OTHER_HASH
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            moved.resolve(namespace="team", name=name)
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_DISABLED
+        connection.rollback()
+
+
+def test_the_shipped_examples_are_the_seventeen_the_design_maps() -> None:
+    """§3.1 maps seventeen `examples.*` names; this ships that set."""
+    names = {name for name, _ in declared_examples()}
+    assert len(names) == 17
+    assert "claims_hybrid_rrf" in names
+    assert "multi_hop_context" in names
+    assert all(purpose for _, purpose in declared_examples())
+
+
+def test_every_declared_example_has_a_body_that_validates() -> None:
+    """The seventeen §3.1 maps, each parsing through the real grammar.
+
+    Two lists that can drift apart will: the names shipped in discovery and the
+    bodies behind them are checked against each other here, and every body goes
+    through the same gate an ad-hoc statement does — an example that could not
+    be run would be worse than no example.
+    """
+    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+    from rememberstack.surfaces.query_sandbox.grammar import validate_sql
+    from rememberstack.surfaces.query_sandbox.saved_queries import SHIPPED_EXAMPLES
+
+    declared = {name for name, _ in SHIPPED_EXAMPLES}
+    assert declared == set(EXAMPLE_QUERIES), (
+        "the shipped names and the example bodies disagree"
+    )
+    assert len(declared) == 17
+    for name, (purpose, sql) in EXAMPLE_QUERIES.items():
+        assert purpose, f"{name} ships without saying what it answers"
+        validate_sql(sql)

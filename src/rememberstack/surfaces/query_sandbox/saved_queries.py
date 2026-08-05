@@ -390,6 +390,82 @@ class SavedQueryRegistry:
             )
 
 
+class SurfaceMoved(Exception):
+    """The surface changed while a validation was running.
+
+    Raised by `revalidate` when the hash it started against is no longer the
+    one in force. The validation is not wrong, it is simply about a surface
+    that no longer exists, and its result cannot be used to activate anything.
+    """
+
+
+def revalidate(
+    *,
+    connection: psycopg.Connection,
+    query_id: UUID,
+    version: int,
+    started_against: str,
+    now_in_force: str,
+    fixtures_passed: bool,
+    minor_compatible: bool,
+    actor: str,
+) -> str:
+    """Decide what a completed revalidation may do to a suspended version (§5).
+
+    The compare-and-swap is the point. A validator reads the manifest hash when
+    it starts and offers it back here; if the surface has moved again in the
+    meantime, the result describes a surface nobody is running and cannot
+    activate anything — the version stays suspended and waits for a fresh
+    validation. Without this, a slow validator could quietly re-activate a
+    version against a surface it never saw.
+
+    Restoration to `active` is allowed ONLY when the new manifest is
+    minor-compatible and every fixture passed. An incompatible major or a
+    failed fixture moves the version to `broken`, which is a statement that
+    someone must look at it rather than a state it can drift out of.
+    """
+    if started_against != now_in_force:
+        raise SurfaceMoved(
+            "the surface changed while this version was being revalidated"
+        )
+    row = connection.execute(
+        b"SELECT status FROM saved_query_versions"
+        b" WHERE query_id = %(query)s AND version = %(version)s",
+        {"query": str(query_id), "version": version},
+    ).fetchone()
+    if row is None:
+        raise SandboxRejection(
+            code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
+            message="no such saved-query version",
+        )
+    if row[0] != "pending_revalidation":
+        # Only a suspended version is waiting for this answer.
+        return str(row[0])
+
+    outcome = "active" if (minor_compatible and fixtures_passed) else "broken"
+    # The swap is conditional on the version still being suspended AND on the
+    # hash still being the one this validation ran against, so two validators
+    # racing cannot both win.
+    cursor = connection.execute(
+        b"UPDATE saved_query_versions"
+        b" SET status = %(status)s::saved_query_status,"
+        b"     validated_surface_manifest_hash = %(manifest)s,"
+        b"     approver_principal = coalesce(approver_principal, %(actor)s)"
+        b" WHERE query_id = %(query)s AND version = %(version)s"
+        b"   AND status = 'pending_revalidation'",
+        {
+            "status": outcome,
+            "manifest": now_in_force,
+            "actor": actor,
+            "query": str(query_id),
+            "version": version,
+        },
+    )
+    if cursor.rowcount != 1:
+        raise SurfaceMoved("this version was changed while it was being revalidated")
+    return outcome
+
+
 def publish_surface_hash(
     *, connection: psycopg.Connection, deployment_id: UUID, manifest_hash: str
 ) -> int:
@@ -418,23 +494,32 @@ def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, sort_keys=True)
 
 
-def declared_examples() -> Sequence[tuple[str, str]]:
-    """The `examples.*` names §5 ships, as (name, purpose) pairs.
+#: The seventeen `examples.*` names §3.1 maps and §5 ships. They carry
+#: `shipped_example` assurance: the platform wrote them, so they are honest
+#: about what they compute — but they are editable starting points rather than
+#: platform operations, and copying one and changing its filters produces a
+#: customer-authored query, which is the intended use.
+SHIPPED_EXAMPLES: Final[tuple[tuple[str, str], ...]] = (
+    ("changed_since", "What the system learned after a given instant"),
+    ("chunk_neighbors", "Current-section ordinal neighbours of a chunk"),
+    ("chunks_hybrid_rrf", "Semantic and lexical chunk channels, RRF-fused"),
+    ("claims_about", "Claims mentioning an entity, with their sources"),
+    ("claims_as_of", "Claims as they stood at a given instant"),
+    ("claims_hybrid_rrf", "Semantic and lexical claim channels, RRF-fused"),
+    ("claims_verbatim", "Claims as asserted, with their source handles"),
+    ("documents_about", "Every live document that mentions an entity"),
+    ("entity_timeline", "One entity's mentions in processing order"),
+    ("explain", "The plan for a statement, without running it"),
+    ("graph_neighborhood", "Relations within N hops of an entity"),
+    ("graph_path", "Routes between two entities"),
+    ("identity_as_of", "Which entity a mention resolved to at an instant"),
+    ("multi_hop_context", "Evidence along a route between two entities"),
+    ("observation_current", "Current observations about an entity"),
+    ("pages_about", "Compiled pages citing an entity"),
+    ("relation_current", "Current relations, adjudicated"),
+)
 
-    They are shipped_example assurance: the platform wrote them, so they are
-    honest about what they compute, but they are still customer-editable
-    starting points rather than platform operations. Copying one and changing
-    its filters produces a customer-authored query, which is the intended use.
-    """
-    return (
-        ("claims_verbatim", "Claims as asserted, with their source handles"),
-        ("claims_hybrid_rrf", "Semantic and lexical claim channels, RRF-fused"),
-        ("chunk_neighbors", "Current-section ordinal neighbours of a chunk"),
-        ("facts_current", "The adjudicated current worldview"),
-        ("facts_contradicted", "Facts with a live contradiction"),
-        ("entity_documents", "Every live document that mentions an entity"),
-        ("entity_profile", "An entity's current profile and counts"),
-        ("evidence_for_fact", "The claim lineages a fact rests on"),
-        ("document_timeline", "A lineage's versions in processing order"),
-        ("recent_changes", "What the system learned most recently"),
-    )
+
+def declared_examples() -> Sequence[tuple[str, str]]:
+    """The `examples.*` names this build ships, as (name, purpose) pairs."""
+    return SHIPPED_EXAMPLES
