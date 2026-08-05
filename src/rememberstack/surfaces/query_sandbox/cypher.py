@@ -26,7 +26,6 @@ boundary, or inside a subquery is stopped. Blunt in that direction is correct.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Final
 
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -233,15 +232,53 @@ def _references(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
 
     Reported so a caller can see which part of the projection contract their
     answer depended on: a statement reading `RELATES.confidence` is tied to a
-    property that contract may change, and that is worth being able to see
-    without re-reading the query.
+    property that contract may change, and that is worth seeing without
+    re-reading the query.
+
+    Read by walking the statement rather than by matching patterns over the raw
+    text, because the raw text includes prose: `RETURN ':Entity .name'` names
+    neither a type nor a property, and a property map's keys ARE properties
+    even though no dot precedes them. A regex got both of those wrong.
     """
-    labels = {
-        match
-        for match in re.findall(r":\s*([A-Za-z_][A-Za-z0-9_]*)", text)
-        if match in PROJECTION_TYPES
-    }
-    properties = set(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)", text))
+    labels: set[str] = set()
+    properties: set[str] = set()
+    word = ""
+    index = 0
+    length = len(text)
+    pending = ""  # the symbol that introduced the word being read
+    in_property_map = 0
+    while index <= length:
+        character = text[index] if index < length else " "
+        if index < length and character in ("'", '"', "`"):
+            index = _skip_quoted(text, index)
+            word = ""
+            pending = ""
+            continue
+        if index < length and text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = length if closing < 0 else closing + 2
+            continue
+        if index < length and text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = length if newline < 0 else newline + 1
+            continue
+        if character.isalnum() or character == "_":
+            word += character
+            index += 1
+            continue
+        if word:
+            if pending == ":" and word in PROJECTION_TYPES:
+                labels.add(word)
+            elif pending == "." or (in_property_map and character == ":"):
+                properties.add(word)
+            word = ""
+        if character == "{":
+            in_property_map += 1
+        elif character == "}":
+            in_property_map = max(0, in_property_map - 1)
+        if not character.isspace():
+            pending = character
+        index += 1
     return tuple(sorted(labels)), tuple(sorted(properties))
 
 
@@ -271,6 +308,10 @@ def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
     unbounded = False
     word = ""
     brackets = 0
+    # The last character that was part of the query, skipping whitespace,
+    # comments, and quoted runs — which is what "the character before this one"
+    # has to mean in a scan that steps over all three.
+    last_symbol = ""
     # A relationship pattern can carry a property map `{...}` or an inline
     # recursive predicate `(r, n | WHERE ...)`, and inside those a `*` is
     # multiplication. Only a `*` in the pattern itself is a hop bound.
@@ -293,16 +334,25 @@ def _scan(text: str) -> tuple[set[str], int, int | None, bool]:
             continue
         if character.isalnum() or character == "_":
             word += character
+            last_symbol = character
             index += 1
             continue
         if word:
             words.add(word.lower())
             word = ""
+        # What came BEFORE this character, captured before it becomes the
+        # previous one itself.
+        preceding = last_symbol
+        if not character.isspace():
+            last_symbol = character
         if character == "[":
-            # A relationship bracket follows the pattern's dash: `-[r:T]->`.
-            # Every other `[` opens a list, where `*` is multiplication and the
-            # surrounding pattern state must not be disturbed.
-            if _previous_symbol(text, index) == "-":
+            # A relationship bracket sits INSIDE a pattern arrow: `-[r:T]->`,
+            # `<-[r]-`. Both sides are required. The dash alone is not enough —
+            # `1 - [2 * 31][1]` is subtraction of a list element — and looking
+            # only at raw characters is not enough either, because a comment
+            # can sit between the dash and the bracket. Every other `[` opens a
+            # list, where `*` is multiplication.
+            if _is_relationship_bracket(text, index, previous=preceding):
                 brackets += 1
                 nested = 0
             elif brackets:
@@ -387,12 +437,64 @@ def _range_upper_bound(text: str, start: int) -> tuple[int | None, int]:
     return lower, index
 
 
-def _previous_symbol(text: str, index: int) -> str:
-    """The last non-space character before `index`, or the empty string."""
-    position = index - 1
-    while position >= 0 and text[position].isspace():
-        position -= 1
-    return text[position] if position >= 0 else ""
+def _is_relationship_bracket(text: str, index: int, *, previous: str) -> bool:
+    """Whether the `[` at `index` opens a relationship pattern.
+
+    A relationship bracket is enclosed by the pattern's arrow on BOTH sides:
+    `-[r:T]->`, `<-[r]-`. Requiring both is what separates it from subtraction
+    followed by a list, and `previous` is the last significant character the
+    scan saw rather than the raw preceding one, so a comment between the dash
+    and the bracket cannot hide the pattern.
+    """
+    if previous != "-":
+        return False
+    closing = _matching_bracket(text, index)
+    return _next_symbol(text, closing) == "-"
+
+
+def _matching_bracket(text: str, start: int) -> int:
+    """The index just past the `]` closing the `[` at `start`."""
+    depth = 0
+    index = start
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character in ("'", '"', "`"):
+            index = _skip_quoted(text, index)
+            continue
+        if text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = length if closing < 0 else closing + 2
+            continue
+        if character == "[":
+            depth += 1
+        elif character == "]":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return length
+
+
+def _next_symbol(text: str, start: int) -> str:
+    """The next character that is part of the query, skipping trivia."""
+    index = start
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character.isspace():
+            index += 1
+            continue
+        if text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = length if closing < 0 else closing + 2
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = length if newline < 0 else newline + 1
+            continue
+        return character
+    return ""
 
 
 def _has_statement_after(text: str, start: int) -> bool:

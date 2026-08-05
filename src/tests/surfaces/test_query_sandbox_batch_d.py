@@ -837,3 +837,57 @@ def test_a_confirmed_result_dates_its_confirmation(
     outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.pg_snapshot_at is not None
+
+
+def test_a_comment_cannot_hide_a_relationship_pattern() -> None:
+    """The engine runs this unbounded traversal; the gate must see it.
+
+    A dash-then-bracket check on raw characters missed it, because a comment
+    sat between them — the classification has to use what the SCAN saw, which
+    steps over comments, not what the text happens to look like.
+    """
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_cypher("MATCH (a)-/* gap */[r:RELATES*]->(b) RETURN a")
+    assert rejection.value.code == QueryErrorCode.RESOURCE_LIMIT
+
+
+def test_subtraction_before_a_list_is_arithmetic() -> None:
+    """A relationship bracket sits inside the arrow on BOTH sides."""
+    assert validate_cypher("RETURN 1 - [2 * 31][1] AS n").text
+    assert validate_cypher("MATCH (a)<-[r:RELATES*1..2]-(b) RETURN a").text
+
+
+def test_graph_references_come_from_the_statement_not_its_prose() -> None:
+    """§4.4's references describe what was queried, not what was quoted."""
+    quoted = validate_cypher("RETURN ':Entity .name' AS prose")
+    assert quoted.graph_types == ()
+    assert quoted.graph_properties == ()
+
+    # A property map's keys are properties even with no dot before them.
+    pattern = validate_cypher(
+        "MATCH (a:Entity {name:'Ada'})-[r:RELATES {confidence:62}]->(b:Entity)"
+        " RETURN r.predicate"
+    )
+    assert set(pattern.graph_types) == {"Entity", "RELATES"}
+    assert {"name", "confidence", "predicate"} <= set(pattern.graph_properties)
+
+
+def test_current_helper_rows_report_the_instant_that_selected_them(
+    graph: tuple[str, list[tuple[str, str, str]]],
+) -> None:
+    """`now()` is transaction start; the current view evaluates at statement
+    time, so labelling rows with `now()` dated them to a different instant."""
+    url, edges = graph
+    with psycopg.connect(_psycopg_url(url)) as connection:
+        connection.execute("SELECT pg_sleep(0.05)")
+        row = connection.execute(
+            "SELECT applied_valid_at, statement_timestamp(), now()"
+            " FROM memory_v1.graph_neighborhood(%s, 1) LIMIT 1".encode(),
+            (edges[0][1],),
+        ).fetchone()
+        connection.rollback()
+    if row is None:
+        pytest.skip("the corpus publishes no edge from this entity")
+    applied, statement_at, transaction_at = row
+    assert applied > transaction_at
+    assert abs((applied - statement_at).total_seconds()) < 1
