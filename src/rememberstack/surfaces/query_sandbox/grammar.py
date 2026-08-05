@@ -7,6 +7,7 @@ posture against a hostile-infinite builtin surface — while the §4.3 caps and
 the read-only role bound whatever the allowlist admits.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import hashlib
 from typing import Final
@@ -61,6 +62,23 @@ PUBLIC_SRF_NAMES: Final = frozenset(
     }
 )
 SRF_INVOCATIONS_MAX: Final = 3
+
+#: §4.3 caps the nomination calls and the body-fetch calls SEPARATELY, at three
+#: each. Counting them together would reject a statement that is inside both
+#: caps, which is a different (and stricter) rule than the one that was
+#: published.
+SRF_CATEGORIES: Final[dict[str, str]] = {
+    "semantic_claims": "nomination",
+    "semantic_chunks": "nomination",
+    "semantic_facts": "nomination",
+    "semantic_entities": "nomination",
+    "lexical_claims": "nomination",
+    "lexical_chunks": "nomination",
+    "fetch_chunk_bodies": "body_fetch",
+    "facts_as_of": "bitemporal",
+    "graph_neighborhood": "graph",
+    "graph_path": "graph",
+}
 
 FUNCTION_ALLOWLIST: Final = frozenset(
     {
@@ -185,6 +203,9 @@ class ValidatedQuery:
     srf_invocations: int
     ordered_result: bool
     parameter_count: int
+    #: `__srf_N` → (function name, literal/parameter argument list). The
+    #: executor resolves these before planning; see `nomination.py`.
+    srf_bindings: tuple[tuple[str, str, tuple[object, ...]], ...] = ()
     is_recursive: bool = False
     rewritten: bool = False
 
@@ -877,23 +898,69 @@ class _ParamScan(Visitor):
         return None
 
 
-def _to_named_placeholders(sql: str, *, count: int) -> str:
+def _to_named_placeholders(sql: str, *, count: int, escape: bool = True) -> str:
     """Rewrite PostgreSQL `$n` placeholders into psycopg named placeholders.
 
-    psycopg binds `%(p1)s`-style names, so the deparsed statement is
-    translated once, here, and the executor binds a matching mapping. Literal
-    percent signs are escaped first so they survive that binding.
+    psycopg binds `%(p1)s`-style names, so the deparsed statement is translated
+    once, here, and the executor binds a matching mapping.
+
+    The rewrite walks the statement rather than replacing text globally,
+    because both things it touches also occur inside quotes and mean something
+    else there: `SELECT '$1'` asks for two characters of text, `SELECT '100%'`
+    asks for four, and `AS "a$1"` names a column `a$1`. Rewriting any of them
+    changes what the caller asked for — and produces a statement psycopg then
+    fails to bind.
     """
-    if count == 0:
-        # With no mapping bound, psycopg performs no placeholder interpolation,
-        # so a literal percent must survive untouched — escaping it here turned
-        # `5 % 2` into a syntax error and `'%a%'` into `'%%a%%'`.
+    if count == 0 and not escape:
         return sql
-    translated = sql.replace("%", "%%")
-    # Longest index first, so $10 is not rewritten as $1 followed by "0".
-    for index in range(count, 0, -1):
-        translated = translated.replace(f"${index}", f"%(p{index})s")
-    return translated
+    out: list[str] = []
+    index = 0
+    length = len(sql)
+    while index < length:
+        character = sql[index]
+        if character in ("'", '"'):
+            closing = _end_of_quoted(sql, index)
+            quoted = sql[index:closing]
+            # A percent inside quotes still passes through psycopg's binder, so
+            # it is escaped; a `$n` inside quotes is part of a value or a name
+            # and is not rewritten. `AS "a$1"` names a column `a$1`.
+            out.append(quoted.replace("%", "%%") if escape else quoted)
+            index = closing
+            continue
+        if character == "%" and escape:
+            out.append("%%")
+            index += 1
+            continue
+        if character == "$" and count:
+            digits = index + 1
+            while digits < length and sql[digits].isdigit():
+                digits += 1
+            number = sql[index + 1 : digits]
+            if number and 1 <= int(number) <= count:
+                out.append(f"%(p{int(number)})s")
+                index = digits
+                continue
+        out.append(character)
+        index += 1
+    return "".join(out)
+
+
+def _end_of_quoted(sql: str, start: int) -> int:
+    """The index just past the quoted run beginning at `start`.
+
+    Handles both kinds: `'…'` is a value and `"…"` is a name, and a doubled
+    quote of either kind is an escaped quote rather than the end.
+    """
+    quote = sql[start]
+    index = start + 1
+    while index < len(sql):
+        if sql[index] == quote:
+            if index + 1 < len(sql) and sql[index + 1] == quote:
+                index += 2
+                continue
+            return index + 1
+        index += 1
+    return len(sql)
 
 
 def _rewrite_srf_invocations(
@@ -911,6 +978,7 @@ def _rewrite_srf_invocations(
 
     counter = 0
     new_ctes: list[CommonTableExpr] = []
+    bindings: list[tuple[str, str, tuple[object, ...]]] = []
 
     class _Rewriter(Visitor):
         def visit_RangeFunction(self, ancestors, node: RangeFunction):  # noqa: ANN001, ANN201
@@ -918,8 +986,20 @@ def _rewrite_srf_invocations(
             for entry in node.functions or ():
                 call = entry[0] if isinstance(entry, tuple) else entry
                 if isinstance(call, FuncCall) and _func_name(call) in PUBLIC_SRF_NAMES:
+                    if node.ordinality:
+                        # The rewrite replaces the call with the rows it
+                        # resolved to, and a resolved relation has no
+                        # generated ordinality column to carry. Refusing says
+                        # so; substituting would drop a column the caller
+                        # named and fail during planning instead.
+                        raise _reject(
+                            QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED,
+                            "WITH ORDINALITY is not available on public"
+                            " functions; number the rows in the outer query",
+                        )
                     name = f"__srf_{counter}"
                     counter += 1
+                    bindings.append((name, _func_name(call), _literal_arguments(call)))
                     body = SelectStmt(
                         targetList=(_star_target(),),
                         fromClause=(node,),
@@ -940,6 +1020,7 @@ def _rewrite_srf_invocations(
 
     rewritten = _Rewriter()(statement)
     assert isinstance(rewritten, SelectStmt)
+    _rewrite_srf_invocations.bindings = tuple(bindings)  # type: ignore[attr-defined]
     if new_ctes:
         existing = list(rewritten.withClause.ctes) if rewritten.withClause else []
         recursive = bool(rewritten.withClause and rewritten.withClause.recursive)
@@ -947,6 +1028,113 @@ def _rewrite_srf_invocations(
             ctes=tuple(new_ctes + existing), recursive=recursive
         )
     return rewritten
+
+
+class _Unrepresentable:
+    """An argument literal the extractor cannot turn into a Python value."""
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return "<unrepresentable literal>"
+
+
+UNREPRESENTABLE: Final = _Unrepresentable()
+
+
+def apply_cast(value: object, casts: Sequence[str]) -> object:
+    """A cast the caller wrote, actually applied.
+
+    `semantic_claims('q', '5'::integer)` asks for k = 5. Dropping the cast and
+    handing on the string would reject a legal call; applying it is what the
+    statement says.
+    """
+    for name in reversed(list(casts)):
+        if name == "_array":
+            continue
+        if name in ("bool", "boolean"):
+            # PostgreSQL's integer-to-boolean cast is "nonzero is true", and
+            # `(2::boolean)::integer` is 1, not 2. Dropping the inner cast sent
+            # the projection a different k than PostgreSQL was asked for.
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in ("t", "true", "yes", "on", "1"):
+                    value = True
+                elif lowered in ("f", "false", "no", "off", "0"):
+                    value = False
+                else:
+                    return UNREPRESENTABLE
+            else:
+                value = bool(value)
+        elif name in ("int2", "int4", "int8", "integer", "bigint", "smallint"):
+            try:
+                value = int(value) if isinstance(value, bool) else int(str(value))
+            except (TypeError, ValueError):
+                return UNREPRESENTABLE
+        elif name in ("text", "varchar", "bpchar", "jsonb", "json", "uuid"):
+            value = str(value)
+        elif name in ("float4", "float8", "numeric", "real"):
+            try:
+                value = float(str(value))
+            except (TypeError, ValueError):
+                return UNREPRESENTABLE
+    return value
+
+
+def _literal_arguments(call: FuncCall) -> tuple[object, ...]:
+    """The argument list as literals and parameter positions.
+
+    A `$n` argument becomes `("$", n)` so the executor can substitute the
+    bound value; a literal becomes its Python value. Nothing else can appear
+    here — the placement rule already required literals or parameters.
+    """
+    from pglast.ast import A_Const
+    from pglast.ast import Float
+    from pglast.ast import Integer
+    from pglast.ast import String as PgString
+
+    arguments: list[object] = []
+    for argument in call.args or ():
+        node = argument
+        # Collected outermost-first as the walk descends; applied in the other
+        # order below, because `('5'::text)::integer` casts to text and THEN to
+        # integer, which is not the same as the reverse.
+        casts: list[str] = []
+        while isinstance(node, TypeCast):
+            names = [
+                _sval(part)
+                for part in getattr(node.typeName, "names", ()) or ()
+                if _sval(part)
+            ]
+            if getattr(node.typeName, "arrayBounds", None):
+                # An array cast does not change the element values, and
+                # stringifying the list would destroy them.
+                names = ["_array"]
+            casts.extend(names)
+            node = node.arg
+        if isinstance(node, ParamRef):
+            number = node.number if isinstance(node.number, int) else 0
+            arguments.append(("$", number, tuple(casts)))
+        elif isinstance(node, A_Const):
+            value = node.val
+            if getattr(node, "isnull", False) or value is None:
+                # SQL NULL in an optional position means "not supplied", which
+                # is what `DEFAULT NULL` says it means.
+                arguments.append(None)
+            elif isinstance(value, Integer):
+                arguments.append(apply_cast(_ival(value), casts))
+            elif isinstance(value, PgString):
+                arguments.append(apply_cast(_sval(value), casts))
+            elif isinstance(value, Float):
+                arguments.append(
+                    apply_cast(float(str(getattr(value, "fval", "0"))), casts)
+                )
+            else:
+                # A literal this extractor cannot represent is NOT the same as
+                # an omitted argument: reading `true::jsonb` as "no filters"
+                # would run a different query than the caller wrote.
+                arguments.append(UNREPRESENTABLE)
+        else:  # pragma: no cover - the placement rule forbids reaching here
+            arguments.append(UNREPRESENTABLE)
+    return tuple(arguments)
 
 
 def _star_target():  # noqa: ANN202
@@ -993,11 +1181,16 @@ def validate_sql(
                 QueryErrorCode.FUNCTION_PLACEMENT_NOT_ALLOWED,
                 "public functions are callable only as top-level FROM items",
             )
-    if len(gate.srf_calls) > SRF_INVOCATIONS_MAX:
-        raise _reject(
-            QueryErrorCode.QUOTA_EXCEEDED,
-            f"at most {SRF_INVOCATIONS_MAX} public function invocations per statement",
-        )
+    counts: dict[str, int] = {}
+    for call in gate.srf_calls:
+        category = SRF_CATEGORIES.get(_func_name(call), "nomination")
+        counts[category] = counts.get(category, 0) + 1
+    for category, used in sorted(counts.items()):
+        if used > SRF_INVOCATIONS_MAX:
+            raise _reject(
+                QueryErrorCode.QUOTA_EXCEEDED,
+                f"at most {SRF_INVOCATIONS_MAX} {category} invocations per statement",
+            )
 
     params = _ParamScan()
     params(statement)
@@ -1007,8 +1200,10 @@ def validate_sql(
     )
 
     rewritten = False
+    srf_bindings: tuple[tuple[str, str, tuple[object, ...]], ...] = ()
     if gate.srf_calls:
         statement = _rewrite_srf_invocations(statement, gate.srf_calls)
+        srf_bindings = getattr(_rewrite_srf_invocations, "bindings", ())
         rewritten = True
 
     deparsed = RawStream()(statement)
@@ -1022,6 +1217,12 @@ def validate_sql(
     # The deparser emits PostgreSQL's `$n`; psycopg binds client-side named
     # placeholders. Translating here (rather than in the executor) keeps one
     # definition of the executable text — the same text that is hashed.
+    #
+    # Percent signs are escaped unconditionally, and the executor always binds
+    # a mapping, so the escaping rule does not depend on whether this
+    # particular statement happened to have parameters — the bridge can add
+    # them later, and a rule that changed under it would break exactly the
+    # statements that mix caller parameters with confirmed rows.
     normalized = _to_named_placeholders(deparsed, count=params.max_index)
     digest = hashlib.sha256(
         f"{normalized}|params={params.max_index}".encode()
@@ -1033,6 +1234,7 @@ def validate_sql(
         referenced_views=tuple(sorted(gate.views)),
         referenced_functions=tuple(sorted(gate.functions)),
         srf_invocations=len(gate.srf_calls),
+        srf_bindings=srf_bindings,
         ordered_result=ordered,
         parameter_count=params.max_index,
         is_recursive=is_recursive,

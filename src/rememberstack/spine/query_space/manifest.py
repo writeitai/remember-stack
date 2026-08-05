@@ -151,12 +151,155 @@ class ManifestView(BaseModel):
 def stub_function_signatures() -> dict[str, CanonicalValue]:
     """Return the bound, still-unpopulated SQL-function member.
 
-    The signatures of the bitemporal, semantic, lexical, body-fetch, and graph
-    functions are contributed by the batches that implement them. Binding the
-    member's shape here means those additions fill the hashed document rather
-    than reshaping it.
+    Superseded by `_bridge_function_signatures()` once the sandbox exists;
+    kept for a checkout that has the schema but not yet the surfaces package.
     """
     return {"contract": "memory_v1.functions/1", "functions": []}
+
+
+#: PostgreSQL type OIDs the query space publishes, by name. A column list
+#: without types tells a caller what it will get called but not what it is.
+_TYPE_NAMES: Final[dict[int, str]] = {
+    16: "boolean",
+    20: "bigint",
+    23: "integer",
+    25: "text",
+    701: "double precision",
+    1184: "timestamptz",
+    2950: "uuid",
+}
+
+
+def _bridge_function_signatures() -> dict[str, CanonicalValue]:
+    """The §6 `function_signatures` member: what each public function accepts
+    and answers with, taken from the implementation rather than restated.
+
+    A caller reads this to know the arity, the filter vocabulary, and the
+    columns a function returns without executing anything, and any change to
+    those rolls `surface_manifest_hash` — the point of putting them here.
+    """
+    from rememberstack.surfaces.query_sandbox import nomination
+    from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_COLUMN_TYPES
+    from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_COLUMNS
+    from rememberstack.surfaces.query_sandbox.bridge import FACTS_AS_OF_ROWS_MAX
+    from rememberstack.surfaces.query_sandbox.bridge import FUNCTION_TARGETS
+    from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
+
+    #: The declared parameter list of each nomination function, in order.
+    #: Arity alone does not tell a caller what the third argument means.
+    nomination_arguments: list[CanonicalValue] = [
+        {"name": "query", "type": "text", "required": True},
+        {"name": "k", "type": "integer", "required": True},
+        {"name": "filters", "type": "jsonb", "required": False, "default": "{}"},
+        {
+            "name": "embedding_input_policy_version",
+            "type": "text",
+            "required": False,
+            "default": None,
+        },
+        {
+            "name": "embedder_generation",
+            "type": "text",
+            "required": False,
+            "default": None,
+        },
+    ]
+
+    functions: list[CanonicalValue] = []
+    for name in sorted(SIGNATURES):
+        target, channel = FUNCTION_TARGETS[name]
+        least, most = SIGNATURES[name]
+        columns, oids = nomination.published_contract(target)
+        functions.append(
+            {
+                "name": name,
+                "target": target,
+                "channel": channel,
+                "arguments_min": least,
+                "arguments_max": most,
+                "arguments": nomination_arguments[:most],
+                "security": "invoker",
+                "filters": list(sorted(nomination.FILTER_ALLOWLISTS[target])),
+                "projection_filters": list(
+                    sorted(nomination.LANCE_FILTER_COLUMNS[target])
+                ),
+                "columns": list(columns),
+                "column_types": [_TYPE_NAMES.get(oid, "unknown") for oid in oids],
+                # These call an external projection, so repeated evaluation in
+                # one statement need not agree: they are volatile, whatever the
+                # PostgreSQL-side helpers are.
+                "volatility": "volatile",
+                "parallel": "unsafe",
+            }
+        )
+    functions.append(
+        {
+            # Pure SQL: it needs no projection, so PostgreSQL runs it directly
+            # and its arity is enforced by the function itself.
+            "name": "facts_as_of",
+            "target": "facts",
+            "channel": "bitemporal",
+            "arguments_min": 2,
+            "arguments_max": 3,
+            "arguments": [
+                {"name": "valid_at", "type": "timestamptz", "required": True},
+                {"name": "believed_at", "type": "timestamptz", "required": True},
+                {
+                    "name": "max_rows",
+                    "type": "integer",
+                    "required": False,
+                    "default": 200,
+                },
+            ],
+            "volatility": "stable",
+            "security": "invoker",
+            "filters": [],
+            "projection_filters": [],
+            "columns": list(FACTS_AS_OF_COLUMNS),
+            "column_types": list(FACTS_AS_OF_COLUMN_TYPES),
+            "max_rows_hard_cap": FACTS_AS_OF_ROWS_MAX,
+            "parallel": "safe",
+        }
+    )
+    functions.append(
+        {
+            "name": "fetch_chunk_bodies",
+            "target": "chunks",
+            "channel": "body",
+            "arguments_min": 1,
+            "arguments_max": 1,
+            "arguments": [{"name": "chunk_ids", "type": "uuid[]", "required": True}],
+            "security": "invoker",
+            "filters": [],
+            "projection_filters": [],
+            "columns": list(nomination.BODY_COLUMNS),
+            "column_types": [
+                _TYPE_NAMES.get(oid, "unknown") for oid in nomination.BODY_TYPE_OIDS
+            ],
+            "chunk_ids_max": nomination.CHUNK_IDS_MAX,
+            "volatility": "volatile",
+            "parallel": "unsafe",
+        }
+    )
+    published = {entry["name"] for entry in functions}  # type: ignore[index]
+    return {
+        "contract": "memory_v1.functions/1",
+        # A function the grammar admits but this build cannot resolve is named
+        # here rather than left for a caller to discover by calling it.
+        "declared_without_signatures": list(
+            sorted(
+                name
+                for name in __import__(
+                    "rememberstack.surfaces.query_sandbox.grammar",
+                    fromlist=["PUBLIC_SRF_NAMES"],
+                ).PUBLIC_SRF_NAMES
+                if name not in published
+            )
+        ),
+        # Globally sorted: a reader comparing two manifests should see a
+        # difference only where the surface differs.
+        "functions": sorted(functions, key=lambda entry: entry["name"]),  # type: ignore[index,arg-type]
+    }
 
 
 def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
@@ -200,7 +343,13 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
         "operators": list(sorted(grammar.OPERATOR_ALLOWLIST)),
         "cast_types": list(sorted(grammar.CAST_TYPE_ALLOWLIST)),
         "public_functions": list(sorted(grammar.PUBLIC_SRF_NAMES)),
-        "srf_invocations_max": grammar.SRF_INVOCATIONS_MAX,
+        # The cap is PER CATEGORY, not per statement: three nomination calls
+        # and three body fetches are both inside it. Publishing one number
+        # described a stricter surface than the one that ships.
+        "srf_invocations_max_per_category": grammar.SRF_INVOCATIONS_MAX,
+        "srf_categories": {
+            name: category for name, category in sorted(grammar.SRF_CATEGORIES.items())
+        },
         "recursion_depth_max": grammar.RECURSION_DEPTH_MAX,
     }
     resource_limits: dict[str, CanonicalValue] = {
@@ -222,7 +371,7 @@ def build_hash_members() -> dict[str, CanonicalValue]:
     """Build the exact document `surface_manifest_hash` is taken over."""
     return {
         "core_operation_descriptors": stub_core_operation_descriptors(),
-        "function_signatures": stub_function_signatures(),
+        "function_signatures": _bridge_function_signatures(),
         "limits": _sandbox_limits_member(),
         "views_schema": _build_views_schema(),
     }

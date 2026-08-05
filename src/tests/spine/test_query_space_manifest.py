@@ -149,14 +149,32 @@ def test_two_independent_builds_of_the_manifest_agree_byte_for_byte() -> None:
 
 
 def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
-    """The three still-unpopulated members carry their bound shape already."""
+    """The still-unpopulated members carry their bound shape already."""
     manifest = load_manifest()
     members = manifest["hash_members"]
     assert isinstance(members, dict)
-    assert members["function_signatures"] == {
-        "contract": "memory_v1.functions/1",
-        "functions": [],
+    signatures = members["function_signatures"]
+    assert isinstance(signatures, dict)
+    assert signatures["contract"] == "memory_v1.functions/1"
+    published = signatures["functions"]
+    assert isinstance(published, list)
+    # Every function the bridge resolves publishes its arity, its filter
+    # vocabulary, and the columns it answers with, so a caller can read the
+    # contract without executing anything.
+    assert {entry["name"] for entry in published} == {  # type: ignore[index]
+        "facts_as_of",
+        "fetch_chunk_bodies",
+        "lexical_chunks",
+        "lexical_claims",
+        "semantic_chunks",
+        "semantic_claims",
+        "semantic_entities",
+        "semantic_facts",
     }
+    for entry in published:
+        assert isinstance(entry, dict)
+        assert entry["arguments_min"] >= 1
+        assert entry["columns"]
     assert members["core_operation_descriptors"] == {
         "contract": "memory_v1.core_operations/1",
         "operations": [],

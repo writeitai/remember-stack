@@ -1,5 +1,7 @@
 """D61 seam for the P1 search indexes: chunks, claims, facts (D8)."""
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -138,6 +140,114 @@ class P1SearchPort(Protocol):
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
     ) -> tuple[str, ...]:
         """Ranked fact-id nominations from the facts channel."""
+        ...
+
+
+@dataclass(frozen=True)
+class P1Nomination:
+    """One scored nomination: the id, its rank, and the channel's own score.
+
+    Ranks are one-based positions in the channel's own ordering. A semantic
+    score and a lexical score are not comparable — the channel says which
+    scale it used, and nothing normalizes across them.
+    """
+
+    item_id: str
+    rank: int
+    score: float
+    channel: str
+    #: The rest of the item's identity, where its id is not the whole of it. A
+    #: fact is identified by (kind, id), so nominating an id alone lets a stale
+    #: relation be confirmed against a current observation that happens to
+    #: share it. Empty for channels whose id IS the identity.
+    qualifier: str | None = None
+
+
+@runtime_checkable
+class P1ScoredSearchPort(Protocol):
+    """Scored nomination for the public query surface (design §3.4).
+
+    The unscored methods above stay exactly as they are: the hybrids fuse by
+    rank and never needed the numbers. The public functions publish `rank` and
+    `score` columns, so the score the channel already computed is carried out
+    rather than a second search being run to recover it.
+    """
+
+    def search_claims_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored claim nominations from the semantic channel."""
+        ...
+
+    def search_claims_lexical_scored(
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored claim nominations from the BM25 channel."""
+        ...
+
+    def search_chunks_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored source-chunk nominations from the semantic channel.
+
+        `equality_filters` are column/value pairs the projection applies BEFORE
+        top-k, so a narrow search still returns k matching rows. A column the
+        dataset does not have is an error, never a silently dropped predicate.
+        """
+        ...
+
+    def search_chunks_lexical_scored(
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored source-chunk nominations from the BM25 channel."""
+        ...
+
+    def search_facts_scored(
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
+    ) -> tuple[P1Nomination, ...]:
+        """Scored fact nominations from the facts channel."""
+        ...
+
+    def search_entities_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        entity_type: str | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored entity nominations over the profile/description vectors.
+
+        New capability: the entity index previously answered only by id
+        (`entity_vectors`), so nothing could ask it "which entities read like
+        this description".
+        """
         ...
 
 

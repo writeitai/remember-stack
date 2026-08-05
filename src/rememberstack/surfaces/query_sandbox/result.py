@@ -63,7 +63,21 @@ class SemanticInvocation(BaseModel):
     nominated: int
     confirmed: int
     dropped_stale: int
+    dropped_filtered: int = 0
+    dropped_ambiguous: int = 0
+    dropped_absent: int = 0
+    dropped_body_mismatch: int = 0
+    # The body path names which side was missing and which check failed, so a
+    # reader can tell a deletion from a rebuild lag from a corrupted body.
+    dropped_absent_current: int = 0
+    dropped_absent_projection: int = 0
+    dropped_hash_mismatch: int = 0
+    # Both pins are reported separately: they are two different generations,
+    # and collapsing them into one field cannot say which was applied.
+    policy_generation: str | None = None
+    embedder_generation: str | None = None
     generation: str | None = None
+    pg_confirmed_at: datetime | None = None
     termination_reason: str | None = None
 
 

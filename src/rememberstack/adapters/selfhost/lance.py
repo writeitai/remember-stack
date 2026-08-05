@@ -1,5 +1,6 @@
 """The embedded-LanceDB P1 chunk index: one table of text + vectors (D8)."""
 
+from collections.abc import Mapping
 from datetime import timedelta
 import math
 from pathlib import Path
@@ -22,6 +23,7 @@ from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
+from rememberstack.ports.p1_index import P1Nomination
 
 _CHUNK_TABLE = "chunks"
 _CLAIM_TABLE = "claims"
@@ -444,6 +446,267 @@ class LanceChunkIndex:
         )
         return tuple(row["fact_id"] for row in query.to_list())
 
+    # -- scored nomination for the public query surface (design §3.4) --------
+
+    @staticmethod
+    def _nominations(
+        rows: list[dict],
+        *,
+        id_column: str,
+        channel: str,
+        qualifier_column: str | None = None,
+    ) -> tuple:
+        """Carry out the score the channel already computed.
+
+        Lance reports `_distance` for a vector search and `_score` for BM25.
+        A distance is inverted into a similarity so that, within a channel,
+        larger is always better; the two scales still never compare across
+        channels, which is why the channel travels with the score.
+
+        Ties break by item id, so two rows the channel scored identically get
+        the same two ranks on every run. Without it the rank a caller sees for
+        a tied row depends on scan order, and a saved query answers differently
+        on Tuesday for no reason it can see.
+        """
+        scored = [
+            (
+                _nomination_score(row),
+                str(row[id_column]),
+                str(row[qualifier_column]) if qualifier_column else None,
+            )
+            for row in rows
+        ]
+        scored.sort(key=lambda entry: (-entry[0], entry[1]))
+        return tuple(
+            P1Nomination(
+                item_id=item_id,
+                rank=position,
+                score=score,
+                channel=channel,
+                qualifier=qualifier,
+            )
+            for position, (score, item_id, qualifier) in enumerate(scored, start=1)
+        )
+
+    def search_claims_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored claim nominations from the semantic channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CLAIM_TABLE):
+            return ()
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
+        table = self._connection.open_table(_CLAIM_TABLE)
+        narrowing = _equality_clause(
+            filters=equality_filters, columns={field.name for field in table.schema}
+        )
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                table.search(list(vector)).where(
+                    f"deployment_id = '{deployment_id}'"
+                    + (" AND is_current_testimony" if current_only else "")
+                    + narrowing,
+                    prefilter=True,
+                ),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="claim_id", channel="semantic"
+        )
+
+    def search_claims_lexical_scored(
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored claim nominations from the BM25 channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CLAIM_TABLE):
+            return ()
+        self._ensure_text_index(table_name=_CLAIM_TABLE)
+        self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
+        self._ensure_bitmap_index(
+            table_name=_CLAIM_TABLE, column="is_current_testimony"
+        )
+        where = f"deployment_id = '{deployment_id}'"
+        if current_only:
+            where += " AND is_current_testimony"
+        where += _equality_clause(
+            filters=equality_filters,
+            columns={
+                field.name for field in self._connection.open_table(_CLAIM_TABLE).schema
+            },
+        )
+        rows = (
+            self._connection.open_table(_CLAIM_TABLE)
+            .search(query, query_type="fts", fts_columns="text")
+            .where(where, prefilter=True)
+            .limit(k)
+            .to_list()
+        )
+        return self._nominations(rows, id_column="claim_id", channel="bm25")
+
+    def search_chunks_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored source-chunk nominations from the semantic channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CHUNK_TABLE):
+            return ()
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        table = self._connection.open_table(_CHUNK_TABLE)
+        columns = {field.name for field in table.schema}
+        policy_generation, embedder_generation = resolve_generations(
+            table=table,
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+        )
+        where = _chunk_search_where(
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+            columns=columns,
+        ) + _equality_clause(filters=equality_filters, columns=columns)
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_CHUNK_TABLE)
+                .search(list(vector))
+                .where(where, prefilter=True),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="chunk_id", channel="semantic"
+        )
+
+    def search_chunks_lexical_scored(
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+        equality_filters: Mapping[str, str] | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored source-chunk nominations from the BM25 channel."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_CHUNK_TABLE):
+            return ()
+        self._ensure_text_index(table_name=_CHUNK_TABLE)
+        self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
+        table = self._connection.open_table(_CHUNK_TABLE)
+        columns = {field.name for field in table.schema}
+        policy_generation, embedder_generation = resolve_generations(
+            table=table,
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+        )
+        where = _chunk_search_where(
+            deployment_id=deployment_id,
+            policy_generation=policy_generation,
+            embedder_generation=embedder_generation,
+            columns=columns,
+        ) + _equality_clause(filters=equality_filters, columns=columns)
+        rows = (
+            self._connection.open_table(_CHUNK_TABLE)
+            .search(query, query_type="fts", fts_columns="text")
+            .where(where, prefilter=True)
+            .limit(k)
+            .to_list()
+        )
+        return self._nominations(rows, id_column="chunk_id", channel="bm25")
+
+    def search_facts_scored(
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
+    ) -> tuple[P1Nomination, ...]:
+        """Scored fact nominations from the facts channel."""
+        deployment_id = str(UUID(deployment_id))
+        if kind is not None and kind not in ("relation", "observation"):
+            raise ValueError(f"unknown facts-channel kind {kind!r}")
+        if not self._has_table(table_name=_FACT_TABLE):
+            return ()
+        where = f"deployment_id = '{deployment_id}'"
+        if kind is not None:
+            where += f" AND kind = '{kind}'"
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_FACT_TABLE)
+                .search(list(vector))
+                .where(where, prefilter=True),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(),
+            id_column="fact_id",
+            channel="semantic",
+            qualifier_column="kind",
+        )
+
+    def search_entities_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        entity_type: str | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Scored entity nominations over the profile/description vectors."""
+        deployment_id = str(UUID(deployment_id))
+        if not self._has_table(table_name=_ENTITY_TABLE):
+            return ()
+        self._ensure_scalar_index(table_name=_ENTITY_TABLE, column="deployment_id")
+        where = f"deployment_id = '{deployment_id}'"
+        if entity_type is not None:
+            # The value reaches a filter string, so it is constrained to the
+            # shape an identifier can take rather than trusted.
+            if not entity_type.replace("_", "").isalnum():
+                raise ValueError(f"unusable entity type {entity_type!r}")
+            where += f" AND type = '{entity_type}'"
+        query = (
+            cast(
+                "LanceVectorQueryBuilder",
+                self._connection.open_table(_ENTITY_TABLE)
+                .search(list(vector))
+                .where(where, prefilter=True),
+            )
+            .nprobes(LANCE_NPROBES)
+            .limit(k)
+        )
+        return self._nominations(
+            query.to_list(), id_column="entity_id", channel="semantic"
+        )
+
     def build_search_indexes(self) -> None:
         """Build the measured scalar + IVF_FLAT indexes after a bulk load.
 
@@ -767,6 +1030,65 @@ class LanceChunkIndex:
 def _escape_literal(value: str) -> str:
     """Escape single quotes for Lance filter string literals."""
     return value.replace("'", "''")
+
+
+def _nomination_score(row: dict) -> float:
+    """The channel's own score for one row, as a larger-is-better number."""
+    if row.get("_score") is not None:
+        return float(row["_score"])
+    if row.get("_distance") is not None:
+        return 1.0 / (1.0 + float(row["_distance"]))
+    return 0.0
+
+
+def resolve_generations(
+    *,
+    table: Table,
+    deployment_id: str,
+    policy_generation: str | None,
+    embedder_generation: str | None,
+) -> tuple[str | None, str | None]:
+    """Check that this dataset holds the requested pair, and return it.
+
+    The pair is chosen upstream, where PostgreSQL can say which generation the
+    spine currently stamps; this only refuses a pair the projection does not
+    hold, so a pin never quietly becomes an empty result that reads as "nothing
+    matched your query".
+    """
+    if policy_generation is None and embedder_generation is None:
+        return None, None
+    columns = {field.name for field in table.schema}
+    if "policy_generation" not in columns or "embedder_generation" not in columns:
+        raise LookupError("the projection records no generations")
+    where = f"deployment_id = '{_escape_literal(deployment_id)}'"
+    for column, value in (
+        ("policy_generation", policy_generation),
+        ("embedder_generation", embedder_generation),
+    ):
+        if value is not None:
+            where += f" AND {column} = '{_escape_literal(value)}'"
+    if not table.search().where(where, prefilter=True).limit(1).to_list():
+        raise LookupError(
+            "the projection holds no chunk under the requested generations"
+        )
+    return policy_generation, embedder_generation
+
+
+def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) -> str:
+    """Render caller filters as a Lance predicate, or refuse to pretend.
+
+    A column this dataset does not have cannot be filtered here, and silently
+    dropping the predicate would return rows the caller explicitly excluded, so
+    it is an error instead.
+    """
+    if not filters:
+        return ""
+    clause = ""
+    for column, value in filters.items():
+        if column not in columns:
+            raise ValueError(f"the projection has no {column} column to filter on")
+        clause += f" AND {column} = '{_escape_literal(str(value))}'"
+    return clause
 
 
 def _chunk_search_where(

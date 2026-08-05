@@ -27,6 +27,10 @@ from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+from rememberstack.surfaces.query_sandbox.bridge import explain_placeholders
+from rememberstack.surfaces.query_sandbox.bridge import required_adapters
+from rememberstack.surfaces.query_sandbox.bridge import resolve_invocations
+from rememberstack.surfaces.query_sandbox.bridge import substitute
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
@@ -35,9 +39,11 @@ from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
+from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
 from rememberstack.surfaces.query_sandbox.result import ResultLimits
+from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
 
 # The only relations whose reference permits a non-null `evaluated_at` (§4.4:
 # every referenced relation must be current/as-of fact/graph surface).
@@ -176,7 +182,14 @@ class QuerySandboxExecutor:
         audit: AuditTrail | None = None,
         kill_switches: KillSwitches | None = None,
         analytical_entitlement: bool = False,
+        search: object | None = None,
+        embed: Callable[..., tuple[float, ...]] | None = None,
     ) -> None:
+        # The public functions need a projection to nominate from and a way to
+        # embed a query; without them the statement still parses, and a call
+        # fails with the store-phase code rather than a confusing SQL error.
+        self._search = search
+        self._embed = embed
         self._deployment_id = deployment_id
         # §4.3: the analytical tier requires an operator entitlement and its
         # own pool. A caller asking for it without one runs interactive.
@@ -364,20 +377,77 @@ class QuerySandboxExecutor:
         principal: str,
     ) -> QueryResult:
         limits = TIER_LIMITS[tier]
-        statement = (
-            f"EXPLAIN (FORMAT JSON) {validated.sql}" if explain else validated.sql
-        )
+        semantic_invocations: tuple[SemanticInvocation, ...] = ()
+        bridge_parameters: dict[str, object] = {}
+        executable = validated.sql
+        needs_projection, needs_embedder = required_adapters(validated.srf_bindings)
+        if not explain and (
+            (needs_projection and self._search is None)
+            or (needs_embedder and self._embed is None)
+        ):
+            return self._failure(
+                QueryErrorCode.LANCE_UNAVAILABLE,
+                "the projection is not configured for this deployment",
+                request_id,
+                started,
+                clock,
+                limits_model,
+                principal,
+            )
+
         try:
             with self._transaction(limits_ms=limits) as cursor:
+                # Confirmation and execution share ONE transaction, so they
+                # share one snapshot. Confirming in a separate transaction
+                # would freeze rows that were live then into a statement that
+                # runs now, and a lineage tombstoned in between would come back
+                # in a result the live views no longer publish — exactly the
+                # D48 leak the confirmation exists to prevent.
+                if validated.srf_bindings and explain:
+                    # EXPLAIN plans the statement; it does not search. The
+                    # bridged calls become empty relations of the shape they
+                    # publish, so the planner sees something it can plan
+                    # instead of a function PostgreSQL does not have.
+                    resolutions = explain_placeholders(validated.srf_bindings)
+                    executable, bridge_parameters = substitute(
+                        validated.sql, resolutions
+                    )
+                    semantic_invocations = tuple(
+                        resolution.invocation for resolution in resolutions
+                    )
+                elif validated.srf_bindings:
+                    resolutions = resolve_invocations(
+                        bindings=validated.srf_bindings,
+                        parameters=parameters,
+                        connection=cursor.connection,
+                        search=self._search,
+                        embed=self._embed,
+                        settings=BridgeSettings(deployment_id=self._deployment_id),
+                    )
+                    executable, bridge_parameters = substitute(
+                        validated.sql, resolutions
+                    )
+                    semantic_invocations = tuple(
+                        resolution.invocation for resolution in resolutions
+                    )
+                statement = (
+                    f"EXPLAIN (FORMAT JSON) {executable}" if explain else executable
+                )
                 pg_snapshot_at = self._snapshot_instant(cursor)
                 # psycopg's type stub demands a LiteralString; the executor's
                 # input is machine-generated by the gate (never caller text), so
                 # bytes — an equally accepted Query form — keeps it type-safe.
-                bound = {
+                bound: dict[str, object] = {
                     f"p{index}": value
                     for index, value in enumerate(parameters, start=1)
                 }
-                cursor.execute(statement.encode(), bound or None)
+                # The bridge's confirmed rows travel as parameters too, so no
+                # confirmed value is ever parsed as part of the statement.
+                bound.update(bridge_parameters)
+                # Always a mapping, never None: psycopg's placeholder binding is
+                # what the escaping in the gate assumes, and it must not
+                # switch on and off with the parameter count.
+                cursor.execute(statement.encode(), bound)
                 columns = tuple(
                     ResultColumn(
                         name=d.name,
@@ -389,6 +459,17 @@ class QuerySandboxExecutor:
                     for d in (cursor.description or ())
                 )
                 raw = cursor.fetchmany(row_cap + 1)
+        except SandboxRejection as rejection:
+            return self._failure(
+                rejection.code,
+                rejection.message,
+                request_id,
+                started,
+                clock,
+                limits_model,
+                principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
+            )
         except psycopg.errors.QueryCanceled:
             return self._failure(
                 QueryErrorCode.STATEMENT_TIMEOUT,
@@ -507,6 +588,7 @@ class QuerySandboxExecutor:
             evaluated_at=evaluated_at,
             pg_snapshot_at=pg_snapshot_at,
             elapsed_ms=(time.monotonic() - clock) * 1000,
+            semantic_invocations=semantic_invocations,
         )
         self._audit.emit(outcome=outcome, principal=principal)
         return outcome
@@ -552,6 +634,13 @@ class QuerySandboxExecutor:
             connection.autocommit = previous_autocommit
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    # REPEATABLE READ, first thing in the transaction: under
+                    # READ COMMITTED each statement takes a NEW snapshot, so
+                    # confirmation and the caller's statement would see
+                    # different states of the database even inside one
+                    # transaction — which is the leak the shared transaction
+                    # was supposed to close.
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                     # Only GUCs a non-superuser may set belong here: the
                     # deployment role is deliberately unprivileged, so
                     # temp_file_limit (superuser-only) is pinned on the role
