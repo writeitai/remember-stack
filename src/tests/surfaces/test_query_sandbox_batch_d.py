@@ -846,3 +846,16 @@ def test_confirmation_is_opt_in(snapshot: _Snapshot) -> None:
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.confirmation is None
     assert outcome.rows
+
+
+def test_a_caller_cannot_forge_the_read_only_refusal(snapshot: _Snapshot) -> None:
+    """An error a caller raises themselves is their error, not our refusal.
+
+    The engine prefixes a user-raised error with "Runtime exception: ", so an
+    exact comparison tells the two apart where a substring test did not.
+    """
+    forged = (
+        "Connection exception: Cannot execute write operations in a read-only database!"
+    )
+    outcome = _cypher(snapshot).query_cypher(cypher=f"RETURN error('{forged}')")
+    assert outcome.error_code != QueryErrorCode.CYPHER_NOT_ALLOWED

@@ -73,7 +73,7 @@ _ENGINE_INTERNAL_KEYS: Final = frozenset({"_id", "_src", "_dst"})
 _LABEL_KEYS: Final = ("_LABEL", "_label")
 
 #: The pinned engine's refusal when a mutation reaches a `read_only=True`
-#: database, verbatim. Mapped to `cypher_not_allowed` so the caller sees a
+#: database, verbatim and compared exactly. Mapped to `cypher_not_allowed` so the caller sees a
 #: stated rejection rather than an opaque execution failure. A version bump
 #: that changes this wording fails the pin test instead of silently
 #: reclassifying writes as execution errors.
@@ -605,7 +605,13 @@ def is_read_only_refusal(message: str) -> bool:
     this check so a wording change fails loudly instead of reclassifying
     writes as execution errors.
     """
-    return READ_ONLY_REFUSAL in message
+    # EXACT match, not a substring. A caller can put any text in an error they
+    # raise themselves — `RETURN error('Connection exception: Cannot execute
+    # write operations in a read-only database!')` — and the engine prefixes
+    # that with "Runtime exception: ". A substring test read the forgery as a
+    # refusal, which would tell a caller their own error was the surface
+    # declining to run a write.
+    return message.strip() == READ_ONLY_REFUSAL
 
 
 def _public_value(value: object) -> object:
