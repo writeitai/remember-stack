@@ -477,6 +477,28 @@ class CypherSandboxExecutor:
             ) from error
         try:
             answer = connection.execute(text, dict(parameters))
+            names = tuple(answer.get_column_names())
+            types = tuple(str(kind) for kind in answer.get_column_data_types())
+            if any(_is_internal_id_type(kind) for kind in types):
+                raise SandboxRejection(
+                    code=QueryErrorCode.CYPHER_NOT_ALLOWED,
+                    message="engine-internal identifiers are not public graph values",
+                )
+            rows: list[list[object]] = []
+            spent = 0
+            # STOP at the caps rather than draining and trimming afterwards.
+            # Materialising every row first made the row and byte caps disclosure
+            # numbers rather than bounds: `UNWIND RANGE(1, 100000) AS n RETURN n`
+            # with max_rows=1 pulled a hundred thousand rows into memory to return
+            # one. One row past the cap is kept so truncation can be reported
+            # honestly.
+            while answer.has_next() and len(rows) <= row_cap and spent <= byte_cap:
+                row = [_public_value(value) for value in answer.get_next()]
+                spent += len(json.dumps(row, default=str).encode())
+                rows.append(row)
+            return _EngineResult(column_names=names, column_types=types, rows=rows)
+        except SandboxRejection:
+            raise
         except RuntimeError as error:
             message = str(error)
             if is_read_only_refusal(message):
@@ -516,26 +538,6 @@ class CypherSandboxExecutor:
                 message="the statement failed during execution",
                 engine_fault_class="ladybug_runtime",
             ) from error
-        names = tuple(answer.get_column_names())
-        types = tuple(str(kind) for kind in answer.get_column_data_types())
-        if any(_is_internal_id_type(kind) for kind in types):
-            raise SandboxRejection(
-                code=QueryErrorCode.CYPHER_NOT_ALLOWED,
-                message="engine-internal identifiers are not public graph values",
-            )
-        rows: list[list[object]] = []
-        spent = 0
-        # STOP at the caps rather than draining and trimming afterwards.
-        # Materialising every row first made the row and byte caps disclosure
-        # numbers rather than bounds: `UNWIND RANGE(1, 100000) AS n RETURN n`
-        # with max_rows=1 pulled a hundred thousand rows into memory to return
-        # one. One row past the cap is kept so truncation can be reported
-        # honestly.
-        while answer.has_next() and len(rows) <= row_cap and spent <= byte_cap:
-            row = [_public_value(value) for value in answer.get_next()]
-            spent += len(json.dumps(row, default=str).encode())
-            rows.append(row)
-        return _EngineResult(column_names=names, column_types=types, rows=rows)
 
     def _confirm(
         self, *, rows: Sequence[Sequence[object]], columns: Sequence[ResultColumn]
@@ -683,6 +685,7 @@ class CypherSandboxExecutor:
             ),
             error_code=rejection.code,
             error_message=rejection.message,
+            empty_result=True,
             warnings=(
                 (P2_STALE_WARNING,)
                 if p2_snapshot is not None

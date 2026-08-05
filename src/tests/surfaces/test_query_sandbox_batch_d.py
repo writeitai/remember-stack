@@ -758,6 +758,61 @@ def test_timeout_setup_failure_prevents_execution() -> None:
     assert connection.executed is False
 
 
+class _RowMaterializationFailureAnswer:
+    """An engine answer that faults only when its first row is read."""
+
+    def get_column_names(self) -> list[str]:
+        """Return metadata successfully before the row fault."""
+        return ["value"]
+
+    def get_column_data_types(self) -> list[str]:
+        """Return one ordinary public scalar type."""
+        return ["INT64"]
+
+    def has_next(self) -> bool:
+        """Report one row so materialization reaches the fault."""
+        return True
+
+    def get_next(self) -> list[int]:
+        """Model a Ladybug runtime fault after execute returned."""
+        raise RuntimeError("synthetic row materialization fault")
+
+
+class _RowMaterializationFailureConnection:
+    """A request-private connection whose result cursor faults."""
+
+    def set_query_timeout(self, _timeout_ms: int) -> None:
+        """Accept the mandatory request timeout."""
+
+    def execute(
+        self, _text: str, _parameters: object
+    ) -> _RowMaterializationFailureAnswer:
+        """Return the answer that faults during row materialization."""
+        return _RowMaterializationFailureAnswer()
+
+    def close(self) -> None:
+        """Release the synthetic request lease."""
+
+
+class _RowMaterializationFailureSnapshot:
+    """A published generation whose reader faults after execution starts."""
+
+    def pinned(self) -> tuple[object, UUID, str, datetime]:
+        """Lease one failing connection with complete provenance."""
+        return _RowMaterializationFailureConnection(), uuid4(), "row-fault", _PAST
+
+
+def test_row_materialization_fault_returns_an_empty_execution_error() -> None:
+    """An engine cursor fault never escapes or publishes partial rows."""
+    outcome = _cypher(_RowMaterializationFailureSnapshot()).query_cypher(
+        cypher="RETURN 1"
+    )
+    assert outcome.error_code == QueryErrorCode.EXECUTION_ERROR
+    assert outcome.termination_reason == "failed"
+    assert outcome.rows == ()
+    assert outcome.empty_result is True
+
+
 class _ConcurrentAnswer:
     """One scalar row for the mixed-tier timeout regression."""
 
