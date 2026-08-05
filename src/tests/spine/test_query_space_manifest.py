@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
 from rememberstack.spine.query_space import build_manifest
 from rememberstack.spine.query_space import build_matrix
@@ -196,6 +197,14 @@ def test_manifest_definitions_are_parse_trees_and_never_sql_text() -> None:
     views_schema = manifest["hash_members"]["views_schema"]
     assert isinstance(views_schema, dict)
     assert views_schema["definition_ast_serializer"] == SERIALIZER_VERSION
+    helpers = views_schema["authorization_helpers"]
+    assert isinstance(helpers, list)
+    assert [helper["qualified_name"] for helper in helpers] == [
+        helper.qualified_name for helper in AUTHORED_AUTHORIZATION_HELPERS.values()
+    ]
+    for helper in helpers:
+        assert isinstance(helper, dict)
+        assert helper["definition_ast"]["@"] == "ViewStmt"
     views = views_schema["views"]
     assert isinstance(views, list)
     for view in views:
@@ -283,11 +292,13 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     surfaces = matrix["surfaces"]
     assert isinstance(surfaces, list)
     names = {str(surface["name"]) for surface in surfaces if isinstance(surface, dict)}
-    # Every private helper is a surface, not just the survivor helper: the
-    # mention and citation helpers are where two deletion rules are defined,
-    # so their cells execute like a public relation's.
+    # Every authorization helper is a surface: the mention, fact, and citation
+    # helpers compile deletion rules, while the two survivor views are private
+    # merge machinery.
     assert names == {f"memory_v1.{contract.name}" for contract in VIEW_CONTRACTS} | {
+        "public.v_graph_survivor",
         "public.v_memory_entity_survivor",
+        "public.v_memory_fact_visible",
         "public.v_memory_mention_current_content",
         "public.v_memory_page_citation_visible",
     }
@@ -296,11 +307,11 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
         for surface in surfaces
         if isinstance(surface, dict) and not surface["caller_reachable"]
     ]
-    # All three helpers are unreachable to a caller; two of them additionally
+    # All five helpers are unreachable to a caller; three of them additionally
     # compile a deletion rule, so their cells execute rather than resting on
     # non-reachability alone.
-    assert len(private) == 3
-    assert sum(1 for surface in private if surface["compiles_deletion"]) == 2
+    assert len(private) == 5
+    assert sum(1 for surface in private if surface["compiles_deletion"]) == 3
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
     assert {target.target_id for target in deferred} == {

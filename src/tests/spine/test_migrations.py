@@ -104,6 +104,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_01_0022",
         "p9_02_0023",
         "p9_03_0024",
+        "p9_04_0025",
     )
     assert len(script.get_heads()) == 1
 
@@ -458,5 +459,58 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_03_0024"
+    assert head_before_noop == head_after_noop == "p9_04_0025"
     assert _inventory(database_url=database_url) == restored_inventory
+
+
+def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
+    """The correction migration must leave exact p9.03 metadata on downgrade."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+
+    def metadata() -> dict[str, tuple[str, str | None, str]]:
+        """Read corrected view metadata that the downgrade must restore."""
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                rows = connection.execute(
+                    text(
+                        "SELECT n.nspname, c.relname,"
+                        " pg_get_userbyid(c.relowner) AS owner,"
+                        " obj_description(c.oid, 'pg_class') AS comment,"
+                        " pg_get_viewdef(c.oid, true) AS definition"
+                        " FROM pg_class AS c"
+                        " JOIN pg_namespace AS n ON n.oid = c.relnamespace"
+                        " WHERE (n.nspname = 'public'"
+                        " AND c.relname IN"
+                        " ('v_graph_survivor', 'v_memory_entity_survivor'))"
+                        " OR (n.nspname = 'memory_v1'"
+                        " AND c.relname = 'identity_events_visible')"
+                    )
+                ).mappings()
+                return {
+                    f"{row['nspname']}.{row['relname']}": (
+                        str(row["owner"]),
+                        None if row["comment"] is None else str(row["comment"]),
+                        str(row["definition"]),
+                    )
+                    for row in rows
+                }
+        finally:
+            engine.dispose()
+
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p9_03_0024")
+    expected = metadata()
+    assert set(expected) == {
+        "memory_v1.identity_events_visible",
+        "public.v_graph_survivor",
+        "public.v_memory_entity_survivor",
+    }
+
+    try:
+        command.upgrade(config=config, revision="head")
+        command.downgrade(config=config, revision="p9_03_0024")
+        assert metadata() == expected
+    finally:
+        command.upgrade(config=config, revision="head")

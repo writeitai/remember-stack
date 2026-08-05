@@ -65,9 +65,6 @@ from pydantic import ConfigDict
 from sqlalchemy import Connection
 from sqlalchemy import text
 
-from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
-    PRIVATE_HELPER_VIEWS,
-)
 from rememberstack.spine.query_space.ast_serializer import SERIALIZER_VERSION
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
@@ -76,10 +73,13 @@ from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA_MAJOR
 from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS
 from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS_BY_NAME
+from rememberstack.spine.query_space.source_definitions import (
+    AUTHORED_AUTHORIZATION_HELPERS,
+)
 from rememberstack.spine.query_space.source_definitions import AUTHORED_VIEWS
 
 #: Identifier of this manifest document's own layout.
-MANIFEST_CONTRACT: Final = "memory_v1.manifest/1"
+MANIFEST_CONTRACT: Final = "memory_v1.manifest/2"
 
 #: The checked-in manifest that discovery serves and the schema gate compares.
 MANIFEST_PATH: Final = Path(__file__).with_name("memory_v1_manifest.json")
@@ -596,6 +596,13 @@ def _build_views_schema() -> dict[str, CanonicalValue]:
         "schema": QUERY_SPACE_SCHEMA,
         "schema_major": QUERY_SPACE_SCHEMA_MAJOR,
         "definition_ast_serializer": SERIALIZER_VERSION,
+        "authorization_helpers": [
+            {
+                "qualified_name": helper.qualified_name,
+                "definition_ast": helper.definition_ast,
+            }
+            for helper in AUTHORED_AUTHORIZATION_HELPERS.values()
+        ],
         "views": [_view_member(view=view) for view in declared_views()],
     }
 
@@ -652,7 +659,7 @@ def _build_annotations() -> dict[str, CanonicalValue]:
 
 
 def deployed_definitions(connection: Connection) -> dict[str, str]:
-    """Deparse every public view and private helper the database is running.
+    """Deparse every public view and authorization helper now deployed.
 
     `pg_get_viewdef` is the server's own printer, so two databases on the same
     server print the same definition the same way. That is what makes the
@@ -668,7 +675,7 @@ def deployed_definitions(connection: Connection) -> dict[str, str]:
             "   AND (n.nspname = :schema"
             "        OR (n.nspname = 'public' AND c.relname = ANY(:helpers)))"
         ),
-        {"schema": QUERY_SPACE_SCHEMA, "helpers": list(PRIVATE_HELPER_VIEWS)},
+        {"schema": QUERY_SPACE_SCHEMA, "helpers": list(AUTHORED_AUTHORIZATION_HELPERS)},
     ).mappings()
     return {str(row["name"]): " ".join(str(row["definition"]).split()) for row in rows}
 
