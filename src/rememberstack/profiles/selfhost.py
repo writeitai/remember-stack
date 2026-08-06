@@ -12,6 +12,7 @@ from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
+import psycopg
 from pydantic import Field
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
@@ -230,6 +231,27 @@ class SelfHostProfile:
             registry=RecipeRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
+        # Install the seventeen examples.* saved-query identities (idempotent).
+        # Not an Alembic migration: deployment seed DML lives in setup/bootstrap.
+        from rememberstack.spine.query_space.canonical import (  # noqa: PLC0415
+            surface_manifest_hash,
+        )
+        from rememberstack.spine.query_space.manifest import (  # noqa: PLC0415
+            build_hash_members,
+        )
+        from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
+            seed_shipped_examples,
+        )
+
+        with self._engine.connect() as sa_connection:
+            raw = sa_connection.connection.dbapi_connection
+            assert isinstance(raw, psycopg.Connection)
+            seed_shipped_examples(
+                connection=raw,
+                deployment_id=self._settings.deployment_id,
+                manifest_hash=surface_manifest_hash(build_hash_members()),
+            )
+            sa_connection.commit()
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
