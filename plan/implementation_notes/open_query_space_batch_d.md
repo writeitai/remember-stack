@@ -228,3 +228,21 @@ formatting and real engine comments removed, plus canonical LadybugDB logical
 parameter families. Different values of one logical type hash the same, while
 different logical types do not. This meets the audit identity contract without
 adding the parser that D82 rejects.
+
+## Post-review CI corrections
+
+The D48 artifact now marks `public.v_memory_fact_visible` applicable to the
+P2-edge deletion target; the executable matrix had proved the fact identifier
+was reachable there before deletion, so calling that cell inapplicable was an
+artifact error.
+
+`current_context` applies the same transaction-local planner bounds as the
+other coordinate-complete hydration paths. Its live evidence views expand a
+deep authorization tree, and leaving PostgreSQL free to reorder that tree can
+exhaust the server before the bounded query returns. This changes no membership
+or public result contract.
+
+Finally, LoCoMo full-v9 retains its exact v3 `question_context` descriptor and
+catalog hash. The live recipe is v4, but silently rolling a prepared v9
+protocol would make old and new runs look comparable. A later manifest-pinned
+protocol remains a distinct Batch F identity.

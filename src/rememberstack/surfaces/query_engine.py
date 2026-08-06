@@ -537,6 +537,13 @@ class QueryEngine:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
+            # The coordinate-complete live evidence views expand into a deep
+            # authorization tree. Preserve this bounded query's written order
+            # so PostgreSQL does not exhaust memory exploring equivalent plans.
+            connection.exec_driver_sql("SET LOCAL jit = off")
+            connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
             fact_rows = (
                 connection.execute(
                     _CONFIRM_CURRENT_FACTS,

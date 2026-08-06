@@ -1605,9 +1605,9 @@
       "target_id": "p2_edge"
     },
     {
-      "basis": "no_identifier_of_this_class",
-      "expectation": "public.v_memory_fact_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
-      "status": "not_applicable",
+      "basis": null,
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_fact_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
       "surface": "public.v_memory_fact_visible",
       "target_id": "p2_edge"
     },
@@ -1832,9 +1832,9 @@
   "contract": "memory_v1.d48_deletion_matrix/2",
   "schema": "memory_v1",
   "status_counts": {
-    "applicable": 71,
+    "applicable": 72,
     "deferred": 58,
-    "not_applicable": 132
+    "not_applicable": 131
   },
   "surface_count": 29,
   "surfaces": [
@@ -2174,6 +2174,7 @@
         "memory_v1.graph_edges_current",
         "memory_v1.graph_edges_visible_history",
         "memory_v1.page_evidence_visible",
+        "public.v_memory_fact_visible",
         "public.v_memory_page_citation_visible"
       ],
       "executed_in": "D",

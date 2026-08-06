@@ -32,6 +32,7 @@ from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
+from benchmarks.locomo.protocol import frozen_v9_tool_catalog
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.runner import _answer_one
@@ -61,9 +62,6 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
-from rememberstack.spine import CANONICAL_RECIPES
-from rememberstack.spine import GRAPH_RECIPES
-from rememberstack.surfaces.recipe_surface import recipe_descriptors
 from rememberstack.surfaces.sdk import MemoryClient
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
@@ -1541,10 +1539,7 @@ def _complete_readiness_payload() -> dict[str, object]:
 
 
 def _stock_tools() -> tuple[ToolDescriptor, ...]:
-    recipes = tuple(
-        sorted((*CANONICAL_RECIPES, *GRAPH_RECIPES), key=lambda recipe: recipe.name)
-    )
-    return recipe_descriptors(recipes=recipes)
+    return frozen_v9_tool_catalog()
 
 
 def test_ingest_forwards_and_records_assumed_utc_session_time(

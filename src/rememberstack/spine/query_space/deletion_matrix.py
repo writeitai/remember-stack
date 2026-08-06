@@ -403,6 +403,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.graph_edges_current",
             "memory_v1.graph_edges_visible_history",
             "memory_v1.page_evidence_visible",
+            "public.v_memory_fact_visible",
             "public.v_memory_page_citation_visible",
         ),
     ),
