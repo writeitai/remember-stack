@@ -15,7 +15,8 @@ is a query nobody has checked.
 Registry SQL can contain customer data — a WHERE clause naming a person is
 customer data — so the tables carry no dependency that would prevent a hard
 delete, and D74 purges the text while audit keeps only ids, hashes, actor, and
-action.
+action. Version *content* is immutable in PostgreSQL; only lifecycle fields
+may transition.
 """
 
 from alembic import op
@@ -105,13 +106,13 @@ CREATE TABLE saved_query_versions (
 );
 
 COMMENT ON TABLE saved_query_versions IS
-  'Immutable versions of a saved query. Each pins the surface_manifest_hash it was validated against; when that hash changes, active versions move to pending_revalidation in the same transaction that publishes the new hash, because a query validated against a surface that no longer exists is a query nobody has checked.';
+  'Immutable versions of a saved query. Content columns cannot change after insert; only lifecycle fields (status, validation, approver, assurance, supersession, pinned manifest hash) may transition. Each pins the surface_manifest_hash it was validated against.';
 
 COMMENT ON COLUMN saved_query_versions.validated_surface_manifest_hash IS
   'The exact surface this version was validated against. A version whose hash is not the current one is not executable until it has been revalidated.';
 
 COMMENT ON COLUMN saved_query_versions.assurance IS
-  'Who stands behind the meaning of the query. NULL means platform fact assurance; customer_authored and customer_reviewed do not raise the result grade above exploratory_tabular.';
+  'Who stands behind the meaning of the query. customer_authored is the draft default; customer_reviewed is set on activation of customer SQL; shipped_example is platform-written starting points. None of these raise the result grade above exploratory_tabular, and none means platform fact assurance.';
 
 CREATE INDEX saved_query_versions_by_status
   ON saved_query_versions (deployment_id, status);
@@ -127,20 +128,91 @@ ALTER TABLE saved_queries
   FOREIGN KEY (query_id, latest_version)
   REFERENCES saved_query_versions(query_id, version)
   DEFERRABLE INITIALLY DEFERRED;
+
+-- Authoritative current surface hash for this deployment. Publication and the
+-- active→pending_revalidation suspension write it in one transaction; a
+-- revalidation CAS conditions its transition on this row still holding the
+-- hash the validator observed when it started.
+CREATE TABLE saved_query_registry_state (
+  deployment_id           uuid PRIMARY KEY
+    REFERENCES deployments(deployment_id) ON DELETE CASCADE,
+  surface_manifest_hash   text NOT NULL,
+  updated_at              timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE saved_query_registry_state IS
+  'Per-deployment surface-manifest pin for saved-query revalidation CAS. publish_surface_hash writes the new hash and suspends active versions in the same transaction; revalidate succeeds only when this hash still equals the validator start hash.';
+
+-- Non-content governance evidence. Hard-delete purges customer SQL text but
+-- these rows remain: only IDs, hashes, actor, action, and timestamps.
+CREATE TABLE saved_query_audit (
+  audit_id      bigserial PRIMARY KEY,
+  deployment_id uuid NOT NULL,
+  query_id      uuid,
+  version       integer,
+  query_hash    text,
+  actor         text NOT NULL,
+  action        text NOT NULL,
+  old_hash      text,
+  new_hash      text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX saved_query_audit_by_deployment
+  ON saved_query_audit (deployment_id, created_at);
+
+COMMENT ON TABLE saved_query_audit IS
+  'Non-reversible, non-content audit of saved-query governance transitions (activate, disable, purge, publish, revalidate). Survives hard deletion of registry content.';
+
+-- Content columns are immutable. Lifecycle fields may transition.
+CREATE FUNCTION saved_query_versions_reject_content_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.sql IS DISTINCT FROM OLD.sql
+     OR NEW.query_hash IS DISTINCT FROM OLD.query_hash
+     OR NEW.parameter_schema IS DISTINCT FROM OLD.parameter_schema
+     OR NEW.declared_result_schema IS DISTINCT FROM OLD.declared_result_schema
+     OR NEW.declared_interpretation IS DISTINCT FROM OLD.declared_interpretation
+     OR NEW.query_space_major IS DISTINCT FROM OLD.query_space_major
+     OR NEW.default_limits IS DISTINCT FROM OLD.default_limits
+     OR NEW.author_principal IS DISTINCT FROM OLD.author_principal
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id
+     OR NEW.query_id IS DISTINCT FROM OLD.query_id
+     OR NEW.version IS DISTINCT FROM OLD.version
+  THEN
+    RAISE EXCEPTION
+      'saved_query_versions content is immutable after insert'
+      USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER saved_query_versions_immutable_content
+  BEFORE UPDATE ON saved_query_versions
+  FOR EACH ROW
+  EXECUTE FUNCTION saved_query_versions_reject_content_mutation();
 """
 
 _DROP = """
-ALTER TABLE saved_queries DROP CONSTRAINT saved_queries_latest_version_exists;
-DROP TABLE saved_query_versions;
-DROP TABLE saved_queries;
-DROP TYPE saved_query_assurance;
-DROP TYPE saved_query_origin;
-DROP TYPE saved_query_status;
+DROP TRIGGER IF EXISTS saved_query_versions_immutable_content ON saved_query_versions;
+DROP FUNCTION IF EXISTS saved_query_versions_reject_content_mutation();
+DROP TABLE IF EXISTS saved_query_audit;
+DROP TABLE IF EXISTS saved_query_registry_state;
+ALTER TABLE saved_queries DROP CONSTRAINT IF EXISTS saved_queries_latest_version_exists;
+DROP TABLE IF EXISTS saved_query_versions;
+DROP TABLE IF EXISTS saved_queries;
+DROP TYPE IF EXISTS saved_query_assurance;
+DROP TYPE IF EXISTS saved_query_origin;
+DROP TYPE IF EXISTS saved_query_status;
 """
 
 
 def upgrade() -> None:
-    """Create the registry tables, their enums, and their bounds."""
+    """Create the registry tables, immutability trigger, state pin, and audit."""
     op.execute(_DDL)
 
 

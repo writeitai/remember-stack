@@ -25,6 +25,7 @@ rather than to the platform's guarantees.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -39,6 +40,9 @@ import psycopg
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
+from rememberstack.surfaces.query_sandbox.limits import ANALYTICAL_LIMITS
+from rememberstack.surfaces.query_sandbox.limits import INTERACTIVE_LIMITS
+from rememberstack.surfaces.query_sandbox.limits import LimitTier
 
 if TYPE_CHECKING:
     from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
@@ -56,10 +60,39 @@ DRAFT_VERSIONS_MAX: Final = 200
 IDENTITIES_PER_HOUR_MAX: Final = 10
 DRAFT_BYTES_MAX: Final = 4 * 1024 * 1024
 
+#: The only supported query-space major for this build.
+SUPPORTED_QUERY_SPACE_MAJORS: Final = frozenset({"memory_v1"})
+
+#: JSON Schema scalar types admitted for parameter/result schemas (§5).
+_SCALAR_JSON_TYPES: Final = frozenset(
+    {"string", "number", "integer", "boolean", "null"}
+)
+
+#: Default-limit keys a save may declare, checked against §4.3 hard caps.
+_DEFAULT_LIMIT_KEYS: Final = frozenset(
+    {"max_rows", "statement_timeout_ms", "max_bytes"}
+)
+
 #: The states a version can be in, and which of them may run. A version that is
 #: not exactly `active` does not execute — including `pending_revalidation`,
 #: which exists precisely to stop execution.
 EXECUTABLE_STATUSES: Final = frozenset({"active"})
+
+#: Statuses from which an operator may activate with bound validation evidence.
+_ACTIVATABLE_STATUSES: Final = frozenset({"draft", "pending_revalidation"})
+
+#: Content-free governance actions retained after purge.
+AUDIT_ACTIONS: Final = frozenset(
+    {"activate", "disable", "purge", "publish", "revalidate", "validate", "deprecate"}
+)
+
+#: A small injected authority: True when the principal may activate/approve.
+ActivationAuthority = Callable[[str], bool]
+
+
+def default_deny_activation(_principal: str) -> bool:
+    """Default activation authority: nobody may activate until a policy is wired."""
+    return False
 
 
 @dataclass(frozen=True)
@@ -109,7 +142,10 @@ class SavedQueryDescription:
     sql: str
     query_hash: str
     parameter_schema: dict[str, Any]
+    declared_result_schema: dict[str, Any]
     declared_interpretation: str | None
+    query_space_major: str
+    default_limits: dict[str, Any]
     validated_surface_manifest_hash: str
     validation_report: dict[str, Any]
     author_principal: str
@@ -136,14 +172,24 @@ class SavedQueryRegistry:
     `connection` must already be scoped to the deployment: the connection IS
     the tenancy boundary here as everywhere else on this surface (§4.2), so
     nothing in this class takes a deployment from the caller.
+
+    `can_activate` is the small injected trusted authority for activation and
+    default-discoverable approval. The registry default-denies; the host wires
+    a deployment-operator or explicit-policy predicate.
     """
 
     def __init__(
-        self, *, connection: psycopg.Connection, deployment_id: UUID, manifest_hash: str
+        self,
+        *,
+        connection: psycopg.Connection,
+        deployment_id: UUID,
+        manifest_hash: str,
+        can_activate: ActivationAuthority | None = None,
     ) -> None:
         self._connection = connection
         self._deployment_id = deployment_id
         self._manifest_hash = manifest_hash
+        self._can_activate = can_activate or default_deny_activation
 
     # -- authoring ---------------------------------------------------------
 
@@ -155,26 +201,73 @@ class SavedQueryRegistry:
         sql: str,
         principal: str,
         parameter_schema: dict[str, Any] | None = None,
+        declared_result_schema: dict[str, Any] | None = None,
+        default_limits: dict[str, Any] | None = None,
+        query_space_major: str = "memory_v1",
         description: str | None = None,
         origin: str = "agent",
         declared_interpretation: str | None = None,
-        report: "ValidationReport | None" = None,
     ) -> SavedQueryVersion:
         """Write a new draft version, creating the identity if it is new.
 
         The SQL is validated against the same grammar an ad-hoc statement goes
-        through, and the version pins the manifest hash it was validated
-        against. Saving something that cannot be validated is refused here
-        rather than discovered by whoever runs it later.
+        through, and the version pins the manifest hash it was authored against.
+        Parameter/result schemas and default limits are checked before write.
+        Validation evidence is not accepted from the caller — only
+        `validate_version` may write a bound report from the stored SQL.
         """
         if len(sql.encode()) > SQL_BYTES_MAX:
             raise SandboxRejection(
-                code=QueryErrorCode.RESOURCE_LIMIT,
+                code=QueryErrorCode.QUOTA_EXCEEDED,
                 message=f"saved SQL is limited to {SQL_BYTES_MAX} bytes",
             )
+        if query_space_major not in SUPPORTED_QUERY_SPACE_MAJORS:
+            raise SandboxRejection(
+                code=QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+                message=(
+                    f"only {sorted(SUPPORTED_QUERY_SPACE_MAJORS)} are supported;"
+                    f" got {query_space_major!r}"
+                ),
+            )
+        params = validate_parameter_schema(parameter_schema or {})
+        results = validate_result_schema(declared_result_schema or {})
+        limits = validate_default_limits(default_limits or {})
         validated = validate_sql(sql)
+        if origin == "shipped_example":
+            # shipped_example assurance is platform-owned. Only the injected
+            # activation authority may assert it — an arbitrary agent cannot
+            # self-label a draft as a shipped example.
+            if not self._can_activate(principal):
+                raise SandboxRejection(
+                    code=QueryErrorCode.INVALID_PARAMETER,
+                    message=(
+                        "origin shipped_example requires activation authority;"
+                        " an agent cannot self-assert shipped-example assurance"
+                    ),
+                )
+            assurance = "shipped_example"
+        else:
+            assurance = "customer_authored"
+
+        # Serialize concurrent draft accounting against the registry-state row
+        # so two principals cannot race past the 4 MiB / identity ceilings.
+        # Also pins this instance to the DB-authoritative surface hash.
+        current_hash = self._require_authoritative_manifest(for_update=True)
         identity = self._identity(namespace=namespace, name=name)
-        self._check_quotas(principal=principal, sql=sql, identity=identity)
+        pending_meta = _draft_metadata_bytes(
+            description=description,
+            declared_interpretation=declared_interpretation,
+            parameter_schema=params,
+            declared_result_schema=results,
+            default_limits=limits,
+            validation_report={},
+        )
+        self._check_quotas(
+            principal=principal,
+            sql=sql,
+            pending_metadata_bytes=pending_meta,
+            identity=identity,
+        )
 
         if identity is None:
             query_id = uuid4()
@@ -200,25 +293,33 @@ class SavedQueryRegistry:
 
         self._connection.execute(
             b"INSERT INTO saved_query_versions (deployment_id, query_id, version,"
-            b" sql, query_hash, parameter_schema, declared_interpretation,"
-            b" query_space_major, validated_surface_manifest_hash, status,"
+            b" sql, query_hash, parameter_schema, declared_result_schema,"
+            b" declared_interpretation, query_space_major,"
+            b" validated_surface_manifest_hash, default_limits, status, assurance,"
             b" author_principal, validation_report)"
             b" VALUES (%(deployment)s, %(query)s, %(version)s, %(sql)s, %(hash)s,"
-            b" %(schema)s::jsonb, %(interpretation)s, 'memory_v1', %(manifest)s,"
-            b" 'draft', %(principal)s, %(report)s::jsonb)",
+            b" %(schema)s::jsonb, %(result_schema)s::jsonb, %(interpretation)s,"
+            b" %(major)s, %(manifest)s, %(limits)s::jsonb, 'draft', %(assurance)s,"
+            b" %(principal)s, '{}'::jsonb)",
             {
                 "deployment": str(self._deployment_id),
                 "query": str(query_id),
                 "version": version,
                 "sql": sql,
                 "hash": validated.query_hash,
-                "schema": _json(parameter_schema or {}),
+                "schema": _json(params),
+                "result_schema": _json(results),
                 "interpretation": declared_interpretation,
-                "manifest": self._manifest_hash,
+                "major": query_space_major,
+                "manifest": current_hash,
+                "limits": _json(limits),
+                "assurance": assurance,
                 "principal": principal,
-                "report": _json(report.as_json() if report else {}),
             },
         )
+        # latest_version tracks the newest *authored* version. Resolve and
+        # default discovery choose the active version separately so drafting
+        # v2 does not hide an active v1.
         self._connection.execute(
             b"UPDATE saved_queries SET latest_version = %(version)s"
             b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
@@ -235,28 +336,96 @@ class SavedQueryRegistry:
             name=name,
             sql=sql,
             query_hash=validated.query_hash,
-            parameter_schema=parameter_schema or {},
+            parameter_schema=params,
             status="draft",
-            validated_surface_manifest_hash=self._manifest_hash,
-            assurance=None,
+            validated_surface_manifest_hash=current_hash,
+            assurance=assurance,
         )
 
-    def activate(
-        self, *, query_id: UUID, version: int, approver: str, author: str
-    ) -> None:
-        """Make a version live. Only an operator may do this (§5).
+    def validate_version(
+        self,
+        *,
+        query_id: UUID,
+        version: int,
+        executor: QuerySandboxExecutor,
+        fixtures: Mapping[str, OperatorFixture | Sequence[object]],
+        principal: str = "validator",
+    ) -> ValidationReport:
+        """Run §5 fixtures on the stored immutable SQL and persist the report.
 
-        The approver is recorded, and may not be the author: a registry where
-        the person who wrote a query can also approve it has approvals that
-        attest to nothing.
+        Evidence is produced from the row's SQL through QuerySandboxExecutor,
+        bound to that row's query_hash and the DB-authoritative surface hash.
+        The executor's reported `surface_manifest_hash` must match that hash;
+        this method never relabels a mismatched executor with the constructor
+        value. A caller cannot hand-construct a passing report for unrelated SQL.
         """
-        if approver == author:
+        current_hash = self._require_authoritative_manifest(for_update=True)
+        row = self._connection.execute(
+            b"SELECT sql, query_hash, status FROM saved_query_versions"
+            b" WHERE deployment_id = %(deployment)s"
+            b"   AND query_id = %(query)s AND version = %(version)s",
+            {
+                "deployment": str(self._deployment_id),
+                "query": str(query_id),
+                "version": version,
+            },
+        ).fetchone()
+        if row is None:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
+                message="no such saved-query version",
+            )
+        report = validate_saved_sql(
+            executor=executor,
+            sql=row[0],
+            fixtures=fixtures,
+            principal=principal,
+            manifest_hash=current_hash,
+            query_hash=row[1],
+        )
+        self._connection.execute(
+            b"UPDATE saved_query_versions"
+            b" SET validation_report = %(report)s::jsonb,"
+            b"     validated_surface_manifest_hash = %(manifest)s"
+            b" WHERE deployment_id = %(deployment)s"
+            b"   AND query_id = %(query)s AND version = %(version)s",
+            {
+                "report": _json(report.as_json()),
+                "manifest": current_hash,
+                "deployment": str(self._deployment_id),
+                "query": str(query_id),
+                "version": version,
+            },
+        )
+        self._audit(
+            action="validate",
+            actor=principal,
+            query_id=query_id,
+            version=version,
+            query_hash=row[1],
+            old_hash=None,
+            new_hash=current_hash,
+        )
+        return report
+
+    def activate(self, *, query_id: UUID, version: int, approver: str) -> None:
+        """Make a version live. Only an authorized principal may do this (§5).
+
+        The stored `author_principal` is the authority for self-approval
+        refusal — the caller cannot claim a different author. Activation
+        requires bound validation evidence for the stored SQL and a legal
+        state transition (`draft` or `pending_revalidation` only). Activating
+        deprecates any prior active version of the same identity atomically.
+        """
+        if not self._can_activate(approver):
             raise SandboxRejection(
                 code=QueryErrorCode.INVALID_PARAMETER,
-                message="a saved query is approved by someone other than its author",
+                message="only a deployment operator or explicit policy may activate",
             )
+        current_hash = self._require_authoritative_manifest(for_update=True)
         row = self._connection.execute(
-            b"SELECT status, validated_surface_manifest_hash, validation_report"
+            b"SELECT status, validated_surface_manifest_hash, validation_report,"
+            b"       author_principal, query_hash, assurance"
             b" FROM saved_query_versions"
             b" WHERE deployment_id = %(deployment)s"
             b"   AND query_id = %(query)s AND version = %(version)s",
@@ -271,38 +440,91 @@ class SavedQueryRegistry:
                 code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
                 message="no such saved-query version",
             )
-        if row[1] != self._manifest_hash:
-            # Activating against a surface the version was not validated
-            # against would publish exactly the claim this registry exists to
-            # prevent.
+        status, pinned_hash, raw_report, author, query_hash, assurance = row
+        if approver == author:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message="a saved query is approved by someone other than its author",
+            )
+        if status not in _ACTIVATABLE_STATUSES:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+                message=(
+                    f"a version in status {status!r} cannot be activated;"
+                    " only draft or pending_revalidation may transition to active"
+                ),
+            )
+        if pinned_hash != current_hash:
             raise SandboxRejection(
                 code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
                 message="this version was validated against a different surface",
             )
-        # §5: activation follows a validation that executed every fixture. A
-        # version whose report is absent or partial has not been checked, and
-        # activating it would publish something nobody verified while looking
-        # exactly like something somebody did.
-        report = row[2] if isinstance(row[2], dict) else {}
-        if not report.get("passed"):
+        report = raw_report if isinstance(raw_report, dict) else {}
+        if not _report_authorizes_activation(
+            report=report, query_hash=query_hash, manifest_hash=current_hash
+        ):
             raise SandboxRejection(
                 code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
                 message=(
-                    "this version has no passing validation report; every §5"
-                    " fixture must run before it can be activated"
+                    "this version has no bound passing validation report;"
+                    " every §5 fixture must run against the stored SQL before"
+                    " it can be activated"
                 ),
             )
-        self._connection.execute(
+        new_assurance = (
+            "shipped_example" if assurance == "shipped_example" else "customer_reviewed"
+        )
+        # Activate first and check rowcount so a concurrent status change
+        # cannot silently deprecate the old active while activating none.
+        cursor = self._connection.execute(
             b"UPDATE saved_query_versions"
-            b" SET status = 'active', approver_principal = %(approver)s"
+            b" SET status = 'active',"
+            b"     approver_principal = %(approver)s,"
+            b"     assurance = %(assurance)s::saved_query_assurance,"
+            b"     superseded_at = NULL"
             b" WHERE deployment_id = %(deployment)s"
-            b"   AND query_id = %(query)s AND version = %(version)s",
+            b"   AND query_id = %(query)s AND version = %(version)s"
+            b"   AND status = ANY(%(allowed)s)",
             {
                 "approver": approver,
+                "assurance": new_assurance,
+                "deployment": str(self._deployment_id),
+                "query": str(query_id),
+                "version": version,
+                "allowed": list(_ACTIVATABLE_STATUSES),
+            },
+        )
+        if cursor.rowcount != 1:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+                message=(
+                    "activation did not apply; the version status changed"
+                    " concurrently or is no longer activatable"
+                ),
+            )
+        # Deprecate any prior active version of this identity so resolve keeps
+        # exactly one executable version.
+        self._connection.execute(
+            b"UPDATE saved_query_versions"
+            b" SET status = 'deprecated', superseded_at = now()"
+            b" WHERE deployment_id = %(deployment)s"
+            b"   AND query_id = %(query)s"
+            b"   AND status = 'active'"
+            b"   AND version <> %(version)s",
+            {
                 "deployment": str(self._deployment_id),
                 "query": str(query_id),
                 "version": version,
             },
+        )
+        self._audit(
+            action="activate",
+            actor=approver,
+            query_id=query_id,
+            version=version,
+            query_hash=query_hash,
+            old_hash=pinned_hash,
+            new_hash=current_hash,
         )
 
     # -- execution ---------------------------------------------------------
@@ -310,36 +532,81 @@ class SavedQueryRegistry:
     def resolve(self, *, namespace: str, name: str) -> SavedQueryVersion:
         """The version `run_saved_query` would execute, or a stated refusal.
 
+        Resolve chooses the active version of the identity, not merely the
+        newest authored version — drafting v2 must not hide an active v1.
         Every refusal names its reason: not found, disabled, awaiting
-        revalidation, or incompatible. A caller who gets "no rows" from a query
-        that was silently not run cannot tell that from an empty answer.
+        revalidation, or incompatible.
         """
-        row = self._connection.execute(
-            b"SELECT q.query_id, v.version, q.namespace, q.name, v.sql,"
-            b" v.query_hash, v.parameter_schema, v.status,"
-            b" v.validated_surface_manifest_hash, v.assurance, q.disabled_at"
-            b" FROM saved_queries AS q"
-            b" JOIN saved_query_versions AS v"
-            b"   ON v.query_id = q.query_id AND v.version = q.latest_version"
-            b" WHERE q.deployment_id = %(deployment)s"
-            b"   AND q.namespace = %(namespace)s AND q.name = %(name)s",
+        identity = self._connection.execute(
+            b"SELECT query_id, disabled_at, latest_version FROM saved_queries"
+            b" WHERE deployment_id = %(deployment)s"
+            b"   AND namespace = %(namespace)s AND name = %(name)s",
             {
                 "deployment": str(self._deployment_id),
                 "namespace": namespace,
                 "name": name,
             },
         ).fetchone()
-        if row is None:
+        if identity is None:
             raise SandboxRejection(
                 code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
                 message=f"no saved query named {namespace}.{name}",
             )
-        if row[10] is not None:
+        query_id, disabled_at, latest_version = identity
+        if disabled_at is not None:
             raise SandboxRejection(
                 code=QueryErrorCode.SAVED_QUERY_DISABLED,
                 message=f"{namespace}.{name} is disabled",
             )
-        if row[7] == "pending_revalidation":
+
+        active = self._connection.execute(
+            b"SELECT v.version, v.sql, v.query_hash, v.parameter_schema, v.status,"
+            b" v.validated_surface_manifest_hash, v.assurance"
+            b" FROM saved_query_versions AS v"
+            b" WHERE v.deployment_id = %(deployment)s"
+            b"   AND v.query_id = %(query)s"
+            b"   AND v.status = 'active'"
+            b" ORDER BY v.version DESC"
+            b" LIMIT 1",
+            {"deployment": str(self._deployment_id), "query": str(query_id)},
+        ).fetchone()
+        if active is not None:
+            current_hash = self._require_authoritative_manifest()
+            if active[5] != current_hash:
+                raise SandboxRejection(
+                    code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
+                    message=(
+                        f"{namespace}.{name} was validated against another surface"
+                    ),
+                )
+            return SavedQueryVersion(
+                query_id=query_id,
+                version=active[0],
+                namespace=namespace,
+                name=name,
+                sql=active[1],
+                query_hash=active[2],
+                parameter_schema=active[3] if isinstance(active[3], dict) else {},
+                status=active[4],
+                validated_surface_manifest_hash=active[5],
+                assurance=active[6],
+            )
+
+        # No active version: report the latest authored status so the caller
+        # learns whether the work is draft, pending, broken, or deprecated.
+        latest = self._connection.execute(
+            b"SELECT v.status, v.validated_surface_manifest_hash"
+            b" FROM saved_query_versions AS v"
+            b" WHERE v.deployment_id = %(deployment)s"
+            b"   AND v.query_id = %(query)s AND v.version = %(version)s",
+            {
+                "deployment": str(self._deployment_id),
+                "query": str(query_id),
+                "version": latest_version,
+            },
+        ).fetchone()
+        status = latest[0] if latest else "draft"
+        if status == "pending_revalidation":
             raise SandboxRejection(
                 code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
                 message=(
@@ -347,30 +614,9 @@ class SavedQueryRegistry:
                     " current surface"
                 ),
             )
-        if row[7] not in EXECUTABLE_STATUSES:
-            raise SandboxRejection(
-                code=QueryErrorCode.SAVED_QUERY_DISABLED,
-                message=f"{namespace}.{name} is {row[7]} and does not execute",
-            )
-        if row[8] != self._manifest_hash:
-            # Belt and braces: publication moves versions to
-            # pending_revalidation, but a version that somehow reaches here
-            # against another surface still does not run.
-            raise SandboxRejection(
-                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
-                message=f"{namespace}.{name} was validated against another surface",
-            )
-        return SavedQueryVersion(
-            query_id=row[0],
-            version=row[1],
-            namespace=row[2],
-            name=row[3],
-            sql=row[4],
-            query_hash=row[5],
-            parameter_schema=row[6],
-            status=row[7],
-            validated_surface_manifest_hash=row[8],
-            assurance=row[9],
+        raise SandboxRejection(
+            code=QueryErrorCode.SAVED_QUERY_DISABLED,
+            message=f"{namespace}.{name} is {status} and does not execute",
         )
 
     # -- discovery ---------------------------------------------------------
@@ -389,7 +635,8 @@ class SavedQueryRegistry:
         clauses = [
             b"q.deployment_id = %(deployment)s",
             b"q.disabled_at IS NULL",
-            b"v.version = q.latest_version",
+            b"v.deployment_id = q.deployment_id",
+            b"v.query_id = q.query_id",
         ]
         params: dict[str, object] = {"deployment": str(self._deployment_id)}
         if namespace is not None:
@@ -400,6 +647,16 @@ class SavedQueryRegistry:
         else:
             clauses.append(b"v.status = %(status)s")
             params["status"] = status
+            if status == "draft":
+                # For draft listing, show the latest draft version per identity
+                # rather than every historical draft row.
+                clauses.append(
+                    b"v.version = ("
+                    b" SELECT max(v2.version) FROM saved_query_versions AS v2"
+                    b" WHERE v2.deployment_id = v.deployment_id"
+                    b"   AND v2.query_id = v.query_id"
+                    b"   AND v2.status = 'draft')"
+                )
         where = b" AND ".join(clauses)
         rows = self._connection.execute(
             b"SELECT q.query_id, q.namespace, q.name, v.version, v.status,"
@@ -408,7 +665,7 @@ class SavedQueryRegistry:
             b" FROM saved_queries AS q"
             b" JOIN saved_query_versions AS v ON v.query_id = q.query_id"
             b"  AND v.deployment_id = q.deployment_id"
-            b" WHERE " + where + b" ORDER BY q.namespace, q.name",
+            b" WHERE " + where + b" ORDER BY q.namespace, q.name, v.version",
             params,
         ).fetchall()
         return tuple(
@@ -432,24 +689,25 @@ class SavedQueryRegistry:
     ) -> SavedQueryDescription:
         """One immutable version: parameters, validation state, and hashes.
 
-        Omitting `version` describes the identity's latest version. Drafts are
-        describeable when asked for by name — description is not the same as
-        default discovery listing — so an operator can inspect what an agent
-        drafted before activating it.
+        Omitting `version` prefers the active version when one exists, else
+        the newest authored version. Drafts are describeable when asked for by
+        name so an operator can inspect what an agent drafted before activating.
         """
         if version is None:
             row = self._connection.execute(
                 b"SELECT q.query_id, q.namespace, q.name, v.version, v.status,"
                 b" q.description, q.origin, v.assurance, v.sql, v.query_hash,"
-                b" v.parameter_schema, v.declared_interpretation,"
+                b" v.parameter_schema, v.declared_result_schema,"
+                b" v.declared_interpretation, v.query_space_major, v.default_limits,"
                 b" v.validated_surface_manifest_hash, v.validation_report,"
                 b" v.author_principal, v.approver_principal"
                 b" FROM saved_queries AS q"
                 b" JOIN saved_query_versions AS v"
-                b"   ON v.query_id = q.query_id AND v.version = q.latest_version"
-                b"  AND v.deployment_id = q.deployment_id"
+                b"   ON v.query_id = q.query_id AND v.deployment_id = q.deployment_id"
                 b" WHERE q.deployment_id = %(deployment)s"
-                b"   AND q.namespace = %(namespace)s AND q.name = %(name)s",
+                b"   AND q.namespace = %(namespace)s AND q.name = %(name)s"
+                b" ORDER BY (v.status = 'active') DESC, v.version DESC"
+                b" LIMIT 1",
                 {
                     "deployment": str(self._deployment_id),
                     "namespace": namespace,
@@ -460,7 +718,8 @@ class SavedQueryRegistry:
             row = self._connection.execute(
                 b"SELECT q.query_id, q.namespace, q.name, v.version, v.status,"
                 b" q.description, q.origin, v.assurance, v.sql, v.query_hash,"
-                b" v.parameter_schema, v.declared_interpretation,"
+                b" v.parameter_schema, v.declared_result_schema,"
+                b" v.declared_interpretation, v.query_space_major, v.default_limits,"
                 b" v.validated_surface_manifest_hash, v.validation_report,"
                 b" v.author_principal, v.approver_principal"
                 b" FROM saved_queries AS q"
@@ -482,8 +741,10 @@ class SavedQueryRegistry:
                 message=f"no saved query named {namespace}.{name}"
                 + (f" version {version}" if version is not None else ""),
             )
-        report = row[13] if isinstance(row[13], dict) else {}
+        report = row[16] if isinstance(row[16], dict) else {}
         schema = row[10] if isinstance(row[10], dict) else {}
+        result_schema = row[11] if isinstance(row[11], dict) else {}
+        limits = row[14] if isinstance(row[14], dict) else {}
         return SavedQueryDescription(
             query_id=row[0],
             namespace=row[1],
@@ -496,24 +757,42 @@ class SavedQueryRegistry:
             sql=row[8],
             query_hash=row[9],
             parameter_schema=schema,
-            declared_interpretation=row[11],
-            validated_surface_manifest_hash=row[12],
+            declared_result_schema=result_schema,
+            declared_interpretation=row[12],
+            query_space_major=row[13],
+            default_limits=limits,
+            validated_surface_manifest_hash=row[15],
             validation_report=report,
-            author_principal=row[14],
-            approver_principal=row[15],
+            author_principal=row[17],
+            approver_principal=row[18],
         )
 
     # -- lifecycle ---------------------------------------------------------
 
-    def disable(self, *, query_id: UUID) -> None:
+    def disable(self, *, query_id: UUID, actor: str) -> None:
         """Take an identity out of service at admission time (§5)."""
         self._connection.execute(
             b"UPDATE saved_queries SET disabled_at = now()"
             b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
             {"deployment": str(self._deployment_id), "query": str(query_id)},
         )
+        self._connection.execute(
+            b"UPDATE saved_query_versions SET status = 'disabled'"
+            b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s"
+            b"   AND status = 'active'",
+            {"deployment": str(self._deployment_id), "query": str(query_id)},
+        )
+        self._audit(
+            action="disable",
+            actor=actor,
+            query_id=query_id,
+            version=None,
+            query_hash=None,
+            old_hash=None,
+            new_hash=None,
+        )
 
-    def purge(self, *, query_id: UUID) -> None:
+    def purge(self, *, query_id: UUID, actor: str) -> None:
         """Hard-delete an identity's text (D74).
 
         Registry SQL can contain customer data — a WHERE clause naming a person
@@ -521,6 +800,32 @@ class SavedQueryRegistry:
         it. What remains is the audit trail's ids, hashes, actor, and action,
         which contain none of it.
         """
+        versions = self._connection.execute(
+            b"SELECT version, query_hash, validated_surface_manifest_hash"
+            b" FROM saved_query_versions"
+            b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
+            {"deployment": str(self._deployment_id), "query": str(query_id)},
+        ).fetchall()
+        for version, query_hash, manifest_hash in versions:
+            self._audit(
+                action="purge",
+                actor=actor,
+                query_id=query_id,
+                version=version,
+                query_hash=query_hash,
+                old_hash=manifest_hash,
+                new_hash=None,
+            )
+        if not versions:
+            self._audit(
+                action="purge",
+                actor=actor,
+                query_id=query_id,
+                version=None,
+                query_hash=None,
+                old_hash=None,
+                new_hash=None,
+            )
         self._connection.execute(
             b"DELETE FROM saved_queries"
             b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
@@ -528,6 +833,82 @@ class SavedQueryRegistry:
         )
 
     # -- internals ---------------------------------------------------------
+
+    def _require_authoritative_manifest(self, *, for_update: bool = False) -> str:
+        """Return the deployment's DB-authoritative surface hash.
+
+        Initializes `saved_query_registry_state` only when absent. If a row
+        already exists with a hash other than this instance's constructor
+        value, fail closed — draft/validate/activate must never trust a stale
+        constructor hash over the database pin.
+        """
+        lock = b" FOR UPDATE" if for_update else b""
+        row = self._connection.execute(
+            b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+            b" WHERE deployment_id = %(deployment)s" + lock,
+            {"deployment": str(self._deployment_id)},
+        ).fetchone()
+        if row is None:
+            self._connection.execute(
+                b"INSERT INTO saved_query_registry_state"
+                b" (deployment_id, surface_manifest_hash)"
+                b" VALUES (%(deployment)s, %(manifest)s)"
+                b" ON CONFLICT (deployment_id) DO NOTHING",
+                {
+                    "deployment": str(self._deployment_id),
+                    "manifest": self._manifest_hash,
+                },
+            )
+            row = self._connection.execute(
+                b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+                b" WHERE deployment_id = %(deployment)s" + lock,
+                {"deployment": str(self._deployment_id)},
+            ).fetchone()
+        if row is None:
+            raise SandboxRejection(
+                code=QueryErrorCode.EXECUTION_ERROR,
+                message="saved-query registry state is unavailable",
+            )
+        current = str(row[0])
+        if current != self._manifest_hash:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
+                message=(
+                    "this registry instance is not bound to the deployment's"
+                    " current surface manifest hash"
+                ),
+            )
+        return current
+
+    def _audit(
+        self,
+        *,
+        action: str,
+        actor: str,
+        query_id: UUID | None,
+        version: int | None,
+        query_hash: str | None,
+        old_hash: str | None,
+        new_hash: str | None,
+    ) -> None:
+        """Persist non-content governance evidence for a transition."""
+        self._connection.execute(
+            b"INSERT INTO saved_query_audit"
+            b" (deployment_id, query_id, version, query_hash, actor, action,"
+            b"  old_hash, new_hash)"
+            b" VALUES (%(deployment)s, %(query)s, %(version)s, %(query_hash)s,"
+            b" %(actor)s, %(action)s, %(old_hash)s, %(new_hash)s)",
+            {
+                "deployment": str(self._deployment_id),
+                "query": str(query_id) if query_id is not None else None,
+                "version": version,
+                "query_hash": query_hash,
+                "actor": actor,
+                "action": action,
+                "old_hash": old_hash,
+                "new_hash": new_hash,
+            },
+        )
 
     def _identity(self, *, namespace: str, name: str) -> UUID | None:
         row = self._connection.execute(
@@ -558,7 +939,14 @@ class SavedQueryRegistry:
             )
         return version
 
-    def _check_quotas(self, *, principal: str, sql: str, identity: UUID | None) -> None:
+    def _check_quotas(
+        self,
+        *,
+        principal: str,
+        sql: str,
+        pending_metadata_bytes: int,
+        identity: UUID | None,
+    ) -> None:
         """Every §5 registry bound, refused by name when it is reached."""
         counts = self._connection.execute(
             b"SELECT"
@@ -574,19 +962,36 @@ class SavedQueryRegistry:
             b" (SELECT count(*) FROM saved_query_versions AS v"
             b"   WHERE v.deployment_id = %(deployment)s AND v.status = 'draft'"
             b"     AND v.author_principal = %(principal)s),"
-            b" (SELECT coalesce(sum(octet_length(v.sql)), 0)"
+            b" (SELECT coalesce(sum("
+            b"     octet_length(v.sql)"
+            b"     + octet_length(coalesce(v.parameter_schema::text, ''))"
+            b"     + octet_length(coalesce(v.declared_result_schema::text, ''))"
+            b"     + octet_length(coalesce(v.default_limits::text, ''))"
+            b"     + octet_length(coalesce(v.validation_report::text, ''))"
+            b"     + octet_length(coalesce(v.declared_interpretation, ''))"
+            b"   ), 0)"
             b"   FROM saved_query_versions AS v"
             b"   WHERE v.deployment_id = %(deployment)s AND v.status = 'draft'"
+            b"     AND v.author_principal = %(principal)s),"
+            b" (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
+            b"   FROM saved_queries AS q"
+            b"   JOIN saved_query_versions AS v"
+            b"     ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
+            b"   WHERE q.deployment_id = %(deployment)s"
+            b"     AND v.status = 'draft'"
             b"     AND v.author_principal = %(principal)s)",
             {"deployment": str(self._deployment_id), "principal": principal},
         ).fetchone()
         assert counts is not None
-        identities, per_hour, draft_identities, draft_versions, draft_bytes = counts
+        (
+            identities,
+            per_hour,
+            draft_identities,
+            draft_versions,
+            draft_version_bytes,
+            draft_description_bytes,
+        ) = counts
         new_identity = identity is None
-        # An identity that already has a draft version is already counted; a
-        # brand-new name would add one more draft identity to the principal.
-        # When the identity exists but none of its versions are draft for this
-        # principal, a new draft still adds that identity to the count.
         existing_draft_identity = False
         if identity is not None:
             existing_draft_identity = (
@@ -626,10 +1031,11 @@ class SavedQueryRegistry:
                     code=QueryErrorCode.QUOTA_EXCEEDED,
                     message=f"this principal may hold at most {limit} {what}",
                 )
-        # The ceiling includes the SQL about to be written. Checking only the
-        # bytes already stored would let a principal park just under the limit
-        # and then write an unbounded next draft.
-        if int(draft_bytes) + len(sql.encode()) > DRAFT_BYTES_MAX:
+        # Ceiling includes encoded SQL plus draft registry metadata about to
+        # be written, not only what is already stored.
+        pending = len(sql.encode()) + pending_metadata_bytes
+        already = int(draft_version_bytes) + int(draft_description_bytes)
+        if already + pending > DRAFT_BYTES_MAX:
             raise SandboxRejection(
                 code=QueryErrorCode.QUOTA_EXCEEDED,
                 message="this principal's drafts exceed their byte ceiling",
@@ -652,31 +1058,40 @@ def revalidate(
     query_id: UUID,
     version: int,
     started_against: str,
-    now_in_force: str,
-    fixtures_passed: bool,
+    executor: QuerySandboxExecutor,
+    fixtures: Mapping[str, OperatorFixture | Sequence[object]],
     minor_compatible: bool,
     actor: str,
 ) -> str:
     """Decide what a completed revalidation may do to a suspended version (§5).
 
-    The compare-and-swap is the point. A validator reads the manifest hash when
-    it starts and offers it back here; if the surface has moved again in the
-    meantime, the result describes a surface nobody is running and cannot
-    activate anything — the version stays suspended and waits for a fresh
-    validation. Without this, a slow validator could quietly re-activate a
-    version against a surface it never saw.
+    Loads the stored SQL and query hash, runs the operator-owned fixtures
+    through the real `QuerySandboxExecutor`, and binds the resulting report to
+    the DB-authoritative `started_against` hash. Fixture success comes only
+    from that execution — callers cannot pass a fabricated pass flag.
+    `minor_compatible` remains the compatibility decision; both it and a
+    passing bound report are required to restore `active`.
 
-    Restoration to `active` is allowed ONLY when the new manifest is
-    minor-compatible and every fixture passed. An incompatible major or a
-    failed fixture moves the version to `broken`, which is a statement that
-    someone must look at it rather than a state it can drift out of.
+    The compare-and-swap is database-authoritative: the transition succeeds
+    only when `started_against` is still the database's current hash and the
+    version is still `pending_revalidation`. A B validation cannot reactivate
+    after C was published while the version was already pending.
     """
-    if started_against != now_in_force:
+    state = connection.execute(
+        b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+        b" WHERE deployment_id = %(deployment)s"
+        b" FOR UPDATE",
+        {"deployment": str(deployment_id)},
+    ).fetchone()
+    current_hash = state[0] if state is not None else None
+    if current_hash is None or current_hash != started_against:
         raise SurfaceMoved(
             "the surface changed while this version was being revalidated"
         )
+
     row = connection.execute(
-        b"SELECT status FROM saved_query_versions"
+        b"SELECT status, query_hash, validated_surface_manifest_hash, sql"
+        b" FROM saved_query_versions"
         b" WHERE deployment_id = %(deployment)s"
         b"   AND query_id = %(query)s AND version = %(version)s",
         {"deployment": str(deployment_id), "query": str(query_id), "version": version},
@@ -687,24 +1102,40 @@ def revalidate(
             message="no such saved-query version",
         )
     if row[0] != "pending_revalidation":
-        # Only a suspended version is waiting for this answer.
         return str(row[0])
 
-    outcome = "active" if (minor_compatible and fixtures_passed) else "broken"
-    # The swap is conditional on the version still being suspended AND on the
-    # hash still being the one this validation ran against, so two validators
-    # racing cannot both win.
+    query_hash, old_manifest, sql = row[1], row[2], row[3]
+    report = validate_saved_sql(
+        executor=executor,
+        sql=sql,
+        fixtures=fixtures,
+        principal=actor,
+        manifest_hash=started_against,
+        query_hash=query_hash,
+    )
+    outcome = "active" if (minor_compatible and report.passed) else "broken"
+
     cursor = connection.execute(
-        b"UPDATE saved_query_versions"
+        b"UPDATE saved_query_versions AS v"
         b" SET status = %(status)s::saved_query_status,"
         b"     validated_surface_manifest_hash = %(manifest)s,"
-        b"     approver_principal = coalesce(approver_principal, %(actor)s)"
-        b" WHERE deployment_id = %(deployment)s"
-        b"   AND query_id = %(query)s AND version = %(version)s"
-        b"   AND status = 'pending_revalidation'",
+        b"     validation_report = %(report)s::jsonb,"
+        b"     approver_principal = CASE"
+        b"       WHEN %(status)s = 'active'"
+        b"       THEN coalesce(v.approver_principal, %(actor)s)"
+        b"       ELSE v.approver_principal END"
+        b" WHERE v.deployment_id = %(deployment)s"
+        b"   AND v.query_id = %(query)s AND v.version = %(version)s"
+        b"   AND v.status = 'pending_revalidation'"
+        b"   AND EXISTS ("
+        b"     SELECT 1 FROM saved_query_registry_state AS s"
+        b"     WHERE s.deployment_id = v.deployment_id"
+        b"       AND s.surface_manifest_hash = %(manifest)s"
+        b"   )",
         {
             "status": outcome,
-            "manifest": now_in_force,
+            "manifest": started_against,
+            "report": _json(report.as_json()),
             "actor": actor,
             "deployment": str(deployment_id),
             "query": str(query_id),
@@ -713,27 +1144,74 @@ def revalidate(
     )
     if cursor.rowcount != 1:
         raise SurfaceMoved("this version was changed while it was being revalidated")
+
+    connection.execute(
+        b"INSERT INTO saved_query_audit"
+        b" (deployment_id, query_id, version, query_hash, actor, action,"
+        b"  old_hash, new_hash)"
+        b" VALUES (%(deployment)s, %(query)s, %(version)s, %(query_hash)s,"
+        b" %(actor)s, 'revalidate', %(old_hash)s, %(new_hash)s)",
+        {
+            "deployment": str(deployment_id),
+            "query": str(query_id),
+            "version": version,
+            "query_hash": query_hash,
+            "actor": actor,
+            "old_hash": old_manifest,
+            "new_hash": started_against,
+        },
+    )
     return outcome
 
 
 def publish_surface_hash(
-    *, connection: psycopg.Connection, deployment_id: UUID, manifest_hash: str
+    *,
+    connection: psycopg.Connection,
+    deployment_id: UUID,
+    manifest_hash: str,
+    actor: str = "surface",
 ) -> int:
-    """Move every active version to `pending_revalidation`, atomically (§5).
+    """Publish a new surface hash and suspend active versions, atomically (§5).
 
-    This is the transition that must happen in the same transaction as making
-    a new `surface_manifest_hash` visible. Between the two there must be no
-    instant at which a version is executable while claiming validation against
-    a surface that has been replaced — so the caller runs both inside one
-    transaction and this function does not open its own.
-
-    Returns how many versions were suspended, which the caller audits.
+    Writes the deployment's authoritative hash into registry state and moves
+    every active version to `pending_revalidation` in the CALLER'S transaction.
+    Between the two there must be no instant at which a version is executable
+    while claiming validation against a surface that has been replaced.
     """
+    old = connection.execute(
+        b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+        b" WHERE deployment_id = %(deployment)s"
+        b" FOR UPDATE",
+        {"deployment": str(deployment_id)},
+    ).fetchone()
+    old_hash = old[0] if old is not None else None
+    connection.execute(
+        b"INSERT INTO saved_query_registry_state"
+        b" (deployment_id, surface_manifest_hash, updated_at)"
+        b" VALUES (%(deployment)s, %(manifest)s, now())"
+        b" ON CONFLICT (deployment_id) DO UPDATE"
+        b" SET surface_manifest_hash = EXCLUDED.surface_manifest_hash,"
+        b"     updated_at = now()",
+        {"deployment": str(deployment_id), "manifest": manifest_hash},
+    )
     cursor = connection.execute(
         b"UPDATE saved_query_versions SET status = 'pending_revalidation'"
         b" WHERE deployment_id = %(deployment)s AND status = 'active'"
         b"   AND validated_surface_manifest_hash <> %(manifest)s",
         {"deployment": str(deployment_id), "manifest": manifest_hash},
+    )
+    connection.execute(
+        b"INSERT INTO saved_query_audit"
+        b" (deployment_id, query_id, version, query_hash, actor, action,"
+        b"  old_hash, new_hash)"
+        b" VALUES (%(deployment)s, NULL, NULL, NULL, %(actor)s, 'publish',"
+        b" %(old_hash)s, %(new_hash)s)",
+        {
+            "deployment": str(deployment_id),
+            "actor": actor,
+            "old_hash": old_hash,
+            "new_hash": manifest_hash,
+        },
     )
     return cursor.rowcount
 
@@ -742,6 +1220,208 @@ def _json(value: dict[str, Any]) -> str:
     import json
 
     return json.dumps(value, sort_keys=True)
+
+
+def _draft_metadata_bytes(
+    *,
+    description: str | None,
+    declared_interpretation: str | None,
+    parameter_schema: dict[str, Any],
+    declared_result_schema: dict[str, Any],
+    default_limits: dict[str, Any],
+    validation_report: dict[str, Any],
+) -> int:
+    """Byte contribution of draft registry metadata toward the §5 ceiling."""
+    parts = (
+        description or "",
+        declared_interpretation or "",
+        _json(parameter_schema),
+        _json(declared_result_schema),
+        _json(default_limits),
+        _json(validation_report),
+    )
+    return sum(len(part.encode()) for part in parts)
+
+
+def validate_parameter_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Accept only the short JSON Schema scalar/array shapes §5 allows."""
+    return _validate_json_schema_shape(schema, what="parameter_schema")
+
+
+def validate_result_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Accept only the short JSON Schema scalar/array shapes §5 allows."""
+    return _validate_json_schema_shape(schema, what="declared_result_schema")
+
+
+def validate_default_limits(limits: dict[str, Any]) -> dict[str, Any]:
+    """Verify declared defaults against the authoritative §4.3 hard caps."""
+    if not isinstance(limits, dict):
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message="default_limits must be an object",
+        )
+    unknown = set(limits) - _DEFAULT_LIMIT_KEYS
+    if unknown:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=f"default_limits has unknown keys: {sorted(unknown)}",
+        )
+    # Hard caps are the stricter interactive numbers for interactive defaults;
+    # analytical hard caps are the absolute ceiling a save may declare.
+    hard_rows = max(
+        INTERACTIVE_LIMITS.returned_rows_hard, ANALYTICAL_LIMITS.returned_rows_hard
+    )
+    hard_timeout = max(
+        INTERACTIVE_LIMITS.statement_timeout_ms_hard,
+        ANALYTICAL_LIMITS.statement_timeout_ms_hard,
+    )
+    hard_bytes = max(
+        INTERACTIVE_LIMITS.returned_bytes_hard, ANALYTICAL_LIMITS.returned_bytes_hard
+    )
+    cleaned: dict[str, Any] = {}
+    if "max_rows" in limits:
+        value = limits["max_rows"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message="default_limits.max_rows must be a positive integer",
+            )
+        if value > hard_rows:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"default_limits.max_rows exceeds hard cap {hard_rows}",
+            )
+        cleaned["max_rows"] = value
+    if "statement_timeout_ms" in limits:
+        value = limits["statement_timeout_ms"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message="default_limits.statement_timeout_ms must be a positive integer",
+            )
+        if value > hard_timeout:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=(
+                    "default_limits.statement_timeout_ms exceeds hard cap"
+                    f" {hard_timeout}"
+                ),
+            )
+        cleaned["statement_timeout_ms"] = value
+    if "max_bytes" in limits:
+        value = limits["max_bytes"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message="default_limits.max_bytes must be a positive integer",
+            )
+        if value > hard_bytes:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"default_limits.max_bytes exceeds hard cap {hard_bytes}",
+            )
+        cleaned["max_bytes"] = value
+    return cleaned
+
+
+def _validate_json_schema_shape(schema: dict[str, Any], *, what: str) -> dict[str, Any]:
+    """A short typed check: object of named scalar or array-of-scalar fields."""
+    if not isinstance(schema, dict):
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER, message=f"{what} must be an object"
+        )
+    if not schema:
+        return {}
+    # Two accepted shapes:
+    # 1) {"type": "object", "properties": {...}, "required": [...]}?
+    # 2) a bare properties map {name: {"type": ...}, ...}
+    if schema.get("type") == "object" or "properties" in schema:
+        if schema.get("type") not in (None, "object"):
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"{what}.type must be 'object' when properties are declared",
+            )
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"{what}.properties must be an object",
+            )
+        cleaned_props = {
+            name: _validate_field_schema(field, what=f"{what}.properties.{name}")
+            for name, field in properties.items()
+        }
+        required = schema.get("required", [])
+        if required is not None and not isinstance(required, list):
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"{what}.required must be an array of property names",
+            )
+        if required:
+            for name in required:
+                if name not in cleaned_props:
+                    raise SandboxRejection(
+                        code=QueryErrorCode.INVALID_PARAMETER,
+                        message=f"{what}.required names unknown property {name!r}",
+                    )
+        out: dict[str, Any] = {"type": "object", "properties": cleaned_props}
+        if required:
+            out["required"] = list(required)
+        return out
+    # Bare map of field schemas.
+    return {
+        name: _validate_field_schema(field, what=f"{what}.{name}")
+        for name, field in schema.items()
+    }
+
+
+def _validate_field_schema(field: object, *, what: str) -> dict[str, Any]:
+    if not isinstance(field, dict) or "type" not in field:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=f"{what} must be a schema object with a type",
+        )
+    field_type = field["type"]
+    if isinstance(field_type, list):
+        if not field_type or any(t not in _SCALAR_JSON_TYPES for t in field_type):
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"{what}.type must be scalar or an array of scalars",
+            )
+        return {"type": list(field_type)}
+    if field_type in _SCALAR_JSON_TYPES:
+        return {"type": field_type}
+    if field_type == "array":
+        items = field.get("items")
+        if not isinstance(items, dict) or items.get("type") not in _SCALAR_JSON_TYPES:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=f"{what}.items must declare a scalar type",
+            )
+        return {"type": "array", "items": {"type": items["type"]}}
+    raise SandboxRejection(
+        code=QueryErrorCode.INVALID_PARAMETER,
+        message=(
+            f"{what}.type must be a JSON Schema scalar, array-of-scalar,"
+            f" or object properties map; got {field_type!r}"
+        ),
+    )
+
+
+def _report_authorizes_activation(
+    *, report: dict[str, Any], query_hash: str, manifest_hash: str
+) -> bool:
+    """True only when the stored report is bound and fully passing."""
+    if not report.get("passed"):
+        return False
+    if report.get("query_hash") != query_hash:
+        return False
+    if report.get("manifest_hash") != manifest_hash:
+        return False
+    fixtures = report.get("fixtures")
+    if not isinstance(fixtures, dict):
+        return False
+    return all(fixtures.get(name) is True for name in VALIDATION_FIXTURES)
 
 
 #: The seventeen `examples.*` names §3.1 maps and §5 ships. They carry
@@ -788,10 +1468,12 @@ class ValidationReport:
     so the report records which fixtures ran and what each concluded rather
     than a single pass/fail — "it validated" is not something a later reader
     can check, and a report that cannot be checked is a claim rather than
-    evidence.
+    evidence. The report is bound to the SQL's query_hash and the surface
+    manifest hash it ran against.
     """
 
     manifest_hash: str
+    query_hash: str
     fixtures: dict[str, bool]
     diagnostics: tuple[str, ...] = ()
 
@@ -804,6 +1486,7 @@ class ValidationReport:
         """The shape stored in `saved_query_versions.validation_report`."""
         return {
             "manifest_hash": self.manifest_hash,
+            "query_hash": self.query_hash,
             "fixtures": {
                 name: self.fixtures.get(name, False) for name in VALIDATION_FIXTURES
             },
@@ -870,6 +1553,8 @@ def validate_saved_sql(
     fixtures: Mapping[str, OperatorFixture | Sequence[object]],
     principal: str = "validator",
     manifest_hash: str | None = None,
+    query_hash: str | None = None,
+    tier: LimitTier = LimitTier.INTERACTIVE,
 ) -> ValidationReport:
     """Execute every §5 fixture through the real sandbox and record outcomes.
 
@@ -878,26 +1563,53 @@ def validate_saved_sql(
     `QuerySandboxExecutor.query_sql` (and a single safe EXPLAIN for
     diagnostics). Missing a required fixture class fails that class rather
     than silently skipping it. Parameter values never enter the SQL text.
+
+    The report is bound to the SQL's query_hash and the *authoritative*
+    surface manifest hash (the `manifest_hash` argument, or the executor's
+    own hash when omitted). EXPLAIN and every fixture result must report that
+    same `surface_manifest_hash`; a mismatched executor fails the evidence
+    rather than being relabeled.
+
+    `tier` selects the §4.3 limit column for the fixture runs (default
+    interactive). Complex multi-join bodies may need analytical entitlement
+    and the analytical tier for a realistic statement budget under the same
+    language and tenancy rules.
     """
-    report_hash = (
+    validated = validate_sql(sql)
+    bound_query_hash = query_hash if query_hash is not None else validated.query_hash
+    if query_hash is not None and query_hash != validated.query_hash:
+        raise SandboxRejection(
+            code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+            message="validation query_hash does not match the SQL being validated",
+        )
+    expected_hash = (
         manifest_hash
         if manifest_hash is not None
-        else getattr(executor, "_manifest_hash", "")
+        else str(getattr(executor, "_manifest_hash", "") or "")
     )
     outcomes: dict[str, bool] = {}
     diagnostics: list[str] = []
+    explain_matched = True
 
-    # Safe EXPLAIN first: diagnostics only. A plan failure does not by itself
-    # fail the report — the four fixtures are the gate.
+    def _manifest_matches(result: QueryResult) -> bool:
+        return result.surface_manifest_hash == expected_hash
+
     explain_parameters: tuple[object, ...] = ()
     if "positive" in fixtures:
         explain_parameters = _as_operator_fixture(
             kind="positive", value=fixtures["positive"]
         ).parameters
     explain = executor.explain_sql(
-        sql=sql, parameters=explain_parameters, principal=principal
+        sql=sql, parameters=explain_parameters, principal=principal, tier=tier
     )
-    if explain.error_code is not None:
+    if not _manifest_matches(explain):
+        explain_matched = False
+        diagnostics.append(
+            "explain: surface_manifest_hash mismatch"
+            f" (executor={explain.surface_manifest_hash!r},"
+            f" expected={expected_hash!r})"
+        )
+    elif explain.error_code is not None:
         diagnostics.append(
             f"explain: {explain.error_code.value}: {explain.error_message}"
         )
@@ -915,13 +1627,27 @@ def validate_saved_sql(
             parameters=fixture.parameters,
             max_rows=fixture.max_rows,
             principal=principal,
+            tier=tier,
         )
+        if not _manifest_matches(result):
+            outcomes[kind] = False
+            diagnostics.append(
+                f"{kind}: surface_manifest_hash mismatch"
+                f" (executor={result.surface_manifest_hash!r},"
+                f" expected={expected_hash!r})"
+            )
+            continue
+        if not explain_matched:
+            outcomes[kind] = False
+            diagnostics.append(f"{kind}: refused; EXPLAIN surface hash mismatched")
+            continue
         passed, note = _fixture_passed(fixture=fixture, outcome=result)
         outcomes[kind] = passed
         diagnostics.append(note)
 
     return ValidationReport(
-        manifest_hash=str(report_hash),
+        manifest_hash=str(expected_hash),
+        query_hash=bound_query_hash,
         fixtures=outcomes,
         diagnostics=tuple(diagnostics),
     )
