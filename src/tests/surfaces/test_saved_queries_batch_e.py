@@ -726,10 +726,14 @@ def test_validate_version_report_replacement_uses_postgres_jsonb_bytes(
             b"     AND v.author_principal = %(p)s)"
             b"  + (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
             b"   FROM saved_queries AS q"
-            b"   JOIN saved_query_versions AS v"
-            b"     ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
-            b"   WHERE q.deployment_id = %(d)s AND v.status = 'draft'"
-            b"     AND v.author_principal = %(p)s)"
+            b"   WHERE q.deployment_id = %(d)s"
+            b"     AND EXISTS ("
+            b"       SELECT 1 FROM saved_query_versions AS v"
+            b"       WHERE v.deployment_id = q.deployment_id"
+            b"         AND v.query_id = q.query_id"
+            b"         AND v.status = 'draft'"
+            b"         AND v.author_principal = %(p)s"
+            b"     ))"
             b"  + octet_length((%(report)s::jsonb)::text)"
             b"  - octet_length(('{}'::jsonb)::text)",
             {
@@ -768,6 +772,97 @@ def test_validate_version_report_replacement_uses_postgres_jsonb_bytes(
                 fixtures=_param_fixtures(),
             )
         assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        connection.rollback()
+
+
+def test_draft_byte_ceiling_counts_identity_description_once(
+    registry_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multi-version drafts count saved_queries.description once, not per version."""
+    import json
+
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        principal = f"desc_{uuid4().hex[:8]}"
+        reg = _registry(connection, actor=principal)
+        name = _unique("desc")
+        description = "d" * 400
+        sql_v1 = "SELECT 1 AS n"
+        sql_v2 = "SELECT 2 AS n"
+        sql_v3 = "SELECT 3 AS n"
+        # Two draft versions of one identity with a large description.
+        reg.draft(namespace="team", name=name, sql=sql_v1, description=description)
+        reg.draft(
+            namespace="team",
+            name=name,
+            sql=sql_v2,
+            # Caller description is not stored on existing identities.
+            description="ignored-should-not-count" * 20,
+        )
+        # Exact stored total: version SQL/metadata twice + description once.
+        exact = connection.execute(
+            b"SELECT"
+            b"  (SELECT coalesce(sum("
+            b"     octet_length(v.sql)"
+            b"     + octet_length(coalesce(v.parameter_schema::text, ''))"
+            b"     + octet_length(coalesce(v.declared_result_schema::text, ''))"
+            b"     + octet_length(coalesce(v.default_limits::text, ''))"
+            b"     + octet_length(coalesce(v.validation_report::text, ''))"
+            b"     + octet_length(coalesce(v.declared_interpretation, ''))"
+            b"   ), 0)"
+            b"   FROM saved_query_versions AS v"
+            b"   WHERE v.deployment_id = %(d)s AND v.status = 'draft'"
+            b"     AND v.author_principal = %(p)s)"
+            b"  + (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
+            b"   FROM saved_queries AS q"
+            b"   WHERE q.deployment_id = %(d)s"
+            b"     AND EXISTS ("
+            b"       SELECT 1 FROM saved_query_versions AS v"
+            b"       WHERE v.deployment_id = q.deployment_id"
+            b"         AND v.query_id = q.query_id"
+            b"         AND v.status = 'draft'"
+            b"         AND v.author_principal = %(p)s"
+            b"     ))",
+            {"d": str(_DEPLOYMENT), "p": principal},
+        ).fetchone()
+        assert exact is not None
+        stored_total = int(exact[0])
+        # Pending v3: SQL + empty JSONB metadata only (no description write).
+        pending = connection.execute(
+            b"SELECT"
+            b"  octet_length(%(sql)s)"
+            b"  + octet_length(coalesce(%(description)s, ''))"
+            b"  + octet_length(coalesce(%(interpretation)s, ''))"
+            b"  + octet_length((%(params)s::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)",
+            {
+                "sql": sql_v3,
+                "description": None,
+                "interpretation": None,
+                "params": json.dumps({}, sort_keys=True),
+            },
+        ).fetchone()
+        assert pending is not None
+        pending_bytes = int(pending[0])
+        ceiling = stored_total + pending_bytes
+        # Exact boundary accepted: description counted once across versions.
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX",
+            ceiling,
+        )
+        reg.draft(namespace="team", name=name, sql=sql_v3, description="still-ignored")
+        # Another version beyond the accepted boundary must be refused.
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX",
+            ceiling - 1,
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            reg.draft(
+                namespace="team", name=name, sql="SELECT 4 AS n", description="x" * 50
+            )
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        assert "byte" in rejection.value.message
         connection.rollback()
 
 
@@ -1047,6 +1142,225 @@ def test_revalidate_does_not_accept_a_fabricated_pass_flag() -> None:
     assert "executor" in sig.parameters
     assert "fixtures" in sig.parameters
     assert "can_activate" in sig.parameters
+
+
+def test_validate_version_is_draft_only_for_pending_and_active(
+    registry_url: str,
+) -> None:
+    """validate_version refuses non-draft rows before writing evidence."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        # Pending revalidation: must not accept a report that activate could
+        # later treat as bound evidence, bypassing revalidate's compatibility.
+        query_id, version, _name = _suspended(connection, registry_url)
+        pending_reg = _registry(connection, actor="agent-1", manifest_hash=_OTHER_HASH)
+        with pytest.raises(SandboxRejection) as rejection:
+            pending_reg.validate_version(
+                query_id=query_id,
+                version=version,
+                executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+                fixtures=_param_fixtures(),
+            )
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
+        assert "only draft" in rejection.value.message
+        status = connection.execute(
+            b"SELECT status, validation_report FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(query_id), version),
+        ).fetchone()
+        assert status is not None and status[0] == "pending_revalidation"
+
+        # Active shipped-origin row: report must not be overwritten.
+        publish_surface_hash(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            manifest_hash=_HASH,
+            actor="operator-1",
+        )
+        author = _registry(connection, actor="operator-author")
+        saved = author.draft(
+            namespace="team",
+            name=_unique("active_ship"),
+            sql=_PARAM_SQL,
+            origin="shipped_example",
+        )
+        author.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        _registry(connection, actor="operator-1").activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        before = connection.execute(
+            b"SELECT status, validation_report FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(saved.query_id), saved.version),
+        ).fetchone()
+        assert before is not None and before[0] == "active"
+        original_report = before[1]
+        agent = _registry(connection, actor="agent-1")
+        with pytest.raises(SandboxRejection) as rejection:
+            agent.validate_version(
+                query_id=saved.query_id,
+                version=saved.version,
+                executor=_sandbox_executor(registry_url),
+                fixtures=_param_fixtures(),
+            )
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
+        assert "only draft" in rejection.value.message
+        after = connection.execute(
+            b"SELECT status, validation_report FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(saved.query_id), saved.version),
+        ).fetchone()
+        assert after is not None and after[0] == "active"
+        assert after[1] == original_report
+        connection.rollback()
+
+
+def test_customer_cannot_revalidate_platform_owned_shipped_examples(
+    registry_url: str,
+) -> None:
+    """Default-denied customer revalidation cannot break or restore shipped examples."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        # Platform-owned via origin=shipped_example (same rule as examples.*).
+        author = _registry(connection, actor="operator-author")
+        saved = author.draft(
+            namespace="team",
+            name=_unique("ship_reval"),
+            sql=_PARAM_SQL,
+            origin="shipped_example",
+        )
+        author.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        _registry(connection, actor="operator-1").activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        publish_surface_hash(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            manifest_hash=_OTHER_HASH,
+            actor="operator-1",
+        )
+        query_id, version = saved.query_id, saved.version
+        # Free function: default-deny refuses even the broken outcome.
+        with pytest.raises(SandboxRejection) as rejection:
+            revalidate(
+                connection=connection,
+                deployment_id=_DEPLOYMENT,
+                query_id=query_id,
+                version=version,
+                started_against=_OTHER_HASH,
+                executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+                fixtures=_param_fixtures(),
+                minor_compatible=False,
+                actor="customer-agent",
+            )
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        assert "platform-owned" in rejection.value.message
+        # Bound registry method: same refusal.
+        customer = _registry(
+            connection, actor="customer-agent", manifest_hash=_OTHER_HASH
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            customer.revalidate(
+                query_id=query_id,
+                version=version,
+                started_against=_OTHER_HASH,
+                executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+                fixtures=_param_fixtures(),
+                minor_compatible=False,
+            )
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        assert "platform-owned" in rejection.value.message
+        status = connection.execute(
+            b"SELECT status FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(query_id), version),
+        ).fetchone()
+        assert status is not None and status[0] == "pending_revalidation"
+
+        # Authorized platform actor may complete revalidation (broken + active).
+        platform = _registry(
+            connection, actor="operator-platform", manifest_hash=_OTHER_HASH
+        )
+        broken = platform.revalidate(
+            query_id=query_id,
+            version=version,
+            started_against=_OTHER_HASH,
+            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+            fixtures=_param_fixtures(),
+            minor_compatible=False,
+        )
+        assert broken == "broken"
+        connection.execute(
+            b"UPDATE saved_query_versions SET status = 'pending_revalidation'"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(query_id), version),
+        )
+        restored = platform.revalidate(
+            query_id=query_id,
+            version=version,
+            started_against=_OTHER_HASH,
+            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+            fixtures=_param_fixtures(),
+            minor_compatible=True,
+        )
+        assert restored == "active"
+        connection.rollback()
+
+
+def test_customer_failed_revalidation_still_breaks_ordinary_queries(
+    registry_url: str,
+) -> None:
+    """Ordinary customer queries may become broken without activation authority."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        # Suspend two ordinary identities under one surface move.
+        first = _draft_validate_activate(connection, registry_url, name=_unique())
+        second = _draft_validate_activate(connection, registry_url, name=_unique())
+        publish_surface_hash(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            manifest_hash=_OTHER_HASH,
+            actor="operator-1",
+        )
+        outcome = revalidate(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            query_id=first.query_id,
+            version=first.version,
+            started_against=_OTHER_HASH,
+            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+            fixtures=_param_fixtures(),
+            minor_compatible=False,
+            actor="untrusted-agent",
+        )
+        assert outcome == "broken"
+        status = connection.execute(
+            b"SELECT status FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(first.query_id), first.version),
+        ).fetchone()
+        assert status is not None and status[0] == "broken"
+        # Bound method path as well.
+        customer = _registry(
+            connection, actor="untrusted-agent", manifest_hash=_OTHER_HASH
+        )
+        outcome2 = customer.revalidate(
+            query_id=second.query_id,
+            version=second.version,
+            started_against=_OTHER_HASH,
+            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+            fixtures=_param_fixtures(),
+            minor_compatible=False,
+        )
+        assert outcome2 == "broken"
+        connection.rollback()
 
 
 def test_validate_version_does_not_block_publish_surface_hash(

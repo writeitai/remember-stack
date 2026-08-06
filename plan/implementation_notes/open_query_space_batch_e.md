@@ -18,11 +18,15 @@ deployment, 50 versions per identity, 64 KiB of SQL, and per-principal draft
 limits. The draft-byte ceiling counts encoded SQL **plus draft registry
 metadata** (description, interpretation, parameter/result schemas, default
 limits, validation report), including the pending write and any report
-replacement on `validate_version`. Pending and replacement JSONB sizes are
-measured in PostgreSQL with the same `octet_length(value::jsonb::text)`
-representation used for stored rows — not Python `json.dumps` byte counts.
-Concurrent drafts serialize on the per-deployment `saved_query_registry_state`
-row (`FOR UPDATE`) so two writers cannot race past the ceiling.
+replacement on `validate_version`. Description is identity-level
+(`saved_queries` once): draft and report-replacement accounting count it once
+per draft identity via EXISTS, not once per draft version; a later version of
+an existing identity does not count a caller `description` that is not stored.
+Pending and replacement JSONB sizes are measured in PostgreSQL with the same
+`octet_length(value::jsonb::text)` representation used for stored rows — not
+Python `json.dumps` byte counts. Concurrent drafts serialize on the
+per-deployment `saved_query_registry_state` row (`FOR UPDATE`) so two writers
+cannot race past the ceiling.
 
 Registry mutations that take a `query_id` also filter by `deployment_id`. The
 connection remains the physical tenancy boundary; the column filter is defense
@@ -53,7 +57,11 @@ at transition:
 Restoration to `active` requires minor-compatibility, every fixture passing via
 real executor execution of stored SQL (no caller-supplied pass flag), **and**
 the same bound-actor `can_activate` policy as first activation (default-deny).
-Anything else is `broken` (or refused when activation authority is missing).
+For ordinary customer identities, a failed or incompatible revalidation becomes
+`broken` without activation authority. Platform-owned identities
+(`namespace=examples` or `origin=shipped_example`) require activation authority
+for **any** revalidation transition — including `broken` — so a default-denied
+customer path cannot disable platform examples and force a silent reseed.
 Prefer `SavedQueryRegistry.revalidate`; the free function accepts the same
 `can_activate` predicate. The new validation report is bound to the
 authoritative start hash and stored, and the transition is audited.
@@ -83,13 +91,16 @@ imply platform fact assurance.
 ## Validation evidence is bound and authoritative
 
 `validate_version` is the only path that writes a validation report for
-customer drafts. It loads the stored immutable SQL, runs the four §5 fixtures
-through `QuerySandboxExecutor` with bound parameters (plus safe EXPLAIN
-diagnostics) **without** holding the publication lock, then lock/re-reads and
-CAS-persists a report bound to `query_hash` + `manifest_hash`. Before a draft
-report is written, its stored size is accounted under the same per-principal
-4 MiB draft-byte ceiling (replacing any current report) using PostgreSQL JSONB
-text sizes; exceeding the ceiling returns `quota_exceeded`. Activation rejects
+customer drafts, and it is **draft-only**: non-draft statuses are refused
+before EXPLAIN/fixtures run, and the persistence CAS requires
+`status = 'draft'` so a concurrent lifecycle move cannot write. It loads the
+stored immutable SQL, runs the four §5 fixtures through
+`QuerySandboxExecutor` with bound parameters (plus safe EXPLAIN diagnostics)
+**without** holding the publication lock, then lock/re-reads and CAS-persists
+a report bound to `query_hash` + `manifest_hash`. Before a draft report is
+written, its stored size is accounted under the same per-principal 4 MiB
+draft-byte ceiling (replacing any current report) using PostgreSQL JSONB text
+sizes; exceeding the ceiling returns `quota_exceeded`. Activation rejects
 unbound, misbound, or partial reports. Status transitions to `active` are
 allowed only from `draft` or `pending_revalidation` — never from `broken`,
 `deprecated`, or `disabled` via stale evidence.
@@ -147,8 +158,8 @@ metadata cannot drift from the bodies.
 idempotently installs all seventeen as registry identities under
 `namespace=examples` with `origin`/`assurance=shipped_example`, discoverable
 and non-default, resolvable through the registry. The `examples` namespace is
-platform-owned: customer `draft` refuses it, and disable/purge refuse
-shipped-example identities. An idempotent seed match verifies
+platform-owned: customer `draft` refuses it, and disable/purge/revalidate
+refuse shipped-example identities without activation authority. An idempotent seed match verifies
 `origin=shipped_example`, `assurance=shipped_example`, matching active body
 hash, and that the identity is not disabled. A non-shipped collision or a
 disabled shipped identity fails closed (no hijack, relabel, or silent

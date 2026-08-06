@@ -294,8 +294,12 @@ class SavedQueryRegistry:
         identity = self._identity(namespace=namespace, name=name)
         if identity is not None:
             self._reject_customer_mutation_of_shipped(query_id=identity, action="draft")
+        # Description lives on `saved_queries` once per identity. A later
+        # version of an existing identity does not store a new description, so
+        # a caller-supplied value must not count toward the draft-byte ceiling.
+        pending_description = description if identity is None else None
         pending_meta = self._pending_draft_metadata_bytes(
-            description=description,
+            description=pending_description,
             declared_interpretation=declared_interpretation,
             parameter_schema=params,
             declared_result_schema=results,
@@ -390,27 +394,32 @@ class SavedQueryRegistry:
         executor: QuerySandboxExecutor,
         fixtures: Mapping[str, OperatorFixture | Sequence[object]],
     ) -> ValidationReport:
-        """Run §5 fixtures on the stored immutable SQL and persist the report.
+        """Run §5 fixtures on a draft and persist bound validation evidence.
 
-        Evidence is produced from the row's SQL through QuerySandboxExecutor,
-        bound to that row's query_hash and the DB-authoritative surface hash.
-        The executor's reported `surface_manifest_hash` must match that hash;
-        this method never relabels a mismatched executor with the constructor
-        value. A caller cannot hand-construct a passing report for unrelated SQL.
+        Only `draft` versions accept a validation report through this path.
+        Active, pending, broken, and other lifecycle states refuse before
+        fixtures run so a suspended version cannot bypass revalidation's
+        `minor_compatible` decision, and an active shipped report cannot be
+        overwritten. Evidence is produced from the row's SQL through
+        QuerySandboxExecutor, bound to that row's query_hash and the
+        DB-authoritative surface hash. The executor's reported
+        `surface_manifest_hash` must match that hash; this method never
+        relabels a mismatched executor with the constructor value.
 
-        When the version is still a draft, the new stored report is accounted
-        under the same per-principal 4 MiB draft-byte ceiling (replacing any
-        current report) before it is written.
+        The new stored report is accounted under the same per-principal 4 MiB
+        draft-byte ceiling (replacing any current report) before it is written.
 
         Protocol matches revalidation: capture the authoritative hash without
         holding the publication lock, run EXPLAIN/fixtures unlocked, then
         lock / re-read / CAS at persistence so `publish_surface_hash` is not
-        blocked and stale evidence is never written as current.
+        blocked and stale evidence is never written as current. Persistence
+        CAS requires `status = 'draft'` so a concurrent lifecycle move cannot
+        write.
         """
         # Capture-at-start: no FOR UPDATE — publication must remain unblocked.
         start_hash = self._require_authoritative_manifest(for_update=False)
         row = self._connection.execute(
-            b"SELECT sql, query_hash"
+            b"SELECT sql, query_hash, status"
             b" FROM saved_query_versions"
             b" WHERE deployment_id = %(deployment)s"
             b"   AND query_id = %(query)s AND version = %(version)s",
@@ -425,7 +434,15 @@ class SavedQueryRegistry:
                 code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
                 message="no such saved-query version",
             )
-        sql, query_hash = row
+        sql, query_hash, status = row
+        # Refuse non-draft before expensive EXPLAIN/fixture execution.
+        if status != "draft":
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+                message=(
+                    f"only draft versions may be validated; this version is {status!r}"
+                ),
+            )
         # Unlocked execution: EXPLAIN and fixtures do not hold the state lock.
         report = validate_saved_sql(
             executor=executor,
@@ -473,12 +490,21 @@ class SavedQueryRegistry:
                 code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
                 message="this version changed while it was being validated",
             )
-        if cur_status == "draft":
-            self._check_draft_report_quota(
-                principal=str(cur_author),
-                existing_report=cur_report if isinstance(cur_report, dict) else {},
-                new_report=report_json,
+        if cur_status != "draft":
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+                message=(
+                    f"only draft versions may be validated;"
+                    f" this version is {cur_status!r}"
+                ),
             )
+        self._check_draft_report_quota(
+            principal=str(cur_author),
+            existing_report=cur_report if isinstance(cur_report, dict) else {},
+            new_report=report_json,
+        )
+        # CAS specifically on draft: a concurrent lifecycle transition must not
+        # write a report onto pending/active/broken rows.
         cursor = self._connection.execute(
             b"UPDATE saved_query_versions"
             b" SET validation_report = %(report)s::jsonb,"
@@ -486,7 +512,7 @@ class SavedQueryRegistry:
             b" WHERE deployment_id = %(deployment)s"
             b"   AND query_id = %(query)s AND version = %(version)s"
             b"   AND query_hash = %(query_hash)s"
-            b"   AND status = %(status)s"
+            b"   AND status = 'draft'"
             b"   AND EXISTS ("
             b"     SELECT 1 FROM saved_query_registry_state AS s"
             b"     WHERE s.deployment_id = saved_query_versions.deployment_id"
@@ -499,7 +525,6 @@ class SavedQueryRegistry:
                 "query": str(query_id),
                 "version": version,
                 "query_hash": query_hash,
-                "status": cur_status,
             },
         )
         if cursor.rowcount != 1:
@@ -1124,8 +1149,12 @@ class SavedQueryRegistry:
         """Revalidate a pending version under this registry's bound authority.
 
         Restoration to `active` uses the same bound actor and `can_activate`
-        policy as first activation (default-deny). Marking a version `broken`
-        does not require activation authority. Protocol: capture → unlocked
+        policy as first activation (default-deny). For ordinary customer
+        queries, marking a version `broken` does not require activation
+        authority. Platform-owned `examples.*` / `origin=shipped_example`
+        identities require activation authority for any revalidation
+        transition (including `broken`), so a customer path cannot disable
+        and silently reseed platform examples. Protocol: capture → unlocked
         fixture execution → lock / re-read / CAS at transition.
         """
         return _revalidate_version(
@@ -1347,13 +1376,18 @@ class SavedQueryRegistry:
             b"   FROM saved_query_versions AS v"
             b"   WHERE v.deployment_id = %(deployment)s AND v.status = 'draft'"
             b"     AND v.author_principal = %(principal)s),"
+            # Description is identity-level (saved_queries once). Count each
+            # draft identity once — never once per draft version.
             b" (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
             b"   FROM saved_queries AS q"
-            b"   JOIN saved_query_versions AS v"
-            b"     ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
             b"   WHERE q.deployment_id = %(deployment)s"
-            b"     AND v.status = 'draft'"
-            b"     AND v.author_principal = %(principal)s)",
+            b"     AND EXISTS ("
+            b"       SELECT 1 FROM saved_query_versions AS v"
+            b"       WHERE v.deployment_id = q.deployment_id"
+            b"         AND v.query_id = q.query_id"
+            b"         AND v.status = 'draft'"
+            b"         AND v.author_principal = %(principal)s"
+            b"     ))",
             {"deployment": str(self._deployment_id), "principal": principal},
         ).fetchone()
         assert counts is not None
@@ -1425,7 +1459,8 @@ class SavedQueryRegistry:
         """Account a draft validation-report write under the 4 MiB ceiling.
 
         The draft-byte sum already includes the current report; the pending
-        write replaces it, so only the delta is added. Must be called while
+        write replaces it, so only the delta is added. Description is counted
+        once per draft identity (not once per version). Must be called while
         holding the per-deployment registry-state lock (same authority as draft).
         """
         counts = self._connection.execute(
@@ -1443,11 +1478,14 @@ class SavedQueryRegistry:
             b"     AND v.author_principal = %(principal)s),"
             b" (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
             b"   FROM saved_queries AS q"
-            b"   JOIN saved_query_versions AS v"
-            b"     ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
             b"   WHERE q.deployment_id = %(deployment)s"
-            b"     AND v.status = 'draft'"
-            b"     AND v.author_principal = %(principal)s)",
+            b"     AND EXISTS ("
+            b"       SELECT 1 FROM saved_query_versions AS v"
+            b"       WHERE v.deployment_id = q.deployment_id"
+            b"         AND v.query_id = q.query_id"
+            b"         AND v.status = 'draft'"
+            b"         AND v.author_principal = %(principal)s"
+            b"     ))",
             {"deployment": str(self._deployment_id), "principal": principal},
         ).fetchone()
         assert counts is not None
@@ -1490,7 +1528,12 @@ def _revalidate_version(
 
     Restoration to `active` requires `can_activate(actor)` — the same
     principal class as first activation. Default-deny when no policy is
-    wired. Marking `broken` does not require activation authority.
+    wired. For ordinary customer queries, marking `broken` does not require
+    activation authority. Platform-owned shipped identities
+    (`namespace=examples` or `origin=shipped_example`) require activation
+    authority for *any* revalidation transition, including `broken`, so a
+    default-denied customer path cannot disable platform examples and force
+    a silent reseed.
     """
     # Capture-at-start: no FOR UPDATE — publication must remain unblocked.
     state = connection.execute(
@@ -1520,6 +1563,25 @@ def _revalidate_version(
         return str(row[0])
 
     query_hash, old_manifest, sql = row[1], row[2], row[3]
+    identity = connection.execute(
+        b"SELECT namespace, origin FROM saved_queries"
+        b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
+        {"deployment": str(deployment_id), "query": str(query_id)},
+    ).fetchone()
+    platform_owned = identity is not None and (
+        identity[0] == EXAMPLES_NAMESPACE or identity[1] == "shipped_example"
+    )
+    # Refuse platform-owned transitions before fixtures when the bound actor
+    # lacks activation authority — any outcome would mutate a shipped identity.
+    if platform_owned and not can_activate(actor):
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=(
+                "revalidating a platform-owned shipped example requires"
+                " activation authority; copy it into a customer namespace"
+                " instead"
+            ),
+        )
     # Unlocked execution: EXPLAIN and fixtures do not hold the state lock.
     report = validate_saved_sql(
         executor=executor,
@@ -1621,7 +1683,9 @@ def revalidate(
     Prefer `SavedQueryRegistry.revalidate` when a host already holds a bound
     registry. This free function is the same protocol with an explicit actor
     and the same default-deny activation policy as the registry: restoration
-    to `active` requires `can_activate(actor)`.
+    to `active` requires `can_activate(actor)`. Platform-owned shipped
+    identities require activation authority for any transition (including
+    `broken`).
 
     Protocol (capture → unlocked execution → CAS at transition):
 
