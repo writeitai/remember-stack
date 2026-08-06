@@ -3210,9 +3210,10 @@ paid noninferiority run a gate before adapter removal. The owner confirmed that
 no one uses the library and directed a clean implementation now. Analysis:
 `plan/analysis/open_query_space_clean_cutover.md`.
 
-**Consequences.** Bootstrap reconciles every recipe row outside the three-name
-allowlist, and registry reads enforce that allowlist, so old local seeds cannot
-keep exposing removed or custom tools. Full-v9 stays historical; any paid
+**Consequences.** Bootstrap atomically replaces each deployment's recipe rows
+with the three canonical descriptors, and registry reads pin their canonical
+versions, so old local seeds or same-name custom versions cannot replace or add
+tools. Full-v9 stays historical; any paid
 quality run over the shipping surface gets a new protocol identity and remains
 operator-invoked. Correctness fixtures for the three operations, per-request
 interface-shape checks, and the deploy/CI exact-definition comparator replace

@@ -6,9 +6,9 @@ misreport its grain never lands — the linter is the chain-level half of the
 D41 bar, the DB CHECK the enum half. Reads return only `status='active'`
 rows: those are what the MCP tool list, the CLI, and the API render from.
 
-Adding a query pattern is inserting a row here — never new code — which is
-exactly why a recipe can add no capability: the executor (surfaces) replays
-whatever chain the row carries, and nothing else.
+The shipping namespace is closed to the three assured operations. Bootstrap
+atomically replaces its deployment's rows with those canonical descriptors;
+saved query patterns live in the separate saved-query registry.
 """
 
 import json
@@ -46,17 +46,7 @@ class RecipeRegistry:
         with self._engine.begin() as connection:
             connection.execute(
                 _INSERT_RECIPE,
-                {
-                    "recipe_id": uuid4(),
-                    "deployment_id": deployment_id,
-                    "name": recipe.name,
-                    "description": recipe.description,
-                    "parameters": recipe.parameters,
-                    "chain": [step.model_dump(mode="json") for step in recipe.chain],
-                    "output_grain": recipe.output_grain.value,
-                    "answer_intent": recipe.answer_intent.value,
-                    "version": recipe.version,
-                },
+                _registration_values(deployment_id=deployment_id, recipe=recipe),
             )
 
     def active(self, *, deployment_id: UUID) -> tuple[Recipe, ...]:
@@ -73,32 +63,58 @@ class RecipeRegistry:
                 .mappings()
                 .all()
             )
-        return tuple(_recipe_from_row(row) for row in rows)
+        return tuple(
+            _recipe_from_row(row)
+            for row in rows
+            if int(str(row["version"])) == _ASSURED_OPERATION_VERSIONS[str(row["name"])]
+        )
 
     def by_name(self, *, deployment_id: UUID, name: str) -> Recipe | None:
-        """The latest active assured operation, or None for every other name."""
+        """The canonical active assured operation, or None for every other name."""
         if name not in _ASSURED_OPERATION_NAMES:
             return None
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
-                    _RECIPE_BY_NAME, {"deployment_id": deployment_id, "name": name}
+                    _RECIPE_BY_NAME,
+                    {
+                        "deployment_id": deployment_id,
+                        "name": name,
+                        "version": _ASSURED_OPERATION_VERSIONS[name],
+                    },
                 )
                 .mappings()
                 .one_or_none()
             )
         return None if row is None else _recipe_from_row(row)
 
-    def delete_except(self, *, deployment_id: UUID, names: tuple[str, ...]) -> int:
-        """Delete rows outside the closed assured-operation namespace."""
-        if not names:
-            return 0
+    def replace_all(self, *, deployment_id: UUID, recipes: tuple[Recipe, ...]) -> int:
+        """Atomically replace one deployment's closed operation catalog."""
+        for recipe in recipes:
+            lint_recipe(recipe)
         with self._engine.begin() as connection:
-            result = connection.execute(
-                _DELETE_OTHER_RECIPES,
-                {"deployment_id": deployment_id, "names": list(names)},
-            )
-        return int(result.rowcount or 0)
+            connection.execute(_DELETE_RECIPES, {"deployment_id": deployment_id})
+            for recipe in recipes:
+                connection.execute(
+                    _INSERT_RECIPE,
+                    _registration_values(deployment_id=deployment_id, recipe=recipe),
+                )
+        return len(recipes)
+
+
+def _registration_values(*, deployment_id: UUID, recipe: Recipe) -> dict[str, object]:
+    """Bind one typed recipe to the registry row written for it."""
+    return {
+        "recipe_id": uuid4(),
+        "deployment_id": deployment_id,
+        "name": recipe.name,
+        "description": recipe.description,
+        "parameters": recipe.parameters,
+        "chain": [step.model_dump(mode="json") for step in recipe.chain],
+        "output_grain": recipe.output_grain.value,
+        "answer_intent": recipe.answer_intent.value,
+        "version": recipe.version,
+    }
 
 
 def _recipe_from_row(row: RowMapping) -> Recipe:
@@ -155,16 +171,15 @@ _RECIPE_BY_NAME = text(
     SELECT {_RECIPE_COLUMNS}
     FROM retrieval_recipes
     WHERE deployment_id = :deployment_id AND name = :name AND status = 'active'
-    ORDER BY version DESC
+      AND version = :version
     LIMIT 1
     """  # noqa: S608 — _RECIPE_COLUMNS is a module constant, not user input
 )
 
-_DELETE_OTHER_RECIPES = text(
+_DELETE_RECIPES = text(
     """
     DELETE FROM retrieval_recipes
     WHERE deployment_id = :deployment_id
-      AND name <> ALL(CAST(:names AS text[]))
     """
 )
 
@@ -725,17 +740,16 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = tuple(
     if recipe.name in _ASSURED_OPERATION_NAMES
 )
 
+_ASSURED_OPERATION_VERSIONS = {
+    recipe.name: recipe.version for recipe in CANONICAL_RECIPES
+}
+
 
 def seed_canonical_recipes(*, registry: RecipeRegistry, deployment_id: UUID) -> int:
     """Reconcile and register the three assured operations (idempotent).
 
-    Every other recipe row is deleted so neither a pre-cutover stock adapter
-    nor an ad-hoc recipe can become a fourth tool. Customer saved queries are
-    a separate registry and are untouched.
+    The deployment's catalog is replaced so neither a pre-cutover stock adapter
+    nor a same-name custom version can replace or add a tool. Customer saved
+    queries are a separate registry and are untouched.
     """
-    registry.delete_except(
-        deployment_id=deployment_id, names=tuple(sorted(_ASSURED_OPERATION_NAMES))
-    )
-    for recipe in CANONICAL_RECIPES:
-        registry.register(deployment_id=deployment_id, recipe=recipe)
-    return len(CANONICAL_RECIPES)
+    return registry.replace_all(deployment_id=deployment_id, recipes=CANONICAL_RECIPES)

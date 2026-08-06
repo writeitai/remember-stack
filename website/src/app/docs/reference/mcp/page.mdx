@@ -21,11 +21,11 @@ system believes the fact.
 
 (Internally these guarantees are decisions D41 and D54.)
 
-The MCP surface exposes the deployment's recipes as MCP tools. Recipe tools
-are not a second, hand-maintained list — **that tool list _is_ the recipe
-registry**. Adding a query pattern is adding a registry row; the tool list
-updates with no code change, exactly as the API's `/recipes` and the CLI's
-`remember query list` do. All three render the same recipe surface.
+The MCP surface exposes the deployment's three assured-operation registry rows
+as MCP tools. That namespace is closed: adding a query pattern means adding an
+`examples.*` saved query, not another tool. MCP, the API's `/recipes`, and the
+CLI's `remember query list` all render the same three registry-backed
+operations.
 
 When the open-query facade is composed, **nine static open-query
 infrastructure tools** are listed alongside recipe tools. Local and remote
@@ -39,8 +39,8 @@ demoted patterns are discoverable `examples.*` saved queries, not tools.
 
 ## `tools/list`
 
-Returns one tool per active recipe **plus** the nine open-query tools when
-composed:
+Returns the three assured-operation tools **plus** the nine open-query tools
+when composed:
 
 | Infrastructure tool | Purpose |
 | --- | --- |

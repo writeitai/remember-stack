@@ -134,8 +134,8 @@ Selected:
 - A caller written against one of the 17 recipe names will fail immediately.
   This is accepted because no such caller exists.
 - Existing databases that were locally seeded may still contain old active
-  rows. Bootstrap reconciles the closed recipe namespace to exactly the three
-  assured operations, and registry reads enforce that same allowlist.
+  rows. Bootstrap atomically replaces the closed recipe namespace with exactly
+  the three canonical descriptors, and registry reads pin those versions.
 - LoCoMo Full-v9 remains an immutable historical protocol. A future benchmark
   over the shipping catalog requires a new protocol identity and catalog hash;
   this change does not run or silently rewrite the paid benchmark.

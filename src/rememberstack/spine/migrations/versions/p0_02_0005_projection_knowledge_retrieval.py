@@ -341,9 +341,9 @@ COMMENT ON TABLE knowledge_refresh_queue IS
   'Debounced domain-trigger queue for the K compile driver (D12/D45), not D61 delivery state. Evidence batches route mechanically; authored_review surfaces D46 flags; this not_before coalesces triggers, while a materialized K job is delivered only from its unlaned processing_state row (D67).';
 CREATE INDEX ix_krefresh_runnable ON knowledge_refresh_queue (deployment_id, status, not_before) WHERE status = 'pending';
 -- ─────────────────────────────────────────────────────────────────────────
--- retrieval_recipes — frozen query plans as registry data (D50). One row per recipe version;
--- surfaces (API/CLI/MCP) render from status='active' rows. The CHECK is the mechanical half
--- of the grain linter (D41/D49); the registration linter validates the chain itself.
+-- retrieval_recipes — the closed assured-operation descriptor registry (D50/D83).
+-- Surfaces render only the canonical active version of the three assured names. The CHECK is
+-- the mechanical half of the grain linter (D41/D49); saved patterns use saved_queries instead.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE retrieval_recipes (
   recipe_id       uuid PRIMARY KEY,
@@ -361,7 +361,7 @@ CREATE TABLE retrieval_recipes (
   CHECK (answer_intent <> 'current_facts' OR output_grain = 'fact')  -- the D41 bar, mechanical
 );
 COMMENT ON TABLE retrieval_recipes IS
-  'D50: recipes as registry rows. MCP tools render from here; the eval harness measures per (name, version); the CHECK enforces the D41 grain bar mechanically (current_facts ⇒ fact grain), with chain-level validation in the registration linter. Adding a query pattern = inserting a row.';
+  'D50/D83: closed registry for the three assured operation descriptors rendered by API, CLI, and MCP. Bootstrap atomically reconciles the canonical rows; reusable query patterns belong in saved_queries. The CHECK enforces the D41 grain bar mechanically (current_facts ⇒ fact grain), with chain-level validation in the registration linter.';
 """
 _TABLES = (
     "projection_snapshots",

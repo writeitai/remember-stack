@@ -380,9 +380,10 @@ def test_the_api_and_surface_must_serve_one_deployment(deployment: _Deployment) 
         )
 
 
-def test_the_tool_list_has_one_entry_per_name(deployment: _Deployment) -> None:
-    """Two active versions of a recipe render as ONE tool — the latest, whose
-    schema is the one that executes (Codex finding on the tool namespace)."""
+def test_a_custom_version_cannot_replace_an_assured_operation(
+    deployment: _Deployment,
+) -> None:
+    """The closed operation namespace serves only the canonical version."""
     deployment.registry.register(
         deployment_id=_DEPLOYMENT_ID,
         recipe=Recipe(
@@ -400,7 +401,7 @@ def test_the_tool_list_has_one_entry_per_name(deployment: _Deployment) -> None:
     tool = next(
         d for d in deployment.surface.descriptors() if d.name == "resolve_entity"
     )
-    assert tool.description.startswith("v2")  # the latest version's schema
+    assert not tool.description.startswith("v2")
     # and the schema forbids stray properties (a typo is a schema violation)
     assert tool.input_schema["additionalProperties"] is False
 

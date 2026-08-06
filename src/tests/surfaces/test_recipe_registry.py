@@ -392,6 +392,51 @@ def test_seeding_is_idempotent_and_round_trips_every_chain(corpus: _Corpus) -> N
         assert by_name[canonical.name].answer_intent == canonical.answer_intent
 
 
+def test_seeding_replaces_conflicting_versions_of_an_assured_name(
+    corpus: _Corpus,
+) -> None:
+    """Bootstrap restores the closed canonical descriptor set atomically."""
+    registry = RecipeRegistry(engine=corpus.engine)
+    canonical = next(
+        recipe
+        for recipe in ASSURED_OPERATION_RECIPES
+        if recipe.name == "resolve_entity"
+    )
+    registry.register(
+        deployment_id=_DEPLOYMENT_ID,
+        recipe=canonical.model_copy(
+            update={"version": canonical.version + 10, "description": "Not canonical."}
+        ),
+    )
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE retrieval_recipes SET description = 'Poisoned canonical row'"
+                " WHERE deployment_id = :deployment AND name = :name"
+                " AND version = :version"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "name": canonical.name,
+                "version": canonical.version,
+            },
+        )
+
+    seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
+
+    assert {
+        recipe.name: recipe for recipe in registry.active(deployment_id=_DEPLOYMENT_ID)
+    } == {recipe.name: recipe for recipe in ASSURED_OPERATION_RECIPES}
+    with corpus.engine.connect() as connection:
+        assert connection.execute(
+            text(
+                "SELECT count(*) FROM retrieval_recipes"
+                " WHERE deployment_id = :deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one() == len(ASSURED_OPERATION_RECIPES)
+
+
 def test_seeding_removes_a_persisted_demoted_recipe(corpus: _Corpus) -> None:
     """A stale local stock row cannot keep a demoted adapter public."""
     registry = RecipeRegistry(engine=corpus.engine)

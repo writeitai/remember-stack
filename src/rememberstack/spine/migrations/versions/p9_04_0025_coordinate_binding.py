@@ -724,6 +724,7 @@ SELECT
     WHERE q.deployment_id = fact.deployment_id
       AND q.item_kind = 'support_withdrawn'
       AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'fact_kind' = fact.fact_kind
       AND q.candidate ->> 'fact_id' = fact.fact_id::text
   ) THEN 'withdrawn' ELSE 'current' END
 FROM v_memory_fact_visible AS fact

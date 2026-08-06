@@ -608,30 +608,33 @@ class CypherSandboxExecutor:
         live: dict[str, set[str]] = {"entity": set(), "relation": set()}
         try:
             with self._connect() as connection:
-                # One snapshot for the whole confirmation. Under READ COMMITTED
-                # each statement takes a new one, so a commit between the
-                # entity check and the relation check could keep a row whose
-                # two halves were never simultaneously live at the instant this
-                # result claims to have checked.
-                connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
-                self._verify_live_schema(connection=connection)
-                confirmed_at = connection.execute(
-                    "SELECT transaction_timestamp()"
-                ).fetchone()
-                for kind, identifiers in wanted.items():
-                    if not identifiers:
-                        continue
-                    live[kind] = {
-                        str(found[0])
-                        for found in connection.execute(
-                            _CONFIRM_SQL[kind].encode(),
-                            {
-                                "deployment": str(self._deployment_id),
-                                "ids": sorted(identifiers),
-                            },
-                        ).fetchall()
-                    }
-                connection.commit()
+                # The native transaction context emits BEGIN itself. Executing
+                # a SQL BEGIN through psycopg's default non-autocommit connection
+                # would first trigger psycopg's implicit BEGIN, leaving the
+                # requested isolation ineffective.
+                with connection.transaction():
+                    # One read-only snapshot for schema verification, the
+                    # disclosed instant, and every membership check.
+                    connection.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                    self._verify_live_schema(connection=connection)
+                    confirmed_at = connection.execute(
+                        "SELECT transaction_timestamp()"
+                    ).fetchone()
+                    for kind, identifiers in wanted.items():
+                        if not identifiers:
+                            continue
+                        live[kind] = {
+                            str(found[0])
+                            for found in connection.execute(
+                                _CONFIRM_SQL[kind].encode(),
+                                {
+                                    "deployment": str(self._deployment_id),
+                                    "ids": sorted(identifiers),
+                                },
+                            ).fetchall()
+                        }
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
@@ -662,10 +665,14 @@ class CypherSandboxExecutor:
         assert self._connect is not None
         try:
             with self._connect() as connection:
-                connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
-                self._verify_live_schema(connection=connection)
-                row = connection.execute("SELECT transaction_timestamp()").fetchone()
-                connection.commit()
+                with connection.transaction():
+                    connection.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                    self._verify_live_schema(connection=connection)
+                    row = connection.execute(
+                        "SELECT transaction_timestamp()"
+                    ).fetchone()
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,

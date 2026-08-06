@@ -26,6 +26,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy import TextClause
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
@@ -533,6 +534,8 @@ class QueryEngine:
             )
         )
         candidate_ids = nominated[:k]
+        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
+        totals: dict[tuple[UUID, str], int] = {}
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -568,25 +571,21 @@ class QueryEngine:
                 if fact_rows
                 else []
             )
-
-        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
-        totals: dict[tuple[UUID, str], int] = {}
-        for row in evidence_rows:
-            key = (row["fact_id"], str(row["stance"]))
-            evidence_by_fact_stance.setdefault(key, []).append(row)
-            totals[key] = int(row["evidence_total"])
-
-        backed_rows = tuple(
-            row
-            for row in fact_rows
-            if any(
-                evidence_by_fact_stance.get((row["fact_id"], stance))
-                for stance in _EVIDENCE_STANCES
+            for row in evidence_rows:
+                key = (row["fact_id"], str(row["stance"]))
+                evidence_by_fact_stance.setdefault(key, []).append(row)
+                totals[key] = int(row["evidence_total"])
+            backed_rows = tuple(
+                row
+                for row in fact_rows
+                if any(
+                    evidence_by_fact_stance.get((row["fact_id"], stance))
+                    for stance in _EVIDENCE_STANCES
+                )
             )
-        )
-        facts = self._enrich_current_context_facts(
-            deployment_id=deployment_id, rows=backed_rows
-        )
+            facts = self._enrich_current_context_facts(
+                connection=connection, deployment_id=deployment_id, rows=backed_rows
+            )
         selected = _select_fact_evidence(
             fact_ids=tuple(fact.fact_id for fact in facts),
             evidence_by_fact_stance=evidence_by_fact_stance,
@@ -2190,6 +2189,7 @@ class QueryEngine:
         facts: tuple[FactResult, ...],
         kind: str,
         support_by_fact: dict[UUID, str] | None = None,
+        connection: Connection | None = None,
     ) -> tuple[FactResult, ...]:
         """Attach the S23 contradiction block and the D54 support marker.
 
@@ -2202,6 +2202,15 @@ class QueryEngine:
         """
         if not facts:
             return facts
+        if connection is None:
+            with self._engine.connect() as own_connection:
+                return self._enrich_facts(
+                    connection=own_connection,
+                    deployment_id=deployment_id,
+                    facts=facts,
+                    kind=kind,
+                    support_by_fact=support_by_fact,
+                )
         groups = [
             fact.contradiction_group
             for fact in facts
@@ -2213,32 +2222,32 @@ class QueryEngine:
             for fact_id, support_state in (support_by_fact or {}).items()
             if support_state == "withdrawn"
         }
-        with self._engine.connect() as connection:
-            if groups:
-                for row in (
-                    connection.execute(
-                        _CONTRADICTION_MEMBERS[kind],
-                        {"deployment_id": deployment_id, "groups": groups},
-                    )
-                    .mappings()
-                    .all()
-                ):
-                    members_by_group.setdefault(row["contradiction_group"], []).append(
-                        dict(row)
-                    )
-            if support_by_fact is None:
-                withdrawn = {
-                    row["fact_id"]
-                    for row in connection.execute(
-                        _OPEN_SUPPORT_FLAGS,
-                        {
-                            "deployment_id": deployment_id,
-                            "fact_ids": [str(fact.fact_id) for fact in facts],
-                        },
-                    )
-                    .mappings()
-                    .all()
-                }
+        if groups:
+            for row in (
+                connection.execute(
+                    _CONTRADICTION_MEMBERS[kind],
+                    {"deployment_id": deployment_id, "groups": groups},
+                )
+                .mappings()
+                .all()
+            ):
+                members_by_group.setdefault(row["contradiction_group"], []).append(
+                    dict(row)
+                )
+        if support_by_fact is None:
+            withdrawn = {
+                row["fact_id"]
+                for row in connection.execute(
+                    _OPEN_SUPPORT_FLAGS,
+                    {
+                        "deployment_id": deployment_id,
+                        "fact_kind": kind,
+                        "fact_ids": [str(fact.fact_id) for fact in facts],
+                    },
+                )
+                .mappings()
+                .all()
+            }
         return tuple(
             self._enrich_one(
                 fact=fact, members_by_group=members_by_group, withdrawn=withdrawn
@@ -2247,7 +2256,11 @@ class QueryEngine:
         )
 
     def _enrich_current_context_facts(
-        self, *, deployment_id: UUID, rows: tuple[RowMapping, ...]
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        rows: tuple[RowMapping, ...],
     ) -> tuple[FactResult, ...]:
         """Build and enrich a mixed relation/observation fact nomination."""
         by_kind: dict[str, tuple[FactResult, ...]] = {
@@ -2260,6 +2273,7 @@ class QueryEngine:
             (kind, fact.fact_id): fact
             for kind, facts in by_kind.items()
             for fact in self._enrich_facts(
+                connection=connection,
                 deployment_id=deployment_id,
                 facts=facts,
                 kind=kind,
@@ -3760,6 +3774,7 @@ _OPEN_SUPPORT_FLAGS = text(
     WHERE deployment_id = :deployment_id
       AND item_kind = 'support_withdrawn'
       AND status IN ('pending', 'deferred')
+      AND candidate ->> 'fact_kind' = :fact_kind
       AND (candidate ->> 'fact_id') = ANY(:fact_ids)
     """
 )

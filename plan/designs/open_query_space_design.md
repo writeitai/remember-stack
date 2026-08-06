@@ -1329,9 +1329,10 @@ protect nobody while preserving duplicate invariant logic.
    discovery, allowlisted functions, saved-query governance, all 17
    `examples.*` queries, and exactly three assured operations.
 2. Seed and expose only `resolve_entity`, `question_context`, and
-   `current_context`. Bootstrap reconciles every other recipe row, and registry
-   reads enforce the same three-name allowlist, so an old local database cannot
-   keep removed or custom recipe tools active.
+   `current_context`. Bootstrap atomically replaces the deployment catalog with
+   those canonical descriptors, and registry reads pin their canonical
+   versions, so neither an old row nor a same-name custom version can replace
+   or add a tool.
 3. Keep the current HTTP, SDK, CLI, and MCP recipe transports for the three
    assured operations. A transport rename is not an authorization or
    simplicity requirement and is outside this cut.
