@@ -50,6 +50,7 @@ from uuid import uuid4
 
 import psycopg
 
+from rememberstack.spine.query_space.manifest import live_schema_differences_psycopg
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.spine.query_space.manifest import SchemaManifestError
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
@@ -613,6 +614,7 @@ class CypherSandboxExecutor:
                 # two halves were never simultaneously live at the instant this
                 # result claims to have checked.
                 connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+                self._verify_live_schema(connection=connection)
                 confirmed_at = connection.execute(
                     "SELECT transaction_timestamp()"
                 ).fetchone()
@@ -660,7 +662,10 @@ class CypherSandboxExecutor:
         assert self._connect is not None
         try:
             with self._connect() as connection:
-                row = connection.execute("SELECT statement_timestamp()").fetchone()
+                connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+                self._verify_live_schema(connection=connection)
+                row = connection.execute("SELECT transaction_timestamp()").fetchone()
+                connection.commit()
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
@@ -668,6 +673,18 @@ class CypherSandboxExecutor:
                 engine_fault_class="postgresql_confirmation",
             ) from error
         return row[0] if row else None
+
+    @staticmethod
+    def _verify_live_schema(*, connection: psycopg.Connection) -> None:
+        """Fail confirmation before reading a drifted ``memory_v1`` surface."""
+        if live_schema_differences_psycopg(connection=connection):
+            raise SandboxRejection(
+                code=QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+                message=(
+                    "the deployed memory_v1 schema does not match "
+                    "this server's checked-in manifest"
+                ),
+            )
 
     @staticmethod
     def _failure(

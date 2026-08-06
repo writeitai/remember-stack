@@ -33,9 +33,9 @@ MCP share the same schemas and strict argument validation. Shipped
 `examples.*` saved queries are **never** top-level tools — they run only
 through `run_saved_query`.
 
-During the dual-surface window the twenty compatibility recipe tools remain
-callable. Default cutover has not passed the paid noninferiority gate; no
-deprecation descriptions are attached yet.
+The recipe registry contains exactly the three assured operations:
+`resolve_entity`, `question_context`, and `current_context`. The seventeen
+demoted patterns are discoverable `examples.*` saved queries, not tools.
 
 ## `tools/list`
 
@@ -60,15 +60,15 @@ Recipe tools still render from the registry:
 {
   "tools": [
     {
-      "name": "relation_current",
-      "description": "Current relations matching a subject and optional predicate …",
+      "name": "current_context",
+      "description": "Current evidence-backed facts matching a question …",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "subject_entity_id": { "type": "string", "format": "uuid" },
-          "predicate": { "type": "string" }
+          "query": { "type": "string" },
+          "k": { "type": "integer", "minimum": 1, "maximum": 30 }
         },
-        "required": ["subject_entity_id"]
+        "required": ["query"]
       }
     }
   ]

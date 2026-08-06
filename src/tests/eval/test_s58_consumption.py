@@ -127,7 +127,7 @@ def skill_surface(database_engine: Engine) -> ConsumptionSkillSurface:
     registry.register(
         deployment_id=_DEPLOYMENT_ID,
         recipe=CANONICAL_RECIPES[0].model_copy(
-            update={"version": 2, "description": "Latest current relation recipe."}
+            update={"version": 2, "description": "Latest entity resolution operation."}
         ),
     )
     return ConsumptionSkillSurface(
@@ -165,8 +165,8 @@ def test_surface_renders_live_deployment_state_and_publishes_atomically(
     assert published.read_text(encoding="utf-8") == rendered.content
     assert "`migration`" in rendered.content
     assert "known empty: no K pages are registered" in rendered.content
-    assert "Latest current relation recipe." in rendered.content
-    assert rendered.content.count("`relation_current` —") == 1
+    assert "Latest entity resolution operation." in rendered.content
+    assert rendered.content.count("`resolve_entity` —") == 1
     assert not list(tmp_path.glob(".SKILL.md.*.tmp"))
 
 

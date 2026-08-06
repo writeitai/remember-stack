@@ -1,15 +1,15 @@
 # Batch C — the nomination bridge
 
 An agent writes `FROM semantic_claims($1, 20)` and gets confirmed rows. This
-note records how, and the places where the implementation departs from the
-design's letter.
+note records how. D83 subsequently reconciled the binding design with this
+as-built executor-side bridge.
 
-## The mechanism differs from §3.4, deliberately
+## The mechanism matches §3.4
 
-§3.4 describes the public functions as in-database `SECURITY DEFINER`
-functions owned by a bridge role. PostgreSQL cannot reach the Lance projection
-without an untrusted procedural language (`plpython3u`), which this product
-does not install and should not require operators to install.
+PostgreSQL cannot reach the Lance projection without an untrusted procedural
+language (`plpython3u`), which this product does not install and should not
+require operators to install. Section 3.4 therefore binds the executor-side
+bridge described here.
 
 So the bridge runs in the executor: the grammar already extracts each accepted
 invocation into its own `MATERIALIZED` CTE, and the executor resolves those
@@ -27,24 +27,20 @@ What this preserves, which is the part that matters:
 - failure is still total: an unreachable projection or a failed confirmation
   fails the statement rather than returning a partial answer.
 
-What it changes: the Lance-backed functions are not callable from a direct
+The Lance-backed functions are not callable from a direct
 `psql` session against the deployment database, only through the query
-surface. That is consistent with the rest of the design — the query role holds
-no privilege to call anything else either — but it is a real difference from
-the written contract and should be reflected in the design when §3.4 is next
-revised. `facts_as_of` is the exception: it needs no projection, so it ships as
+surface. That is part of the binding contract, not a compatibility promise.
+`facts_as_of` is the exception: it needs no projection, so it ships as
 an ordinary PostgreSQL function (migration `p9_03_0024`) and behaves the same
 either way.
 
-## Function attributes differ from §3.4, and less privilege is why
+## Function attributes use the least privilege
 
-§3.4 describes the SQL-callable functions as `SECURITY DEFINER` and
-`PARALLEL UNSAFE`. `facts_as_of` ships `SECURITY INVOKER` and `PARALLEL SAFE`:
+`facts_as_of` ships `SECURITY INVOKER` and `PARALLEL SAFE`:
 the query role already holds `SELECT` on `facts_visible_history`, so definer
 rights would add an escalation path that buys nothing, and the function reads
 views with no side effects, so forbidding parallelism would only make it
-slower. The `SECURITY DEFINER` language in §3.4 was written for a bridge that
-needed to reach objects the caller cannot; this function does not.
+slower. Section 3.4 now records these attributes directly.
 
 ## Signatures are enforced, not assumed
 

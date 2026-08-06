@@ -62,6 +62,7 @@ from typing import Any
 from typing import cast
 from typing import Final
 
+import psycopg
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from sqlalchemy import Connection
@@ -851,6 +852,53 @@ def introspect_live_schema(connection: Connection) -> LiveSchema:
     )
 
 
+def introspect_live_schema_psycopg(*, connection: psycopg.Connection) -> LiveSchema:
+    """Read the deployed query-space shape through a runtime psycopg connection."""
+    version_row = connection.execute(
+        "SELECT current_setting('server_version_num')::int / 10000"
+    ).fetchone()
+    if version_row is None:
+        raise SchemaManifestError("PostgreSQL did not report its major version")
+    relations = connection.execute(
+        "SELECT c.relname, obj_description(c.oid, 'pg_class') AS comment "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relkind = 'v' ORDER BY c.relname",
+        (QUERY_SPACE_SCHEMA,),
+    ).fetchall()
+    columns = connection.execute(
+        "SELECT c.relname, a.attname, "
+        "pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, "
+        "col_description(a.attrelid, a.attnum) AS comment "
+        "FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relkind = 'v' "
+        "AND a.attnum > 0 AND NOT a.attisdropped "
+        "ORDER BY c.relname, a.attnum",
+        (QUERY_SPACE_SCHEMA,),
+    ).fetchall()
+    by_view: dict[str, list[LiveColumn]] = {}
+    for view, column, column_type, comment in columns:
+        by_view.setdefault(str(view), []).append(
+            LiveColumn(
+                name=str(column),
+                type=str(column_type),
+                comment=None if comment is None else str(comment),
+            )
+        )
+    return LiveSchema(
+        postgresql_major=int(version_row[0]),
+        schema_name=QUERY_SPACE_SCHEMA,
+        views=tuple(
+            LiveView(
+                name=str(name),
+                comment=None if comment is None else str(comment),
+                columns=tuple(by_view.get(str(name), ())),
+            )
+            for name, comment in relations
+        ),
+    )
+
+
 def live_schema_differences(
     *, connection: Connection, manifest: dict[str, Any] | None = None
 ) -> tuple[str, ...]:
@@ -861,13 +909,31 @@ def live_schema_differences(
     reports are exactly what the checked-in manifest publishes.
     """
     published = manifest if manifest is not None else load_manifest()
+    return _live_schema_differences(
+        live=introspect_live_schema(connection), published=published
+    )
+
+
+def live_schema_differences_psycopg(
+    *, connection: psycopg.Connection, manifest: dict[str, Any] | None = None
+) -> tuple[str, ...]:
+    """Compare runtime psycopg catalog state with the checked-in manifest."""
+    published = manifest if manifest is not None else load_manifest()
+    return _live_schema_differences(
+        live=introspect_live_schema_psycopg(connection=connection), published=published
+    )
+
+
+def _live_schema_differences(
+    *, live: LiveSchema, published: dict[str, Any]
+) -> tuple[str, ...]:
+    """Compare one independently observed schema with the published shape."""
     views_schema = published["hash_members"]["views_schema"]
     expected_views = {
         str(view["name"]): view
         for view in views_schema["views"]
         if isinstance(view, dict)
     }
-    live = introspect_live_schema(connection)
     live_views = {view.name: view for view in live.views}
 
     problems: list[str] = []

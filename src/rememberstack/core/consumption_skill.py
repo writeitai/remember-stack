@@ -14,8 +14,8 @@ from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
-#: Bumped for the open-query dual-surface rewrite (Batch F).
-CONSUMPTION_SKILL_VERSION: Final = "2.0.0"
+#: Bumped for the integrated open-query rewrite (Batch F).
+CONSUMPTION_SKILL_VERSION: Final = "2.1.0"
 
 
 def render_consumption_skill(
@@ -136,10 +136,9 @@ def _honesty_warnings() -> str:
 
 
 def _assured_operations(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
-    """Name the three assured operations and any enabled compatibility recipes."""
+    """Name the complete three-operation assured surface."""
     core = {"resolve_entity", "question_context", "current_context"}
     enabled_core = [recipe for recipe in recipes if recipe.name in core]
-    others = [recipe for recipe in recipes if recipe.name not in core]
     if enabled_core:
         core_rows = "\n".join(
             f"- `{recipe.name}` — `{recipe.output_grain}` / "
@@ -152,29 +151,13 @@ def _assured_operations(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
             " `resolve_entity`, `question_context`, and `current_context`"
             " (D49 Envelope contracts)."
         )
-    other_note = (
-        "Compatibility recipe adapters remain callable during the dual-surface"
-        " measurement window; they are frozen Envelope shapes, not additional"
-        " platform intent operations. Choose by contract among open SQL/Cypher,"
-        " the three assured operations, and any enabled adapters. Discover"
-        " adapters with `remember query list` / `GET /recipes` / MCP recipe"
-        " tools when needed."
-        if others
-        else "No extra compatibility recipes are enabled on this deployment."
-    )
-    other_rows = ""
-    if others:
-        other_rows = "\n" + "\n".join(
-            f"- `{recipe.name}` — `{recipe.output_grain}` / "
-            f"`{recipe.answer_intent}`: {_one_line(value=recipe.description)}"
-            for recipe in others
-        )
     return (
-        "## Assured operations and compatibility adapters\n\n"
+        "## Assured operations\n\n"
         "Exactly three platform intent operations ship with D49 Envelope"
         " contracts:\n\n"
         f"{core_rows}\n\n"
-        f"{other_note}{other_rows}"
+        "All other shipped retrieval patterns are open SQL/Cypher or non-tool "
+        "`examples.*` saved queries; there is no compatibility recipe catalog."
     )
 
 
@@ -200,23 +183,16 @@ def _grains() -> str:
 
 def _testimony(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
     """Teach current testimony, historical opt-in, and withdrawn support."""
-    recipe_names = {recipe.name for recipe in recipes}
-    history_surface = (
-        "This deployment enables a `claims_as_of` compatibility adapter; use it "
-        "only for assertion history, never for current truth. The same history "
-        "shape is also available as `examples.claims_as_of` via "
-        "`run_saved_query` or as an inclusive overlap predicate in open SQL."
-        if "claims_as_of" in recipe_names
-        else "For assertion history, query `claims_visible_history` with an "
-        "inclusive overlap predicate; that never means what is true now."
-    )
+    del recipes
     return (
         "## Testimony currency and shaky support\n\n"
         "Claim search and claim views default to **current testimony**. Claims "
         "left behind by a living document's newer version or by a newer "
         "extraction generation are history, not current search results. "
         "`claims_as_of` means **what sources asserted as of a past system time**; "
-        f"it never means what is true now. {history_surface}\n\n"
+        "it never means what is true now. Use `examples.claims_as_of` through "
+        "`run_saved_query`, or query `claims_visible_history` with an inclusive "
+        "overlap predicate.\n\n"
         "A fact with `support: withdrawn` has lost all current-testimony support "
         "because a toolchain re-read did not re-derive it. It still stands while "
         "review is open, but it is shaky: report the caveat, inspect its transcript "

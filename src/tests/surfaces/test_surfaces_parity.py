@@ -233,11 +233,12 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
     api_names = {
         descriptor["name"] for descriptor in deployment.client.get("/recipes").json()
     }
-    assert mcp_names == registry_names
+    expected = {"resolve_entity", "question_context", "current_context"}
+    assert mcp_names == registry_names == expected
     assert api_names == registry_names
     # and the tool carries its JSON-Schema input contract
-    tool = next(t for t in tools if t["name"] == "relation_current")
-    assert tool["inputSchema"]["required"] == ["subject_entity_id"]
+    tool = next(t for t in tools if t["name"] == "resolve_entity")
+    assert tool["inputSchema"]["required"] == ["name"]
 
 
 def test_all_three_surfaces_return_the_same_envelope(
@@ -245,16 +246,13 @@ def test_all_three_surfaces_return_the_same_envelope(
 ) -> None:
     """Running one recipe through API, MCP, and the CLI returns the same
     envelope — all three render one RecipeSurface (parity is a property)."""
-    arguments: dict[str, object] = {
-        "subject_entity_id": str(deployment.alice),
-        "predicate": "works_for",
-    }
+    arguments: dict[str, object] = {"name": "Alice"}
 
     api_envelope = deployment.client.post(
-        "/recipe/relation_current", json=arguments
+        "/recipe/resolve_entity", json=arguments
     ).json()
 
-    mcp_result = deployment.mcp.call_tool(name="relation_current", arguments=arguments)
+    mcp_result = deployment.mcp.call_tool(name="resolve_entity", arguments=arguments)
     assert mcp_result["isError"] is False
     content = cast("list[dict[str, Any]]", mcp_result["content"])
     mcp_envelope = json.loads(content[0]["text"])
@@ -262,16 +260,14 @@ def test_all_three_surfaces_return_the_same_envelope(
     # the CLI is an httpx.Client of the API; the TestClient is exactly that,
     # routed in-process to the ASGI app
     exit_code = query_run(
-        client=deployment.client,
-        name="relation_current",
-        arg_pairs=[f"subject_entity_id={deployment.alice}", "predicate=works_for"],
+        client=deployment.client, name="resolve_entity", arg_pairs=["name=Alice"]
     )
     assert exit_code == 0
     cli_envelope = json.loads(capsys.readouterr().out)
 
     assert _payload(api_envelope) == _payload(mcp_envelope) == _payload(cli_envelope)
     # and it is the real answer
-    assert api_envelope["facts"][0]["label"] == "Alice works for Acme."
+    assert api_envelope["entities"][0]["canonical_name"] == "Alice"
 
 
 def test_the_cli_query_list_matches_the_api(
@@ -291,13 +287,11 @@ def test_unknown_recipe_and_missing_argument_are_typed_failures(
     """An unknown recipe is a 404 / MCP error; a missing required argument is a
     422 / MCP error — never a crash across the wire."""
     assert deployment.client.post("/recipe/teleport", json={}).status_code == 404
-    assert (
-        deployment.client.post("/recipe/relation_current", json={}).status_code == 422
-    )
+    assert deployment.client.post("/recipe/resolve_entity", json={}).status_code == 422
 
     unknown = deployment.mcp.call_tool(name="teleport", arguments={})
     assert unknown["isError"] is True
-    missing = deployment.mcp.call_tool(name="relation_current", arguments={})
+    missing = deployment.mcp.call_tool(name="resolve_entity", arguments={})
     assert missing["isError"] is True
 
 
@@ -342,19 +336,16 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
 ) -> None:
     """A wrong-typed argument or a misspelled parameter is a 422 / MCP error,
     never a 500 or a silently-broadened query (Codex findings)."""
-    bad_uuid = deployment.client.post(
-        "/recipe/relation_current", json={"subject_entity_id": "not-a-uuid"}
+    bad_integer = deployment.client.post(
+        "/recipe/current_context", json={"query": "Alice", "k": "not-an-integer"}
     )
-    assert bad_uuid.status_code == 422
+    assert bad_integer.status_code == 422
 
-    typo = deployment.client.post(
-        "/recipe/relation_current",
-        json={"subject_entity_id": str(deployment.alice), "predciate": "works_for"},
-    )
+    typo = deployment.client.post("/recipe/resolve_entity", json={"naem": "Alice"})
     assert typo.status_code == 422  # a typo never silently broadens the query
 
     mcp_bad = deployment.mcp.call_tool(
-        name="relation_current", arguments={"subject_entity_id": "not-a-uuid"}
+        name="current_context", arguments={"query": "Alice", "k": "not-an-integer"}
     )
     assert mcp_bad["isError"] is True
 
@@ -395,24 +386,19 @@ def test_the_tool_list_has_one_entry_per_name(deployment: _Deployment) -> None:
     deployment.registry.register(
         deployment_id=_DEPLOYMENT_ID,
         recipe=Recipe(
-            name="relation_current",
+            name="resolve_entity",
             description="v2 — same shape, newer version",
-            parameters={"subject_entity_id": {"type": "uuid", "required": True}},
-            chain=(
-                RecipeStep(
-                    op="lookup_relations",
-                    bind={"subject_entity_id": "subject_entity_id"},
-                ),
-            ),
+            parameters={"name": {"type": "string", "required": True}},
+            chain=(RecipeStep(op="resolve", bind={"name": "name"}),),
             output_grain=Grain.FACT,
             answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
             version=2,
         ),
     )
     names = [descriptor.name for descriptor in deployment.surface.descriptors()]
-    assert names.count("relation_current") == 1
+    assert names.count("resolve_entity") == 1
     tool = next(
-        d for d in deployment.surface.descriptors() if d.name == "relation_current"
+        d for d in deployment.surface.descriptors() if d.name == "resolve_entity"
     )
     assert tool.description.startswith("v2")  # the latest version's schema
     # and the schema forbids stray properties (a typo is a schema violation)
@@ -424,12 +410,12 @@ def test_the_cli_rejects_a_malformed_argument(deployment: _Deployment) -> None:
     (exit 2), not a crash (Codex finding on _split_arg)."""
     assert (
         query_run(
-            client=deployment.client, name="relation_current", arg_pairs=["novalue"]
+            client=deployment.client, name="resolve_entity", arg_pairs=["novalue"]
         )
         == 2
     )
     assert (
-        query_run(client=deployment.client, name="relation_current", arg_pairs=["=v"])
+        query_run(client=deployment.client, name="resolve_entity", arg_pairs=["=v"])
         == 2
     )
 

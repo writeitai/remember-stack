@@ -60,17 +60,25 @@ class RecipeRegistry:
             )
 
     def active(self, *, deployment_id: UUID) -> tuple[Recipe, ...]:
-        """Every active recipe, name-ordered — the surface's tool list."""
+        """The three active assured operations, name-ordered."""
         with self._engine.connect() as connection:
             rows = (
-                connection.execute(_ACTIVE_RECIPES, {"deployment_id": deployment_id})
+                connection.execute(
+                    _ACTIVE_RECIPES,
+                    {
+                        "deployment_id": deployment_id,
+                        "names": sorted(_ASSURED_OPERATION_NAMES),
+                    },
+                )
                 .mappings()
                 .all()
             )
         return tuple(_recipe_from_row(row) for row in rows)
 
     def by_name(self, *, deployment_id: UUID, name: str) -> Recipe | None:
-        """The latest active version of one recipe, or None if none exists."""
+        """The latest active assured operation, or None for every other name."""
+        if name not in _ASSURED_OPERATION_NAMES:
+            return None
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
@@ -80,6 +88,17 @@ class RecipeRegistry:
                 .one_or_none()
             )
         return None if row is None else _recipe_from_row(row)
+
+    def delete_except(self, *, deployment_id: UUID, names: tuple[str, ...]) -> int:
+        """Delete rows outside the closed assured-operation namespace."""
+        if not names:
+            return 0
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                _DELETE_OTHER_RECIPES,
+                {"deployment_id": deployment_id, "names": list(names)},
+            )
+        return int(result.rowcount or 0)
 
 
 def _recipe_from_row(row: RowMapping) -> Recipe:
@@ -126,6 +145,7 @@ _ACTIVE_RECIPES = text(
     SELECT {_RECIPE_COLUMNS}
     FROM retrieval_recipes
     WHERE deployment_id = :deployment_id AND status = 'active'
+      AND name = ANY(CAST(:names AS text[]))
     ORDER BY name, version DESC
     """  # noqa: S608 — _RECIPE_COLUMNS is a module constant, not user input
 )
@@ -140,14 +160,21 @@ _RECIPE_BY_NAME = text(
     """  # noqa: S608 — _RECIPE_COLUMNS is a module constant, not user input
 )
 
+_DELETE_OTHER_RECIPES = text(
+    """
+    DELETE FROM retrieval_recipes
+    WHERE deployment_id = :deployment_id
+      AND name <> ALL(CAST(:names AS text[]))
+    """
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────
-# The canonical recipe set (retrieval §4), each a frozen composition of the
-# zero-LLM primitives. These are seeded into every deployment; the surfaces
-# render their tool list from the rows, and the eval harness proves each is
-# exactly its chain. Adding a query pattern is adding an entry here.
+# Historical stock definitions. The frozen Full-v9 benchmark and primitive
+# regression fixtures still need these descriptors, but only the three entries
+# selected into ``CANONICAL_RECIPES`` below are seeded or exposed as tools.
 # ─────────────────────────────────────────────────────────────────────────
-CANONICAL_RECIPES: tuple[Recipe, ...] = (
+_STOCK_RECIPE_DEFINITIONS: tuple[Recipe, ...] = (
     Recipe(
         name="resolve_entity",
         description="Resolve a name to ranked current entity candidates before"
@@ -567,7 +594,7 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     ),
 )
 
-GRAPH_RECIPES: tuple[Recipe, ...] = (
+_DEMOTED_GRAPH_RECIPE_DEFINITIONS: tuple[Recipe, ...] = (
     Recipe(
         name="multi_hop_context",
         description="How do two named entities connect, or what surrounds one"
@@ -688,20 +715,27 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
     ),
 )
 
+_ASSURED_OPERATION_NAMES = frozenset(
+    {"resolve_entity", "question_context", "current_context"}
+)
+
+CANONICAL_RECIPES: tuple[Recipe, ...] = tuple(
+    recipe
+    for recipe in _STOCK_RECIPE_DEFINITIONS
+    if recipe.name in _ASSURED_OPERATION_NAMES
+)
+
 
 def seed_canonical_recipes(*, registry: RecipeRegistry, deployment_id: UUID) -> int:
-    """Register the canonical recipe set into a deployment (idempotent).
+    """Reconcile and register the three assured operations (idempotent).
 
-    Each recipe is linted then inserted; re-seeding is a no-op per version.
-    Returns how many recipes were seeded (the full canonical count).
+    Every other recipe row is deleted so neither a pre-cutover stock adapter
+    nor an ad-hoc recipe can become a fourth tool. Customer saved queries are
+    a separate registry and are untouched.
     """
+    registry.delete_except(
+        deployment_id=deployment_id, names=tuple(sorted(_ASSURED_OPERATION_NAMES))
+    )
     for recipe in CANONICAL_RECIPES:
         registry.register(deployment_id=deployment_id, recipe=recipe)
     return len(CANONICAL_RECIPES)
-
-
-def seed_graph_recipes(*, registry: RecipeRegistry, deployment_id: UUID) -> int:
-    """Seed P2 recipes only for profiles that actually compose graph queries."""
-    for recipe in GRAPH_RECIPES:
-        registry.register(deployment_id=deployment_id, recipe=recipe)
-    return len(GRAPH_RECIPES)

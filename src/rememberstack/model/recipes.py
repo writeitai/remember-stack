@@ -1,13 +1,12 @@
-"""Recipe registry values (D50): frozen query plans as data, not code.
+"""Assured-operation descriptor values: frozen query plans as data, not code.
 
-A **recipe** is a named, versioned composition of the zero-LLM primitives
-(retrieval §4) — `relation_hybrid_rrf`, `claims_as_of`, `entity_timeline`,
-and the rest. It is a *registry row*, never code: the MCP tool list renders
-from these rows, the eval harness measures recall@k per recipe version, and
-adding a query pattern is inserting a row. The load-bearing property is that
-a recipe adds **no capability** — anything it does, an agent can compose from
-§3 — so a recipe is exactly its `chain`, and the eval harness proves it by
-replaying the chain and diffing.
+A **recipe** value is a named, versioned composition of zero-LLM primitives.
+The shipping registry exposes exactly the three D83 assured operations; other
+query patterns belong in the saved-query registry under ``examples.*``. The
+older descriptor set remains private only for frozen benchmark and primitive
+regression fixtures. The load-bearing property is unchanged: a recipe adds no
+capability, so it is exactly its ``chain`` and can be checked by replaying that
+chain and diffing the result.
 
 Two declared enums make the D41 grain bar ("claims never answer *is it true
 now*") a mechanical constraint rather than a prose judgment: `output_grain`

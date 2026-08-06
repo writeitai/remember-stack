@@ -1008,6 +1008,27 @@ def test_confirmation_without_a_connection_is_refused_not_ignored(
     assert outcome.error_code == QueryErrorCode.PG_UNAVAILABLE
 
 
+def test_confirmation_fails_when_live_memory_schema_drifts(
+    snapshot: _Snapshot,
+    graph: tuple[str, list[tuple[str, str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmed Cypher cannot bypass the live ``memory_v1`` manifest gate."""
+    url, _ = graph
+    monkeypatch.setattr(
+        "rememberstack.surfaces.query_sandbox.cypher_executor.live_schema_differences_psycopg",
+        lambda **_kwargs: ("memory_v1.entities_current: comment differs",),
+    )
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
+    assert outcome.error_code == QueryErrorCode.SCHEMA_VERSION_MISMATCH
+    assert outcome.rows == ()
+
+
 def test_confirmation_drops_rows_whose_entities_are_no_longer_live(
     snapshot: _Snapshot, graph: tuple[str, list[tuple[str, str, str]]]
 ) -> None:

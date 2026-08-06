@@ -91,16 +91,22 @@ TEMPERATURE: Final = 0.0
 def frozen_v9_tool_catalog() -> tuple[ToolDescriptor, ...]:
     """Return the exact tool descriptors pinned by the full-v9 protocol.
 
-    The live catalog may evolve during the dual-surface migration. Full-v9
-    remains comparable only to deployments serving its frozen descriptors;
-    the later surface-manifest protocol is a distinct benchmark identity.
+    The live pre-release catalog has moved to three assured operations.
+    Full-v9 remains historical and comparable only to deployments serving its
+    frozen descriptors; a benchmark of the shipping surface needs a distinct
+    protocol identity.
     """
-    from rememberstack.spine import CANONICAL_RECIPES
-    from rememberstack.spine import GRAPH_RECIPES
+    from rememberstack.spine.recipes import (  # noqa: PLC2701
+        _DEMOTED_GRAPH_RECIPE_DEFINITIONS,
+    )
+    from rememberstack.spine.recipes import _STOCK_RECIPE_DEFINITIONS  # noqa: PLC2701
     from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
     recipes = tuple(
-        sorted((*CANONICAL_RECIPES, *GRAPH_RECIPES), key=lambda recipe: recipe.name)
+        sorted(
+            (*_STOCK_RECIPE_DEFINITIONS, *_DEMOTED_GRAPH_RECIPE_DEFINITIONS),
+            key=lambda recipe: recipe.name,
+        )
     )
     return tuple(
         _FROZEN_V9_QUESTION_CONTEXT

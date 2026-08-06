@@ -13,7 +13,6 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
 from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.discovery import DiscoveryHit
@@ -58,7 +57,6 @@ class OpenQueryFacade:
         sql: QuerySandboxExecutor,
         cypher: CypherSandboxExecutor | None = None,
         saved_queries: SavedQueryReads | None = None,
-        usage: MigrationUsageCounters | None = None,
         principal: str = "agent",
     ) -> None:
         """Bind one deployment and reject mismatched executor/registry deps.
@@ -86,7 +84,6 @@ class OpenQueryFacade:
         self._sql = sql
         self._cypher = cypher
         self._saved = saved_queries
-        self._usage = usage or MigrationUsageCounters.disabled()
         self._principal = principal
 
     @property
@@ -104,8 +101,6 @@ class OpenQueryFacade:
         principal: str | None = None,
     ) -> QueryResult:
         """One sandboxed SQL statement; `QueryResult/v1` in every outcome."""
-        # §8 denominator: open retrieval-bearing calls only.
-        self._usage.record(surface="open_query", operation="query_sql")
         return self._sql.query_sql(
             sql=sql,
             parameters=parameters,
@@ -142,7 +137,6 @@ class OpenQueryFacade:
         confirm: bool = False,
     ) -> QueryResult:
         """One read-only Cypher statement over the server-selected snapshot."""
-        self._usage.record(surface="open_query", operation="query_cypher")
         return self._require_cypher().query_cypher(
             cypher=cypher,
             parameters=parameters,
@@ -220,7 +214,6 @@ class OpenQueryFacade:
         to the selected tier hard caps. A caller-provided ``max_rows`` wins
         over the stored default; there is no second execution path.
         """
-        self._usage.record(surface="open_query", operation="run_saved_query")
         registry = self._require_saved()
         resolved = registry.resolve(namespace=namespace, name=name, version=version)
         limits = resolved.default_limits or {}

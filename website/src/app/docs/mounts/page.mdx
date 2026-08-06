@@ -66,7 +66,7 @@ those surfaces instead of advertising paths that do not exist.
 `ConsumptionSkillSurface` reads the live deployment name, language,
 special-purpose scopes, current Plane K page count, and latest active recipe
 versions from PostgreSQL. It combines them with the published mount locations
-and renders a versioned, standard `SKILL.md` (skill revision `2.0.0`).
+and renders a versioned, standard `SKILL.md` (skill revision `2.1.0`).
 
 The skill opens with the bound two-layer headline, then presents three neutral
 choices — Cypher for native graph power with point-in-time semantics, SQL for
@@ -76,8 +76,9 @@ typed answers — with the four bound SQL examples (wrong claim-window query and
 latest-contradicting-testimony divergence) plus snapshot-ID-to-live composition.
 
 When Plane K is empty, the skill says so honestly and prefers open query or P3
-rather than inventing synthesis. Compatibility recipe adapters remain listed
-when enabled but are not the default steering language.
+rather than inventing synthesis. Its assured-operation section is the complete
+three-name catalog: `resolve_entity`, `question_context`, and `current_context`.
+The former query patterns are discoverable only as `examples.*` saved queries.
 
 The renderer can return the artifact without writing it, or publish it
 atomically so a harness never reads a partially-written skill:

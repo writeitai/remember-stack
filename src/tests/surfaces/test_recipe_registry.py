@@ -47,11 +47,14 @@ from rememberstack.model import Recipe
 from rememberstack.model import RecipeAnswerIntent
 from rememberstack.model import RecipeStep
 from rememberstack.model import Truncation
-from rememberstack.spine import CANONICAL_RECIPES
+from rememberstack.spine import CANONICAL_RECIPES as ASSURED_OPERATION_RECIPES
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
 from rememberstack.spine import seed_canonical_recipes
-from rememberstack.spine.recipes import GRAPH_RECIPES
+from rememberstack.spine.recipes import (
+    _DEMOTED_GRAPH_RECIPE_DEFINITIONS as GRAPH_RECIPES,
+)
+from rememberstack.spine.recipes import _STOCK_RECIPE_DEFINITIONS as CANONICAL_RECIPES
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import EXECUTABLE_OPS
 from rememberstack.surfaces import QueryEngine
@@ -380,19 +383,17 @@ def test_seeding_is_idempotent_and_round_trips_every_chain(corpus: _Corpus) -> N
     seeded = seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
     seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)  # again
     active = registry.active(deployment_id=_DEPLOYMENT_ID)
-    assert len(active) == seeded == len(CANONICAL_RECIPES)
+    assert len(active) == seeded == len(ASSURED_OPERATION_RECIPES)
 
     by_name = {recipe.name: recipe for recipe in active}
-    for canonical in CANONICAL_RECIPES:
+    for canonical in ASSURED_OPERATION_RECIPES:
         assert by_name[canonical.name].chain == canonical.chain
         assert by_name[canonical.name].output_grain == canonical.output_grain
         assert by_name[canonical.name].answer_intent == canonical.answer_intent
 
 
-def test_seeding_upgrades_a_changed_recipe_instead_of_masking_it(
-    corpus: _Corpus,
-) -> None:
-    """A v1 row must not hide the bounded v2 public parameter schema."""
+def test_seeding_removes_a_persisted_demoted_recipe(corpus: _Corpus) -> None:
+    """A stale local stock row cannot keep a demoted adapter public."""
     registry = RecipeRegistry(engine=corpus.engine)
     current = next(
         recipe for recipe in CANONICAL_RECIPES if recipe.name == "claims_verbatim"
@@ -412,23 +413,13 @@ def test_seeding_upgrades_a_changed_recipe_instead_of_masking_it(
 
     seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
 
-    active = registry.by_name(deployment_id=_DEPLOYMENT_ID, name="claims_verbatim")
-    assert active is not None
-    assert active.version == 3
-    assert active.parameters["k"] == {
-        "type": "integer",
-        "required": False,
-        "default": 10,
-        "minimum": 1,
-        "maximum": 30,
-    }
+    assert (
+        registry.by_name(deployment_id=_DEPLOYMENT_ID, name="claims_verbatim") is None
+    )
 
 
-def test_identity_as_of_v3_supersedes_a_persisted_v2_descriptor(
-    corpus: _Corpus,
-) -> None:
-    """ON CONFLICT DO NOTHING must not pin deployments to the pre-truncation
-    descriptor: re-seeding over a persisted v2 row serves v3 (issue #156)."""
+def test_seeding_removes_all_versions_of_a_demoted_recipe(corpus: _Corpus) -> None:
+    """Reconciliation removes old versions as well as the latest descriptor."""
     registry = RecipeRegistry(engine=corpus.engine)
     current = next(
         recipe for recipe in CANONICAL_RECIPES if recipe.name == "identity_as_of"
@@ -447,15 +438,34 @@ def test_identity_as_of_v3_supersedes_a_persisted_v2_descriptor(
 
     seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
 
-    active = registry.by_name(deployment_id=_DEPLOYMENT_ID, name="identity_as_of")
-    assert active is not None
-    assert active.version == 3
-    assert "truncation" in active.description
-    assert active.parameters["limit"] == {
-        "type": "integer",
-        "required": False,
-        "minimum": 1,
-    }
+    assert registry.by_name(deployment_id=_DEPLOYMENT_ID, name="identity_as_of") is None
+
+
+def test_registry_never_exposes_an_ad_hoc_fourth_operation(corpus: _Corpus) -> None:
+    """Recipe rows outside the three-name product namespace stay non-public."""
+    registry = RecipeRegistry(engine=corpus.engine)
+    custom = ASSURED_OPERATION_RECIPES[0].model_copy(
+        update={"name": "custom_query_tool", "description": "Not a product tool."}
+    )
+    registry.register(deployment_id=_DEPLOYMENT_ID, recipe=custom)
+
+    assert (
+        registry.by_name(deployment_id=_DEPLOYMENT_ID, name="custom_query_tool") is None
+    )
+    assert {
+        recipe.name for recipe in registry.active(deployment_id=_DEPLOYMENT_ID)
+    } <= {"resolve_entity", "question_context", "current_context"}
+
+    seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
+    with corpus.engine.connect() as connection:
+        remaining = connection.execute(
+            text(
+                "SELECT count(*) FROM retrieval_recipes "
+                "WHERE deployment_id = :deployment_id AND name = 'custom_query_tool'"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID},
+        ).scalar_one()
+    assert remaining == 0
 
 
 # --- a recipe ≡ its chain --------------------------------------------------

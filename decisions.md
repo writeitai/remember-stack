@@ -3177,3 +3177,49 @@ precedes this branch at merge time.
 **Rejected.** A second Cypher parser; UUID/column-name authority guessing; empty arrays for
 unavailable dependency metadata; a confinement-free subprocess described as a sandbox;
 implicit P2 neighbors in context operations with no caller-visible graph request.
+
+## D83. Open query makes a clean pre-release cut; retained operations consume `memory_v1`
+
+**Decision (2026-08-06).** RememberStack has no users or integrations that
+require compatibility with the 17 demoted recipe adapters. They are removed
+from the seeded/public catalog now, without a deprecation window, compatibility
+telemetry, or a benchmark-gated removal protocol. Their query patterns remain
+as discoverable, non-tool `examples.*` saved queries. The shipping intent
+surface remains exactly `resolve_entity`, `question_context`, and
+`current_context`, plus the nine open-query infrastructure entry points.
+
+The three assured operations keep their D49 `Envelope` contracts and existing
+transport entry points, but every retained live-result path uses the accepted
+`memory_v1` views as its invariant authority. In particular, entity resolution,
+claim/chunk confirmation, current-fact confirmation, contradiction enrichment,
+and retained graph-edge confirmation do not reconstruct D41, D48, or D54 from
+base tables. The
+registry remains as the small versioned descriptor/execution authority for the
+three operations; renaming every recipe transport is not part of this cut.
+
+Before SQL or saved-query execution, the runtime verifies the live `memory_v1`
+shape against the checked-in manifest and fails `schema_version_mismatch` on
+drift. Cypher separately verifies the P2 snapshot's pinned surface contract. Lance-backed
+SQL functions are executor-resolved bridges, not in-database runtimes. Body
+fetch verifies the reproducible embedding-text hash and source/prefix
+separation; the source-content hash remains a coordinate until the body store
+contains enough ordered-block material to reproduce it.
+
+**Context.** The prior dual-surface design assumed active consumers and made a
+paid noninferiority run a gate before adapter removal. The owner confirmed that
+no one uses the library and directed a clean implementation now. Analysis:
+`plan/analysis/open_query_space_clean_cutover.md`.
+
+**Consequences.** Bootstrap reconciles every recipe row outside the three-name
+allowlist, and registry reads enforce that allowlist, so old local seeds cannot
+keep exposing removed or custom tools. Full-v9 stays historical; any paid
+quality run over the shipping surface gets a new protocol identity and remains
+operator-invoked. Correctness fixtures for the three operations, per-request
+interface-shape checks, and the deploy/CI exact-definition comparator replace
+migration-parity and adapter-usage gates.
+
+**Rejected.** RLS; preserving unused adapters for hypothetical callers; a
+180-day no-user deprecation window; renaming all transports as a substitute for
+fixing authorization; a second operation registry; an in-PostgreSQL Lance
+runtime; claiming a body hash can be verified from bytes that do not reproduce
+its input.

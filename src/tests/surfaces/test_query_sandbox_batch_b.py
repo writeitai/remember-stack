@@ -341,6 +341,23 @@ def test_executor_completes_with_full_header(migrated: str) -> None:
     assert outcome.negative_kind is None
 
 
+def test_executor_fails_closed_before_sql_when_live_schema_drifts(
+    migrated: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later manifest mismatch wins; no process-lifetime success cache."""
+    comparisons = iter(((), ("memory_v1.documents_live: comment differs",)))
+    monkeypatch.setattr(
+        "rememberstack.surfaces.query_sandbox.executor.live_schema_differences_psycopg",
+        lambda **_kwargs: next(comparisons),
+    )
+    executor = _executor(migrated)
+    first = executor.query_sql(sql="SELECT count(*) FROM documents_live")
+    assert first.termination_reason == "completed", first.error_message
+    outcome = executor.query_sql(sql="SELECT count(*) FROM documents_live")
+    assert outcome.termination_reason == "failed"
+    assert outcome.error_code == QueryErrorCode.SCHEMA_VERSION_MISMATCH
+
+
 def test_executor_row_cap_truncates_honestly(migrated: str) -> None:
     outcome = _executor(migrated).query_sql(
         sql="SELECT column_name FROM claims_live, claims_live c2", max_rows=1
