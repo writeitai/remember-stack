@@ -17,6 +17,7 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_TOOL_CATALOG_SHA256
+from benchmarks.locomo.protocol import frozen_v9_tool_catalog
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -33,9 +34,6 @@ from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
-from rememberstack.spine import CANONICAL_RECIPES
-from rememberstack.spine import GRAPH_RECIPES
-from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 
 def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> None:
@@ -165,10 +163,7 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
 
 
 def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
-    recipes = tuple(
-        sorted((*CANONICAL_RECIPES, *GRAPH_RECIPES), key=lambda recipe: recipe.name)
-    )
-    descriptors = recipe_descriptors(recipes=recipes)
+    descriptors = frozen_v9_tool_catalog()
     canonical = json.dumps(
         [
             descriptor.model_dump(mode="json", exclude_none=False)

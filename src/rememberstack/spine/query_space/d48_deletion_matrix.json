@@ -1,5 +1,5 @@
 {
-  "cell_count": 243,
+  "cell_count": 261,
   "cells": [
     {
       "basis": null,
@@ -171,9 +171,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "lineage"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_fact_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "lineage"
     },
     {
@@ -317,9 +331,9 @@
       "target_id": "version"
     },
     {
-      "basis": null,
-      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.identity_events_visible before the mutation, and no column of any row carries one of them after it.",
-      "status": "applicable",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.identity_events_visible",
       "target_id": "version"
     },
@@ -360,9 +374,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "version"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "version"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_fact_visible publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "version"
     },
     {
@@ -549,9 +577,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "representation"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_fact_visible publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "representation"
     },
     {
@@ -738,9 +780,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "claim"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_fact_visible publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "claim"
     },
     {
@@ -927,9 +983,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": null,
+      "expectation": "The fact_provenance target's forbidden identifiers are reachable through public.v_memory_fact_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "fact_provenance"
     },
     {
@@ -1116,9 +1186,23 @@
     },
     {
       "basis": "not_caller_reachable",
-      "expectation": "public.v_memory_entity_survivor is the merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_fact_visible publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "k_target"
     },
     {
@@ -1307,7 +1391,21 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "public.v_graph_survivor",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "p1_candidate"
     },
     {
@@ -1326,190 +1424,204 @@
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.changes_visible",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.chunks_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claim_occurrences_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.claim_occurrences_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.claims_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.claims_visible_history publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.claims_visible_history",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.contradiction_members_current",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_versions_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.document_versions_visible",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.documents_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.documents_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.entities_current",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.entity_aliases_current",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.entity_document_mentions",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.evidence_lineage before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.evidence_lineage",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.fact_claim_evidence_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.fact_claim_evidence_live",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.facts_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.facts_current",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.facts_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.facts_visible_history",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.graph_edges_current before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.graph_edges_current",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.graph_edges_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.graph_edges_visible_history",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.identity_events_visible",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.mentions_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.mentions_live",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.page_evidence_visible before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
       "surface": "memory_v1.page_evidence_visible",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.pages_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.sections_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.sections_live",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.testimony_currency_events_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
       "surface": "memory_v1.testimony_currency_events_visible",
       "target_id": "p2_edge"
     },
     {
-      "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_graph_survivor",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_fact_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_fact_visible",
+      "target_id": "p2_edge"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
       "surface": "public.v_memory_mention_current_content",
       "target_id": "p2_edge"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch D: the P2 snapshot projection, its generation boundary, and the Cypher surface that reads it are Batch D, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
-      "status": "deferred",
+      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
       "surface": "public.v_memory_page_citation_visible",
       "target_id": "p2_edge"
     },
@@ -1685,7 +1797,21 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "public.v_graph_survivor",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_fact_visible",
       "target_id": "corpus_body"
     },
     {
@@ -1706,11 +1832,11 @@
   "contract": "memory_v1.d48_deletion_matrix/2",
   "schema": "memory_v1",
   "status_counts": {
-    "applicable": 61,
-    "deferred": 81,
-    "not_applicable": 101
+    "applicable": 72,
+    "deferred": 58,
+    "not_applicable": 131
   },
-  "surface_count": 27,
+  "surface_count": 29,
   "surfaces": [
     {
       "caller_reachable": true,
@@ -1835,7 +1961,17 @@
     {
       "caller_reachable": false,
       "compiles_deletion": false,
+      "name": "public.v_graph_survivor"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": false,
       "name": "public.v_memory_entity_survivor"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": true,
+      "name": "public.v_memory_fact_visible"
     },
     {
       "caller_reachable": false,
@@ -1876,6 +2012,7 @@
         "memory_v1.sections_live",
         "memory_v1.testimony_currency_events_visible",
         "public.v_memory_mention_current_content",
+        "public.v_memory_fact_visible",
         "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
@@ -1905,7 +2042,6 @@
         "memory_v1.changes_visible",
         "memory_v1.claims_visible_history",
         "memory_v1.document_versions_visible",
-        "memory_v1.identity_events_visible",
         "memory_v1.testimony_currency_events_visible"
       ],
       "executed_in": "A",
@@ -1973,6 +2109,7 @@
         "memory_v1.graph_edges_current",
         "memory_v1.graph_edges_visible_history",
         "memory_v1.page_evidence_visible",
+        "public.v_memory_fact_visible",
         "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
@@ -2028,12 +2165,22 @@
       "target_id": "p1_candidate"
     },
     {
-      "applicable_surfaces": [],
+      "applicable_surfaces": [
+        "memory_v1.changes_visible",
+        "memory_v1.evidence_lineage",
+        "memory_v1.fact_claim_evidence_live",
+        "memory_v1.facts_current",
+        "memory_v1.facts_visible_history",
+        "memory_v1.graph_edges_current",
+        "memory_v1.graph_edges_visible_history",
+        "memory_v1.page_evidence_visible",
+        "public.v_memory_fact_visible",
+        "public.v_memory_page_citation_visible"
+      ],
       "executed_in": "D",
-      "forbidden_identifiers": "The edge and its endpoint identifiers in any generation built after the deletion; a generation built before it may still return them, but only with its own earlier built_at and the snapshot_graph grade.",
+      "forbidden_identifiers": "The edge identifier in any generation built after the deletion; a generation built before it may still return the edge and endpoints, but only with its own earlier built_at and the snapshot_graph grade.",
       "identifier_classes": [
-        "fact",
-        "entity"
+        "fact"
       ],
       "mutation": "Delete the relation behind a projected edge, then read the snapshot before and after the next rebuild.",
       "summary": "A projected graph edge is deleted after a snapshot was built.",

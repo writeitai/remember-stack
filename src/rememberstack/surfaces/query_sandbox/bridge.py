@@ -53,12 +53,14 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
 #: Public functions PostgreSQL runs itself. They need no projection, so the
 #: executor leaves their invocation in place and the planner sees straight
 #: through it; only the Lance-backed ones are resolved and substituted.
-SQL_NATIVE_FUNCTIONS: Final = frozenset({"facts_as_of"})
+SQL_NATIVE_FUNCTIONS: Final = frozenset(
+    {"facts_as_of", "graph_neighborhood", "graph_path"}
+)
 
-#: Which adapter each public function actually needs. `facts_as_of` needs
-#: neither, the lexical channels and the body fetch never embed anything, and
-#: refusing those because an embedder is unconfigured would fail requests that
-#: would have worked.
+#: Which adapter each public function actually needs. The SQL-native functions
+#: need neither, the lexical channels and the body fetch never embed anything,
+#: and refusing those because an embedder is unconfigured would fail requests
+#: that would have worked.
 NEEDS_PROJECTION: Final = frozenset(FUNCTION_TARGETS)
 NEEDS_EMBEDDER: Final = frozenset(
     name for name, (_, channel) in FUNCTION_TARGETS.items() if channel == "semantic"

@@ -37,8 +37,8 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
-    PRIVATE_HELPER_VIEWS,
+from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
+    AUTHORIZATION_HELPER_VIEWS,
 )
 from rememberstack.spine.query_space import build_manifest
 from rememberstack.spine.query_space import DELETION_TARGETS
@@ -66,10 +66,6 @@ _PAST = datetime(2024, 1, 1, tzinfo=UTC)
 _MID = datetime(2025, 1, 1, tzinfo=UTC)
 _ENDED = datetime(2025, 6, 1, tzinfo=UTC)
 _FUTURE = datetime(2099, 1, 1, tzinfo=UTC)
-
-#: The permissive legacy shape a D48 chain must never reintroduce: a left join
-#: whose absence *admits* the row it was meant to authorize.
-_ORPHAN_BRANCH_MARKERS = ("doc_id is null or", "version_id is null or")
 
 
 @pytest.fixture(scope="module")
@@ -1603,24 +1599,6 @@ def test_every_view_and_column_comment_is_a_complete_sentence(corpus: _Corpus) -
             assert text_value.endswith("."), f"{view['name']}.{column['name']}"
 
 
-def test_no_view_reintroduces_the_legacy_orphan_branch(corpus: _Corpus) -> None:
-    """The permissive left-join branch that lets an orphan through is absent."""
-    with corpus.engine.connect() as connection:
-        definitions = _rows(
-            connection=connection,
-            sql=(
-                "SELECT c.relname, pg_get_viewdef(c.oid, true) AS definition"
-                " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
-                " WHERE n.nspname = 'memory_v1' AND c.relkind = 'v'"
-            ),
-        )
-
-    for row in definitions:
-        normalized = " ".join(str(row["definition"]).lower().split())
-        for marker in _ORPHAN_BRANCH_MARKERS:
-            assert marker not in normalized, f"{row['relname']} contains {marker!r}"
-
-
 def test_declared_join_keys_resolve_inside_the_query_space(corpus: _Corpus) -> None:
     """Every documented join path names real columns on a real public relation."""
     manifest = load_manifest()
@@ -1703,6 +1681,7 @@ def _forbidden_identifiers(*, corpus: _Corpus, target_id: str) -> set[str]:
         ),
         "claim": (corpus.claim["a"],),
         "fact_provenance": (corpus.fact["current"],),
+        "p2_edge": (corpus.fact["current"],),
         "k_target": (
             corpus.doc["kcited"],
             corpus.version["kcited.v1"],
@@ -1797,7 +1776,7 @@ def _apply_deletion(*, connection: Connection, corpus: _Corpus, target_id: str) 
             {"claim": corpus.claim["a"]},
         )
         return
-    if target_id == "fact_provenance":
+    if target_id in {"fact_provenance", "p2_edge"}:
         connection.execute(
             text("DELETE FROM relation_evidence WHERE relation_id = :relation"),
             {"relation": corpus.fact["current"]},
@@ -1893,13 +1872,13 @@ def test_the_private_helper_cells_prove_their_own_non_reachability(
     """A `not_caller_reachable` cell names a relation a caller cannot read.
 
     Every private helper is checked, not only the one the matrix crosses with
-    each target: all three carry rules the public relations depend on, and all
-    three would be a way around those rules if a grant ever appeared on them.
+        each target: all five carry rules the public relations depend on, and all
+    five would be a way around those rules if a grant ever appeared on them.
     """
     helpers = {
         surface.name for surface in MATRIX_SURFACES if not surface.caller_reachable
-    } | {f"public.{name}" for name in PRIVATE_HELPER_VIEWS}
-    assert len(helpers) == len(PRIVATE_HELPER_VIEWS)
+    } | {f"public.{name}" for name in AUTHORIZATION_HELPER_VIEWS}
+    assert len(helpers) == len(AUTHORIZATION_HELPER_VIEWS)
     with corpus.engine.connect() as connection:
         for helper in sorted(helpers):
             schema, _, relation = helper.partition(".")
@@ -1930,7 +1909,7 @@ def test_deferred_matrix_cells_name_the_batch_that_will_execute_them(
     """A target this batch cannot build is recorded, not silently omitted."""
     cells = _matrix_cells()
     deferred = {target.target_id for target in DELETION_TARGETS if target.deferred}
-    assert deferred == {"p1_candidate", "p2_edge", "corpus_body"}
+    assert deferred == {"p1_candidate", "corpus_body"}
     for (target_id, _surface), cell in cells.items():
         if target_id in deferred:
             assert cell["status"] == "deferred"
@@ -2028,6 +2007,656 @@ def test_a_mention_cannot_borrow_a_live_lineage_from_its_chunk(corpus: _Corpus) 
     assert counted_before == 1
     assert after == [], "the mention is exposed through its chunk's lineage"
     assert counted_after == [], "the count still includes the removed mention"
+
+
+def test_a_tombstoned_chunk_lineage_cannot_authorize_sibling_surfaces(
+    corpus: _Corpus,
+) -> None:
+    """A chunk's live identifiers never authorize claims, entities, or events.
+
+    The transcript tables use logical foreign keys, so this deliberately
+    inconsistent row is possible: the chunk keeps a live version coordinate
+    but names a tombstoned document lineage. Every sibling must bind the
+    chunk's own lineage before publishing anything derived from it.
+    """
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE chunks SET doc_id = :erased WHERE chunk_id = :chunk"),
+            {"erased": corpus.doc["erased"], "chunk": corpus.chunk["primary.v2"]},
+        )
+        counts = {
+            "chunk": _scalar(
+                connection=connection,
+                sql=("SELECT count(*) FROM memory_v1.chunks_live WHERE chunk_id = :id"),
+                id=corpus.chunk["primary.v2"],
+            ),
+            "claim_history": _scalar(
+                connection=connection,
+                sql=(
+                    "SELECT count(*) FROM memory_v1.claims_visible_history"
+                    " WHERE claim_id = :id"
+                ),
+                id=corpus.claim["a"],
+            ),
+            "claim_live": _scalar(
+                connection=connection,
+                sql="SELECT count(*) FROM memory_v1.claims_live WHERE claim_id = :id",
+                id=corpus.claim["a"],
+            ),
+            "occurrence": _scalar(
+                connection=connection,
+                sql=(
+                    "SELECT count(*) FROM memory_v1.claim_occurrences_live"
+                    " WHERE chunk_id = :id"
+                ),
+                id=corpus.chunk["primary.v2"],
+            ),
+            "mention": _scalar(
+                connection=connection,
+                sql="SELECT count(*) FROM memory_v1.mentions_live WHERE mention_id = :id",
+                id=corpus.mention["acme"],
+            ),
+            "entity": _scalar(
+                connection=connection,
+                sql=(
+                    "SELECT count(*) FROM memory_v1.entities_current"
+                    " WHERE entity_id = :id"
+                ),
+                id=corpus.entity["acme"],
+            ),
+            "identity_event": _scalar(
+                connection=connection,
+                sql=(
+                    "SELECT count(*) FROM memory_v1.identity_events_visible"
+                    " WHERE event_id = :id"
+                ),
+                id=corpus.decision["acme"],
+            ),
+        }
+        connection.rollback()
+
+    assert counts == {name: 0 for name in counts}
+
+
+def test_identity_events_cite_only_mentions_live(corpus: _Corpus) -> None:
+    """A historical mention cannot leave an identity event in a live transcript."""
+    with corpus.engine.connect() as connection:
+        entity_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.entities_current"
+                " WHERE entity_id = :entity"
+            ),
+            entity=corpus.entity["alice"],
+        )
+        mention_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.mentions_live"
+                " WHERE mention_id = :mention"
+            ),
+            mention=corpus.mention["old"],
+        )
+        event_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.identity_events_visible"
+                " WHERE event_id = :event"
+            ),
+            event=corpus.decision["old"],
+        )
+
+    assert entity_visible == 1, "the entity gate must not decide this test"
+    assert mention_visible == 0
+    assert event_visible == 0
+
+
+def test_a_claim_cannot_borrow_a_representation_from_another_lineage(
+    corpus: _Corpus,
+) -> None:
+    """The claim's chunk representation must belong to its visible version."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunks SET representation_id = :representation"
+                " WHERE chunk_id = :chunk"
+            ),
+            {
+                "representation": corpus.representation["erased.v1"],
+                "chunk": corpus.chunk["primary.v2"],
+            },
+        )
+        raw = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM chunks WHERE chunk_id = :chunk"
+                " AND representation_id = :representation"
+            ),
+            chunk=corpus.chunk["primary.v2"],
+            representation=corpus.representation["erased.v1"],
+        )
+        visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.claims_visible_history"
+                " WHERE claim_id = :claim"
+            ),
+            claim=corpus.claim["a"],
+        )
+        entity = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.entities_current"
+                " WHERE entity_id = :entity"
+            ),
+            entity=corpus.entity["acme"],
+        )
+        identity_event = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.identity_events_visible"
+                " WHERE event_id = :event"
+            ),
+            event=corpus.decision["acme"],
+        )
+        fact = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.facts_visible_history"
+                " WHERE fact_id = :fact"
+            ),
+            fact=corpus.fact["current"],
+        )
+        connection.rollback()
+
+    assert raw == 1, "the mismatched logical coordinate must exist"
+    assert visible == 0
+    assert entity == 0
+    assert identity_event == 0
+    assert fact == 0
+
+
+def test_sections_and_chunks_null_cross_lineage_section_coordinates(
+    corpus: _Corpus,
+) -> None:
+    """Parent and chunk section identifiers resolve only inside one live tree."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_sections SET node_path = 'cross-lineage',"
+                " structure_generation_id = :generation"
+                " WHERE section_id = :section"
+            ),
+            {
+                "generation": corpus.generation["primary.v2"],
+                "section": corpus.section["erased.v1"],
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE document_sections SET parent_section_id = :erased"
+                " WHERE section_id = :current"
+            ),
+            {
+                "erased": corpus.section["erased.v1"],
+                "current": corpus.section["primary.v2"],
+            },
+        )
+        connection.execute(
+            text("UPDATE chunks SET section_id = :erased WHERE chunk_id = :chunk"),
+            {
+                "erased": corpus.section["erased.v1"],
+                "chunk": corpus.chunk["primary.v2"],
+            },
+        )
+        section = _rows(
+            connection=connection,
+            sql=(
+                "SELECT parent_section_id FROM memory_v1.sections_live"
+                " WHERE section_id = :section"
+            ),
+            section=corpus.section["primary.v2"],
+        )[0]
+        chunk = _rows(
+            connection=connection,
+            sql=(
+                "SELECT section_id FROM memory_v1.chunks_live WHERE chunk_id = :chunk"
+            ),
+            chunk=corpus.chunk["primary.v2"],
+        )[0]
+        erased_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.sections_live"
+                " WHERE section_id = :section"
+            ),
+            section=corpus.section["erased.v1"],
+        )
+        connection.rollback()
+
+    assert section["parent_section_id"] is None
+    assert chunk["section_id"] is None
+    assert erased_visible == 0
+
+
+def test_occurrences_and_currency_events_bind_the_claim_lineage(
+    corpus: _Corpus,
+) -> None:
+    """Associations cannot place another lineage's claim under a live row."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunk_claims SET claim_id = :foreign_claim"
+                " WHERE chunk_id = :chunk AND claim_id = :local_claim"
+            ),
+            {
+                "foreign_claim": corpus.claim["c"],
+                "chunk": corpus.chunk["primary.v2"],
+                "local_claim": corpus.claim["a"],
+            },
+        )
+        occurrence = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.claim_occurrences_live"
+                " WHERE chunk_id = :chunk AND claim_id = :claim"
+            ),
+            chunk=corpus.chunk["primary.v2"],
+            claim=corpus.claim["c"],
+        )
+        connection.execute(
+            text(
+                "UPDATE testimony_currency_events SET claim_id = :foreign_claim"
+                " WHERE event_id = :event"
+            ),
+            {
+                "foreign_claim": corpus.claim["c"],
+                "event": corpus.currency_event["reextracted"],
+            },
+        )
+        event = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.testimony_currency_events_visible"
+                " WHERE event_id = :event"
+            ),
+            event=corpus.currency_event["reextracted"],
+        )
+        connection.execute(
+            text(
+                "UPDATE testimony_currency_events SET claim_id = :claim,"
+                " from_version_id = :foreign_version WHERE event_id = :event"
+            ),
+            {
+                "claim": corpus.claim["old"],
+                "foreign_version": corpus.version["erased.v1"],
+                "event": corpus.currency_event["reextracted"],
+            },
+        )
+        from_version = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT from_version_id"
+                " FROM memory_v1.testimony_currency_events_visible"
+                " WHERE event_id = :event"
+            ),
+            event=corpus.currency_event["reextracted"],
+        )
+        connection.rollback()
+
+    assert occurrence == 0
+    assert event == 0
+    assert from_version is None
+
+
+def test_fact_membership_and_evidence_share_one_claim_bound_authority(
+    corpus: _Corpus,
+) -> None:
+    """Mismatched evidence cannot publish a fact through any downstream view."""
+    facts = (corpus.fact["current"], corpus.fact["open_ended"])
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE relation_evidence SET doc_id = :erased"
+                " WHERE relation_id = ANY(:facts)"
+            ),
+            {"erased": corpus.doc["erased"], "facts": list(facts)},
+        )
+        assert (
+            _scalar(
+                connection=connection,
+                sql="SELECT count(*) FROM relation_evidence WHERE relation_id = ANY(:facts)",
+                facts=list(facts),
+            )
+            > 0
+        )
+        surfaces = (
+            "v_memory_fact_visible",
+            "memory_v1.fact_claim_evidence_live",
+            "memory_v1.evidence_lineage",
+            "memory_v1.facts_visible_history",
+            "memory_v1.facts_current",
+            "memory_v1.contradiction_members_current",
+            "memory_v1.graph_edges_current",
+            "memory_v1.graph_edges_visible_history",
+            "memory_v1.changes_visible",
+        )
+        counts = {
+            surface: _scalar(
+                connection=connection,
+                sql=f"SELECT count(*) FROM {surface} WHERE "  # noqa: S608 -- fixed test relation names
+                + (
+                    "relation_id = ANY(:facts)"
+                    if "graph_edges" in surface
+                    else "object_id = ANY(:facts)"
+                    if surface == "memory_v1.changes_visible"
+                    else "fact_id = ANY(:facts)"
+                ),
+                facts=list(facts),
+            )
+            for surface in surfaces
+        }
+        cited = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.page_evidence_visible"
+                " WHERE target_kind = 'relation' AND target_id = :fact"
+            ),
+            fact=corpus.fact["current"],
+        )
+        connection.rollback()
+
+    assert counts == {surface: 0 for surface in surfaces}
+    assert cited == 0
+
+
+def test_evidence_for_a_nonexistent_fact_is_never_public(corpus: _Corpus) -> None:
+    """A logical evidence row cannot manufacture a fact-catalog identifier."""
+    missing_fact = uuid4()
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                " claim_id, doc_id, stance, normalizer_version, created_at)"
+                " VALUES (:deployment, :fact, :claim, :doc, 'supports',"
+                " 'normalizer-1', :at)"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "fact": missing_fact,
+                "claim": corpus.claim["a"],
+                "doc": corpus.doc["primary"],
+                "at": _MID,
+            },
+        )
+        bridge = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.fact_claim_evidence_live"
+                " WHERE fact_id = :fact"
+            ),
+            fact=missing_fact,
+        )
+        lineages = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.evidence_lineage WHERE fact_id = :fact"
+            ),
+            fact=missing_fact,
+        )
+        connection.rollback()
+
+    assert bridge == 0
+    assert lineages == 0
+
+
+def test_an_orphan_claim_cannot_authorize_a_fact_or_any_sibling(
+    corpus: _Corpus,
+) -> None:
+    """Fact provenance must be a fully visible historical claim coordinate."""
+    orphan_claim = uuid4()
+    missing_chunk = uuid4()
+    fact = uuid4()
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, extractor_version, is_current_testimony,"
+                " asserted_at, ingested_at)"
+                " VALUES (:claim, :deployment, :doc, :chunk, 'orphan claim',"
+                " 'orphan claim', 0, 12, true, true, 'extractor-1', true,"
+                " :at, :at)"
+            ),
+            {
+                "claim": orphan_claim,
+                "deployment": _DEPLOYMENT_ID,
+                "doc": corpus.doc["primary"],
+                "chunk": missing_chunk,
+                "at": _PAST,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id, ingested_at,"
+                " contradiction_group, fact_label, normalizer_version)"
+                " SELECT :fact, deployment_id, subject_entity_id, predicate,"
+                " object_entity_id, :at, :group, 'orphan-backed fact',"
+                " 'normalizer-1' FROM relations WHERE relation_id = :source"
+            ),
+            {
+                "fact": fact,
+                "at": _PAST,
+                "group": uuid4(),
+                "source": corpus.fact["current"],
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                " claim_id, doc_id, stance, normalizer_version, created_at)"
+                " VALUES (:deployment, :fact, :claim, :doc, 'supports',"
+                " 'normalizer-1', :at)"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "fact": fact,
+                "claim": orphan_claim,
+                "doc": corpus.doc["primary"],
+                "at": _PAST,
+            },
+        )
+        claim_visible = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.claims_visible_history"
+                " WHERE claim_id = :claim"
+            ),
+            claim=orphan_claim,
+        )
+        surfaces = (
+            "v_memory_fact_visible",
+            "memory_v1.fact_claim_evidence_live",
+            "memory_v1.evidence_lineage",
+            "memory_v1.facts_visible_history",
+            "memory_v1.facts_current",
+            "memory_v1.contradiction_members_current",
+            "memory_v1.graph_edges_current",
+            "memory_v1.graph_edges_visible_history",
+            "memory_v1.changes_visible",
+        )
+        counts = {
+            surface: _scalar(
+                connection=connection,
+                sql=f"SELECT count(*) FROM {surface} WHERE "  # noqa: S608 -- fixed test relation names
+                + (
+                    "relation_id = :fact"
+                    if "graph_edges" in surface
+                    else "object_id = :fact"
+                    if surface == "memory_v1.changes_visible"
+                    else "fact_id = :fact"
+                ),
+                fact=fact,
+            )
+            for surface in surfaces
+        }
+        connection.rollback()
+
+    assert claim_visible == 0
+    assert counts == {surface: 0 for surface in surfaces}
+
+
+def test_a_fact_with_an_invisible_endpoint_is_absent_from_fact_and_evidence_views(
+    corpus: _Corpus,
+) -> None:
+    """Every declared entity join key resolves inside ``entities_current``."""
+    with corpus.engine.begin() as connection:
+        assert (
+            _scalar(
+                connection=connection,
+                sql=(
+                    "SELECT count(*) FROM memory_v1.entities_current"
+                    " WHERE entity_id = :entity"
+                ),
+                entity=corpus.entity["ghost"],
+            )
+            == 0
+        )
+        before_report = orphan_quarantine_report(
+            connection=connection, deployment_id=str(_DEPLOYMENT_ID)
+        )
+        connection.execute(
+            text(
+                "UPDATE relations SET object_entity_id = :ghost"
+                " WHERE relation_id = :fact"
+            ),
+            {"ghost": corpus.entity["ghost"], "fact": corpus.fact["current"]},
+        )
+        catalog = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.facts_visible_history"
+                " WHERE fact_id = :fact"
+            ),
+            fact=corpus.fact["current"],
+        )
+        bridge = _scalar(
+            connection=connection,
+            sql=(
+                "SELECT count(*) FROM memory_v1.fact_claim_evidence_live"
+                " WHERE fact_id = :fact"
+            ),
+            fact=corpus.fact["current"],
+        )
+        after_report = orphan_quarantine_report(
+            connection=connection, deployment_id=str(_DEPLOYMENT_ID)
+        )
+        connection.rollback()
+
+    before_counts = {
+        category.category: category.row_count for category in before_report.categories
+    }
+    after_counts = {
+        category.category: category.row_count for category in after_report.categories
+    }
+    assert catalog == 0
+    assert bridge == 0
+    assert after_counts["knowledge_citation_without_visible_target"] == (
+        before_counts["knowledge_citation_without_visible_target"] + 1
+    )
+
+
+def test_corrupt_coordinates_leak_no_identifier_through_any_surface(
+    corpus: _Corpus,
+) -> None:
+    """The sibling audit covers all 24 caller-reachable views.
+
+    The focused tests above prove which malformed coordinate causes each row
+    to disappear. This test combines representative malformed associations and
+    then scans the complete surface inventory, so fixing only the named views
+    while leaving a downstream sibling open cannot pass.
+    """
+    missing_fact = uuid4()
+    forbidden = {
+        str(corpus.chunk["primary.v2"]),
+        str(corpus.claim["a"]),
+        str(corpus.mention["acme"]),
+        str(corpus.decision["acme"]),
+        str(corpus.entity["acme"]),
+        str(corpus.fact["current"]),
+        str(corpus.fact["open_ended"]),
+        str(corpus.section["erased.v1"]),
+        str(corpus.version["erased.v1"]),
+        str(missing_fact),
+    }
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunks SET representation_id = :representation"
+                " WHERE chunk_id = :chunk"
+            ),
+            {
+                "representation": corpus.representation["erased.v1"],
+                "chunk": corpus.chunk["primary.v2"],
+            },
+        )
+        connection.execute(
+            text("UPDATE chunks SET section_id = :section WHERE chunk_id = :chunk"),
+            {
+                "section": corpus.section["erased.v1"],
+                "chunk": corpus.chunk["primary.v2"],
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE relation_evidence SET doc_id = :doc"
+                " WHERE relation_id = ANY(:facts)"
+            ),
+            {
+                "doc": corpus.doc["erased"],
+                "facts": [corpus.fact["current"], corpus.fact["open_ended"]],
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE testimony_currency_events SET from_version_id = :version"
+                " WHERE event_id = :event"
+            ),
+            {
+                "version": corpus.version["erased.v1"],
+                "event": corpus.currency_event["reextracted"],
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                " claim_id, doc_id, stance, normalizer_version, created_at)"
+                " VALUES (:deployment, :fact, :claim, :doc, 'supports',"
+                " 'normalizer-1', :at)"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "fact": missing_fact,
+                "claim": corpus.claim["old"],
+                "doc": corpus.doc["primary"],
+                "at": _MID,
+            },
+        )
+
+        public_surfaces = tuple(
+            surface for surface in MATRIX_SURFACES if surface.caller_reachable
+        )
+        assert len(public_surfaces) == 24
+        leaks = {
+            surface.name: _reachable_values(
+                connection=connection, relation=surface.name, forbidden=forbidden
+            )
+            for surface in public_surfaces
+        }
+        connection.rollback()
+
+    assert leaks == {surface.name: set() for surface in public_surfaces}
 
 
 def test_a_resolution_to_an_absent_entity_nulls_the_whole_resolution(
@@ -2266,10 +2895,10 @@ def test_a_merge_cycle_resolves_to_no_survivor_at_all(corpus: _Corpus) -> None:
     assert counts["entity_merge_chain_unresolved"] == 2
 
 
-def test_a_merge_chain_past_the_depth_bound_resolves_to_no_survivor(
+def test_a_long_acyclic_merge_chain_resolves_without_a_guessed_depth_bound(
     corpus: _Corpus,
 ) -> None:
-    """Beyond the guard the answer is nothing, never a half-walked answer."""
+    """A valid chain resolves regardless of length; only cycles fail closed."""
     chain = [uuid4() for _ in range(70)]
     with corpus.engine.begin() as connection:
         for position, entity_id in enumerate(chain):
@@ -2307,7 +2936,7 @@ def test_a_merge_chain_past_the_depth_bound_resolves_to_no_survivor(
         connection.rollback()
 
     terminal = str(chain[-1])
-    assert str(chain[0]) not in resolved, "a chain past the guard resolves to nothing"
+    assert resolved[str(chain[0])] == terminal
     assert resolved[str(chain[-5])] == terminal, "a short chain still resolves"
     assert resolved[terminal] == terminal
 
@@ -2786,7 +3415,7 @@ def test_quarantine_report_counts_what_the_public_views_omit(corpus: _Corpus) ->
 
     counts = {category.category: category.row_count for category in report.categories}
     assert tuple(counts) == QUARANTINE_CATEGORIES
-    assert counts["fact_without_surviving_provenance"] >= 1
+    assert counts["fact_without_visible_membership"] >= 1
     assert counts["entity_without_surviving_provenance"] == 1
     assert counts["crossref_without_live_endpoints"] >= 1
     assert counts["section_outside_current_generation"] >= 1

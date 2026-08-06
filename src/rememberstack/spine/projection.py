@@ -6,12 +6,14 @@ one per deployment/plane — the object store holds only immutable snapshot
 bytes, never a mutable pointer). The export executes the spike battery's
 bound strategy: the survivor map materializes ONCE into an indexed temp
 table per export connection, and every edge read joins against it — the
-`v_graph_*` views remain the semantic contract, the catalog owns the
-execution shape (`plan/analysis/p2_spike_battery.md`, finding 2).
+`memory_v1` invariant views are the semantic export contract. The catalog
+retains the indexed survivor map only for the corruption/cycle abort gate
+(`plan/analysis/p2_spike_battery.md`, finding 2).
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Final
 from uuid import UUID
 from uuid import uuid4
@@ -31,17 +33,33 @@ resolves endpoints against node PKs and throws on a missing endpoint)."""
 
 
 class GraphExport:
-    """One export pass over a single connection with the survivor map ready."""
+    """One deployment's invariant-filtered export on a consistent connection."""
 
-    def __init__(self, *, connection: Connection) -> None:
+    def __init__(self, *, connection: Connection, deployment_id: UUID) -> None:
         """Bind to the export connection (the temp survivor table exists)."""
         self._connection = connection
+        self._deployment_id = deployment_id
+        # §3.5 binds `built_at` to THIS transaction's timestamp, captured once
+        # at export start. It is the instant the whole snapshot is a consistent
+        # cut of, and it is what every answer from that snapshot is scoped to —
+        # so it comes from the transaction that took the cut, never from a
+        # row-insert default or a wall clock read at publish or query time.
+        self._built_at = connection.execute(
+            text("SELECT transaction_timestamp()")
+        ).scalar_one()
+
+    @property
+    def built_at(self) -> datetime:
+        """The export transaction's timestamp: the cut this snapshot projects."""
+        return self._built_at
 
     def rows(self, *, table: str) -> Iterator[Row]:
         """Stream one graph table's rows (server-side cursor)."""
         statement = _EXPORT_SQL[table]
         return iter(
-            self._connection.execution_options(yield_per=10_000).execute(statement)
+            self._connection.execution_options(yield_per=10_000).execute(
+                statement, {"deployment_id": self._deployment_id}
+            )
         )
 
     def count(self, *, table: str) -> int:
@@ -49,7 +67,8 @@ class GraphExport:
         statement = _EXPORT_SQL[table]
         return int(
             self._connection.execute(
-                text(f"SELECT count(*) FROM ({statement.text}) export")  # noqa: S608
+                text(f"SELECT count(*) FROM ({statement.text}) export"),  # noqa: S608
+                {"deployment_id": self._deployment_id},
             ).scalar_one()
         )
 
@@ -59,13 +78,21 @@ class GraphExport:
         Read on the export connection, so it can never advertise a relation
         the consistent cut cannot contain.
         """
-        return self._connection.execute(_SELECT_WATERMARK).scalar_one_or_none()
+        return self._connection.execute(
+            _SELECT_WATERMARK, {"deployment_id": self._deployment_id}
+        ).scalar_one_or_none()
 
     def unresolved_survivors(self) -> tuple[UUID, ...]:
-        """The abort-before-snapshot gate (spike c): entities whose survivor
-        is still merged — a merge cycle or a corrupt redirect chain. Any row
-        aborts the snapshot; the offenders are recorded for the operator."""
-        return tuple(self._connection.execute(_SELECT_UNRESOLVED_SURVIVORS).scalars())
+        """Return entities omitted by terminal survivor resolution.
+
+        A cycle or dangling redirect has no terminal row in ``graph_survivor``.
+        Any omission aborts the snapshot and is recorded for the operator.
+        """
+        return tuple(
+            self._connection.execute(
+                _SELECT_UNRESOLVED_SURVIVORS, {"deployment_id": self._deployment_id}
+            ).scalars()
+        )
 
 
 class CorpusExport:
@@ -106,7 +133,7 @@ class ProjectionCatalog:
         self._engine = engine
 
     @contextmanager
-    def graph_export(self) -> Iterator[GraphExport]:
+    def graph_export(self, *, deployment_id: UUID) -> Iterator[GraphExport]:
         """One consistent export pass (single transaction, survivor map once).
 
         Everything the snapshot reads happens inside one REPEATABLE READ
@@ -116,10 +143,19 @@ class ProjectionCatalog:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
-            connection.execute(_CREATE_SURVIVOR_MAP)
+            # The coordinate-complete invariant views expand into a deep plan.
+            # LLVM JIT compilation of that plan can consume enough memory to
+            # kill PostgreSQL before the first row is returned. The rebuild is
+            # a bounded sequential export, so keep planning literal and avoid
+            # multiplying its memory across parallel workers.
+            connection.exec_driver_sql("SET LOCAL jit = off")
+            connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+            connection.execute(_CREATE_SURVIVOR_MAP, {"deployment_id": deployment_id})
             connection.execute(_INDEX_SURVIVOR_MAP)
             try:
-                yield GraphExport(connection=connection)
+                yield GraphExport(connection=connection, deployment_id=deployment_id)
             finally:
                 connection.rollback()  # temp table + snapshot cut end together
 
@@ -157,6 +193,7 @@ class ProjectionCatalog:
         row_counts: dict[str, int],
         validation: dict[str, object],
         built_from_watermark: object,
+        built_at: object = None,
     ) -> bool:
         """Publish and swap the latest pointer — serialized and order-guarded.
 
@@ -177,6 +214,7 @@ class ProjectionCatalog:
                     "deployment_id": deployment_id,
                     "plane": plane,
                     "snapshot_id": snapshot_id,
+                    "built_at": built_at,
                 },
             ).scalar_one_or_none()
             if newer is not None:
@@ -187,6 +225,7 @@ class ProjectionCatalog:
                         "row_counts": row_counts,
                         "validation": {**validation, "superseded_by_newer": str(newer)},
                         "built_from_watermark": built_from_watermark,
+                        "built_at": built_at,
                     },
                 )
                 return False
@@ -200,6 +239,9 @@ class ProjectionCatalog:
                     "row_counts": row_counts,
                     "validation": validation,
                     "built_from_watermark": built_from_watermark,
+                    # The cut the export actually took, not the instant the
+                    # registry row happened to be inserted.
+                    "built_at": built_at,
                 },
             )
         return True
@@ -375,7 +417,11 @@ class ProjectionCatalog:
 _CREATE_SURVIVOR_MAP = text(
     """
     CREATE TEMP TABLE graph_survivor ON COMMIT DROP AS
-    SELECT * FROM v_graph_survivor
+    SELECT s.entity_id, s.survivor
+    FROM v_graph_survivor AS s
+    JOIN entities AS e
+      ON e.entity_id = s.entity_id
+     AND e.deployment_id = :deployment_id
     """
 )
 
@@ -384,72 +430,82 @@ _INDEX_SURVIVOR_MAP = text("CREATE INDEX ON graph_survivor (entity_id)")
 _EXPORT_SQL: Final[dict[str, TextClause]] = {
     "Entity": text(
         """
-        SELECT id, type, name, normalized_name, summary, created_at
-        FROM v_graph_entities
+        SELECT entity_id AS id, entity_type AS type,
+               canonical_name AS name, normalized_name,
+               profile_summary AS summary,
+               (created_at AT TIME ZONE 'UTC') AS created_at
+        FROM memory_v1.entities_current
+        WHERE deployment_id = :deployment_id
         """
     ),
     "Document": text(
         """
-        SELECT id, title, source_uri, published_at FROM v_graph_documents
+        SELECT doc_id AS id, title, source_uri,
+               (published_at AT TIME ZONE 'UTC')::date AS published_at
+        FROM memory_v1.documents_live
+        WHERE deployment_id = :deployment_id
         """
     ),
     "RELATES": text(
         """
-        SELECT s1.survivor AS from_id, s2.survivor AS to_id,
-               r.relation_id, s1.survivor AS subject_id, s2.survivor AS object_id,
+        SELECT r.subject_entity_id AS from_id, r.object_entity_id AS to_id,
+               r.relation_id, r.subject_entity_id AS subject_id,
+               r.object_entity_id AS object_id,
                r.predicate, r.fact_label AS fact,
-               r.evidence_count::bigint AS evidence_count,
-               r.contradict_count::bigint AS contradict_count,
+               r.evidence_count_current AS evidence_count,
+               r.contradict_count_current AS contradict_count,
                r.confidence::float8 AS confidence, r.contradiction_group,
                (r.valid_from AT TIME ZONE 'UTC') AS valid_from,
                (r.valid_until AT TIME ZONE 'UTC') AS valid_until,
                (r.ingested_at AT TIME ZONE 'UTC') AS ingested_at,
                (r.invalidated_at AT TIME ZONE 'UTC') AS invalidated_at
-        FROM relations r
-        JOIN graph_survivor s1 ON s1.entity_id = r.subject_entity_id
-        JOIN graph_survivor s2 ON s2.entity_id = r.object_entity_id
-        JOIN entities e1 ON e1.entity_id = s1.survivor AND e1.status = 'active'
-        JOIN entities e2 ON e2.entity_id = s2.survivor AND e2.status = 'active'
+        FROM memory_v1.graph_edges_visible_history AS r
+        WHERE r.deployment_id = :deployment_id
         """
     ),
     "MENTIONED_IN": text(
         """
-        SELECT s.survivor AS from_id, m.doc_id AS to_id,
-               COUNT(*)::bigint AS mention_count,
-               (MIN(m.created_at) AT TIME ZONE 'UTC') AS first_seen
-        FROM mentions m
-        JOIN resolution_decisions rd
-          ON rd.mention_id = m.mention_id AND rd.superseded_by IS NULL
-        JOIN graph_survivor s ON s.entity_id = rd.entity_id
-        JOIN entities e ON e.entity_id = s.survivor AND e.status = 'active'
-        WHERE EXISTS (SELECT 1 FROM documents d
-                      WHERE d.doc_id = m.doc_id AND d.deleted_at IS NULL)
-        GROUP BY s.survivor, m.doc_id
+        SELECT entity_id AS from_id, doc_id AS to_id, mention_count,
+               (first_mentioned_at AT TIME ZONE 'UTC') AS first_seen
+        FROM memory_v1.entity_document_mentions
+        WHERE deployment_id = :deployment_id
         """
     ),
     "DOC_CROSSREF": text(
         """
-        SELECT "from" AS from_id, "to" AS to_id,
-               "from" AS from_doc_id, "to" AS to_doc_id, kind, context
-        FROM v_graph_crossref
+        SELECT from_doc_id AS from_id, to_doc_id AS to_id,
+               from_doc_id, to_doc_id, kind, context
+        FROM memory_v1.document_crossrefs_live
+        WHERE deployment_id = :deployment_id
         """
     ),
     "IS_DOCUMENT": text(
         """
-        SELECT s.survivor AS from_id, d.doc_id AS to_id
-        FROM documents d
-        JOIN graph_survivor s ON s.entity_id = d.document_entity_id
-        JOIN entities e ON e.entity_id = s.survivor AND e.status = 'active'
-        WHERE d.document_entity_id IS NOT NULL AND d.deleted_at IS NULL
+        SELECT entity.entity_id AS from_id, document.doc_id AS to_id
+        FROM memory_v1.documents_live AS document
+        JOIN documents AS raw
+          ON raw.deployment_id = document.deployment_id
+         AND raw.doc_id = document.doc_id
+        JOIN v_memory_entity_survivor AS survivor
+          ON survivor.deployment_id = raw.deployment_id
+         AND survivor.entity_id = raw.document_entity_id
+        JOIN memory_v1.entities_current AS entity
+          ON entity.deployment_id = survivor.deployment_id
+         AND entity.entity_id = survivor.survivor_entity_id
+        WHERE document.deployment_id = :deployment_id
         """
     ),
 }
 
 _SELECT_UNRESOLVED_SURVIVORS = text(
     """
-    SELECT s.entity_id FROM graph_survivor s
-    JOIN entities e ON e.entity_id = s.survivor
-    WHERE e.merged_into IS NOT NULL
+    SELECT e.entity_id
+    FROM entities AS e
+    LEFT JOIN graph_survivor AS resolved
+      ON resolved.entity_id = e.entity_id
+    WHERE e.deployment_id = :deployment_id
+      AND resolved.entity_id IS NULL
+    ORDER BY e.entity_id
     """
 )
 
@@ -487,6 +543,7 @@ _PUBLISH_SNAPSHOT = text(
     UPDATE projection_snapshots
     SET status = 'published', is_latest = true, row_counts = :row_counts,
         validation = :validation, built_from_watermark = :built_from_watermark,
+        built_at = coalesce(:built_at, built_at),
         published_at = now()
     WHERE snapshot_id = :snapshot_id
     """
@@ -615,7 +672,9 @@ _SELECT_LATEST = text(
 
 _SELECT_WATERMARK = text(
     """
-    SELECT max(ingested_at) FROM relations
+    SELECT max(ingested_at)
+    FROM memory_v1.graph_edges_visible_history
+    WHERE deployment_id = :deployment_id
     """
 )
 
@@ -650,7 +709,11 @@ _SELECT_NEWER_LATEST = text(
       AND cur.plane = CAST(:plane AS projection_plane)
       AND cur.is_latest
       AND mine.snapshot_id = :snapshot_id
-      AND cur.built_at > mine.built_at
+      -- Compare against the cut this candidate is ABOUT to record, not the
+      -- registry-insert time it still carries: the row is stamped with its
+      -- export cut by the publish below, and reading the stale value here
+      -- superseded a genuinely newer snapshot.
+      AND cur.built_at > coalesce(CAST(:built_at AS timestamptz), mine.built_at)
     """
 )
 
@@ -658,7 +721,8 @@ _MARK_SUPERSEDED = text(
     """
     UPDATE projection_snapshots
     SET status = 'superseded', row_counts = :row_counts,
-        validation = :validation, built_from_watermark = :built_from_watermark
+        validation = :validation, built_from_watermark = :built_from_watermark,
+        built_at = coalesce(CAST(:built_at AS timestamptz), built_at)
     WHERE snapshot_id = :snapshot_id
     """
 ).bindparams(bindparam("row_counts", type_=JSON), bindparam("validation", type_=JSON))

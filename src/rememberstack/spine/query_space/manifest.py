@@ -55,9 +55,11 @@ The file has two halves, and the split is deliberate.
   explicitly excluded from the hash, so a new index must not roll it.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from typing import cast
 from typing import Final
 
 from pydantic import BaseModel
@@ -65,10 +67,8 @@ from pydantic import ConfigDict
 from sqlalchemy import Connection
 from sqlalchemy import text
 
-from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
-    PRIVATE_HELPER_VIEWS,
-)
 from rememberstack.spine.query_space.ast_serializer import SERIALIZER_VERSION
+from rememberstack.spine.query_space.canonical import canonical_json_bytes
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.catalog import POSTGRESQL_MAJOR
@@ -76,10 +76,13 @@ from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA_MAJOR
 from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS
 from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS_BY_NAME
+from rememberstack.spine.query_space.source_definitions import (
+    AUTHORED_AUTHORIZATION_HELPERS,
+)
 from rememberstack.spine.query_space.source_definitions import AUTHORED_VIEWS
 
 #: Identifier of this manifest document's own layout.
-MANIFEST_CONTRACT: Final = "memory_v1.manifest/1"
+MANIFEST_CONTRACT: Final = "memory_v1.manifest/2"
 
 #: The checked-in manifest that discovery serves and the schema gate compares.
 MANIFEST_PATH: Final = Path(__file__).with_name("memory_v1_manifest.json")
@@ -281,6 +284,266 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "parallel": "unsafe",
         }
     )
+    graph_edge_columns = [
+        "relation_id",
+        "subject_entity_id",
+        "object_entity_id",
+        "predicate",
+        "fact_label",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at",
+        "contradiction_group",
+        "confidence",
+        "evidence_count_current",
+        "contradict_count_current",
+        "support_state_current",
+    ]
+    graph_edge_types = [
+        "uuid",
+        "uuid",
+        "uuid",
+        "text",
+        "text",
+        "timestamptz",
+        "timestamptz",
+        "timestamptz",
+        "timestamptz",
+        "uuid",
+        "real",
+        "bigint",
+        "bigint",
+        "text",
+    ]
+    functions.extend(
+        [
+            {
+                "name": "graph_neighborhood",
+                "target": "graph",
+                "channel": "postgresql",
+                "arguments_min": 1,
+                "arguments_max": 6,
+                "arguments": [
+                    {"name": "start_entity_id", "type": "uuid", "required": True},
+                    {
+                        "name": "max_depth",
+                        "type": "integer",
+                        "required": False,
+                        "default": 2,
+                        "hard_cap": 4,
+                    },
+                    {
+                        "name": "predicates",
+                        "type": "text[]",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "valid_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "believed_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "max_edges",
+                        "type": "integer",
+                        "required": False,
+                        "default": 100,
+                        "hard_cap": 500,
+                    },
+                ],
+                "volatility": "stable",
+                "security": "invoker",
+                "parallel": "unsafe",
+                "comment": (
+                    "Traverse the live graph with statement_timestamp() applied to"
+                    " both clocks when both are omitted, or the half-open historical"
+                    " graph when both valid_at and believed_at are supplied. Supplying"
+                    " exactly one clock fails with invalid_parameter_value. Reaching"
+                    " a depth or edge cap is disclosed in QueryResult/v1."
+                ),
+                "example": (
+                    "SELECT * FROM memory_v1.graph_neighborhood("
+                    "$1, 2, NULL, $2, $3, 100)"
+                ),
+                "columns": [
+                    "path_id",
+                    "hop",
+                    "path_position",
+                    "from_entity_id",
+                    "to_entity_id",
+                    *graph_edge_columns,
+                    "applied_valid_at",
+                    "applied_believed_at",
+                ],
+                "column_types": [
+                    "bigint",
+                    "integer",
+                    "integer",
+                    "uuid",
+                    "uuid",
+                    *graph_edge_types,
+                    "timestamptz",
+                    "timestamptz",
+                ],
+            },
+            {
+                "name": "graph_path",
+                "target": "graph",
+                "channel": "postgresql",
+                "arguments_min": 2,
+                "arguments_max": 8,
+                "arguments": [
+                    {"name": "from_entity_id", "type": "uuid", "required": True},
+                    {"name": "to_entity_id", "type": "uuid", "required": True},
+                    {
+                        "name": "max_depth",
+                        "type": "integer",
+                        "required": False,
+                        "default": 4,
+                        "hard_cap": 6,
+                    },
+                    {
+                        "name": "predicates",
+                        "type": "text[]",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "valid_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "believed_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "name": "max_paths",
+                        "type": "integer",
+                        "required": False,
+                        "default": 3,
+                        "hard_cap": 10,
+                    },
+                    {
+                        "name": "max_edges",
+                        "type": "integer",
+                        "required": False,
+                        "default": 100,
+                        "hard_cap": 500,
+                    },
+                ],
+                "volatility": "stable",
+                "security": "invoker",
+                "parallel": "unsafe",
+                "comment": (
+                    "Return bounded simple paths over the live graph with"
+                    " statement_timestamp() applied to both clocks when both are"
+                    " omitted, or the half-open historical graph when both valid_at"
+                    " and believed_at are supplied. Supplying exactly one clock fails"
+                    " with invalid_parameter_value. Reaching a depth, path, or edge"
+                    " cap is disclosed in QueryResult/v1."
+                ),
+                "example": (
+                    "SELECT * FROM memory_v1.graph_path("
+                    "$1, $2, 4, NULL, $3, $4, 3, 100)"
+                ),
+                "columns": [
+                    "path_id",
+                    "path_length",
+                    "path_position",
+                    "step_from_entity_id",
+                    "step_to_entity_id",
+                    *graph_edge_columns,
+                    "applied_valid_at",
+                    "applied_believed_at",
+                ],
+                "column_types": [
+                    "bigint",
+                    "integer",
+                    "integer",
+                    "uuid",
+                    "uuid",
+                    *graph_edge_types,
+                    "timestamptz",
+                    "timestamptz",
+                ],
+            },
+            {
+                "name": "query_cypher",
+                "target": "graph",
+                "channel": "cypher",
+                "arguments_min": 1,
+                "arguments_max": 3,
+                "arguments": [
+                    {"name": "cypher", "type": "text", "required": True},
+                    {
+                        "name": "parameters",
+                        "type": "json",
+                        "required": False,
+                        "default": {},
+                    },
+                    {
+                        "name": "max_rows",
+                        "type": "integer",
+                        "required": False,
+                        "default": None,
+                    },
+                ],
+                "execution_options": {"confirm": {"type": "boolean", "default": False}},
+                "result_contract": "QueryResult/v1",
+                "grade": "snapshot_graph",
+                "comment": (
+                    "Execute one bounded read against the disclosed P2 snapshot;"
+                    " confirm defaults false and checks only top-level typed Entity"
+                    " and RELATES values. The manifest's rejected_functions list"
+                    " names the pinned physical-address origin and coercion functions"
+                    " that are unavailable."
+                ),
+                "example": (
+                    "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20"
+                ),
+                "columns": ["result"],
+                "column_types": ["QueryResult/v1"],
+            },
+            {
+                "name": "explain_cypher",
+                "target": "graph",
+                "channel": "cypher",
+                "arguments_min": 1,
+                "arguments_max": 2,
+                "arguments": [
+                    {"name": "cypher", "type": "text", "required": True},
+                    {
+                        "name": "parameters",
+                        "type": "json",
+                        "required": False,
+                        "default": {},
+                    },
+                ],
+                "result_contract": "QueryResult/v1",
+                "grade": "snapshot_graph",
+                "comment": (
+                    "Return the bounded engine plan for one accepted read without"
+                    " executing it. The same dialect gate applies, including refusal"
+                    " of the manifest's physical-address functions."
+                ),
+                "example": "MATCH (e:Entity) RETURN e.name LIMIT 20",
+                "columns": ["result"],
+                "column_types": ["QueryResult/v1"],
+            },
+        ]
+    )
     published = {entry["name"] for entry in functions}  # type: ignore[index]
     return {
         "contract": "memory_v1.functions/1",
@@ -307,6 +570,67 @@ def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
     return {"contract": "memory_v1.core_operations/1", "operations": []}
 
 
+def _core_operation_descriptors() -> dict[str, CanonicalValue]:
+    """The three assured operations, derived from their canonical recipes."""
+    from rememberstack.spine.recipes import CANONICAL_RECIPES
+    from rememberstack.surfaces.recipe_surface import recipe_descriptors
+
+    assured = {"resolve_entity", "question_context", "current_context"}
+    recipes = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
+    if set(recipes) & assured != assured:
+        raise SchemaManifestError("the canonical recipe set lacks an assured operation")
+    public_descriptors = {
+        descriptor.name: descriptor
+        for descriptor in recipe_descriptors(
+            recipes=tuple(recipes[name] for name in sorted(assured))
+        )
+    }
+    operations: list[CanonicalValue] = []
+    for name in sorted(assured):
+        recipe = recipes[name]
+        public = public_descriptors[name]
+        chain = cast(
+            "CanonicalValue", [step.model_dump(mode="json") for step in recipe.chain]
+        )
+        descriptor: dict[str, CanonicalValue] = {
+            "name": public.name,
+            "version": public.version,
+            "description": public.description,
+            "input_schema": cast("CanonicalValue", public.input_schema),
+            "envelope_contract": "D49",
+            "grain": public.output_grain,
+            "intent": public.answer_intent,
+            "implementation_chain_hash": hashlib.sha256(
+                canonical_json_bytes(chain)
+            ).hexdigest(),
+        }
+        if name == "question_context":
+            descriptor["channels"] = {
+                "claims": {"enabled": True, "grain": "evidence", "hybrid": True},
+                "chunks": {"enabled": True, "grain": "evidence", "hybrid": True},
+                "facts": {
+                    "enabled_by": "include_facts",
+                    "default": False,
+                    "grain": "fact",
+                    "nomination": "semantic",
+                    "confirmed_in": "postgresql",
+                    "max_facts": 30,
+                    "evidence_per_fact": 3,
+                    "evidence_budget": 60,
+                },
+                "entities": {
+                    "enabled_by": "include_entities",
+                    "default": False,
+                    "grain": "fact",
+                    "order": "exact_resolution_then_semantic",
+                    "confirmed_in": "postgresql",
+                    "max_candidates": 20,
+                },
+            }
+        operations.append(descriptor)
+    return {"contract": "memory_v1.core_operations/1", "operations": operations}
+
+
 def stub_limits() -> dict[str, CanonicalValue]:
     """Return the bound, still-unpopulated grammar and resource-limit member.
 
@@ -315,7 +639,11 @@ def stub_limits() -> dict[str, CanonicalValue]:
     """
     return {
         "contract": "memory_v1.limits/1",
-        "sql_grammar": {"operators": [], "pg_catalog_functions": []},
+        "sql_grammar": {
+            "operators": [],
+            "pg_catalog_functions": [],
+            "statement_node_classes": [],
+        },
         "cypher_dialect": {"allowed_clauses": [], "rejected_constructs": []},
         "p2_projection": {"contract_version": None, "node_types": {}, "edge_types": {}},
         "resource_limits": {
@@ -337,8 +665,10 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
     """
     from rememberstack.surfaces.query_sandbox import grammar
     from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
+    from rememberstack.workers.p2 import P2_PROJECTION_SCHEMA
 
     sql_grammar: dict[str, CanonicalValue] = {
+        "statement_node_classes": list(sorted(grammar.STATEMENT_NODE_ALLOWLIST)),
         "functions": list(sorted(grammar.FUNCTION_ALLOWLIST)),
         "operators": list(sorted(grammar.OPERATOR_ALLOWLIST)),
         "cast_types": list(sorted(grammar.CAST_TYPE_ALLOWLIST)),
@@ -362,15 +692,57 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
         "contract": "memory_v1.limits/1",
         "sql_grammar": sql_grammar,
         "resource_limits": resource_limits,
-        "cypher_dialect": {"contract": "memory_v1.cypher/1", "clauses": []},
-        "p2_projection": {"contract": "memory_v1.p2/1"},
+        "cypher_dialect": _cypher_dialect(),
+        "p2_projection": cast("dict[str, CanonicalValue]", P2_PROJECTION_SCHEMA),
+    }
+
+
+def _cypher_dialect() -> dict[str, CanonicalValue]:
+    """The §3.5 Cypher read surface: what it accepts and what it refuses.
+
+    The reject list is part of the public contract, not an implementation
+    detail: an agent needs to know which constructs die before the engine sees
+    them (the file/network/extension family). Mutations are refused by the
+    engine's `read_only=True` and mapped to the same public code; a change to
+    either path rolls the hash.
+    """
+    from rememberstack.surfaces.query_sandbox import cypher
+    from rememberstack.surfaces.query_sandbox.cypher_executor import (
+        CYPHER_TEXT_BYTES_MAX,
+    )
+
+    return {
+        "contract": "memory_v1.cypher/1",
+        "engine": "ladybug",
+        "engine_version": cypher.LADYBUG_ENGINE_VERSION,
+        "read_clauses": list(sorted(cypher.READ_CLAUSES)),
+        "read_openings": list(sorted(cypher.READ_OPENINGS)),
+        "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
+        "engine_rejected_mutations": list(sorted(cypher.ENGINE_REJECTED_MUTATIONS)),
+        "rejected_functions": list(sorted(cypher.REJECTED_FUNCTIONS)),
+        "text_bytes_max": CYPHER_TEXT_BYTES_MAX,
+        # Pinned engine-native recursive upper bound. The executor does not
+        # duplicate this grammar in a text walker.
+        "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,
+        "grade": "snapshot_graph",
+        "process_isolated": False,
+        "graph_reference_metadata": "unavailable",
+        # `confirm=true` checks live membership of projected entity/relation
+        # ids; it does not make any other part of the result live. Naming the
+        # types alone read as a promise about any projection of them, which is
+        # wider than what the code does — a scalar `RETURN e.id` is not
+        # checked, and saying so here is the difference between a documented
+        # limit and an overclaim.
+        "confirmable_types": ["Entity", "RELATES"],
+        "confirmable_projections": ["typed_node_value", "typed_relationship_value"],
+        "unconfirmed_projections": ["scalar_id_projection"],
     }
 
 
 def build_hash_members() -> dict[str, CanonicalValue]:
     """Build the exact document `surface_manifest_hash` is taken over."""
     return {
-        "core_operation_descriptors": stub_core_operation_descriptors(),
+        "core_operation_descriptors": _core_operation_descriptors(),
         "function_signatures": _bridge_function_signatures(),
         "limits": _sandbox_limits_member(),
         "views_schema": _build_views_schema(),
@@ -596,6 +968,13 @@ def _build_views_schema() -> dict[str, CanonicalValue]:
         "schema": QUERY_SPACE_SCHEMA,
         "schema_major": QUERY_SPACE_SCHEMA_MAJOR,
         "definition_ast_serializer": SERIALIZER_VERSION,
+        "authorization_helpers": [
+            {
+                "qualified_name": helper.qualified_name,
+                "definition_ast": helper.definition_ast,
+            }
+            for helper in AUTHORED_AUTHORIZATION_HELPERS.values()
+        ],
         "views": [_view_member(view=view) for view in declared_views()],
     }
 
@@ -652,7 +1031,7 @@ def _build_annotations() -> dict[str, CanonicalValue]:
 
 
 def deployed_definitions(connection: Connection) -> dict[str, str]:
-    """Deparse every public view and private helper the database is running.
+    """Deparse every public view and authorization helper now deployed.
 
     `pg_get_viewdef` is the server's own printer, so two databases on the same
     server print the same definition the same way. That is what makes the
@@ -668,7 +1047,7 @@ def deployed_definitions(connection: Connection) -> dict[str, str]:
             "   AND (n.nspname = :schema"
             "        OR (n.nspname = 'public' AND c.relname = ANY(:helpers)))"
         ),
-        {"schema": QUERY_SPACE_SCHEMA, "helpers": list(PRIVATE_HELPER_VIEWS)},
+        {"schema": QUERY_SPACE_SCHEMA, "helpers": list(AUTHORED_AUTHORIZATION_HELPERS)},
     ).mappings()
     return {str(row["name"]): " ".join(str(row["definition"]).split()) for row in rows}
 

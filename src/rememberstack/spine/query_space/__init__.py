@@ -37,10 +37,14 @@ from rememberstack.spine.query_space.manifest import write_manifest
 from rememberstack.spine.query_space.quarantine import orphan_quarantine_report
 from rememberstack.spine.query_space.quarantine import QUARANTINE_CATEGORIES
 from rememberstack.spine.query_space.quarantine import QuarantineReport
+from rememberstack.spine.query_space.source_definitions import (
+    AUTHORED_AUTHORIZATION_HELPERS,
+)
 from rememberstack.spine.query_space.source_definitions import AUTHORED_VIEWS
 
 __all__ = [
     "AUTHORED_VIEWS",
+    "AUTHORED_AUTHORIZATION_HELPERS",
     "DELETION_TARGETS",
     "DELETION_TARGETS_BY_ID",
     "EXECUTED_TARGETS",

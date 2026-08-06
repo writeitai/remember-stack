@@ -1,8 +1,8 @@
 """The authored `memory_v1` DDL, read as the canonical source of the surface.
 
-The migration that creates the query space holds the DDL strings PostgreSQL
-executes. Those strings — not a running server's rendering of them — are what
-the manifest describes, for two reasons.
+The migrations that create and correct the query space hold the DDL strings
+PostgreSQL executes. Those strings — not a running server's rendering of them
+— are what the manifest describes, for two reasons.
 
 - **Reproducibility.** The manifest hash must be computable from the repository
   alone, on a machine with no PostgreSQL running, and must not move when the
@@ -12,12 +12,13 @@ the manifest describes, for two reasons.
   longer distinguishes: the exact output-column list the contract publishes and
   the per-column documentation written beside it.
 
-What this module extracts, per public relation: the `CREATE VIEW` statement
+What this module extracts, per public relation: the latest `CREATE VIEW` or
+`CREATE OR REPLACE VIEW` statement
 (parsed into the canonical AST that is hashed), the ordered output-column
 names, the view comment, and each column's comment. The private helper views
-are deliberately excluded — they are not part of the published surface — but
-their DDL is still parsed, so a syntax error anywhere in the block is caught
-here rather than at migration time.
+remain absent from the published relation list, but authorization-helper ASTs
+are hashed as dependencies because changing one changes public row membership.
+Their grants remain private; hash membership is not caller reachability.
 
 The one fact about a column that the source cannot state is its SQL type: only
 PostgreSQL can resolve the type of an expression. That is declared in
@@ -35,6 +36,15 @@ from pydantic import ConfigDict
 from rememberstack.spine.migrations._helpers import view_column_comments
 from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
     MEMORY_V1_AUTHORED_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
+    AUTHORIZATION_HELPER_VIEWS,
+)
+from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
+    MEMORY_V1_CORRECTION_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_05_0026_graph_helpers import (
+    GRAPH_EDGE_VIEW_DDL,
 )
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
@@ -68,6 +78,16 @@ class AuthoredView(BaseModel):
     """The canonical parse tree of `statement`, which is what the hash pins."""
 
 
+class AuthoredAuthorizationHelper(BaseModel):
+    """One private view whose semantics determine public row membership."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    qualified_name: str
+    definition_ast: CanonicalValue
+
+
 def _statements(*, sql: str) -> list[str]:
     """Split one authored DDL block into its individual statements."""
     parsed = parse_sql(sql)
@@ -99,11 +119,17 @@ def _comment_target(*, statement: str) -> tuple[str, str] | None:
     return ".".join(parts), str(node.comment)
 
 
-def _build_authored_views() -> dict[str, AuthoredView]:
-    """Read every published relation out of the authored DDL blocks."""
+def _authored_parts() -> tuple[
+    dict[str, str], dict[str, str], dict[str, dict[str, str]]
+]:
+    """Read the latest definitions plus their stable authored documentation."""
     statements: list[str] = []
     column_comments: dict[str, dict[str, str]] = {}
-    for block in MEMORY_V1_AUTHORED_DDL:
+    for block in (
+        *MEMORY_V1_AUTHORED_DDL,
+        MEMORY_V1_CORRECTION_DDL,
+        GRAPH_EDGE_VIEW_DDL,
+    ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):
             column_comments.setdefault(view, {})[column] = comment
@@ -118,6 +144,12 @@ def _build_authored_views() -> dict[str, AuthoredView]:
         commented = _comment_target(statement=statement)
         if commented is not None:
             comments[commented[0]] = commented[1]
+    return definitions, comments, column_comments
+
+
+def _build_authored_views() -> dict[str, AuthoredView]:
+    """Read every published relation out of the latest authored DDL."""
+    definitions, comments, column_comments = _authored_parts()
 
     prefix = f"{QUERY_SPACE_SCHEMA}."
     views: dict[str, AuthoredView] = {}
@@ -145,5 +177,26 @@ def _build_authored_views() -> dict[str, AuthoredView]:
     return dict(sorted(views.items()))
 
 
+def _build_authorization_helpers() -> dict[str, AuthoredAuthorizationHelper]:
+    """Read every private definition that controls a public membership rule."""
+    definitions, _, _ = _authored_parts()
+    helpers: dict[str, AuthoredAuthorizationHelper] = {}
+    for name in AUTHORIZATION_HELPER_VIEWS:
+        statement = definitions.get(name)
+        if statement is None:
+            raise SourceDefinitionError(
+                f"authorization helper {name} has no authored definition"
+            )
+        helpers[name] = AuthoredAuthorizationHelper(
+            name=name,
+            qualified_name=f"public.{name}",
+            definition_ast=serialize_definition(authored_definition=statement),
+        )
+    return dict(sorted(helpers.items()))
+
+
 #: Every published relation, keyed by its unqualified name, in name order.
 AUTHORED_VIEWS: Final = _build_authored_views()
+
+#: Every private semantic dependency whose AST is part of the surface identity.
+AUTHORED_AUTHORIZATION_HELPERS: Final = _build_authorization_helpers()

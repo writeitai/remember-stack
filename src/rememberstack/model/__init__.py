@@ -34,6 +34,7 @@ from rememberstack.model.claims import ClaimValidKind
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.claims import DecisionRecord
 from rememberstack.model.claims import DecisionType
+from rememberstack.model.claims import FactForEmbedding
 from rememberstack.model.claims import FactForLabeling
 from rememberstack.model.claims import FactLabelResponse
 from rememberstack.model.claims import ObservationForEmbedding
@@ -405,6 +406,7 @@ __all__ = (
     "EvidenceResult",
     "ChunkEvidenceResult",
     "FactEvidence",
+    "FactForEmbedding",
     "FactForLabeling",
     "FactLabelResponse",
     "FactResult",

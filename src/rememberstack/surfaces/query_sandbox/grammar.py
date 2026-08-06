@@ -246,8 +246,70 @@ def _func_name(call: FuncCall) -> str:
     return parts[-1].lower()
 
 
+#: The parse-tree node classes a read statement is built from.
+#:
+#: The allowlists above name relations, functions, operators and casts, but they
+#: are only consulted for the node classes that carry them — so a construct
+#: expressed through a DIFFERENT node class was never compared against anything
+#: and simply ran. `JSON_OBJECT(...)`, `JSON_ARRAYAGG(...)` and `IS JSON` are
+#: not `FuncCall` nodes; `GROUPING(...)` is a `GroupingFunc`. All of them
+#: reached PostgreSQL that way. Enumerating those four would leave the fifth,
+#: so the posture is default-deny over node classes: a construct nobody
+#: considered is refused rather than admitted.
+STATEMENT_NODE_ALLOWLIST: Final = frozenset(
+    {
+        "RawStmt",
+        "SelectStmt",
+        "WithClause",
+        "CommonTableExpr",
+        "JoinExpr",
+        "RangeVar",
+        "RangeSubselect",
+        "RangeFunction",
+        "Alias",
+        "ResTarget",
+        "SortBy",
+        "WindowDef",
+        "ColumnRef",
+        "A_Const",
+        "A_Expr",
+        "A_Star",
+        "A_Indirection",
+        "A_Indices",
+        "A_ArrayExpr",
+        "BoolExpr",
+        "NullTest",
+        "BooleanTest",
+        "CaseExpr",
+        "CaseWhen",
+        "CoalesceExpr",
+        "MinMaxExpr",
+        "SubLink",
+        "FuncCall",
+        "TypeCast",
+        "TypeName",
+        "ParamRef",
+        "CollateClause",
+        "RowExpr",
+        "NamedArgExpr",
+        "String",
+        "Integer",
+        "Float",
+        "Boolean",
+        "BitString",
+        "Null",
+        "GroupingSet",
+    }
+)
+
+
 class _AllowlistVisitor(Visitor):
-    """Walks the full tree enforcing relations, functions, operators, casts."""
+    """Walks the full tree enforcing relations, functions, operators, casts.
+
+    Default-deny applies to NODE CLASSES first: a construct whose class this
+    surface has never considered is refused before any allowlist is consulted,
+    because an unconsidered construct is precisely the one no allowlist covers.
+    """
 
     def __init__(self, *, cte_names: frozenset[str]) -> None:
         super().__init__()
@@ -255,6 +317,40 @@ class _AllowlistVisitor(Visitor):
         self.views: set[str] = set()
         self.functions: set[str] = set()
         self.srf_calls: list[FuncCall] = []
+
+    def visit(self, ancestors, node):  # noqa: ANN001, ANN201
+        """The generic fallback: a node class with no dedicated visitor.
+
+        pglast dispatches to `visit_<Class>` where one exists and here where it
+        does not, so this is exactly the set of constructs nothing else has
+        looked at — which is why it refuses rather than passes.
+        """
+        name = type(node).__name__
+        if name not in STATEMENT_NODE_ALLOWLIST:
+            raise _reject(
+                QueryErrorCode.STATEMENT_NOT_ALLOWED,
+                f"{name} is not part of the statement grammar this surface reads",
+            )
+        return None
+
+    def visit_SortBy(self, ancestors, node):  # noqa: ANN001, ANN201
+        """`ORDER BY x USING <op>` names an operator like any other use of one.
+
+        It travels on the sort clause rather than inside an expression, so the
+        operator allowlist never saw it.
+        """
+        parts = tuple(_sval(part) for part in getattr(node, "useOp", ()) or ())
+        if len(parts) > 1:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"qualified operator {'.'.join(parts)} is not allowed",
+            )
+        if parts and parts[0] not in OPERATOR_ALLOWLIST:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"operator {parts[0]} is not allowed",
+            )
+        return None
 
     def visit_RangeVar(self, ancestors, node: RangeVar):  # noqa: ANN001, ANN201
         schema = node.schemaname
@@ -292,12 +388,19 @@ class _AllowlistVisitor(Visitor):
         return None
 
     def visit_A_Expr(self, ancestors, node: A_Expr):  # noqa: ANN001, ANN201
-        for piece in node.name or ():
-            if isinstance(piece, String) and _sval(piece) not in OPERATOR_ALLOWLIST:
-                raise _reject(
-                    QueryErrorCode.OPERATOR_NOT_ALLOWED,
-                    f"operator {piece.sval} is not allowed",
-                )
+        parts = tuple(
+            _sval(piece) for piece in node.name or () if isinstance(piece, String)
+        )
+        if len(parts) > 1:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"qualified operator {'.'.join(parts)} is not allowed",
+            )
+        if parts and parts[0] not in OPERATOR_ALLOWLIST:
+            raise _reject(
+                QueryErrorCode.OPERATOR_NOT_ALLOWED,
+                f"operator {parts[0]} is not allowed",
+            )
         return None
 
     def visit_TypeCast(self, ancestors, node: TypeCast):  # noqa: ANN001, ANN201
@@ -358,6 +461,8 @@ class _AllowlistVisitor(Visitor):
 
 
 def _assert_single_readonly_statement(sql: str) -> SelectStmt:
+    if "\x00" in sql:
+        raise _reject(QueryErrorCode.PARSE_ERROR, "SQL text contains a NUL byte")
     try:
         statements = parse_sql(sql)
     except ParseError as error:

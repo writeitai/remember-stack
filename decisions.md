@@ -3081,3 +3081,99 @@ single handler patch.
 per-chunk location LLM; hotfix-only durability inside the old monolith; ungoverned connector
 JSON as Lance filters; free-form header as sole E2 location grounding channel without typed
 replacement.
+
+## D81. Query-sandbox contracts follow enforceable authorities, not parallel approximations (refines D68)
+
+**Decision (2026-08-05, Batch B correction review).** The open SQL sandbox uses one
+deployment-derived query login and its enforceable 64 MiB `temp_file_limit` for both
+interactive and entitled analytical requests; no second analytical role is introduced merely
+to advertise a larger temporary-file allowance. Raw SQL containing U+0000 is rejected before
+pglast. Every rejected or failed `QueryResult/v1` carries zero rows and
+`empty_result=true`. Discovery serializes every field of the authoritative `TierLimits`
+record rather than a hand-picked subset. A public request executes `READ ONLY, REPEATABLE
+READ`, because its bounded internal confirmation work and caller statement must share one
+snapshot.
+
+D68's database boundary applies to content-bearing deployment databases. Provisioning revokes
+default `PUBLIC` database privileges before deployment content or query credentials exist,
+then grants `CONNECT` to that database's derived login; the pool/HBA route offers that login
+only its bound database. PostgreSQL effective privileges are additive, so revoking from one
+role cannot override `PUBLIC`. We therefore make no false claim that an arbitrary
+unprovisioned or administrative database has a per-role deny ACL; such databases must contain
+no deployment content. The implementation analysis and PostgreSQL sources are recorded in
+`plan/analysis/open_query_space_batch_b_corrections.md`.
+
+**Context.** Review found six cases where code or prose duplicated an authority and drifted:
+an analytical cap larger than the only role setting; parser-first handling of NUL; a model
+default that made rowless failures say non-empty; six manually selected discovery fields from
+a 19-field record; `READ COMMITTED` prose beside a repeatable-read executor; and a test over two
+migrated databases described as proof about every database in a cluster.
+
+**Rejected alternatives.** A second analytical login solely for a temp cap; RLS; cluster event
+triggers that mutate all future database ACLs; a custom SQL lexer for the NUL precondition; a
+second discovery-limit schema; weakening the executor to `READ COMMITTED`.
+
+**Consequences.** The binding design, limits manifest, discovery payload, result honesty, and
+tests now name the same authorities. Cross-deployment acceptance tests prove isolation between
+provisioned deployment databases, while provisioning order and routing carry the boundary for
+the cluster around them. Changes to `TierLimits`, including the 64 MiB analytical temp cap,
+roll `surface_manifest_hash` through the existing manifest generator.
+
+## D82. The Cypher boundary stays lexical/read-only; unavailable graph metadata is null; question context v4 reuses existing authorities
+
+**Decision (2026-08-05).** The Cypher pre-engine gate remains a conservative token scanner,
+not a handwritten parser: it default-denies statement openings and rejects the pinned
+external-action/session/maintenance family anywhere outside quotes and real engine comments.
+LadybugDB `read_only=True` remains the mutation authority. The pinned engine's 30-hop ceiling
+is engine-native. Graph type/property references are null until the engine supplies structural
+parse metadata; `confirm=true` checks only top-level engine-typed `NODE`/`REL` values labelled
+`Entity`/`RELATES` and warns when none were confirmable. Forgeable structs and scalar UUID
+projections remain snapshot-scoped, and engine `INTERNAL_ID` offsets are never public.
+The observed pinned-engine physical-address family — `id`, `rowid`,
+`internal_id`, `offset`, `hash`, `cast`, `string`, and `to_string` — is refused
+in function-call position, including backtick-quoted names. These functions can
+expose or derive a physical address directly or erase its engine type; ordinary
+public `e.id` and ``e.`id` `` properties remain available.
+
+The P2 rebuild reads the same D48/D54-bearing `memory_v1` relations as the live query surface,
+and reader caches are keyed and verified by deployment plus immutable snapshot identity and a
+validated leaf version. Cypher shares SQL's kill-switch/admission/audit objects. Pure
+PostgreSQL graph helpers remain invoker-security; their transaction-local cap marker makes them
+parallel-unsafe, while only projection-backed functions need the no-login definer bridge.
+Their paired-clock refusal is internal to the two documented helpers; PUBLIC
+has no function EXECUTE privilege in `memory_v1`, and the routed query role is
+granted only the manifest-enumerated functions. Nested engine `INTERNAL_ID`
+types are refused just like scalar physical IDs. A failure to install the
+engine statement timeout fails closed before execution.
+
+Cypher query identity uses the existing scanner's normalized token sequence
+plus pinned-engine logical parameter families. It ignores formatting and real
+engine comments without pretending that the engine exposes an AST or adding a
+second parser.
+
+`question_context` v4 adds default-false `include_facts` and `include_entities` flags. Facts
+reuse `current_context`'s semantic nomination, D48/D41 confirmation, both-stance evidence,
+30-fact cap, fixed evidence depth 3, and 60-association budget. Entities combine exact
+resolution before semantic nomination, deduplicate by survivor ID, confirm once through
+`memory_v1.entities_current`, then cap the live survivors at 20. P1 and PostgreSQL are the existing
+authorities; graph expansion is not silently added to either context operation.
+
+**Rationale.** The removed Cypher walker repeatedly guessed structural meaning incorrectly.
+Reintroducing it for hop bounds, scalar-ID provenance, or graph references would recreate the
+same defect family. An ordinary Python child process would add RPC and snapshot-path plumbing
+without the filesystem/network confinement the earlier worker contract claimed; the observed
+LadybugDB INT128 fault raises rather than hanging or corrupting shared state. Building a nominal
+worker would therefore add complexity without meeting its security claim.
+
+**Consequences.** External actions that read-only does not stop remain load-bearing pre-engine
+rejections. Mutations may reach the read-only engine but can never commit and map to
+`cypher_not_allowed`. Snapshot failures after pinning retain snapshot provenance and snapshots
+older than 3600 seconds warn. Reopen true process confinement only when the hosting layer can
+provide it or observed engine behavior requires a fault boundary. The three assured
+descriptors, exhaustive P2 schema, Cypher/graph signatures, and `surface_manifest_hash` roll
+atomically with v4. D81 is assigned to the stacked Batch B contract-correction decision that
+precedes this branch at merge time.
+
+**Rejected.** A second Cypher parser; UUID/column-name authority guessing; empty arrays for
+unavailable dependency metadata; a confinement-free subprocess described as a sandbox;
+implicit P2 neighbors in context operations with no caller-visible graph request.

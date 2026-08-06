@@ -9,6 +9,7 @@ seeded, deterministic).
 
 from collections.abc import Callable
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 import random
 from typing import cast
@@ -21,18 +22,20 @@ from pydantic import ValidationError
 import pytest
 from sqlalchemy.engine import make_url
 
+from rememberstack.spine.query_space import load_manifest
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.discovery import search_query_space
-from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE
+from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE_FULL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
+from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 
 _ROOT = Path(__file__).parents[3]
 _DEPLOYMENT = UUID("5b000000-0000-0000-0000-00000000000b")
@@ -303,6 +306,7 @@ def test_query_role_settings_are_pinned_by_the_migration(migrated: str) -> None:
             )
         }
     assert settings["temp_file_limit"] == "64MB"
+    assert {caps.temp_file_kib for caps in TIER_LIMITS.values()} == {65_536}
     assert settings["max_parallel_workers_per_gather"] == "0"
     assert settings["default_transaction_read_only"] == "on"
 
@@ -358,6 +362,7 @@ def test_a_public_function_needs_a_projection(migrated: str) -> None:
     )
     assert outcome.termination_reason == "failed"
     assert outcome.error_code == QueryErrorCode.LANCE_UNAVAILABLE
+    assert outcome.empty_result is True
 
 
 def test_executor_parameter_count_mismatch(migrated: str) -> None:
@@ -365,6 +370,7 @@ def test_executor_parameter_count_mismatch(migrated: str) -> None:
         sql="SELECT count(*) FROM claims_live", parameters=["stray"]
     )
     assert outcome.error_code == QueryErrorCode.INVALID_PARAMETER
+    assert outcome.empty_result is True
 
 
 def test_executor_evaluated_at_rule(migrated: str) -> None:
@@ -437,6 +443,7 @@ def test_executor_error_mapping(error: Exception, code: QueryErrorCode) -> None:
     assert outcome.termination_reason == "failed"
     assert outcome.error_code == code
     assert outcome.error_message is not None
+    assert outcome.empty_result is True
     assert "claims" not in (outcome.error_message or "")
 
 
@@ -495,16 +502,36 @@ def test_audit_trail_is_fire_and_forget(migrated: str) -> None:
 
 def test_discovery_serves_manifest_and_headline() -> None:
     description = describe_query_space()
+    members = load_manifest()["hash_members"]
     assert description.schema == "memory_v1"
     assert len(description.views) == 24
-    assert description.headline == TWO_LAYER_HEADLINE
+    assert description.headline == TWO_LAYER_HEADLINE_FULL
     assert set(description.functions) == PUBLIC_SRF_NAMES
+    assert description.limits == {
+        tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()
+    }
+    assert (
+        description.core_operation_descriptors == members["core_operation_descriptors"]
+    )
+    assert description.function_signatures == members["function_signatures"]
+    assert description.cypher_dialect == members["limits"]["cypher_dialect"]
+    assert description.p2_projection == members["limits"]["p2_projection"]
+    entry_points = {
+        entry["name"]
+        for entry in description.function_signatures["functions"]  # type: ignore[index]
+        if entry["channel"] == "cypher"  # type: ignore[index]
+    }
+    assert entry_points == {"query_cypher", "explain_cypher"}
     assert description.examples == ()
 
 
 def test_discovery_search_ranks_relevant_views() -> None:
-    names = [view.name for view in search_query_space(query="current facts", k=3)]
+    hits = search_query_space(query="current facts", k=3)
+    names = [hit.name for hit in hits]
     assert "facts_current" in names
+    assert all(
+        hit.kind in {"view", "function", "core_operation", "example"} for hit in hits
+    )
     with pytest.raises(SandboxRejection):
         search_query_space(query="facts", k=0)
 
@@ -909,6 +936,16 @@ def test_the_surface_hash_covers_the_grammar_and_the_limits() -> None:
         grammar_module.FUNCTION_ALLOWLIST = original
     assert surface_manifest_hash(build_hash_members()) == baseline
 
+    original_nodes = grammar_module.STATEMENT_NODE_ALLOWLIST
+    try:
+        grammar_module.STATEMENT_NODE_ALLOWLIST = frozenset(
+            original_nodes | {"JsonObjectConstructor"}
+        )
+        assert surface_manifest_hash(build_hash_members()) != baseline
+    finally:
+        grammar_module.STATEMENT_NODE_ALLOWLIST = original_nodes
+    assert surface_manifest_hash(build_hash_members()) == baseline
+
 
 def test_the_analytical_tier_requires_an_entitlement(migrated: str) -> None:
     """Asking for the analytical tier does not grant it."""
@@ -987,3 +1024,75 @@ def test_a_deployment_login_cannot_reach_another_deployment(migrated: str) -> No
             admin.execute(
                 f'DROP DATABASE IF EXISTS "{neighbour}" WITH (FORCE)'.encode()
             )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT JSON_OBJECT('a': 1)",
+        "SELECT JSON_ARRAY(1, 2)",
+        "SELECT JSON_ARRAYAGG(1)",
+        "SELECT JSON_OBJECTAGG('k': 1)",
+        "SELECT '[]' IS JSON ARRAY",
+        "SELECT GROUPING(fact_kind) FROM facts_current GROUP BY fact_kind",
+    ],
+)
+def test_a_construct_nobody_considered_is_refused(statement: str) -> None:
+    """Default-deny is over NODE CLASSES, not over a list of bad names.
+
+    Every one of these executed against the deployment role: the allowlists
+    were consulted only for the node classes that carry them, so a construct
+    expressed through a different class was never compared against anything.
+    `JSON_OBJECT` is not a `FuncCall`; `GROUPING` is a `GroupingFunc`. Naming
+    these six would have left the seventh.
+    """
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql(statement)
+    assert rejection.value.code == QueryErrorCode.STATEMENT_NOT_ALLOWED
+
+
+def test_a_nul_byte_is_rejected_before_the_parser_can_truncate() -> None:
+    """Raw SQL cannot hide a suffix after pglast's string terminator."""
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql("SELECT 1\x00; DELETE FROM claims")
+    assert rejection.value.code == QueryErrorCode.PARSE_ERROR
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT claim_id FROM claims_live",
+        "SELECT c.claim_id FROM claims_live AS c JOIN mentions_live AS m"
+        "  ON m.claim_id = c.claim_id ORDER BY c.asserted_at DESC LIMIT 5",
+        "WITH x AS (SELECT claim_id FROM claims_live) SELECT count(*) FROM x",
+        "SELECT CASE WHEN evidence_count > 1 THEN 'many' ELSE 'one' END"
+        "  FROM facts_current",
+        "SELECT fact_id FROM facts_current WHERE predicate IS NOT NULL"
+        "  ORDER BY fact_id DESC",
+    ],
+)
+def test_ordinary_reads_still_pass_the_stricter_gate(statement: str) -> None:
+    """Default-deny that refuses ordinary joins, CTEs and CASE is not stricter,
+    it is broken."""
+    assert validate_sql(statement).sql
+
+
+def test_a_sort_operator_is_checked_like_any_other() -> None:
+    """`ORDER BY x USING <op>` names an operator, and it was never checked."""
+    assert validate_sql("SELECT fact_id FROM facts_current ORDER BY fact_id USING <")
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql("SELECT fact_id FROM facts_current ORDER BY fact_id USING ?|")
+    assert rejection.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED
+
+    with pytest.raises(SandboxRejection) as qualified:
+        validate_sql(
+            'SELECT fact_id FROM facts_current ORDER BY fact_id USING OPERATOR("<".<)'
+        )
+    assert qualified.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED
+
+
+def test_a_qualified_expression_operator_is_rejected_as_one_name() -> None:
+    """Allowlisted pieces cannot assemble a qualified operator escape."""
+    with pytest.raises(SandboxRejection) as rejection:
+        validate_sql('SELECT 1 OPERATOR("<".=) 1')
+    assert rejection.value.code == QueryErrorCode.OPERATOR_NOT_ALLOWED

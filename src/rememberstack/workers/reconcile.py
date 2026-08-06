@@ -35,7 +35,8 @@ from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
-from rememberstack.workers.p1 import FACT_LABEL_VERSION
+from rememberstack.workers.p1 import label_relation_component_version
+from rememberstack.workers.p1 import P1Settings
 
 RECONCILE_VERSION = "reconcile-2026.07"
 """The reconcile stage's component version (D12 idempotency key member)."""
@@ -200,7 +201,9 @@ class ReconcileHandler:
                     target_kind=work.target_kind,
                     target_id=work.target_id,
                     stage=PipelineStage.LABEL_RELATION,
-                    component_version=FACT_LABEL_VERSION,
+                    component_version=label_relation_component_version(
+                        embedding_model=P1Settings().embedding_model
+                    ),
                     content_hash=work.content_hash,
                     lane=work.lane,
                     payload={

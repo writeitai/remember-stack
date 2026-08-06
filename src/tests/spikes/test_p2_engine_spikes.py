@@ -527,10 +527,11 @@ def test_spike_b2_parquet_transport_throughput(
 
 
 def test_spike_c_merge_recursion_and_validation_gate(seeded_deployment: Engine) -> None:
-    """(c) v_graph_survivor terminates on a planted merge CYCLE (the depth
-    guard), and the WP-4.2 validation-gate query catches every endpoint
-    that fails to resolve to exactly one active survivor — the clean chain
-    passes, the cycle members are named."""
+    """(c) survivor resolution terminates and omits a planted merge cycle.
+
+    The WP-4.2 validation gate treats missing terminal resolutions as
+    offenders: the clean chain passes and both cycle members are named.
+    """
     a, b, c = uuid4(), uuid4(), uuid4()
     x, y = uuid4(), uuid4()
     with seeded_deployment.begin() as connection:
@@ -559,17 +560,19 @@ def test_spike_c_merge_recursion_and_validation_gate(seeded_deployment: Engine) 
             for row in connection.execute(
                 text("SELECT entity_id, survivor FROM v_graph_survivor")
             ).all()
-        }  # terminates: the depth guard caps the cycle walk
+        }  # recursive UNION terminates when a pair repeats
         assert survivors[a] == c
         assert survivors[b] == c
+        assert x not in survivors and y not in survivors
         # the validation gate (rebuild aborts the snapshot on any row):
         offenders = {
             row[0]
             for row in connection.execute(
                 text(
-                    "SELECT s.entity_id FROM v_graph_survivor s"
-                    " JOIN entities e ON e.entity_id = s.survivor"
-                    " WHERE e.merged_into IS NOT NULL"
+                    "SELECT e.entity_id FROM entities AS e"
+                    " LEFT JOIN v_graph_survivor AS resolved"
+                    " ON resolved.entity_id = e.entity_id"
+                    " WHERE resolved.entity_id IS NULL"
                 )
             ).all()
         }
