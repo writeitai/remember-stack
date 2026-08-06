@@ -591,11 +591,8 @@ def test_every_recipe_equals_its_hand_composed_chain(corpus: _Corpus) -> None:
 
     direct["claims_hybrid_rrf"] = claim_hybrid(k=30, candidate_k=100)
     direct["chunks_hybrid_rrf"] = chunk_hybrid(k=30, candidate_k=100)
-    direct["question_context"] = engine.combine_evidence(
-        inputs=(
-            claim_hybrid(k=50, candidate_k=200),
-            chunk_hybrid(k=50, candidate_k=200),
-        )
+    direct["question_context"] = engine.question_context(
+        deployment_id=_DEPLOYMENT_ID, query="alice acme"
     )
 
     canonical = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
@@ -744,20 +741,9 @@ def test_chunks_hybrid_rrf_nominates_then_confirms_once() -> None:
 
 
 def test_question_context_keeps_claims_and_chunks_separately_typed() -> None:
-    """The high-recall recipe never cross-fuses claims with source chunks."""
+    """The v4 compound op keeps every optional channel explicitly typed."""
     recipe = next(r for r in CANONICAL_RECIPES if r.name == "question_context")
-    assert [step.op for step in recipe.chain] == [
-        "nominate_claims",
-        "nominate_claims",
-        "fuse",
-        "hydrate_claims",
-        "nominate_chunks",
-        "nominate_chunks",
-        "fuse",
-        "hydrate_chunks",
-        "combine_evidence",
-    ]
-    assert recipe.chain[-1].inputs == (3, 7)
+    assert [step.op for step in recipe.chain] == ["question_context"]
     candidate_parameter = recipe.parameters["candidate_k"]
     result_parameter = recipe.parameters["k"]
     assert isinstance(candidate_parameter, dict)
@@ -767,12 +753,17 @@ def test_question_context_keeps_claims_and_chunks_separately_typed() -> None:
     assert isinstance(candidate_default, int)
     assert isinstance(result_default, int)
     assert candidate_default > result_default
-    assert recipe.chain[2].bind == {}
-    assert recipe.chain[3].bind == {"limit": "k"}
-    assert recipe.chain[3].settings == {"group_exact_text": True}
-    assert recipe.chain[6].bind == {}
-    assert recipe.chain[7].bind == {"limit": "k"}
-    assert recipe.version == 3
+    assert recipe.parameters["include_facts"] == {
+        "type": "boolean",
+        "required": False,
+        "default": False,
+    }
+    assert recipe.parameters["include_entities"] == {
+        "type": "boolean",
+        "required": False,
+        "default": False,
+    }
+    assert recipe.version == 4
     lint_recipe(recipe)
 
 

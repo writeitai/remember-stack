@@ -6,18 +6,15 @@ version and cannot leak data. The first-call resource leads with the bound
 two-layer retrieval headline, verbatim from the design.
 """
 
-from dataclasses import asdict
 from dataclasses import dataclass
 import fnmatch
+from typing import Any
+from typing import cast
 from typing import Final
 
-from rememberstack.spine.query_space.canonical import surface_manifest_hash
-from rememberstack.spine.query_space.manifest import build_hash_members
-from rememberstack.spine.query_space.manifest import declared_views
+from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
-from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
-from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 
 # Bound in the design's opening block ("Bound two-layer retrieval headline
 # (reused verbatim)") — discovery, the consumption skill, and the OSS docs
@@ -60,6 +57,10 @@ class QuerySpaceDescription:
     views: tuple[ViewDescription, ...]
     functions: tuple[str, ...]
     limits: dict[str, dict[str, int]]
+    core_operation_descriptors: dict[str, object]
+    function_signatures: dict[str, object]
+    cypher_dialect: dict[str, object]
+    p2_projection: dict[str, object]
     examples: tuple[str, ...]
 
 
@@ -67,31 +68,49 @@ def describe_query_space(
     *, pattern: str | None = None, include_examples: bool = False
 ) -> QuerySpaceDescription:
     """Manifest-backed exact schema, comments, hash, and limits (§3.1)."""
+    manifest = load_manifest()
+    members = cast("dict[str, Any]", manifest["hash_members"])
+    views_schema = cast("dict[str, Any]", members["views_schema"])
     views = []
-    for view in declared_views():
-        if pattern is not None and not fnmatch.fnmatch(view.name, pattern):
+    for view in cast("list[dict[str, Any]]", views_schema["views"]):
+        name = str(view["name"])
+        if pattern is not None and not fnmatch.fnmatch(name, pattern):
             continue
         views.append(
             ViewDescription(
-                name=view.name,
-                grain=view.grain,
-                row_key=tuple(view.row_key),
-                comment=view.comment,
+                name=name,
+                grain=str(view["grain"]),
+                row_key=tuple(str(key) for key in view["row_key"]),
+                comment=str(view["comment"]),
                 columns=tuple(
-                    (column.name, column.type, column.nullable)
-                    for column in view.columns
+                    (str(column["name"]), str(column["type"]), bool(column["nullable"]))
+                    for column in cast("list[dict[str, Any]]", view["columns"])
                 ),
             )
         )
-    limits = {tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()}
+    signatures = cast("dict[str, Any]", members["function_signatures"])
+    signature_entries = cast("list[dict[str, Any]]", signatures["functions"])
+    limits_member = cast("dict[str, Any]", members["limits"])
     return QuerySpaceDescription(
-        schema="memory_v1",
-        schema_major=1,
-        surface_manifest_hash=surface_manifest_hash(build_hash_members()),
+        schema=str(views_schema["schema"]),
+        schema_major=int(views_schema["schema_major"]),
+        surface_manifest_hash=str(manifest["surface_manifest_hash"]),
         headline=TWO_LAYER_HEADLINE,
         views=tuple(views),
-        functions=tuple(sorted(PUBLIC_SRF_NAMES)),
-        limits=limits,
+        functions=tuple(
+            sorted(
+                str(entry["name"])
+                for entry in signature_entries
+                if entry.get("channel") != "cypher"
+            )
+        ),
+        limits=cast("dict[str, dict[str, int]]", limits_member["resource_limits"]),
+        core_operation_descriptors=cast(
+            "dict[str, object]", members["core_operation_descriptors"]
+        ),
+        function_signatures=cast("dict[str, object]", signatures),
+        cypher_dialect=cast("dict[str, object]", limits_member["cypher_dialect"]),
+        p2_projection=cast("dict[str, object]", limits_member["p2_projection"]),
         # The saved-query registry (Batch E) populates these; until then the
         # flag is honored with an empty set either way.
         examples=() if not include_examples else (),

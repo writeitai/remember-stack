@@ -42,6 +42,21 @@ class AuditEvent:
     analytical_tier: bool
     referenced_views: tuple[str, ...]
     referenced_functions: tuple[str, ...]
+    referenced_graph_types: tuple[str, ...] | None
+    referenced_graph_properties: tuple[str, ...] | None
+    p2_snapshot_id: UUID | None
+    p2_snapshot_version: str | None
+    p2_built_at: datetime | None
+    p2_age_seconds: float | None
+    confirmation_requested: int | None
+    confirmation_nominated: int | None
+    confirmation_confirmed: int | None
+    confirmation_dropped_stale: int | None
+    graph_depth_cap: int | None
+    graph_rows: int | None
+    graph_row_cap_reached: bool | None
+    graph_byte_cap_reached: bool | None
+    engine_fault_class: str | None
     termination_reason: str
     error_code: str | None
     returned_row_count: int
@@ -64,9 +79,19 @@ class AuditTrail:
         trail._enabled = False
         return trail
 
-    def emit(self, *, outcome: "QueryResult", principal: str) -> None:
+    def emit(
+        self,
+        *,
+        outcome: "QueryResult",
+        principal: str,
+        engine_fault_class: str | None = None,
+        graph_depth_cap: int | None = None,
+    ) -> None:
         if not self._enabled:
             return
+        snapshot = outcome.p2_snapshot
+        confirmation = outcome.confirmation
+        is_graph = outcome.query_language == "cypher"
         event = AuditEvent(
             request_id=outcome.request_id,
             deployment_id=outcome.deployment_id,
@@ -83,6 +108,35 @@ class AuditTrail:
             analytical_tier=outcome.limits.analytical_tier,
             referenced_views=outcome.referenced_views,
             referenced_functions=outcome.referenced_functions,
+            referenced_graph_types=outcome.referenced_graph_types,
+            referenced_graph_properties=outcome.referenced_graph_properties,
+            p2_snapshot_id=snapshot.snapshot_id if snapshot is not None else None,
+            p2_snapshot_version=(
+                snapshot.snapshot_version if snapshot is not None else None
+            ),
+            p2_built_at=snapshot.built_at if snapshot is not None else None,
+            p2_age_seconds=snapshot.age_seconds if snapshot is not None else None,
+            confirmation_requested=(
+                confirmation.requested if confirmation is not None else None
+            ),
+            confirmation_nominated=(
+                confirmation.nominated if confirmation is not None else None
+            ),
+            confirmation_confirmed=(
+                confirmation.confirmed if confirmation is not None else None
+            ),
+            confirmation_dropped_stale=(
+                confirmation.dropped_stale if confirmation is not None else None
+            ),
+            graph_depth_cap=graph_depth_cap if is_graph else None,
+            graph_rows=outcome.returned_row_count if is_graph else None,
+            graph_row_cap_reached=(
+                outcome.truncation_reason == "row_cap" if is_graph else None
+            ),
+            graph_byte_cap_reached=(
+                outcome.truncation_reason == "byte_cap" if is_graph else None
+            ),
+            engine_fault_class=engine_fault_class,
             termination_reason=outcome.termination_reason,
             error_code=outcome.error_code.value if outcome.error_code else None,
             returned_row_count=outcome.returned_row_count,
