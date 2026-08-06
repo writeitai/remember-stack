@@ -657,8 +657,9 @@ def test_embedding_provider_order_parses_env_shapes(
     configured: str | None, expected: list[str] | None
 ) -> None:
     """Compose may pass empty, CSV, or JSON list forms for the order."""
-    settings = OpenRouterSettings(
-        api_key="test-key", embedding_provider_order=configured
+    # model_validate applies the before-validator; the ctor type is list[str]|None.
+    settings = OpenRouterSettings.model_validate(
+        {"api_key": "test-key", "embedding_provider_order": configured}
     )
 
     assert settings.embedding_provider_order == expected
