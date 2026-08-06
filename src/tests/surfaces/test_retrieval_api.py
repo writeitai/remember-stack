@@ -554,7 +554,7 @@ def test_s5_sources_via_the_hydration_chain(rig: _ApiRig) -> None:
     stamped = by_text["Alice Novak joined Acme in 2024."]
     assert stamped["claim_valid_from"] == "2024-01-01T00:00:00Z"
     assert stamped["claim_valid_until"] == "2024-12-31T00:00:00Z"
-    unstamped = by_text["Alice Novak works for Acme."]
+    unstamped = by_text["Alice Novak works for Acme"]
     assert unstamped["claim_valid_from"] is None
     assert unstamped["claim_valid_until"] is None
     (source,) = hydrated["sources"]
@@ -737,7 +737,7 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
     assert stamped["asserted_at"] == "2025-02-03T00:00:00Z"
     assert stamped["document_title"] == "staffing"
     assert stamped["source_kind"] == "upload"
-    unstamped = by_text["Alice Novak works for Acme."]
+    unstamped = by_text["Alice Novak works for Acme"]
     assert unstamped["claim_valid_from"] is None
     assert unstamped["claim_valid_until"] is None
 
