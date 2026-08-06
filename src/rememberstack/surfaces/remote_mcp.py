@@ -23,7 +23,12 @@ class RemoteRecipeMcpServer:
         self._client = client
 
     def list_tools(self) -> dict[str, object]:
-        """The MCP ``tools/list`` result: recipes plus static open-query tools."""
+        """The MCP ``tools/list`` result: recipes plus open-query tools when composed.
+
+        Recipe tools come from ``GET /recipes``. The nine static open-query
+        tools are advertised only when the remote deployment mounts the open
+        facade (same composition gate as local MCP and HTTP).
+        """
         tools: list[dict[str, object]] = [
             {
                 "name": descriptor.name,
@@ -32,9 +37,8 @@ class RemoteRecipeMcpServer:
             }
             for descriptor in self._client.recipes()
         ]
-        # Remote MCP always advertises the nine infrastructure tools; calls
-        # fail typed if the deployment has not composed the open facade.
-        tools.extend(open_query_tool_descriptors())
+        if self._remote_open_query_is_composed():
+            tools.extend(open_query_tool_descriptors())
         return {"tools": tools}
 
     def call_tool(
@@ -67,6 +71,20 @@ class RemoteRecipeMcpServer:
             "content": [{"type": "text", "text": envelope.model_dump_json()}],
             "isError": False,
         }
+
+    def _remote_open_query_is_composed(self) -> bool:
+        """Return whether the remote deployment exposes the open-query surface.
+
+        ``GET /query/space`` is mounted only when ``build_api`` composes
+        ``open_query``. A successful discovery response is the authority that
+        the nine static tools may be advertised; any API error fails closed so
+        ``tools/list`` never claims routes that are absent.
+        """
+        try:
+            self._client.describe_query_space()
+        except MemoryApiError:
+            return False
+        return True
 
 
 def serve_mcp_stdio(

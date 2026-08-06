@@ -279,6 +279,9 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
                     }
                 ],
             )
+        if request.url.path == "/query/space":
+            # No open-query facade composed on this deployment.
+            return httpx.Response(404, json={"detail": "Not Found"})
         return httpx.Response(200, json=envelope)
 
     transport = httpx.Client(
@@ -321,8 +324,31 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     assert len(responses) == 3
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
-    assert responses[1]["result"]["tools"][0]["name"] == "entity_resolve"
+    tool_names = [tool["name"] for tool in responses[1]["result"]["tools"]]
+    assert tool_names == ["entity_resolve"]
     assert responses[2]["result"]["isError"] is False
+
+
+def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
+    """Remote tools/list advertises the nine open-query tools only when composed."""
+    from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/recipes":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/query/space":
+            return httpx.Response(
+                200, json={"headline": "two-layer", "views": [], "functions": []}
+            )
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    transport = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+    listed = server.list_tools()
+    names = [tool["name"] for tool in listed["tools"]]  # type: ignore[index]
+    assert names == list(OPEN_QUERY_TOOL_NAMES)
 
 
 def test_remote_mcp_survives_an_invalid_deployment_response() -> None:
