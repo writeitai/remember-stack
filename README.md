@@ -43,7 +43,7 @@
 | src/rememberstack/core/knowledge\_planner.py                                                  |       35 |        5 |       16 |        5 |     80.4% |33, 35, 37, 50, 52 |
 | src/rememberstack/core/knowledge\_writer.py                                                   |       71 |        1 |       30 |        1 |     98.0% |        24 |
 | src/rememberstack/core/ranking.py                                                             |       66 |        8 |       20 |        6 |     83.7% |60, 125, 127, 166, 178-179, 186, 197 |
-| src/rememberstack/core/recipe\_linter.py                                                      |       58 |        6 |       42 |        6 |     88.0% |133, 144, 174, 189, 195, 201 |
+| src/rememberstack/core/recipe\_linter.py                                                      |       58 |        6 |       42 |        7 |     87.0% |134, 145, 159-\>149, 175, 190, 196, 202 |
 | src/rememberstack/core/section\_snap.py                                                       |       63 |        3 |       26 |        3 |     93.3% |122, 177, 203 |
 | src/rememberstack/core/storage\_routing.py                                                    |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/core/structure\_skeleton.py                                                 |      261 |        7 |       90 |        8 |     95.7% |341, 343, 345, 450, 533-\>532, 601, 603, 666 |
@@ -155,19 +155,20 @@
 | src/rememberstack/spine/migrations/versions/p9\_02\_0023\_query\_space\_roles.py              |       55 |        0 |       12 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/versions/p9\_03\_0024\_facts\_as\_of.py                    |       19 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/versions/p9\_04\_0025\_coordinate\_binding.py              |       63 |        2 |       26 |        2 |     95.5% |  888, 906 |
+| src/rememberstack/spine/migrations/versions/p9\_05\_0026\_graph\_helpers.py                   |       56 |        1 |       14 |        1 |     97.1% |       670 |
 | src/rememberstack/spine/observation\_adjudication.py                                          |      159 |       21 |       34 |       11 |     82.4% |132, 230-249, 257-276, 328-346, 443-\>315, 477-494, 513, 521-533, 550, 688, 693 |
 | src/rememberstack/spine/operations.py                                                         |       76 |        1 |        4 |        1 |     97.5% |       151 |
-| src/rememberstack/spine/projection.py                                                         |      140 |       15 |       10 |        0 |     87.3% |49-50, 278-285, 291-294, 342-343, 354-355 |
+| src/rememberstack/spine/projection.py                                                         |      150 |       15 |       10 |        0 |     88.1% |67-68, 318-325, 331-334, 382-383, 394-395 |
 | src/rememberstack/spine/query\_space/\_\_init\_\_.py                                          |       40 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/query\_space/ast\_serializer.py                                       |       27 |        4 |       10 |        2 |     83.8% |77-78, 82, 102 |
 | src/rememberstack/spine/query\_space/canonical.py                                             |       71 |        2 |       32 |        1 |     97.1% |   89, 137 |
 | src/rememberstack/spine/query\_space/catalog.py                                               |       31 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/spine/query\_space/deletion\_matrix.py                                      |       80 |        2 |       18 |        1 |     96.9% |  543, 549 |
-| src/rememberstack/spine/query\_space/manifest.py                                              |      151 |       15 |       36 |       11 |     86.1% |157, 316, 409, 415, 423, 508, 525, 532-535, 540, 545, 556, 567, 707, 709 |
+| src/rememberstack/spine/query\_space/deletion\_matrix.py                                      |       80 |        2 |       18 |        1 |     96.9% |  551, 557 |
+| src/rememberstack/spine/query\_space/manifest.py                                              |      180 |       17 |       42 |       12 |     86.9% |160, 570, 581, 640, 776, 782, 790, 875, 892, 899-902, 907, 912, 923, 934, 1074, 1076 |
 | src/rememberstack/spine/query\_space/quarantine.py                                            |       20 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/spine/query\_space/source\_definitions.py                                   |       88 |        3 |       28 |        3 |     94.8% |155, 158, 180 |
+| src/rememberstack/spine/query\_space/source\_definitions.py                                   |       89 |        3 |       28 |        3 |     94.9% |162, 165, 187 |
 | src/rememberstack/spine/readiness.py                                                          |       52 |        1 |       10 |        1 |     96.8% |        58 |
-| src/rememberstack/spine/recipes.py                                                            |       48 |        3 |        4 |        0 |     90.4% |   719-721 |
+| src/rememberstack/spine/recipes.py                                                            |       48 |        3 |        4 |        0 |     90.4% |   705-707 |
 | src/rememberstack/spine/resolver.py                                                           |      179 |       12 |       48 |       11 |     89.9% |215, 217, 225-\>227, 235-241, 300, 310-311, 315, 398, 412, 635, 640 |
 | src/rememberstack/spine/review.py                                                             |      120 |        7 |       30 |        7 |     90.7% |118, 178, 248-\>259, 345-349, 396, 398, 649 |
 | src/rememberstack/spine/settings.py                                                           |        9 |        0 |        0 |        0 |    100.0% |           |
@@ -180,19 +181,21 @@
 | src/rememberstack/surfaces/graph\_queries.py                                                  |      216 |       14 |       60 |       10 |     91.3% |107-108, 248-249, 263, 267, 333, 337, 434-435, 454, 569-\>574, 591-\>593, 702, 709, 715 |
 | src/rememberstack/surfaces/http\_api.py                                                       |      145 |        7 |       22 |        2 |     93.4% |199, 316, 331-343, 375-376 |
 | src/rememberstack/surfaces/mcp.py                                                             |       15 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/surfaces/query\_engine.py                                                   |      699 |       24 |      212 |       22 |     94.7% |149-150, 209, 441, 686, 743, 822-\>829, 831, 839, 876, 1215, 1279, 1352-1354, 1390, 1431, 1575, 1650-\>1652, 1653, 1928, 2188, 2231, 2252, 2456, 2460 |
+| src/rememberstack/surfaces/query\_engine.py                                                   |      789 |       37 |      238 |       29 |     93.2% |163-164, 223, 455, 735-738, 823, 885, 891, 964-971, 973, 981, 1018, 1357, 1421, 1494-1496, 1532, 1573, 1717, 1792-\>1794, 1795, 2044, 2063-2064, 2069, 2073, 2150, 2410, 2453, 2474, 2488, 2490, 2686, 2690 |
 | src/rememberstack/surfaces/query\_sandbox/\_\_init\_\_.py                                     |        8 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/surfaces/query\_sandbox/audit.py                                            |       92 |        7 |       14 |        4 |     89.6% |101-\>108, 145-146, 149-150, 170, 195, 199 |
-| src/rememberstack/surfaces/query\_sandbox/bridge.py                                           |      254 |       28 |       80 |       13 |     87.1% |196, 198, 206-207, 214, 260, 276, 290, 331, 333, 356-357, 480-481, 557-558, 577, 593, 618, 630-631, 724, 750, 833, 844-847 |
-| src/rememberstack/surfaces/query\_sandbox/discovery.py                                        |       42 |        3 |       14 |        3 |     89.3% |73, 113, 126 |
-| src/rememberstack/surfaces/query\_sandbox/errors.py                                           |       36 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/surfaces/query\_sandbox/executor.py                                         |      226 |       21 |       62 |       13 |     87.5% |85-91, 131, 139, 145, 154, 156, 158, 160, 163-165, 297, 317, 336-341, 543-544 |
+| src/rememberstack/surfaces/query\_sandbox/audit.py                                            |       95 |        5 |       14 |        4 |     91.7% |155-\>162, 203-204, 224, 249, 253 |
+| src/rememberstack/surfaces/query\_sandbox/bridge.py                                           |      254 |       27 |       80 |       12 |     87.7% |200, 208-209, 216, 262, 278, 292, 333, 335, 358-359, 482-483, 559-560, 579, 595, 620, 632-633, 726, 752, 835, 846-849 |
+| src/rememberstack/surfaces/query\_sandbox/cypher.py                                           |      157 |        6 |       68 |        3 |     96.0% |256, 347-349, 365-366 |
+| src/rememberstack/surfaces/query\_sandbox/cypher\_executor.py                                 |      305 |       36 |       98 |       22 |     84.6% |220, 280, 312-\>318, 335-\>337, 414, 420, 502, 520, 544, 554-555, 628-629, 638, 659-660, 758, 771, 784-789, 803-804, 828, 830, 832, 838, 840, 844, 846, 848, 853-859 |
+| src/rememberstack/surfaces/query\_sandbox/discovery.py                                        |       45 |        3 |       14 |        3 |     89.8% |78, 132, 145 |
+| src/rememberstack/surfaces/query\_sandbox/errors.py                                           |       37 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/surfaces/query\_sandbox/executor.py                                         |      239 |       21 |       66 |       13 |     88.2% |90-96, 136, 144, 150, 159, 161, 163, 165, 168-170, 302, 322, 341-346, 561-562 |
 | src/rememberstack/surfaces/query\_sandbox/grammar.py                                          |      602 |       55 |      244 |       33 |     88.2% |233, 237, 242, 375, 400, 448, 468-469, 511-\>510, 535, 552-553, 556-565, 588, 671, 677, 729, 733-734, 741, 751, 853-862, 876-879, 885-\>882, 929-\>927, 1000-\>1002, 1020, 1044-\>1048, 1064-1065, 1068, 1093-\>1091, 1100, 1124, 1129-\>1135, 1157, 1163-1169, 1175-1176, 1180-1183, 1215, 1232, 1285 |
 | src/rememberstack/surfaces/query\_sandbox/limits.py                                           |       15 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_sandbox/nomination.py                                       |      263 |       28 |       90 |       14 |     87.5% |206-207, 212, 281-289, 296, 516-517, 580, 582, 584, 698-704, 710, 727-728, 765, 787-788, 796, 828-829, 852-\>854 |
-| src/rememberstack/surfaces/query\_sandbox/result.py                                           |       58 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/surfaces/recipe\_executor.py                                                |      119 |       15 |       48 |        9 |     83.2% |110, 112, 115, 124, 140, 165, 180-186, 202, 206, 208, 262 |
-| src/rememberstack/surfaces/recipe\_surface.py                                                 |       98 |       18 |       40 |        3 |     76.1% |62-68, 78-83, 176-\>184, 222, 235-243 |
+| src/rememberstack/surfaces/query\_sandbox/result.py                                           |       65 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/surfaces/recipe\_executor.py                                                |      121 |       16 |       48 |       10 |     82.2% |106, 110, 112, 115, 124, 140, 165, 180-186, 202, 206, 208, 262 |
+| src/rememberstack/surfaces/recipe\_surface.py                                                 |      107 |       26 |       46 |        3 |     69.3% |63-69, 74-81, 91-96, 190-\>198, 236, 249-257 |
 | src/rememberstack/surfaces/remote\_mcp.py                                                     |       62 |       12 |       24 |        7 |     77.9% |57-58, 65, 71-72, 88, 98, 107, 113, 116, 121, 129 |
 | src/rememberstack/surfaces/sdk.py                                                             |      134 |       18 |       34 |        7 |     83.9% |71, 114, 140-146, 160, 178, 190, 209, 262, 264, 298, 358-359, 360-\>362, 365-366 |
 | src/rememberstack/workers/\_\_init\_\_.py                                                     |       84 |        0 |        0 |        0 |    100.0% |           |
@@ -210,13 +213,13 @@
 | src/rememberstack/workers/knowledge\_writer.py                                                |      156 |       12 |       22 |       11 |     87.1% |74, 94, 140, 174, 191, 196, 198, 297, 334, 340, 342, 363 |
 | src/rememberstack/workers/operations.py                                                       |       14 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/workers/p1.py                                                               |       80 |        1 |       12 |        1 |     97.8% |       233 |
-| src/rememberstack/workers/p2.py                                                               |      194 |       11 |       44 |       12 |     90.3% |268-270, 282-\>299, 322-325, 326-\>330, 341, 424-\>453, 430, 437, 446, 464, 477, 512-\>516 |
+| src/rememberstack/workers/p2.py                                                               |      250 |       22 |       62 |       17 |     87.5% |268-277, 333-335, 354-\>371, 394-397, 398-\>402, 421, 505, 515, 520, 538, 551, 556, 569-\>589, 576, 583, 603, 625, 643, 656, 663, 698-\>702 |
 | src/rememberstack/workers/p2\_analytics.py                                                    |      104 |        3 |       16 |        1 |     96.7% |212, 232-233 |
 | src/rememberstack/workers/p3.py                                                               |      247 |        5 |       68 |        5 |     96.8% |122-127, 226-\>228, 333-\>335, 337-\>341, 564, 671 |
 | src/rememberstack/workers/reconcile.py                                                        |      149 |        8 |       38 |       11 |     89.8% |118, 193, 236, 241, 275-\>267, 277, 311, 312-\>317, 321, 394-\>405, 507 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **18163** | **1492** | **4298** |  **719** | **89.1%** |           |
+| **TOTAL**                                                                                     | **18905** | **1567** | **4538** |  **759** | **89.0%** |           |
 
 
 ## Setup coverage badge
