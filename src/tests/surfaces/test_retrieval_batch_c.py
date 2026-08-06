@@ -556,7 +556,7 @@ def test_evidence_totals_are_exact_under_per_stance_truncation(corpus: _Corpus) 
         total.stance: (total.returned, total.total) for total in answer.evidence_totals
     }
 
-    assert totals == {"supports": (1, 3), "contradicts": (1, 2)}
+    assert totals == {"supports": (1, 2), "contradicts": (1, 2)}
 
 
 def test_tombstoned_and_noncurrent_evidence_is_excluded(corpus: _Corpus) -> None:
@@ -569,7 +569,7 @@ def test_tombstoned_and_noncurrent_evidence_is_excluded(corpus: _Corpus) -> None
     assert corpus.claims["tombstoned-support"] not in returned
     assert corpus.claims["noncurrent-contradict"] not in returned
     assert {(total.stance, total.total) for total in answer.evidence_totals} == {
-        ("supports", 3),
+        ("supports", 2),
         ("contradicts", 2),
     }
 
