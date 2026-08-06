@@ -1,5 +1,9 @@
 name: CI
 
+# PR-oriented fast gate (target wall time under ~10 minutes). Full multi-Python
+# coverage stays on the Nightly workflow. Design/rationale:
+# design/operations/pr-ci-fast-gate.md
+
 on:
   push:
     branches: ["main"]
@@ -9,17 +13,250 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  UV_PYTHON: "3.13"
+
 jobs:
+  changes:
+    name: Path filters
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      workers: ${{ steps.filter.outputs.workers }}
+      surfaces: ${{ steps.filter.outputs.surfaces }}
+      adapters: ${{ steps.filter.outputs.adapters }}
+      compose: ${{ steps.filter.outputs.compose }}
+      shared_core: ${{ steps.filter.outputs.shared_core }}
+      ci_control: ${{ steps.filter.outputs.ci_control }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/ci/path-filters.yml
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python 3.13
+      - name: Test inventory drift check
+        run: python3 .github/ci/check_test_inventory.py
+      - name: Architecture dependency check
+        run: uv run lint-imports
+      - name: Ruff lint
+        run: uv run ruff check src/ benchmarks/
+      - name: Ruff format check
+        run: uv run ruff format --check src/ benchmarks/
+      - name: Pyright type check
+        run: uv run pyright src/ benchmarks/ --pythonversion 3.13
+
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python 3.13
+      - name: Unit pack (no Postgres service)
+        run: |
+          mapfile -t paths < .github/ci/unit-paths.txt
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "unit-paths.txt is empty" >&2
+            exit 1
+          fi
+          uv run pytest "${paths[@]}" -q --tb=short
+
+  contract-smoke:
+    name: Contract smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
+    services:
+      postgres:
+        image: ghcr.io/dbsystel/postgresql-partman@sha256:bf9d2331aaeb3e33a4e6e73b4c024ca618d4d1ea050bbab978125ff63b83385a
+        env:
+          POSTGRES_USER: rememberstack
+          POSTGRES_PASSWORD: rememberstack_test
+          POSTGRES_DB: rememberstack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rememberstack -d rememberstack_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python 3.13
+      - name: Contract smoke pack
+        run: |
+          mapfile -t paths < .github/ci/contract-smoke-paths.txt
+          uv run pytest "${paths[@]}" -v --tb=short
+
+  integration-workers:
+    name: Integration (workers)
+    needs: changes
+    if: >-
+      github.event_name == 'push'
+      || needs.changes.outputs.workers == 'true'
+      || needs.changes.outputs.shared_core == 'true'
+      || needs.changes.outputs.ci_control == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
+    services:
+      postgres:
+        image: ghcr.io/dbsystel/postgresql-partman@sha256:bf9d2331aaeb3e33a4e6e73b4c024ca618d4d1ea050bbab978125ff63b83385a
+        env:
+          POSTGRES_USER: rememberstack
+          POSTGRES_PASSWORD: rememberstack_test
+          POSTGRES_DB: rememberstack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rememberstack -d rememberstack_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python 3.13
+      - name: Workers + spine integration
+        run: uv run pytest src/tests/workers src/tests/spine -q --tb=short
+
+  integration-surfaces:
+    name: Integration (surfaces)
+    needs: changes
+    if: >-
+      github.event_name == 'push'
+      || needs.changes.outputs.surfaces == 'true'
+      || needs.changes.outputs.shared_core == 'true'
+      || needs.changes.outputs.ci_control == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    env:
+      REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
+    services:
+      postgres:
+        image: ghcr.io/dbsystel/postgresql-partman@sha256:bf9d2331aaeb3e33a4e6e73b4c024ca618d4d1ea050bbab978125ff63b83385a
+        env:
+          POSTGRES_USER: rememberstack
+          POSTGRES_PASSWORD: rememberstack_test
+          POSTGRES_DB: rememberstack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rememberstack -d rememberstack_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python 3.13
+      - name: Surfaces + eval integration
+        run: uv run pytest src/tests/surfaces src/tests/eval -q --tb=short
+
+  integration-adapters:
+    name: Integration (adapters)
+    needs: changes
+    if: >-
+      github.event_name == 'push'
+      || needs.changes.outputs.adapters == 'true'
+      || needs.changes.outputs.shared_core == 'true'
+      || needs.changes.outputs.ci_control == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
+    services:
+      postgres:
+        image: ghcr.io/dbsystel/postgresql-partman@sha256:bf9d2331aaeb3e33a4e6e73b4c024ca618d4d1ea050bbab978125ff63b83385a
+        env:
+          POSTGRES_USER: rememberstack
+          POSTGRES_PASSWORD: rememberstack_test
+          POSTGRES_DB: rememberstack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rememberstack -d rememberstack_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python 3.13
+      - name: Adapters + profiles + spikes integration
+        run: |
+          uv run pytest src/tests/adapters src/tests/profiles src/tests/spikes -q --tb=short
+
   compose-quickstart:
     name: Compose quickstart
+    needs: changes
+    if: >-
+      github.event_name == 'push'
+      || needs.changes.outputs.compose == 'true'
+      || needs.changes.outputs.ci_control == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
     env:
       QUICKSTART_TARGET_SECONDS: "600"
-      # Stamped into the built image so provenance checks have something true to
-      # compare against; see plan/designs/locomo_benchmark_design.md.
       REMEMBERSTACK_BUILD_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -32,8 +269,6 @@ jobs:
           started_at="$(date +%s)"
           docker compose --env-file .env.example up --build --detach --wait
           curl --fail http://localhost:8000/recipes
-          # A dropped build-arg would otherwise stay green until a real
-          # benchmark answer stage refused to run.
           served_revision="$(curl --fail --silent http://localhost:8000/deployment \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
           test "$served_revision" = "${REMEMBERSTACK_BUILD_REVISION}"
@@ -190,90 +425,20 @@ jobs:
         if: always()
         run: docker compose --env-file .env.example down --volumes
 
-  checks:
+  # Single always-present required check. Integration path jobs are soft.
+  pr-gate:
+    name: PR gate
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-    services:
-      postgres:
-        image: ghcr.io/dbsystel/postgresql-partman@sha256:bf9d2331aaeb3e33a4e6e73b4c024ca618d4d1ea050bbab978125ff63b83385a
-        env:
-          POSTGRES_USER: rememberstack
-          POSTGRES_PASSWORD: rememberstack_test
-          POSTGRES_DB: rememberstack_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U rememberstack -d rememberstack_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
+    needs: [changes, quality, unit, contract-smoke]
+    if: always()
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install dependencies (locked)
-        run: uv sync --locked --python ${{ matrix.python-version }}
-
-      - name: Architecture dependency check
-        run: uv run lint-imports
-
-      - name: Ruff lint
-        run: uv run ruff check src/ benchmarks/
-
-      - name: Ruff format check
-        run: uv run ruff format --check src/ benchmarks/
-
-      - name: Pyright type check
-        run: uv run pyright src/ benchmarks/ --pythonversion ${{ matrix.python-version }}
-
-      - name: Real PostgreSQL Alembic lifecycle
-        run: uv run pytest src/tests/spine/test_migrations.py -v --tb=short
-
-      - name: Tests (with coverage)
-        run: uv run pytest src/tests -v --tb=short --cov --cov-report=term
-        env:
-          COVERAGE_FILE: .coverage.${{ matrix.python-version }}
-
-      - name: Upload coverage data
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.python-version }}
-          path: .coverage.${{ matrix.python-version }}
-          include-hidden-files: true
-
-  coverage:
-    name: Coverage report
-    runs-on: ubuntu-latest
-    needs: checks
-    permissions:
-      pull-requests: write
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download coverage data
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-*
-          merge-multiple: true
-
-      - name: Coverage comment + badge
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ github.token }}
-          MERGE_COVERAGE_FILES: true
+      - name: Require hard lanes (incl. path selector)
+        run: |
+          echo "changes=${{ needs.changes.result }}"
+          echo "quality=${{ needs.quality.result }}"
+          echo "unit=${{ needs.unit.result }}"
+          echo "contract-smoke=${{ needs.contract-smoke.result }}"
+          test "${{ needs.changes.result }}" = "success"
+          test "${{ needs.quality.result }}" = "success"
+          test "${{ needs.unit.result }}" = "success"
+          test "${{ needs.contract-smoke.result }}" = "success"
