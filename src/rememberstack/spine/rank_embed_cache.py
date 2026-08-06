@@ -148,15 +148,10 @@ class RankEmbedCache:
                     self.miss_count += 1
 
         if misses:
-            self._embed_misses(pairs=misses, meter=meter, call_key=call_key)
-            with self._lock:
-                for key, _ in misses:
-                    vector = self._entries.get(key)
-                    if vector is None:
-                        raise RuntimeError(
-                            f"rank embed cache miss after fill: {key.identity}"
-                        )
-                    resolved[key] = vector
+            filled = self._embed_misses(
+                pairs=misses, meter=meter, call_key=call_key
+            )
+            resolved.update(filled)
 
         return resolved[new_key], [resolved[key] for key in open_keys]
 
@@ -166,8 +161,14 @@ class RankEmbedCache:
         pairs: list[tuple[_CacheKey, str]],
         meter: CostMeterPort | None,
         call_key: str,
-    ) -> None:
-        """Embed cache misses in provider-sized chunks and store validated vectors."""
+    ) -> dict[_CacheKey, tuple[float, ...]]:
+        """Embed misses in chunks; return all vectors for this resolve.
+
+        Vectors for the active resolve are returned even if the bounded LRU
+        later evicts them — a cold hub larger than max_entries must not fail
+        after paying for embeds.
+        """
+        filled: dict[_CacheKey, tuple[float, ...]] = {}
         for start in range(0, len(pairs), self._embed_chunk_size):
             chunk = pairs[start : start + self._embed_chunk_size]
             texts = tuple(text for _, text in chunk)
@@ -191,7 +192,9 @@ class RankEmbedCache:
                     validated = _validate_vector(
                         vector=tuple(vector), expected_dims=self._dims
                     )
+                    filled[key] = validated
                     self._put_unlocked(key=key, vector=validated)
+        return filled
 
     def _put_unlocked(
         self, *, key: _CacheKey, vector: tuple[float, ...]

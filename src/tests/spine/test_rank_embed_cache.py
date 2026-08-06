@@ -37,6 +37,26 @@ def test_open_statements_embedded_once_across_two_rank_resolves() -> None:
     assert provider.embedded_texts[first_len:] == ["profit was 1M"]
 
 
+def test_cold_hub_larger_than_lru_still_resolves() -> None:
+    """Active-resolve vectors are not lost to LRU eviction mid-fill."""
+    provider = FakeModelProvider()
+    cache = RankEmbedCache(
+        model_provider=provider,
+        embedding_model="qwen/qwen3-embedding-8b",
+        max_entries=2,
+    )
+    opens = tuple((uuid4(), f"statement {i}") for i in range(5))
+    new_vec, open_vecs = cache.resolve_rank_vectors(
+        new_statement="brand new",
+        open_items=opens,
+        meter=None,
+        call_key="rank",
+    )
+    assert len(new_vec) == 8
+    assert len(open_vecs) == 5
+    assert all(len(vector) == 8 for vector in open_vecs)
+
+
 def test_write_through_observation_id_is_reusable() -> None:
     """A NEW vector aliased onto a new observation_id is a hit on next rank."""
     provider = FakeModelProvider()
