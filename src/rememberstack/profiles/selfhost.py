@@ -926,6 +926,11 @@ def _model_bindings() -> dict[str, str]:
         "p1_embedding": p1.embedding_model,
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
+        "openrouter_embedding_provider_order": (
+            ",".join(openrouter.embedding_provider_order)
+            if openrouter.embedding_provider_order
+            else "unset"
+        ),
         "openrouter_max_completion_tokens": (
             str(openrouter.max_completion_tokens)
             if openrouter.max_completion_tokens is not None

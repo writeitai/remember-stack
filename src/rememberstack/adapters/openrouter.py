@@ -37,6 +37,33 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
 
 
+def _parse_provider_name_list(*, value: object, field_name: str) -> object:
+    """Parse comma-separated or JSON list of OpenRouter provider slugs.
+
+    Empty strings (Compose unset optionals) become ``None``. Used by embedding
+    (and future chat) ordered shortlists.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped.startswith("["):
+            try:
+                value = json.loads(stripped)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"{field_name} must be comma-separated names or a JSON list"
+                ) from error
+        else:
+            value = [part.strip() for part in stripped.split(",") if part.strip()]
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{field_name} must be a non-empty list of strings")
+    names = [str(item).strip() for item in value if str(item).strip()]
+    return names or None
+
+
 class StrictSchemaError(ValueError):
     """A response model cannot be expressed under strict structured output.
 
@@ -64,6 +91,21 @@ class OpenRouterSettings(BaseSettings):
     Explicit ``None`` omits ``max_tokens`` from the provider payload.
     """
     embedding_provider: str | None = None
+    """Optional single OpenRouter embedding provider pin (``provider.only``).
+
+    Prefer ``embedding_provider_order`` when you want a priced shortlist with
+    failover (e.g. Nebius then DeepInfra then SiliconFlow). When both are set,
+    the order wins.
+    """
+    embedding_provider_order: list[str] | None = None
+    """Ordered OpenRouter embedding providers (``provider.order`` + fallbacks).
+
+    Env: ``REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER`` as a
+    comma-separated list of *provider slugs* (not quantization tags): e.g.
+    ``nebius,deepinfra,siliconflow``. Tags like ``siliconflow/fp8`` are
+    endpoint labels; routing uses the base provider slug from the endpoints
+    API. See ``design/operations/openrouter-embedding-routing.md``.
+    """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
     """Optional per-model effort overrides as a JSON object env var
@@ -81,6 +123,14 @@ class OpenRouterSettings(BaseSettings):
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @field_validator("embedding_provider_order", mode="before")
+    @classmethod
+    def parse_embedding_provider_order(cls, value: object) -> object:
+        """Parse comma-separated or JSON list of OpenRouter provider slugs."""
+        return _parse_provider_name_list(
+            value=value, field_name="embedding_provider_order"
+        )
 
     @field_validator("max_completion_tokens", mode="before")
     @classmethod
@@ -241,6 +291,24 @@ class OpenRouterModelProvider:
             )
         return content, usage
 
+    def _embedding_provider_payload(self) -> dict[str, object] | None:
+        """Build OpenRouter provider routing for embedding requests.
+
+        ``embedding_provider_order`` prefers named hosts first (price/latency
+        shortlist) but keeps ``allow_fallbacks`` on so a single-host 5xx/429 can
+        move to the next slug rather than dead-letter the stage. A single
+        ``embedding_provider`` remains hard-only (no marketplace escape).
+        """
+        order = self._settings.embedding_provider_order
+        if order:
+            return {"order": list(order), "allow_fallbacks": True}
+        if self._settings.embedding_provider:
+            return {
+                "only": [self._settings.embedding_provider],
+                "allow_fallbacks": False,
+            }
+        return None
+
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """One embeddings call for the caller's batch."""
         started_ns = time.monotonic_ns()
@@ -248,11 +316,9 @@ class OpenRouterModelProvider:
             "model": request.model,
             "input": list(request.texts),
         }
-        if self._settings.embedding_provider:
-            payload["provider"] = {
-                "only": [self._settings.embedding_provider],
-                "allow_fallbacks": False,
-            }
+        provider = self._embedding_provider_payload()
+        if provider is not None:
+            payload["provider"] = provider
         body = self._post(path="/embeddings", payload=payload)
         usage = _usage(
             body=body,
