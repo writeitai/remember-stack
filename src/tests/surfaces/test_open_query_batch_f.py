@@ -58,6 +58,9 @@ _DEPLOYMENT = UUID("f0000000-0000-0000-0000-00000000000f")
 _HASH = surface_manifest_hash(build_hash_members())
 _QUERY_ROLE_PASSWORD = "batch-f-proofs"
 _ROOT = Path(__file__).resolve().parents[3]
+# Raw connections opened by `_registry` for this module. Closed on fixture teardown
+# so they cannot hold sessions that block the next module's schema downgrade.
+_REGISTRY_CONNECTIONS: list[psycopg.Connection] = []
 
 
 def _psycopg_url(url: str) -> str:
@@ -100,8 +103,13 @@ def migrated() -> Iterator[str]:
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
         connection.commit()
-    yield database_url
-    engine.dispose()
+    try:
+        yield database_url
+    finally:
+        while _REGISTRY_CONNECTIONS:
+            connection = _REGISTRY_CONNECTIONS.pop()
+            connection.close()
+        engine.dispose()
 
 
 def _as_query_role(database_url: str) -> psycopg.Connection:
@@ -121,6 +129,7 @@ def _sql_executor(database_url: str) -> QuerySandboxExecutor:
 
 def _registry(database_url: str) -> SavedQueryRegistry:
     connection = psycopg.connect(_psycopg_url(database_url))
+    _REGISTRY_CONNECTIONS.append(connection)
     return SavedQueryRegistry(
         connection=connection,
         deployment_id=_DEPLOYMENT,
