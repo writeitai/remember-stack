@@ -1,15 +1,21 @@
-"""Pure renderer for the versioned D51 agent-consumption skill."""
+"""Pure renderer for the versioned agent-consumption skill (D51 + open query)."""
+
+from __future__ import annotations
 
 import json
 from typing import Final
 
+from rememberstack.core.open_query_prose import HONESTY_WARNINGS
+from rememberstack.core.open_query_prose import RETRIEVAL_CHOICES
+from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_FULL
 from rememberstack.model import ConsumptionRecipe
 from rememberstack.model import ConsumptionScope
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
-CONSUMPTION_SKILL_VERSION: Final = "1.0.0"
+#: Bumped for the open-query dual-surface rewrite (Batch F).
+CONSUMPTION_SKILL_VERSION: Final = "2.0.0"
 
 
 def render_consumption_skill(
@@ -19,17 +25,17 @@ def render_consumption_skill(
     deployment = context.deployment
     sections = (
         _header(),
+        _two_layer_headline(),
+        _three_choices(),
         _deployment(context=context),
-        _default_motion(
-            knowledge_page_count=deployment.knowledge_page_count,
-            recipes=context.recipes,
-        ),
+        _bound_examples(),
+        _honesty_warnings(),
+        _assured_operations(recipes=context.recipes),
         _grains(),
         _testimony(recipes=context.recipes),
         _time_and_media(),
         _envelope(),
         _mounts(mounts=context.mounts),
-        _recipes(recipes=context.recipes),
         _working_rules(),
     )
     return RenderedConsumptionSkill(
@@ -53,6 +59,27 @@ def _header() -> str:
     )
 
 
+def _two_layer_headline() -> str:
+    """Open with the exact bound two-layer retrieval headline (design §6)."""
+    return f"## Two deliberately separate truth layers\n\n{TWO_LAYER_HEADLINE_FULL}"
+
+
+def _three_choices() -> str:
+    """Present the three neutral retrieval choices without language steering."""
+    bullets = "\n".join(f"- {choice}" for choice in RETRIEVAL_CHOICES)
+    return (
+        "## Choose how to query\n\n"
+        "After the two-layer distinction, pick one of these three surfaces."
+        " None is preferred in prose; pick by what the task needs:\n\n"
+        f"{bullets}\n\n"
+        "Open infrastructure entry points: `query_sql`, `explain_sql`,"
+        " `query_cypher`, `explain_cypher`, `describe_query_space`,"
+        " `search_query_space`, `list_saved_queries`, `describe_saved_query`,"
+        " `run_saved_query`. Discover schema with `describe_query_space` or"
+        " `remember query space` before writing filters."
+    )
+
+
 def _deployment(*, context: ConsumptionSkillContext) -> str:
     """Render deployment identity, language, scopes, and current K state."""
     deployment = context.deployment
@@ -67,6 +94,14 @@ def _deployment(*, context: ConsumptionSkillContext) -> str:
         if deployment.knowledge_page_count == 0
         else f"{deployment.knowledge_page_count} K page(s) are registered"
     )
+    empty_k = (
+        "This deployment currently has no K pages. Use open SQL/Cypher or"
+        " assured operations rather than inventing a missing summary. When"
+        " mounts exist, fall back to the P3 corpus tree for orientation."
+        if deployment.knowledge_page_count == 0
+        else "If K returns `known_empty`, fall back to P3 or open query; never"
+        " invent the missing synthesis."
+    )
     return (
         "## This deployment\n\n"
         f"- Name: {_literal(value=deployment.name)}\n"
@@ -75,39 +110,71 @@ def _deployment(*, context: ConsumptionSkillContext) -> str:
         f"- Default language: `{deployment.default_language}`"
         f"{description}\n"
         f"- Plane K state: {knowledge_state}.\n"
-        f"- Special-purpose scopes:\n{scopes}"
+        f"- Special-purpose scopes:\n{scopes}\n\n"
+        f"{empty_k}"
     )
 
 
-def _default_motion(
-    *, knowledge_page_count: int, recipes: tuple[ConsumptionRecipe, ...]
-) -> str:
-    """Teach the one progressive-disclosure motion and honest empty-K fallback."""
-    orientation_route = (
-        "Read the knowledge checkout or use the active `pages_about` orientation "
-        "recipe."
-        if any(recipe.name == "pages_about" for recipe in recipes)
-        else "Read the knowledge checkout, or use an orientation-intent recipe if "
-        "one is enabled."
+def _bound_examples() -> str:
+    """The same worked-example set discovery publishes (design §6)."""
+    from rememberstack.core.open_query_prose import bound_worked_examples
+
+    sections: list[str] = ["## Bound worked examples"]
+    for example in bound_worked_examples():
+        title = str(example["title"])
+        purpose = str(example["purpose"])
+        language = str(example["language"])
+        body = str(example["body"])
+        sections.append(f"### {title}\n\n{purpose}\n\n```{language}\n{body}\n```")
+    return "\n\n".join(sections)
+
+
+def _honesty_warnings() -> str:
+    """The design-required honesty warnings for open results."""
+    bullets = "\n".join(f"- {warning}" for warning in HONESTY_WARNINGS)
+    return f"## Honesty rules for open results\n\n{bullets}"
+
+
+def _assured_operations(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
+    """Name the three assured operations and any enabled compatibility recipes."""
+    core = {"resolve_entity", "question_context", "current_context"}
+    enabled_core = [recipe for recipe in recipes if recipe.name in core]
+    others = [recipe for recipe in recipes if recipe.name not in core]
+    if enabled_core:
+        core_rows = "\n".join(
+            f"- `{recipe.name}` — `{recipe.output_grain}` / "
+            f"`{recipe.answer_intent}`: {_one_line(value=recipe.description)}"
+            for recipe in enabled_core
+        )
+    else:
+        core_rows = (
+            "- The three assured operations are"
+            " `resolve_entity`, `question_context`, and `current_context`"
+            " (D49 Envelope contracts)."
+        )
+    other_note = (
+        "Compatibility recipe adapters remain callable during the dual-surface"
+        " measurement window; they are frozen Envelope shapes, not additional"
+        " platform intent operations. Choose by contract among open SQL/Cypher,"
+        " the three assured operations, and any enabled adapters. Discover"
+        " adapters with `remember query list` / `GET /recipes` / MCP recipe"
+        " tools when needed."
+        if others
+        else "No extra compatibility recipes are enabled on this deployment."
     )
-    empty_instruction = (
-        "This deployment currently has no K pages. The orientation attempt is still "
-        "correct, but an empty/`known_empty` result means: fall back to the P3 corpus "
-        "tree when mounted, or to search when unmounted. Never invent the missing "
-        "summary."
-        if knowledge_page_count == 0
-        else "If K returns `known_empty`, fall back to P3 or search; never turn an "
-        "empty orientation layer into an invented summary."
-    )
+    other_rows = ""
+    if others:
+        other_rows = "\n" + "\n".join(
+            f"- `{recipe.name}` — `{recipe.output_grain}` / "
+            f"`{recipe.answer_intent}`: {_one_line(value=recipe.description)}"
+            for recipe in others
+        )
     return (
-        "## Default motion: orient, verify, audit\n\n"
-        f"1. **Orient on plane K.** {orientation_route} K is cheap, pre-paid "
-        "synthesis, not live-confirmed truth.\n"
-        "2. **Verify on the spine.** For anything load-bearing, query the fact layer "
-        "(relations or observations). A fact lookup re-checks live PostgreSQL state.\n"
-        "3. **Audit on evidence.** When the stakes or ambiguity demand it, hydrate "
-        "the fact to claims, source spans, documents, and finally the original.\n\n"
-        f"{empty_instruction}"
+        "## Assured operations and compatibility adapters\n\n"
+        "Exactly three platform intent operations ship with D49 Envelope"
+        " contracts:\n\n"
+        f"{core_rows}\n\n"
+        f"{other_note}{other_rows}"
     )
 
 
@@ -135,20 +202,21 @@ def _testimony(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
     """Teach current testimony, historical opt-in, and withdrawn support."""
     recipe_names = {recipe.name for recipe in recipes}
     history_surface = (
-        "This deployment enables `claims_as_of`; use it only for assertion "
-        "history, never for current truth."
+        "This deployment enables a `claims_as_of` compatibility adapter; use it "
+        "only for assertion history, never for current truth. The same history "
+        "shape is also available as `examples.claims_as_of` via "
+        "`run_saved_query` or as an inclusive overlap predicate in open SQL."
         if "claims_as_of" in recipe_names
-        else "This deployment does not enable a `claims_as_of` recipe. Its current "
-        "query surfaces do not expose superseded testimony, so do not attempt an "
-        "undeclared history option."
+        else "For assertion history, query `claims_visible_history` with an "
+        "inclusive overlap predicate; that never means what is true now."
     )
     return (
         "## Testimony currency and shaky support\n\n"
-        "Claim search defaults to **current testimony**. Claims left behind by a "
-        "living document's newer version or by a newer extraction generation are "
-        "history, not current search results. `claims_as_of` means **what sources "
-        "asserted as of a past system time**; it never means what is true now. "
-        f"{history_surface}\n\n"
+        "Claim search and claim views default to **current testimony**. Claims "
+        "left behind by a living document's newer version or by a newer "
+        "extraction generation are history, not current search results. "
+        "`claims_as_of` means **what sources asserted as of a past system time**; "
+        f"it never means what is true now. {history_surface}\n\n"
         "A fact with `support: withdrawn` has lost all current-testimony support "
         "because a toolchain re-read did not re-derive it. It still stands while "
         "review is open, but it is shaky: report the caveat, inspect its transcript "
@@ -165,6 +233,9 @@ def _time_and_media() -> str:
         "occurs;\n"
         "- `valid_from` / `valid_until` say **when a fact held in the world**;\n"
         "- `ingested_at` / `believed_at` say **when the system knew it**.\n\n"
+        "Cypher results disclose `built_at` and `age_seconds` for the P2 snapshot "
+        "cut. Freshness targets and alerts never relabel, reject, or silently "
+        "refresh a snapshot answer.\n\n"
         "For media-derived evidence, read `evidence_mode`: `source_expression` is "
         "rendered speech/text, `model_observation` is what a model reports seeing, "
         "and `model_interpretation` is the model's interpretation. When tone or a "
@@ -174,14 +245,20 @@ def _time_and_media() -> str:
 
 
 def _envelope() -> str:
-    """Teach response honesty fields and the distinct negative reactions."""
+    """Teach response honesty fields for both Envelope and QueryResult."""
     return (
-        "## Read the whole response envelope\n\n"
-        "Check `grain`, applied `valid_at`/`believed_at`, identity regime, per-store "
-        "freshness, truncation/continuation, and `dropped_by_hydration`. A result "
-        "inside a live contradiction group must include or point to its co-members; "
+        "## Read the whole response\n\n"
+        "For assured operations, check Envelope `grain`, applied "
+        "`valid_at`/`believed_at`, identity regime, per-store freshness, "
+        "truncation/continuation, and `dropped_by_hydration`. A result inside a "
+        "live contradiction group must include or point to its co-members; "
         "report the competing sides instead of silently picking one.\n\n"
-        "Negative results require different moves:\n\n"
+        "For open SQL/Cypher, every answer is `QueryResult/v1`. Inspect "
+        "`grade` (`exploratory_tabular` or `snapshot_graph`), "
+        "`truncated`/`truncation_reason`, warnings, `p2_snapshot` provenance, "
+        "confirmation/nomination drop counts, and `saved_query` stamps. "
+        "Empty SQL is untyped; never promote it to a D49 negative.\n\n"
+        "Negative Envelope results require different moves:\n\n"
         "- `unknown_entity`: widen resolution or search;\n"
         "- `known_empty`: the entity exists but no matching result is known within "
         "the stated freshness;\n"
@@ -207,35 +284,14 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
             f"- plane K checkout: `{mounts.knowledge}`"
         )
     return (
-        "## Filesystem first\n\n"
+        "## Filesystem first when mounts exist\n\n"
         f"{availability}\n\n"
         "When mounts exist, prefer them for navigation, reading, and grep. Reserve "
-        "API/CLI/MCP for operations with no filesystem equivalent: semantic search, "
-        "graph traversal, temporal as-of queries, hydration, transcripts, and "
-        "deltas. Start in P3 or K, not raw. Follow an explicit raw pointer only "
-        "when the original is needed, and use the deployment's audited raw-access "
-        "mechanism."
-    )
-
-
-def _recipes(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
-    """Render only this deployment's latest active recipe versions."""
-    if not recipes:
-        rows = "No recipes are enabled. Use the primitive API directly."
-    else:
-        rows = "\n".join(
-            f"- `{recipe.name}` — `{recipe.output_grain}` / "
-            f"`{recipe.answer_intent}`: {_one_line(value=recipe.description)}"
-            for recipe in recipes
-        )
-    return (
-        "## Enabled recipes and surfaces\n\n"
-        f"{rows}\n\n"
-        "Discover the current set with `remember query list`, `GET /recipes`, or MCP "
-        "tool listing. Run one with `remember query run <name> --arg key=value`, "
-        "`POST /recipe/<name>`, or the same-named MCP tool. Recipe grain and intent "
-        "are part of the contract; a recipe adds no capability beyond its primitive "
-        "chain."
+        "API/CLI/MCP for operations with no filesystem equivalent: open SQL and "
+        "Cypher, semantic/lexical SRFs, graph traversal, temporal as-of queries, "
+        "hydration, transcripts, and deltas. Start in P3 or K, not raw. Follow an "
+        "explicit raw pointer only when the original is needed, and use the "
+        "deployment's audited raw-access mechanism."
     )
 
 
@@ -245,10 +301,13 @@ def _working_rules() -> str:
         "## Before acting on a memory answer\n\n"
         "1. Did I use facts, not claims, for a current-truth question?\n"
         "2. Did I keep fact, evidence, and compiled grains labeled separately?\n"
-        "3. Did I inspect freshness, truncation, contradictions, and withdrawn "
+        "3. For Cypher, did I disclose and respect `built_at` / age rather than "
+        "treat the row as live?\n"
+        "4. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
-        "4. Did I verify load-bearing K statements on the spine?\n"
-        "5. Did I hydrate to evidence or raw source when the stakes required it?"
+        "5. Did I re-ground snapshot ids in live SQL when the task needs current "
+        "truth?\n"
+        "6. Did I hydrate to evidence or raw source when the stakes required it?"
     )
 
 

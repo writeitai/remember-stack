@@ -1,39 +1,76 @@
 """MCP protocol logic backed by the remote typed SDK, safe in the base wheel."""
 
+from __future__ import annotations
+
 import json
+import re
 import sys
 from typing import TextIO
 
 from rememberstack import __version__
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
+from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
+# Stable open-query discovery identity discriminants (catalog authority values).
+# Validated at the remote MCP composition boundary only — not a full schema
+# mirror, and deliberately free of spine/query-space imports for base-wheel safety.
+_OPEN_QUERY_SCHEMA = "memory_v1"
+_OPEN_QUERY_SCHEMA_MAJOR = 1
+_SURFACE_MANIFEST_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
 
 class RemoteRecipeMcpServer:
-    """Render remote deployment recipes as MCP tools and proxy calls to it."""
+    """Render remote recipes and open-query tools; proxy calls to the API."""
 
     def __init__(self, *, client: MemoryClient) -> None:
         self._client = client
 
     def list_tools(self) -> dict[str, object]:
-        """The MCP ``tools/list`` result from the deployment registry."""
-        return {
-            "tools": [
-                {
-                    "name": descriptor.name,
-                    "description": descriptor.description,
-                    "inputSchema": descriptor.input_schema,
-                }
-                for descriptor in self._client.recipes()
-            ]
-        }
+        """The MCP ``tools/list`` result: recipes plus open-query tools when composed.
+
+        Recipe tools come from ``GET /recipes``. The nine static open-query
+        tools are advertised only when the remote deployment mounts the open
+        facade (same composition gate as local MCP and HTTP).
+        """
+        tools: list[dict[str, object]] = [
+            {
+                "name": descriptor.name,
+                "description": descriptor.description,
+                "inputSchema": descriptor.input_schema,
+            }
+            for descriptor in self._client.recipes()
+        ]
+        if self._remote_open_query_is_composed():
+            tools.extend(open_query_tool_descriptors())
+        return {"tools": tools}
 
     def call_tool(
         self, *, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        """The MCP ``tools/call`` result containing one envelope JSON block."""
+        """The MCP ``tools/call`` result containing one JSON text block."""
+        if name in OPEN_QUERY_TOOL_NAMES:
+            try:
+                payload = self._client.call_open_query(name=name, arguments=arguments)
+            except (
+                MemoryApiError,
+                SandboxRejection,
+                ValueError,
+                TypeError,
+                KeyError,
+            ) as error:
+                return {
+                    "content": [{"type": "text", "text": str(error)}],
+                    "isError": True,
+                }
+            return {
+                "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
+                "isError": False,
+            }
         try:
             envelope = self._client.run_recipe(name=name, arguments=arguments)
         except (MemoryApiError, ValueError) as error:
@@ -42,6 +79,43 @@ class RemoteRecipeMcpServer:
             "content": [{"type": "text", "text": envelope.model_dump_json()}],
             "isError": False,
         }
+
+    def _remote_open_query_is_composed(self) -> bool:
+        """Return whether the remote deployment exposes the open-query surface.
+
+        ``GET /query/space`` is mounted only when ``build_api`` composes
+        ``open_query``. A valid-enough discovery identity is the authority that
+        the nine static tools may be advertised; missing, unavailable, empty,
+        wrong-schema, or malformed-hash responses fail closed so ``tools/list``
+        never claims routes that are absent or untrustworthy.
+        """
+        try:
+            payload = self._client.describe_query_space()
+        except MemoryApiError:
+            return False
+        return _is_authoritative_open_query_discovery(payload)
+
+
+def _is_authoritative_open_query_discovery(payload: object) -> bool:
+    """True only for a dict carrying the stable open-query discovery identity.
+
+    Requires ``schema == memory_v1``, ``schema_major == 1``, and a syntactically
+    valid 64-character lowercase hex ``surface_manifest_hash``. Compatible newer
+    manifests (different hash) still pass; wrong schema, major, empty objects,
+    and malformed hashes fail closed. Does not mirror the full discovery schema.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("schema") != _OPEN_QUERY_SCHEMA:
+        return False
+    schema_major = payload.get("schema_major")
+    # bool is a subclass of int; reject True/False explicitly.
+    if type(schema_major) is not int or schema_major != _OPEN_QUERY_SCHEMA_MAJOR:
+        return False
+    manifest_hash = payload.get("surface_manifest_hash")
+    if not isinstance(manifest_hash, str):
+        return False
+    return _SURFACE_MANIFEST_HASH_RE.fullmatch(manifest_hash) is not None
 
 
 def serve_mcp_stdio(

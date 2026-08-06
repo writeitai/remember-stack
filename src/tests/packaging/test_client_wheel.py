@@ -115,6 +115,34 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         text=True,
     )
 
+    executable = environment / "bin" / "remember"
+    # Offline estimate on the base wheel (SQLAlchemy absent); never starts a paid run.
+    estimate = subprocess.run(
+        [
+            str(executable),
+            "eval",
+            "open-query-gate",
+            "--estimate",
+            "--cases",
+            "1",
+            "--arms",
+            "1",
+            "--calls-per-case",
+            "1",
+            "--unit-cost",
+            "0.01",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert estimate.returncode == 0, estimate.stderr
+    plan = json.loads(estimate.stdout)
+    assert plan["paid_run"] is False
+    assert plan["operator_gated"] is True
+    assert plan["total_model_calls"] == 1
+    assert plan["estimated_total_cost"] == 0.01
+
     source = tmp_path / "fresh-wheel.md"
     source.write_bytes(b"fresh wheel push\n")
     _DeploymentHandler.ingested = []
@@ -126,7 +154,6 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         monkeypatch.setenv(
             "REMEMBERSTACK_API_URL", f"http://127.0.0.1:{server.server_port}"
         )
-        executable = environment / "bin" / "remember"
         version = subprocess.run(
             [str(executable), "--version"], check=True, capture_output=True, text=True
         )

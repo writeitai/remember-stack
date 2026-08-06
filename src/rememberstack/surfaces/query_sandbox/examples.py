@@ -19,6 +19,9 @@ from datetime import timezone
 from typing import Final
 from uuid import UUID
 
+from rememberstack.core.open_query_prose import CLAIMS_VERBATIM_PURPOSE
+from rememberstack.core.open_query_prose import CLAIMS_VERBATIM_SQL
+
 #: Deterministic never-present identities for the empty fixture class.
 _EMPTY_ENTITY: Final = UUID("00000000-0000-4000-8000-0000000000e1")
 _EMPTY_CHUNK: Final = UUID("00000000-0000-4000-8000-0000000000c1")
@@ -28,16 +31,10 @@ _FAR_FUTURE: Final = datetime(2099, 1, 1, tzinfo=timezone.utc)
 
 #: name -> (purpose, SQL). The purpose is what a caller sees in discovery; it
 #: says what the query answers, not how, because the how is right there.
+#: ``claims_verbatim`` purpose/SQL are owned by core/open_query_prose so the
+#: semantic-to-relational worked example cannot drift from this registry body.
 EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
-    "claims_verbatim": (
-        "Claims as asserted, nominated semantically and joined to live testimony",
-        "SELECT s.claim_id, s.rank, s.channel, c.claim_text, c.source_handle,"
-        "       c.source_kind, c.asserted_at"
-        " FROM semantic_claims($1, 20) AS s"
-        " JOIN claims_live AS c ON c.claim_id = s.claim_id"
-        " ORDER BY s.rank, s.claim_id"
-        " LIMIT 20",
-    ),
+    "claims_verbatim": (CLAIMS_VERBATIM_PURPOSE, CLAIMS_VERBATIM_SQL),
     "claims_about": (
         "Claims that mention an entity, via live claim occurrences",
         "SELECT c.claim_id, c.claim_text, c.source_handle, c.asserted_at,"
