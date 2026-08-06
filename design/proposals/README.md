@@ -1,11 +1,13 @@
 # Design proposals
 
 Live, **unchosen** alternatives and deferred improvement tracks. These are not
-binding architecture. Binding observation/adjudication behavior remains in
+binding architecture. Binding product design remains under `plan/designs/` and
+`decisions.md`. Binding observation/adjudication behavior remains in
 `plan/designs/observations_design.md` (D43) and the decision log.
 
 | Proposal | Status | One-line |
 | --- | --- | --- |
+| [`provider-health-routing.md`](provider-health-routing.md) | Open | Shared health scores so workers demote slow/erroring OpenRouter hosts dynamically |
 | [`observation-adjudication-efficiency.md`](observation-adjudication-efficiency.md) | Open — not implemented | Algorithmic ways to cut LLM/embed cost and wall time on the E3 observation-adjudication tail |
 
 ## How to use this directory
