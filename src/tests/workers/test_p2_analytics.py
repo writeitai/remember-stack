@@ -75,14 +75,106 @@ class _Corpus:
                     ),
                     {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name},
                 )
+                connection.execute(
+                    text(
+                        "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                        " source_ref, document_entity_id, title)"
+                        " VALUES (:doc, :d, 'upload', :ref, :e, :n)"
+                    ),
+                    {
+                        "doc": uuid4(),
+                        "d": _DEPLOYMENT_ID,
+                        "ref": f"analytics-entity-{entity_id}",
+                        "e": entity_id,
+                        "n": name,
+                    },
+                )
+            self.evidence_doc, self.evidence_claim = self._live_claim(connection)
             for cluster in (left, right):
                 for index, subject in enumerate(cluster):
                     for obj in cluster[index + 1 :]:
                         self._edge(connection, subject, obj)
             self._edge(connection, "Dave", "Erin")  # the single bridge
 
+    def _live_claim(self, connection: object) -> tuple[UUID, UUID]:
+        """Seed one complete visible claim coordinate for the analytics facts."""
+        doc_id = uuid4()
+        version_id = uuid4()
+        representation_id = uuid4()
+        chunk_id = uuid4()
+        claim_id = uuid4()
+        content_hash = f"analytics-evidence-{doc_id}"
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                " source_ref, title) VALUES (:doc, :d, 'upload', :ref, 'Evidence')"
+            ),
+            {"doc": doc_id, "d": _DEPLOYMENT_ID, "ref": content_hash},
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime, raw_uri)"
+                " VALUES (:d, :hash, 'text/plain', :uri)"
+            ),
+            {"d": _DEPLOYMENT_ID, "hash": content_hash, "uri": f"mem://{content_hash}"},
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                " content_hash, version_no, status)"
+                " VALUES (:version, :d, :doc, :hash, 1, 'ready')"
+            ),
+            {
+                "version": version_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "hash": content_hash,
+            },
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO document_representations (representation_id, deployment_id,"
+                " version_id, route, status) VALUES (:representation, :d, :version,"
+                " 'passthrough', 'ready')"
+            ),
+            {
+                "representation": representation_id,
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+            },
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                " representation_id, ordinal, block_start, block_end,"
+                " chunk_content_hash, extraction_input_hash, char_start, char_end)"
+                " VALUES (:chunk, :d, :doc, :version, :representation, 0, 0, 0,"
+                " :hash, :hash, 0, 8)"
+            ),
+            {
+                "chunk": chunk_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "version": version_id,
+                "representation": representation_id,
+                "hash": content_hash,
+            },
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, extractor_version)"
+                " VALUES (:claim, :d, :doc, :chunk, 'evidence', 'evidence', 0, 8,"
+                " true, true, 'analytics-test')"
+            ),
+            {"claim": claim_id, "d": _DEPLOYMENT_ID, "doc": doc_id, "chunk": chunk_id},
+        )
+        return doc_id, claim_id
+
     def _edge(self, connection: object, subject: str, obj: str) -> None:
         """One `knows` relation between two seeded people."""
+        relation_id = uuid4()
         connection.execute(  # type: ignore[attr-defined]
             text(
                 "INSERT INTO relations (relation_id, deployment_id,"
@@ -91,11 +183,24 @@ class _Corpus:
                 " VALUES (:r, :d, :s, 'knows', :o, 'toy', :label, 1)"
             ),
             {
-                "r": uuid4(),
+                "r": relation_id,
                 "d": _DEPLOYMENT_ID,
                 "s": self.ids[subject],
                 "o": self.ids[obj],
                 "label": f"{subject} knows {obj}",
+            },
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            text(
+                "INSERT INTO relation_evidence (deployment_id, relation_id, claim_id,"
+                " doc_id, stance, normalizer_version)"
+                " VALUES (:d, :r, :claim, :doc, 'supports', 'toy')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "r": relation_id,
+                "claim": self.evidence_claim,
+                "doc": self.evidence_doc,
             },
         )
 

@@ -91,6 +91,7 @@ class _Corpus:
         self.budget_fact_ids: list[UUID] = []
         self.claims: dict[str, UUID] = {}
         self.claim_docs: dict[UUID, UUID] = {}
+        self.doc_chunks: dict[UUID, UUID] = {}
         with engine.begin() as connection:
             self._seed_entities(connection)
             self._seed_primary_facts(connection)
@@ -112,6 +113,20 @@ class _Corpus:
                     "entity": entity_id,
                     "deployment": _DEPLOYMENT_ID,
                     "kind": kind,
+                    "name": name,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, document_entity_id, title)"
+                    " VALUES (:doc, :deployment, 'upload', :ref, :entity, :name)"
+                ),
+                {
+                    "doc": uuid4(),
+                    "deployment": _DEPLOYMENT_ID,
+                    "ref": f"batch-c-entity-{entity_id}",
+                    "entity": entity_id,
                     "name": name,
                 },
             )
@@ -264,6 +279,20 @@ class _Corpus:
                     "name": f"Object {object_id}",
                 },
             )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, document_entity_id, title)"
+                    " VALUES (:doc, :deployment, 'upload', :ref, :entity, :name)"
+                ),
+                {
+                    "doc": uuid4(),
+                    "deployment": _DEPLOYMENT_ID,
+                    "ref": f"batch-c-entity-{object_id}",
+                    "entity": object_id,
+                    "name": f"Object {object_id}",
+                },
+            )
         connection.execute(
             text(
                 "INSERT INTO relations (relation_id, deployment_id,"
@@ -286,6 +315,10 @@ class _Corpus:
 
     def _document(self, connection: Connection, *, key: str) -> UUID:
         doc_id = uuid4()
+        version_id = uuid4()
+        representation_id = uuid4()
+        chunk_id = uuid4()
+        content_hash = f"batch-c-{key}-{doc_id}"
         connection.execute(
             text(
                 "INSERT INTO documents (doc_id, deployment_id, source_kind,"
@@ -298,6 +331,61 @@ class _Corpus:
                 "title": f"Batch C {key}",
             },
         )
+        connection.execute(
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime, raw_uri)"
+                " VALUES (:deployment, :hash, 'text/plain', :uri)"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "hash": content_hash,
+                "uri": f"mem://{content_hash}",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                " content_hash, version_no, status) VALUES (:version, :deployment,"
+                " :doc, :hash, 1, 'ready')"
+            ),
+            {
+                "version": version_id,
+                "deployment": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "hash": content_hash,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id, deployment_id,"
+                " version_id, route, status) VALUES (:representation, :deployment,"
+                " :version, 'passthrough', 'ready')"
+            ),
+            {
+                "representation": representation_id,
+                "deployment": _DEPLOYMENT_ID,
+                "version": version_id,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                " representation_id, ordinal, block_start, block_end,"
+                " chunk_content_hash, extraction_input_hash, char_start, char_end,"
+                " created_at) VALUES (:chunk, :deployment, :doc, :version,"
+                " :representation, 0, 0, 0, :hash, :hash, 0, 32, :at)"
+            ),
+            {
+                "chunk": chunk_id,
+                "deployment": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "version": version_id,
+                "representation": representation_id,
+                "hash": content_hash,
+                "at": _NOW,
+            },
+        )
+        self.doc_chunks[doc_id] = chunk_id
         return doc_id
 
     def _evidence(
@@ -314,7 +402,7 @@ class _Corpus:
     ) -> None:
         doc_id = doc_id or self._document(connection, key=key)
         claim_id = uuid4()
-        chunk_id = uuid4()
+        chunk_id = self.doc_chunks[doc_id]
         body = f"Evidence for {key}."
         self.claims[key] = claim_id
         self.claim_docs[claim_id] = doc_id
