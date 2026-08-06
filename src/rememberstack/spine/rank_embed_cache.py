@@ -43,9 +43,7 @@ def _validate_vector(
     if not vector:
         raise ValueError("empty embedding vector")
     if expected_dims is not None and len(vector) != expected_dims:
-        raise ValueError(
-            f"embedding dims {len(vector)} != expected {expected_dims}"
-        )
+        raise ValueError(f"embedding dims {len(vector)} != expected {expected_dims}")
     if any(not (x == x) or x in (float("inf"), float("-inf")) for x in vector):
         raise ValueError("non-finite embedding component")
     if sum(x * x for x in vector) == 0.0:
@@ -148,9 +146,7 @@ class RankEmbedCache:
                     self.miss_count += 1
 
         if misses:
-            filled = self._embed_misses(
-                pairs=misses, meter=meter, call_key=call_key
-            )
+            filled = self._embed_misses(pairs=misses, meter=meter, call_key=call_key)
             resolved.update(filled)
 
         return resolved[new_key], [resolved[key] for key in open_keys]
@@ -196,9 +192,7 @@ class RankEmbedCache:
                     self._put_unlocked(key=key, vector=validated)
         return filled
 
-    def _put_unlocked(
-        self, *, key: _CacheKey, vector: tuple[float, ...]
-    ) -> None:
+    def _put_unlocked(self, *, key: _CacheKey, vector: tuple[float, ...]) -> None:
         """Insert/update one entry and enforce LRU bound (lock held)."""
         self._entries[key] = vector
         self._entries.move_to_end(key)

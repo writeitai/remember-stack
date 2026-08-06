@@ -47,10 +47,7 @@ def test_cold_hub_larger_than_lru_still_resolves() -> None:
     )
     opens = tuple((uuid4(), f"statement {i}") for i in range(5))
     new_vec, open_vecs = cache.resolve_rank_vectors(
-        new_statement="brand new",
-        open_items=opens,
-        meter=None,
-        call_key="rank",
+        new_statement="brand new", open_items=opens, meter=None, call_key="rank"
     )
     assert len(new_vec) == 8
     assert len(open_vecs) == 5
@@ -65,10 +62,7 @@ def test_write_through_observation_id_is_reusable() -> None:
     )
     new_id = uuid4()
     new_vec, _ = cache.resolve_rank_vectors(
-        new_statement="status is active",
-        open_items=(),
-        meter=None,
-        call_key="rank",
+        new_statement="status is active", open_items=(), meter=None, call_key="rank"
     )
     cache.put_observation(observation_id=new_id, vector=new_vec)
     texts_after_put = len(provider.embedded_texts)

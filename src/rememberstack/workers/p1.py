@@ -47,6 +47,7 @@ def label_relation_component_version(*, embedding_model: str) -> str:
     """
     return f"{FACT_LABEL_VERSION}+{embedding_model}"
 
+
 _DEFAULT_EMBED_BATCH_SIZE: Final = 64
 """Default texts per embeddings HTTP call (OpenRouter hosts cap input length)."""
 
@@ -76,9 +77,7 @@ _PREDICATE_SURFACE: Final[dict[str, str]] = {
 }
 
 
-def deterministic_fact_label(
-    *, subject: str, predicate: str, object_name: str
-) -> str:
+def deterministic_fact_label(*, subject: str, predicate: str, object_name: str) -> str:
     """Build the embeddable relation label without an LLM (S4 with S1 fallback)."""
     surface = _PREDICATE_SURFACE.get(predicate, predicate.replace("_", " "))
     return f"{subject} {surface} {object_name}"
@@ -280,8 +279,7 @@ class LabelFactsHandler:
                         )
                     else:
                         self._facts.record_observation_embedding(
-                            observation_id=row.fact_id,
-                            label_version=embed_generation,
+                            observation_id=row.fact_id, label_version=embed_generation
                         )
         return HandlerOutcome()
 

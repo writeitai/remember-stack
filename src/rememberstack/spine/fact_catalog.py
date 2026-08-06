@@ -258,11 +258,7 @@ class FactCatalog:
         return tuple(FactForEmbedding.model_validate(dict(row)) for row in rows)
 
     def record_fact_embedding(
-        self,
-        *,
-        relation_id: UUID,
-        label_version: str,
-        embed_generation: str,
+        self, *, relation_id: UUID, label_version: str, embed_generation: str
     ) -> None:
         """Stamp Lance readiness after a successful facts-channel upsert.
 

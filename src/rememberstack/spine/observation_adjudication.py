@@ -89,8 +89,7 @@ class ObservationAdjudicator:
         self._model_provider = model_provider
         self._settings = settings
         self._rank_cache = rank_embed_cache or RankEmbedCache(
-            model_provider=model_provider,
-            embedding_model=settings.embedding_model,
+            model_provider=model_provider, embedding_model=settings.embedding_model
         )
         self._last_rank_new_vector: tuple[float, ...] | None = None
         self._last_rank_new_statement: str | None = None
