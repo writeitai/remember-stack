@@ -573,6 +573,97 @@ def test_embedding_pins_configured_provider_without_fallback(
     assert response.vectors == ((0.1, 0.2),)
 
 
+def test_embedding_provider_order_prefers_shortlist_with_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordered shortlist keeps price control while allowing host failover."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            embedding_provider_order=["nebius", "deepinfra", "siliconflow"],
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/embeddings"
+        observed.update(payload)
+        return {
+            "model": "qwen/qwen3-embedding-8b",
+            "usage": {"prompt_tokens": 2, "cost": "0.000001"},
+            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.embed(
+            request=EmbeddingRequest(model="qwen/qwen3-embedding-8b", texts=("memory",))
+        )
+    finally:
+        provider._client.close()
+
+    assert observed["provider"] == {
+        "order": ["nebius", "deepinfra", "siliconflow"],
+        "allow_fallbacks": True,
+    }
+
+
+def test_embedding_provider_order_wins_over_hard_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When both are set, the ordered shortlist is the resilient path."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            embedding_provider="nebius",
+            embedding_provider_order=["deepinfra", "nebius"],
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        observed.update(payload)
+        return {
+            "model": "qwen/qwen3-embedding-8b",
+            "usage": {"prompt_tokens": 1, "cost": "0"},
+            "data": [{"index": 0, "embedding": [0.0]}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.embed(
+            request=EmbeddingRequest(model="qwen/qwen3-embedding-8b", texts=("x",))
+        )
+    finally:
+        provider._client.close()
+
+    assert observed["provider"] == {
+        "order": ["deepinfra", "nebius"],
+        "allow_fallbacks": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    (
+        (None, None),
+        ("", None),
+        ("  ", None),
+        ("nebius, deepinfra", ["nebius", "deepinfra"]),
+        ('["nebius","siliconflow"]', ["nebius", "siliconflow"]),
+    ),
+)
+def test_embedding_provider_order_parses_env_shapes(
+    configured: str | None, expected: list[str] | None
+) -> None:
+    """Compose may pass empty, CSV, or JSON list forms for the order."""
+    settings = OpenRouterSettings(
+        api_key="test-key", embedding_provider_order=configured
+    )
+
+    assert settings.embedding_provider_order == expected
+
+
 @pytest.mark.parametrize("configured", (None, "", "  "))
 def test_empty_embedding_provider_is_unset(configured: str | None) -> None:
     """Compose's empty optional value must preserve automatic provider routing."""
