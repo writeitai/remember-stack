@@ -48,6 +48,7 @@ from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.saved_queries import declared_examples
+from rememberstack.surfaces.query_sandbox.saved_queries import EXAMPLES_NAMESPACE
 from rememberstack.surfaces.query_sandbox.saved_queries import IDENTITIES_PER_HOUR_MAX
 from rememberstack.surfaces.query_sandbox.saved_queries import OperatorFixture
 from rememberstack.surfaces.query_sandbox.saved_queries import PLATFORM_SEED_ACTOR
@@ -622,6 +623,154 @@ def test_validation_report_write_respects_draft_byte_ceiling(
         connection.rollback()
 
 
+def test_draft_byte_ceiling_uses_postgres_jsonb_encoding(
+    registry_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pending metadata is measured with octet_length(value::jsonb::text), not Python dumps."""
+    import json
+
+    unicode_schema = {"é": {"type": "string"}}
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        python_bytes = len(json.dumps(unicode_schema, sort_keys=True).encode())
+        pg_bytes = connection.execute(
+            b"SELECT octet_length((%s::jsonb)::text)",
+            (json.dumps(unicode_schema, sort_keys=True),),
+        ).fetchone()
+        assert pg_bytes is not None
+        assert int(pg_bytes[0]) != python_bytes
+        # Exact stored total for one draft of SELECT 1 with this schema and empty
+        # description/interpretation/limits/report.
+        sql = "SELECT 1 AS n"
+        exact = connection.execute(
+            b"SELECT"
+            b"  octet_length(%(sql)s)"
+            b"  + octet_length(coalesce(%(description)s, ''))"
+            b"  + octet_length(coalesce(%(interpretation)s, ''))"
+            b"  + octet_length((%(params)s::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)",
+            {
+                "sql": sql,
+                "description": None,
+                "interpretation": None,
+                "params": json.dumps(unicode_schema, sort_keys=True),
+            },
+        ).fetchone()
+        assert exact is not None
+        exact_total = int(exact[0])
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX",
+            exact_total,
+        )
+        principal = f"jsonb_{uuid4().hex[:8]}"
+        reg = _registry(connection, actor=principal)
+        # Exact boundary must be accepted.
+        reg.draft(
+            namespace="team",
+            name=_unique("jb"),
+            sql=sql,
+            parameter_schema=unicode_schema,
+        )
+        # +1 over the ceiling must be rejected.
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX",
+            exact_total - 1,
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            reg.draft(
+                namespace="team",
+                name=_unique("jb"),
+                sql=sql,
+                parameter_schema=unicode_schema,
+            )
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        connection.rollback()
+
+
+def test_validate_version_report_replacement_uses_postgres_jsonb_bytes(
+    registry_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Report replacement accounts the new report via PostgreSQL JSONB text size."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        author = f"vrj_{uuid4().hex[:8]}"
+        reg = _registry(connection, actor=author)
+        saved = reg.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
+        # Measure draft SQL + empty metadata + a real passing report size.
+        # First run validation without a tight ceiling to obtain the report shape.
+        report = reg.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        report_json = report.as_json()
+        # Reset report to empty so we re-apply under a measured ceiling.
+        connection.execute(
+            b"UPDATE saved_query_versions SET validation_report = '{}'::jsonb"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(saved.query_id), saved.version),
+        )
+        measured = connection.execute(
+            b"SELECT"
+            b"  (SELECT coalesce(sum("
+            b"     octet_length(v.sql)"
+            b"     + octet_length(coalesce(v.parameter_schema::text, ''))"
+            b"     + octet_length(coalesce(v.declared_result_schema::text, ''))"
+            b"     + octet_length(coalesce(v.default_limits::text, ''))"
+            b"     + octet_length(coalesce(v.validation_report::text, ''))"
+            b"     + octet_length(coalesce(v.declared_interpretation, ''))"
+            b"   ), 0)"
+            b"   FROM saved_query_versions AS v"
+            b"   WHERE v.deployment_id = %(d)s AND v.status = 'draft'"
+            b"     AND v.author_principal = %(p)s)"
+            b"  + (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
+            b"   FROM saved_queries AS q"
+            b"   JOIN saved_query_versions AS v"
+            b"     ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
+            b"   WHERE q.deployment_id = %(d)s AND v.status = 'draft'"
+            b"     AND v.author_principal = %(p)s)"
+            b"  + octet_length((%(report)s::jsonb)::text)"
+            b"  - octet_length(('{}'::jsonb)::text)",
+            {
+                "d": str(_DEPLOYMENT),
+                "p": author,
+                "report": __import__("json").dumps(report_json, sort_keys=True),
+            },
+        ).fetchone()
+        assert measured is not None
+        exact = int(measured[0])
+        # Exact boundary accepted.
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX", exact
+        )
+        reg.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        connection.execute(
+            b"UPDATE saved_query_versions SET validation_report = '{}'::jsonb"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(saved.query_id), saved.version),
+        )
+        # +1 rejected.
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX",
+            exact - 1,
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            reg.validate_version(
+                query_id=saved.query_id,
+                version=saved.version,
+                executor=_sandbox_executor(registry_url),
+                fixtures=_param_fixtures(),
+            )
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        connection.rollback()
+
+
 # --- revalidation ------------------------------------------------------------
 
 
@@ -651,11 +800,54 @@ def test_a_clean_revalidation_restores_a_suspended_version(registry_url: str) ->
             executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
             fixtures=_param_fixtures(),
             minor_compatible=True,
-            actor="validator",
+            actor="operator-revalidator",
+            can_activate=_is_operator,
         )
         assert outcome == "active"
         moved = _registry(connection, actor="operator-1", manifest_hash=_OTHER_HASH)
         assert moved.resolve(namespace="team", name=name).status == "active"
+        connection.rollback()
+
+
+def test_revalidate_cannot_restore_active_without_activation_authority(
+    registry_url: str,
+) -> None:
+    """Restoration to active uses the same default-deny policy as first activation."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        query_id, version, name = _suspended(connection, registry_url)
+        with pytest.raises(SandboxRejection) as rejection:
+            revalidate(
+                connection=connection,
+                deployment_id=_DEPLOYMENT,
+                query_id=query_id,
+                version=version,
+                started_against=_OTHER_HASH,
+                executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+                fixtures=_param_fixtures(),
+                minor_compatible=True,
+                actor="untrusted-agent",
+            )
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        assert "activation authority" in rejection.value.message
+        status = connection.execute(
+            b"SELECT status FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(query_id), version),
+        ).fetchone()
+        assert status is not None and status[0] == "pending_revalidation"
+        # Bound registry method uses the same policy as first activation.
+        authorized = _registry(
+            connection, actor="operator-revalidator", manifest_hash=_OTHER_HASH
+        )
+        outcome = authorized.revalidate(
+            query_id=query_id,
+            version=version,
+            started_against=_OTHER_HASH,
+            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+            fixtures=_param_fixtures(),
+            minor_compatible=True,
+        )
+        assert outcome == "active"
         connection.rollback()
 
 
@@ -682,7 +874,8 @@ def test_a_validation_of_a_surface_that_moved_again_cannot_activate(
                 executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
                 fixtures=_param_fixtures(),
                 minor_compatible=True,
-                actor="validator",
+                actor="operator-revalidator",
+                can_activate=_is_operator,
             )
         still = _registry(connection, actor="operator-1", manifest_hash=third)
         with pytest.raises(SandboxRejection) as rejection:
@@ -735,7 +928,8 @@ def test_publish_during_unlocked_revalidation_cannot_activate(
                         executor=pausing,  # type: ignore[arg-type]
                         fixtures=_param_fixtures(),
                         minor_compatible=True,
-                        actor="validator",
+                        actor="operator-revalidator",
+                        can_activate=_is_operator,
                     )
                     outcomes.append(result)
                     connection.commit()
@@ -834,7 +1028,8 @@ def test_a_failed_revalidation_marks_the_version_broken(
             executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
             fixtures=fixtures,
             minor_compatible=minor_compatible,
-            actor="validator",
+            actor="operator-revalidator",
+            can_activate=_is_operator,
         )
         assert outcome == "broken"
         moved = _registry(connection, actor="operator-1", manifest_hash=_OTHER_HASH)
@@ -851,6 +1046,115 @@ def test_revalidate_does_not_accept_a_fabricated_pass_flag() -> None:
     assert "fixtures_passed" not in sig.parameters
     assert "executor" in sig.parameters
     assert "fixtures" in sig.parameters
+    assert "can_activate" in sig.parameters
+
+
+def test_validate_version_does_not_block_publish_surface_hash(
+    registry_url: str,
+) -> None:
+    """validate_version must not hold the publication lock through fixture execution."""
+    start = Barrier(2, timeout=30)
+    published = Barrier(2, timeout=30)
+    errors: list[BaseException] = []
+    outcomes: list[object] = []
+    third = "d" * 64
+
+    with psycopg.connect(_psycopg_url(registry_url)) as setup:
+        agent = _registry(setup, actor="agent-lock")
+        saved = agent.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
+        setup.commit()
+        query_id, version = saved.query_id, saved.version
+
+    class _PausingExecutor:
+        def __init__(self, inner: QuerySandboxExecutor) -> None:
+            self._inner = inner
+            self._paused = False
+
+        def explain_sql(self, **kwargs: object) -> object:
+            return self._inner.explain_sql(**kwargs)  # type: ignore[arg-type]
+
+        def query_sql(self, **kwargs: object) -> object:
+            if not self._paused:
+                self._paused = True
+                start.wait()
+                published.wait()
+            return self._inner.query_sql(**kwargs)  # type: ignore[arg-type]
+
+    def validator() -> None:
+        try:
+            with psycopg.connect(_psycopg_url(registry_url)) as connection:
+                reg = _registry(connection, actor="agent-lock")
+                pausing = _PausingExecutor(_sandbox_executor(registry_url))
+                try:
+                    report = reg.validate_version(
+                        query_id=query_id,
+                        version=version,
+                        executor=pausing,  # type: ignore[arg-type]
+                        fixtures=_param_fixtures(),
+                    )
+                    outcomes.append(report)
+                    connection.commit()
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+                    connection.rollback()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    def publisher() -> None:
+        try:
+            start.wait()
+            with psycopg.connect(_psycopg_url(registry_url)) as connection:
+                connection.execute(b"SET lock_timeout = '2s'")
+                publish_surface_hash(
+                    connection=connection,
+                    deployment_id=_DEPLOYMENT,
+                    manifest_hash=third,
+                    actor="operator-1",
+                )
+                connection.commit()
+            published.wait()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+            try:
+                published.wait()
+            except Exception:  # noqa: BLE001
+                pass
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(validator), pool.submit(publisher)]
+        for future in futures:
+            future.result(timeout=60)
+
+    # Publication must not time out behind validate_version's fixtures.
+    assert not any(
+        isinstance(e, psycopg.errors.LockNotAvailable)
+        or (isinstance(e, psycopg.Error) and getattr(e, "sqlstate", None) == "55P03")
+        for e in errors
+    ), errors
+    # Validator either finishes before noticing the move, or CAS-fails with SurfaceMoved.
+    assert outcomes or any(isinstance(e, SurfaceMoved) for e in errors), errors
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        pin = connection.execute(
+            b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+            b" WHERE deployment_id = %s",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert pin is not None and pin[0] == third
+        # Restore live pin for later module tests.
+        connection.execute(
+            b"UPDATE saved_query_registry_state"
+            b" SET surface_manifest_hash = %s, updated_at = now()"
+            b" WHERE deployment_id = %s",
+            (_HASH, str(_DEPLOYMENT)),
+        )
+        connection.execute(
+            b"DELETE FROM saved_query_versions WHERE deployment_id = %s",
+            (str(_DEPLOYMENT),),
+        )
+        connection.execute(
+            b"DELETE FROM saved_queries WHERE deployment_id = %s", (str(_DEPLOYMENT),)
+        )
+        connection.commit()
 
 
 # --- examples / seed ---------------------------------------------------------
@@ -987,27 +1291,97 @@ def test_seed_installs_exactly_seventeen_examples_idempotently(
         connection.rollback()
 
 
-def test_shipped_example_origin_requires_activation_authority(
-    agent_registry: SavedQueryRegistry, registry_url: str
+def test_examples_namespace_is_reserved_for_platform_seed(
+    agent_registry: SavedQueryRegistry, registry: SavedQueryRegistry
 ) -> None:
-    with pytest.raises(SandboxRejection) as rejection:
-        agent_registry.draft(
-            namespace="examples",
-            name=_unique(),
-            sql=_PARAM_SQL,
-            origin="shipped_example",
-        )
-    assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
-    assert "shipped_example" in rejection.value.message
+    """Customer drafting cannot create or append examples.* identities."""
+    for reg in (agent_registry, registry):
+        with pytest.raises(SandboxRejection) as rejection:
+            reg.draft(namespace=EXAMPLES_NAMESPACE, name=_unique(), sql=_PARAM_SQL)
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        assert "platform-owned" in rejection.value.message
+
+
+def test_seed_fails_closed_on_non_shipped_examples_collision(registry_url: str) -> None:
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
-        op = _registry(connection, actor="operator-shipper")
-        saved = op.draft(
-            namespace="examples",
-            name=_unique(),
-            sql=_PARAM_SQL,
-            origin="shipped_example",
+        # Pre-create a customer identity that collides with a shipped name.
+        connection.execute(
+            b"INSERT INTO saved_queries (deployment_id, query_id, namespace,"
+            b" name, description, owner_principal, origin)"
+            b" VALUES (%s, %s, 'examples', 'claims_about', 'hijack',"
+            b" 'agent-1', 'agent')",
+            (str(_DEPLOYMENT), str(uuid4())),
         )
-        assert saved.assurance == "shipped_example"
+        connection.execute(
+            b"INSERT INTO saved_query_registry_state"
+            b" (deployment_id, surface_manifest_hash)"
+            b" VALUES (%s, %s)"
+            b" ON CONFLICT (deployment_id) DO NOTHING",
+            (str(_DEPLOYMENT), _HASH),
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            seed_shipped_examples(
+                connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
+            )
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        assert "non-shipped collision" in rejection.value.message
+        # Origin must remain customer-owned (no hijack/relabel).
+        row = connection.execute(
+            b"SELECT origin FROM saved_queries"
+            b" WHERE deployment_id = %s AND namespace = 'examples'"
+            b"   AND name = 'claims_about'",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert row is not None and row[0] == "agent"
+        connection.rollback()
+
+
+def test_customer_cannot_disable_or_purge_shipped_examples(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        installed = seed_shipped_examples(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
+        )
+        assert installed == 17
+        query_id = connection.execute(
+            b"SELECT query_id FROM saved_queries"
+            b" WHERE deployment_id = %s AND namespace = 'examples'"
+            b"   AND name = 'claims_about'",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert query_id is not None
+        op = _registry(connection, actor="operator-1")
+        agent = _registry(connection, actor="agent-1")
+        for reg in (op, agent):
+            with pytest.raises(SandboxRejection) as rejection:
+                reg.disable(query_id=query_id[0])
+            assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+            with pytest.raises(SandboxRejection) as rejection:
+                reg.purge(query_id=query_id[0])
+            assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        # Still resolvable after refused mutations.
+        resolved = op.resolve(namespace="examples", name="claims_about")
+        assert resolved.status == "active"
+        assert resolved.assurance == "shipped_example"
+        connection.rollback()
+
+
+def test_seed_fails_closed_on_disabled_shipped_example(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        seed_shipped_examples(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
+        )
+        # Force-disable at SQL (customer path refuses) to prove seed does not re-enable.
+        connection.execute(
+            b"UPDATE saved_queries SET disabled_at = now()"
+            b" WHERE deployment_id = %s AND namespace = 'examples'"
+            b"   AND name = 'relation_current'",
+            (str(_DEPLOYMENT),),
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            seed_shipped_examples(
+                connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
+            )
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_DISABLED
         connection.rollback()
 
 
@@ -1038,6 +1412,8 @@ def example_corpus(
         tuple[UUID, ...],
         tuple[UUID, ...],
         dict[str, str],
+        tuple[UUID, ...],
+        tuple[UUID, ...],
     ]
 ]:
     """Batch A corpus builder on a dedicated deployment for four-class proofs."""
@@ -1138,10 +1514,83 @@ def example_corpus(
                 ),
                 {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
             ).scalar()
-
+            # Real base-table fact excluded from the live surface (not never-present).
+            tombstone_fact = connection.execute(
+                text(
+                    "SELECT r.relation_id FROM relations AS r"
+                    " WHERE r.deployment_id = :d"
+                    "   AND NOT EXISTS ("
+                    "     SELECT 1 FROM memory_v1.facts_current AS f"
+                    "     WHERE f.deployment_id = r.deployment_id"
+                    "       AND f.fact_id = r.relation_id"
+                    "   )"
+                    "   AND NOT EXISTS ("
+                    "     SELECT 1 FROM memory_v1.facts_visible_history AS h"
+                    "     WHERE h.deployment_id = r.deployment_id"
+                    "       AND h.fact_id = r.relation_id"
+                    "   )"
+                    " LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            if tombstone_fact is None:
+                # Fall back to any non-current relation (ended/invalidated) only if
+                # explain's history join still yields empty for that handle via
+                # missing live evidence; prefer a true surface-excluded row.
+                tombstone_fact = connection.execute(
+                    text(
+                        "SELECT r.relation_id FROM relations AS r"
+                        " WHERE r.deployment_id = :d"
+                        "   AND NOT EXISTS ("
+                        "     SELECT 1 FROM memory_v1.facts_current AS f"
+                        "     WHERE f.deployment_id = r.deployment_id"
+                        "       AND f.fact_id = r.relation_id"
+                        "   )"
+                        " LIMIT 1"
+                    ),
+                    {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+                ).scalar()
+            # Claims that exist in base tables but are excluded from claims_live.
+            tombstone_claims = tuple(
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT c.claim_id FROM claims AS c"
+                        " WHERE c.deployment_id = :d"
+                        "   AND NOT EXISTS ("
+                        "     SELECT 1 FROM memory_v1.claims_live AS l"
+                        "     WHERE l.deployment_id = c.deployment_id"
+                        "       AND l.claim_id = c.claim_id"
+                        "   )"
+                        " LIMIT 5"
+                    ),
+                    {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+                )
+            )
+            tombstone_chunks = tuple(
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT ch.chunk_id FROM chunks AS ch"
+                        " WHERE ch.deployment_id = :d"
+                        "   AND NOT EXISTS ("
+                        "     SELECT 1 FROM memory_v1.chunks_live AS l"
+                        "     WHERE l.deployment_id = ch.deployment_id"
+                        "       AND l.chunk_id = ch.chunk_id"
+                        "   )"
+                        " LIMIT 5"
+                    ),
+                    {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+                )
+            )
         assert alice is not None and acme is not None
         assert live_chunk is not None and live_fact is not None
         assert claims and chunks
+        assert alice_dup is not None, "corpus must expose a merged entity for tombstone"
+        assert deleted_chunk is not None, "corpus must expose a deleted chunk"
+        assert tombstone_fact is not None, "corpus must expose a surface-excluded fact"
+        assert tombstone_claims, "corpus must expose surface-excluded claims"
+        assert tombstone_chunks, "corpus must expose surface-excluded chunks"
         # Stamp embedding hashes so chunk channels can confirm fixture bodies.
         chunk_bodies: dict[str, str] = {}
         with engine.begin() as connection:
@@ -1168,26 +1617,33 @@ def example_corpus(
         empty_fact = UUID("00000000-0000-4000-8000-0000000000f1")
         far_past = datetime(1970, 1, 1, tzinfo=timezone.utc)
         far_future = datetime(2099, 6, 1, tzinfo=timezone.utc)
+        # Distinct time windows that stay empty without overlapping live claim
+        # validity (_PAST.._MID) or positive windows. Never-present empty vs a
+        # pre-corpus historical window (tombstone) for claims_as_of; empty looks
+        # after everything while tombstone uses a later far-future for since.
+        tombstone_from = datetime(2010, 6, 1, tzinfo=timezone.utc)
+        tombstone_to = datetime(2010, 6, 1, tzinfo=timezone.utc)
+        tombstone_since = datetime(2099, 12, 1, tzinfo=timezone.utc)
         handles = ExampleFixtureHandles(
             live_entity=alice,
             other_entity=acme,
             empty_entity=empty_entity,
-            tombstone_entity=alice_dup or empty_entity,
+            tombstone_entity=alice_dup,
             live_chunk=live_chunk,
             empty_chunk=empty_chunk,
-            tombstone_chunk=deleted_chunk or empty_chunk,
+            tombstone_chunk=deleted_chunk,
             live_fact=live_fact,
             empty_fact=empty_fact,
-            tombstone_fact=empty_fact,
+            tombstone_fact=tombstone_fact,
             live_from=batch_a._PAST,
             live_to=far_future,
             empty_from=far_past,
             empty_to=far_past,
-            tombstone_from=far_past,
-            tombstone_to=far_past,
+            tombstone_from=tombstone_from,
+            tombstone_to=tombstone_to,
             live_since=far_past,
             empty_since=far_future,
-            tombstone_since=far_future,
+            tombstone_since=tombstone_since,
         )
         yield (
             registry_url,
@@ -1196,6 +1652,8 @@ def example_corpus(
             claims,
             chunks,
             chunk_bodies,
+            tombstone_claims,
+            tombstone_chunks,
         )
     finally:
         batch_a._DEPLOYMENT_ID = original
@@ -1311,12 +1769,21 @@ def test_every_example_runs_four_validation_classes_on_corpus(
         tuple[UUID, ...],
         tuple[UUID, ...],
         dict[str, str],
+        tuple[UUID, ...],
+        tuple[UUID, ...],
     ],
 ) -> None:
     """Positive mapping, empty, tombstone absence, and real cap on all 17 bodies."""
-    url, deployment_id, handles, claims, chunks, chunk_bodies = example_corpus
-    tomb_claims = (UUID("00000000-0000-4000-8000-0000000000d1"),)
-    tomb_chunks = (UUID("00000000-0000-4000-8000-0000000000d2"),)
+    (
+        url,
+        deployment_id,
+        handles,
+        claims,
+        chunks,
+        chunk_bodies,
+        tomb_claims,
+        tomb_chunks,
+    ) = example_corpus
     search = _FixtureSearch(
         live_claims=claims,
         live_chunks=chunks,
@@ -1330,6 +1797,10 @@ def test_every_example_runs_four_validation_classes_on_corpus(
         meta = example_operator_fixtures(name, handles=handles)
         assert meta["positive"]["parameters"] != meta["empty"]["parameters"]
         assert meta["positive"]["parameters"] != meta["tombstone"]["parameters"]
+        # Cap may reuse positive parameters under a tight row bound; empty and
+        # tombstone must stay distinct where the body accepts distinguishing
+        # parameters (all 17 operators do).
+        assert meta["empty"]["parameters"] != meta["tombstone"]["parameters"], name
 
     failures: list[str] = []
     for name, (_, sql) in EXAMPLE_QUERIES.items():
@@ -1367,14 +1838,25 @@ def test_examples_execute_within_caps_on_corpus(
         tuple[UUID, ...],
         tuple[UUID, ...],
         dict[str, str],
+        tuple[UUID, ...],
+        tuple[UUID, ...],
     ],
 ) -> None:
-    url, deployment_id, handles, claims, chunks, chunk_bodies = example_corpus
+    (
+        url,
+        deployment_id,
+        handles,
+        claims,
+        chunks,
+        chunk_bodies,
+        tomb_claims,
+        tomb_chunks,
+    ) = example_corpus
     search = _FixtureSearch(
         live_claims=claims,
         live_chunks=chunks,
-        tombstone_claims=(UUID("00000000-0000-4000-8000-0000000000d1"),),
-        tombstone_chunks=(UUID("00000000-0000-4000-8000-0000000000d2"),),
+        tombstone_claims=tomb_claims,
+        tombstone_chunks=tomb_chunks,
         chunk_bodies=chunk_bodies,
     )
     inner = _sandbox_executor(url, deployment_id=deployment_id, search=search)

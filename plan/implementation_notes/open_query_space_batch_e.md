@@ -18,9 +18,11 @@ deployment, 50 versions per identity, 64 KiB of SQL, and per-principal draft
 limits. The draft-byte ceiling counts encoded SQL **plus draft registry
 metadata** (description, interpretation, parameter/result schemas, default
 limits, validation report), including the pending write and any report
-replacement on `validate_version`. Concurrent drafts serialize on the
-per-deployment `saved_query_registry_state` row (`FOR UPDATE`) so two writers
-cannot race past the ceiling.
+replacement on `validate_version`. Pending and replacement JSONB sizes are
+measured in PostgreSQL with the same `octet_length(value::jsonb::text)`
+representation used for stored rows — not Python `json.dumps` byte counts.
+Concurrent drafts serialize on the per-deployment `saved_query_registry_state`
+row (`FOR UPDATE`) so two writers cannot race past the ceiling.
 
 Registry mutations that take a `query_id` also filter by `deployment_id`. The
 connection remains the physical tenancy boundary; the column filter is defense
@@ -35,19 +37,25 @@ Every version pins the `surface_manifest_hash` it validated against.
 `pending_revalidation` in the CALLER'S transaction — suspension and publication
 are one act.
 
-`revalidate` follows capture → unlocked execution → CAS at transition:
+`revalidate` and `validate_version` follow capture → unlocked execution → CAS
+at transition:
 
 1. Read the authoritative hash **without** holding the publication lock through
    EXPLAIN/fixtures (so a concurrent `publish_surface_hash` is not blocked).
 2. Run operator fixtures through the real `QuerySandboxExecutor` while unlocked.
 3. Lock the registry-state row, re-read the hash, and compare-and-swap the
-   version UPDATE only when `status = pending_revalidation` and the state hash
-   still equals the validator's start hash. Otherwise raise `SurfaceMoved`;
-   the version remains pending for a fresh validation against the new hash.
+   version UPDATE only when the start hash is still current (and, for
+   revalidation, `status = pending_revalidation`). Otherwise raise
+   `SurfaceMoved`; the version remains pending / without current evidence for a
+   fresh validation against the new hash. Draft-byte quota serialization for a
+   report write happens only at this short persistence transition.
 
-Restoration to `active` requires minor-compatibility AND every fixture passing
-via real executor execution of stored SQL (no caller-supplied pass flag);
-anything else is `broken`. The new validation report is bound to the
+Restoration to `active` requires minor-compatibility, every fixture passing via
+real executor execution of stored SQL (no caller-supplied pass flag), **and**
+the same bound-actor `can_activate` policy as first activation (default-deny).
+Anything else is `broken` (or refused when activation authority is missing).
+Prefer `SavedQueryRegistry.revalidate`; the free function accepts the same
+`can_activate` predicate. The new validation report is bound to the
 authoritative start hash and stored, and the transition is audited.
 
 `SavedQueryRegistry` draft/validate/activate (and resolve's surface check) load
@@ -77,13 +85,14 @@ imply platform fact assurance.
 `validate_version` is the only path that writes a validation report for
 customer drafts. It loads the stored immutable SQL, runs the four §5 fixtures
 through `QuerySandboxExecutor` with bound parameters (plus safe EXPLAIN
-diagnostics), and persists a report bound to `query_hash` + `manifest_hash`.
-Before a draft report is written, its stored size is accounted under the same
-per-principal 4 MiB draft-byte ceiling (replacing any current report); exceeding
-the ceiling returns `quota_exceeded`. Activation rejects unbound, misbound, or
-partial reports. Status transitions to `active` are allowed only from `draft`
-or `pending_revalidation` — never from `broken`, `deprecated`, or `disabled`
-via stale evidence.
+diagnostics) **without** holding the publication lock, then lock/re-reads and
+CAS-persists a report bound to `query_hash` + `manifest_hash`. Before a draft
+report is written, its stored size is accounted under the same per-principal
+4 MiB draft-byte ceiling (replacing any current report) using PostgreSQL JSONB
+text sizes; exceeding the ceiling returns `quota_exceeded`. Activation rejects
+unbound, misbound, or partial reports. Status transitions to `active` are
+allowed only from `draft` or `pending_revalidation` — never from `broken`,
+`deprecated`, or `disabled` via stale evidence.
 
 Fixture judgment:
 
@@ -137,18 +146,25 @@ metadata cannot drift from the bodies.
 `seed_shipped_examples` (and `SavedQueryRegistry.install_shipped_examples`)
 idempotently installs all seventeen as registry identities under
 `namespace=examples` with `origin`/`assurance=shipped_example`, discoverable
-and non-default, resolvable through the registry. The self-host `setup` path
-calls the seed after recipes. Deployment seed DML is **not** in Alembic
-migrations. Re-seeding the same bodies is a no-op. Examples remain editable
+and non-default, resolvable through the registry. The `examples` namespace is
+platform-owned: customer `draft` refuses it, and disable/purge refuse
+shipped-example identities. An idempotent seed match verifies
+`origin=shipped_example`, `assurance=shipped_example`, matching active body
+hash, and that the identity is not disabled. A non-shipped collision or a
+disabled shipped identity fails closed (no hijack, relabel, or silent
+re-enable). The self-host `setup` path calls the seed after recipes.
+Deployment seed DML is **not** in Alembic migrations. Examples remain editable
 only by copying into a customer namespace and never become top-level tools.
 Install requires a registry bound to an activation-authorized actor
 (`PLATFORM_SEED_ACTOR` on the bootstrap path).
 
 Focused proofs run the four fixture classes against a shared Batch A corpus
 with distinct positive/empty/tombstone/cap parameters (including a mode-aware
-search port for semantic/lexical bodies). An always-empty substitution fails
-positive. Seed idempotency is proved by two seed calls yielding exactly 17
-active `examples.*` identities.
+search port for semantic/lexical bodies and real base-table rows excluded by
+live/history surfaces for tombstone handles). Empty and tombstone parameters
+differ where the query accepts distinguishing parameters. An always-empty
+substitution fails positive. Seed idempotency is proved by two seed calls
+yielding exactly 17 active `examples.*` identities.
 
 ## Migration head
 

@@ -100,6 +100,10 @@ def default_deny_activation(_actor: str) -> bool:
 #: Bound actor used by the self-host seed path for shipped `examples.*` install.
 PLATFORM_SEED_ACTOR: Final = "platform:shipped-examples"
 
+#: Platform-owned namespace for the seventeen shipped demotion examples (§2).
+#: Customer drafts must copy into another namespace; only platform seed installs here.
+EXAMPLES_NAMESPACE: Final = "examples"
+
 
 @dataclass(frozen=True)
 class SavedQueryVersion:
@@ -253,6 +257,17 @@ class SavedQueryRegistry:
                     f" got {query_space_major!r}"
                 ),
             )
+        # The examples namespace is platform-owned. Customer drafting copies a
+        # shipped body into another namespace; install_shipped_examples is the
+        # only path that creates or refreshes examples.* identities.
+        if namespace == EXAMPLES_NAMESPACE:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=(
+                    "the examples namespace is platform-owned;"
+                    " copy a shipped example into a customer namespace to edit it"
+                ),
+            )
         params = validate_parameter_schema(parameter_schema or {})
         results = validate_result_schema(declared_result_schema or {})
         limits = validate_default_limits(default_limits or {})
@@ -277,7 +292,9 @@ class SavedQueryRegistry:
         # Also pins this instance to the DB-authoritative surface hash.
         current_hash = self._require_authoritative_manifest(for_update=True)
         identity = self._identity(namespace=namespace, name=name)
-        pending_meta = _draft_metadata_bytes(
+        if identity is not None:
+            self._reject_customer_mutation_of_shipped(query_id=identity, action="draft")
+        pending_meta = self._pending_draft_metadata_bytes(
             description=description,
             declared_interpretation=declared_interpretation,
             parameter_schema=params,
@@ -384,10 +401,16 @@ class SavedQueryRegistry:
         When the version is still a draft, the new stored report is accounted
         under the same per-principal 4 MiB draft-byte ceiling (replacing any
         current report) before it is written.
+
+        Protocol matches revalidation: capture the authoritative hash without
+        holding the publication lock, run EXPLAIN/fixtures unlocked, then
+        lock / re-read / CAS at persistence so `publish_surface_hash` is not
+        blocked and stale evidence is never written as current.
         """
-        current_hash = self._require_authoritative_manifest(for_update=True)
+        # Capture-at-start: no FOR UPDATE — publication must remain unblocked.
+        start_hash = self._require_authoritative_manifest(for_update=False)
         row = self._connection.execute(
-            b"SELECT sql, query_hash, status, author_principal, validation_report"
+            b"SELECT sql, query_hash"
             b" FROM saved_query_versions"
             b" WHERE deployment_id = %(deployment)s"
             b"   AND query_id = %(query)s AND version = %(version)s",
@@ -402,38 +425,87 @@ class SavedQueryRegistry:
                 code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
                 message="no such saved-query version",
             )
-        sql, query_hash, status, author, existing_report = row
+        sql, query_hash = row
+        # Unlocked execution: EXPLAIN and fixtures do not hold the state lock.
         report = validate_saved_sql(
             executor=executor,
             sql=sql,
             fixtures=fixtures,
             principal=self._actor,
-            manifest_hash=current_hash,
+            manifest_hash=start_hash,
             query_hash=query_hash,
         )
         report_json = report.as_json()
-        if status == "draft":
-            self._check_draft_report_quota(
-                principal=str(author),
-                existing_report=existing_report
-                if isinstance(existing_report, dict)
-                else {},
-                new_report=report_json,
-            )
-        self._connection.execute(
-            b"UPDATE saved_query_versions"
-            b" SET validation_report = %(report)s::jsonb,"
-            b"     validated_surface_manifest_hash = %(manifest)s"
+
+        # CAS-at-persistence: lock, re-read, fail closed if the surface moved.
+        # Do not hold this lock through EXPLAIN/fixtures; only the short
+        # quota + write transition is serialized here.
+        state = self._connection.execute(
+            b"SELECT surface_manifest_hash FROM saved_query_registry_state"
             b" WHERE deployment_id = %(deployment)s"
-            b"   AND query_id = %(query)s AND version = %(version)s",
+            b" FOR UPDATE",
+            {"deployment": str(self._deployment_id)},
+        ).fetchone()
+        if state is None or str(state[0]) != start_hash:
+            raise SurfaceMoved(
+                "the surface changed while this version was being validated"
+            )
+        current = self._connection.execute(
+            b"SELECT sql, query_hash, status, author_principal, validation_report"
+            b" FROM saved_query_versions"
+            b" WHERE deployment_id = %(deployment)s"
+            b"   AND query_id = %(query)s AND version = %(version)s"
+            b" FOR UPDATE",
             {
-                "report": _json(report_json),
-                "manifest": current_hash,
                 "deployment": str(self._deployment_id),
                 "query": str(query_id),
                 "version": version,
             },
+        ).fetchone()
+        if current is None:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
+                message="no such saved-query version",
+            )
+        cur_sql, cur_hash, cur_status, cur_author, cur_report = current
+        if cur_sql != sql or cur_hash != query_hash:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+                message="this version changed while it was being validated",
+            )
+        if cur_status == "draft":
+            self._check_draft_report_quota(
+                principal=str(cur_author),
+                existing_report=cur_report if isinstance(cur_report, dict) else {},
+                new_report=report_json,
+            )
+        cursor = self._connection.execute(
+            b"UPDATE saved_query_versions"
+            b" SET validation_report = %(report)s::jsonb,"
+            b"     validated_surface_manifest_hash = %(manifest)s"
+            b" WHERE deployment_id = %(deployment)s"
+            b"   AND query_id = %(query)s AND version = %(version)s"
+            b"   AND query_hash = %(query_hash)s"
+            b"   AND status = %(status)s"
+            b"   AND EXISTS ("
+            b"     SELECT 1 FROM saved_query_registry_state AS s"
+            b"     WHERE s.deployment_id = saved_query_versions.deployment_id"
+            b"       AND s.surface_manifest_hash = %(manifest)s"
+            b"   )",
+            {
+                "report": _json(report_json),
+                "manifest": start_hash,
+                "deployment": str(self._deployment_id),
+                "query": str(query_id),
+                "version": version,
+                "query_hash": query_hash,
+                "status": cur_status,
+            },
         )
+        if cursor.rowcount != 1:
+            raise SurfaceMoved(
+                "this version or surface changed while it was being validated"
+            )
         self._audit(
             action="validate",
             actor=self._actor,
@@ -441,7 +513,7 @@ class SavedQueryRegistry:
             version=version,
             query_hash=query_hash,
             old_hash=None,
-            new_hash=current_hash,
+            new_hash=start_hash,
         )
         return report
 
@@ -811,6 +883,7 @@ class SavedQueryRegistry:
 
     def disable(self, *, query_id: UUID) -> None:
         """Take an identity out of service at admission time (§5)."""
+        self._reject_customer_mutation_of_shipped(query_id=query_id, action="disable")
         self._connection.execute(
             b"UPDATE saved_queries SET disabled_at = now()"
             b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
@@ -838,8 +911,10 @@ class SavedQueryRegistry:
         Registry SQL can contain customer data — a WHERE clause naming a person
         is customer data — so a deletion removes the text rather than marking
         it. What remains is the audit trail's ids, hashes, actor, and action,
-        which contain none of it.
+        which contain none of it. Shipped `examples.*` identities are not
+        purgeable through this path.
         """
+        self._reject_customer_mutation_of_shipped(query_id=query_id, action="purge")
         versions = self._connection.execute(
             b"SELECT version, query_hash, validated_surface_manifest_hash"
             b" FROM saved_query_versions"
@@ -902,14 +977,45 @@ class SavedQueryRegistry:
         installed = 0
         for name, (purpose, sql) in EXAMPLE_QUERIES.items():
             validated = validate_sql(sql)
-            identity = self._identity(namespace="examples", name=name)
+            identity = self._identity(namespace=EXAMPLES_NAMESPACE, name=name)
             if identity is not None:
+                meta = self._connection.execute(
+                    b"SELECT origin, disabled_at FROM saved_queries"
+                    b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
+                    {"deployment": str(self._deployment_id), "query": str(identity)},
+                ).fetchone()
+                if meta is None:
+                    raise SandboxRejection(
+                        code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
+                        message=f"examples.{name} identity disappeared during seed",
+                    )
+                origin, disabled_at = meta
+                # Fail closed: never hijack a customer identity, never silently
+                # re-enable a disabled shipped row, never treat a non-matching
+                # body as an idempotent skip.
+                if origin != "shipped_example":
+                    raise SandboxRejection(
+                        code=QueryErrorCode.INVALID_PARAMETER,
+                        message=(
+                            f"examples.{name} already exists with origin"
+                            f" {origin!r}; seeding refuses a non-shipped collision"
+                        ),
+                    )
+                if disabled_at is not None:
+                    raise SandboxRejection(
+                        code=QueryErrorCode.SAVED_QUERY_DISABLED,
+                        message=(
+                            f"examples.{name} is disabled;"
+                            " seeding does not re-enable a shipped identity"
+                        ),
+                    )
                 same = self._connection.execute(
                     b"SELECT 1 FROM saved_query_versions"
                     b" WHERE deployment_id = %(deployment)s"
                     b"   AND query_id = %(query)s"
                     b"   AND query_hash = %(hash)s"
                     b"   AND status = 'active'"
+                    b"   AND assurance = 'shipped_example'"
                     b" LIMIT 1",
                     {
                         "deployment": str(self._deployment_id),
@@ -924,11 +1030,12 @@ class SavedQueryRegistry:
                 self._connection.execute(
                     b"INSERT INTO saved_queries (deployment_id, query_id, namespace,"
                     b" name, description, owner_principal, origin)"
-                    b" VALUES (%(deployment)s, %(query)s, 'examples', %(name)s,"
+                    b" VALUES (%(deployment)s, %(query)s, %(namespace)s, %(name)s,"
                     b" %(description)s, %(principal)s, 'shipped_example')",
                     {
                         "deployment": str(self._deployment_id),
                         "query": str(query_id),
+                        "namespace": EXAMPLES_NAMESPACE,
                         "name": name,
                         "description": purpose,
                         "principal": self._actor,
@@ -1004,7 +1111,102 @@ class SavedQueryRegistry:
             installed += 1
         return installed
 
+    def revalidate(
+        self,
+        *,
+        query_id: UUID,
+        version: int,
+        started_against: str,
+        executor: QuerySandboxExecutor,
+        fixtures: Mapping[str, OperatorFixture | Sequence[object]],
+        minor_compatible: bool,
+    ) -> str:
+        """Revalidate a pending version under this registry's bound authority.
+
+        Restoration to `active` uses the same bound actor and `can_activate`
+        policy as first activation (default-deny). Marking a version `broken`
+        does not require activation authority. Protocol: capture → unlocked
+        fixture execution → lock / re-read / CAS at transition.
+        """
+        return _revalidate_version(
+            connection=self._connection,
+            deployment_id=self._deployment_id,
+            query_id=query_id,
+            version=version,
+            started_against=started_against,
+            executor=executor,
+            fixtures=fixtures,
+            minor_compatible=minor_compatible,
+            actor=self._actor,
+            can_activate=self._can_activate,
+        )
+
     # -- internals ---------------------------------------------------------
+
+    def _reject_customer_mutation_of_shipped(
+        self, *, query_id: UUID, action: str
+    ) -> None:
+        """Refuse customer mutation of platform-owned shipped example identities."""
+        row = self._connection.execute(
+            b"SELECT namespace, origin FROM saved_queries"
+            b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
+            {"deployment": str(self._deployment_id), "query": str(query_id)},
+        ).fetchone()
+        if row is None:
+            return
+        namespace, origin = row
+        if namespace == EXAMPLES_NAMESPACE or origin == "shipped_example":
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=(
+                    f"cannot {action} a platform-owned shipped example;"
+                    " copy it into a customer namespace instead"
+                ),
+            )
+
+    def _pending_draft_metadata_bytes(
+        self,
+        *,
+        description: str | None,
+        declared_interpretation: str | None,
+        parameter_schema: dict[str, Any],
+        declared_result_schema: dict[str, Any],
+        default_limits: dict[str, Any],
+        validation_report: dict[str, Any],
+    ) -> int:
+        """Pending draft metadata size using PostgreSQL JSONB text encoding.
+
+        Matches stored-row accounting: `octet_length(value::jsonb::text)` for
+        JSONB columns and `octet_length(text)` for plain text fields. Must not
+        mix Python `json.dumps` byte counts with PostgreSQL JSONB.
+        """
+        row = self._connection.execute(
+            b"SELECT"
+            b"  octet_length(coalesce(%(description)s, ''))"
+            b"  + octet_length(coalesce(%(interpretation)s, ''))"
+            b"  + octet_length((%(params)s::jsonb)::text)"
+            b"  + octet_length((%(results)s::jsonb)::text)"
+            b"  + octet_length((%(limits)s::jsonb)::text)"
+            b"  + octet_length((%(report)s::jsonb)::text)",
+            {
+                "description": description,
+                "interpretation": declared_interpretation,
+                "params": _json(parameter_schema),
+                "results": _json(declared_result_schema),
+                "limits": _json(default_limits),
+                "report": _json(validation_report),
+            },
+        ).fetchone()
+        assert row is not None
+        return int(row[0])
+
+    def _jsonb_octet_length(self, value: dict[str, Any]) -> int:
+        """Exact PostgreSQL JSONB text size of a dict about to be stored."""
+        row = self._connection.execute(
+            b"SELECT octet_length((%(value)s::jsonb)::text)", {"value": _json(value)}
+        ).fetchone()
+        assert row is not None
+        return int(row[0])
 
     def _require_authoritative_manifest(self, *, for_update: bool = False) -> str:
         """Return the deployment's DB-authoritative surface hash.
@@ -1250,8 +1452,8 @@ class SavedQueryRegistry:
         ).fetchone()
         assert counts is not None
         already = int(counts[0]) + int(counts[1])
-        old_bytes = len(_json(existing_report).encode())
-        new_bytes = len(_json(new_report).encode())
+        old_bytes = self._jsonb_octet_length(existing_report)
+        new_bytes = self._jsonb_octet_length(new_report)
         # Replace: drop the old report contribution, add the new one.
         projected = already - old_bytes + new_bytes
         if projected > DRAFT_BYTES_MAX:
@@ -1264,13 +1466,14 @@ class SavedQueryRegistry:
 class SurfaceMoved(Exception):
     """The surface changed while a validation was running.
 
-    Raised by `revalidate` when the hash it started against is no longer the
-    one in force. The validation is not wrong, it is simply about a surface
-    that no longer exists, and its result cannot be used to activate anything.
+    Raised by `revalidate` / `validate_version` when the hash it started
+    against is no longer the one in force. The validation is not wrong, it is
+    simply about a surface that no longer exists, and its result cannot be
+    used to activate anything or be written as current evidence.
     """
 
 
-def revalidate(
+def _revalidate_version(
     *,
     connection: psycopg.Connection,
     deployment_id: UUID,
@@ -1281,25 +1484,13 @@ def revalidate(
     fixtures: Mapping[str, OperatorFixture | Sequence[object]],
     minor_compatible: bool,
     actor: str,
+    can_activate: ActivationAuthority,
 ) -> str:
-    """Decide what a completed revalidation may do to a suspended version (§5).
+    """Shared revalidation protocol with bound activation authority.
 
-    Protocol (capture → unlocked execution → CAS at transition):
-
-    1. Read the authoritative surface hash without holding the publication
-       lock through EXPLAIN/fixtures.
-    2. Load the stored SQL and run operator-owned fixtures through the real
-       `QuerySandboxExecutor` while unlocked, so a concurrent
-       `publish_surface_hash` is not blocked by the validator.
-    3. Lock, re-read the authoritative hash, and compare-and-swap the version
-       transition only when `started_against` is still current and the version
-       is still `pending_revalidation`. Otherwise raise `SurfaceMoved`; the
-       version remains pending for a fresh validation against the new hash.
-
-    Fixture success comes only from that execution — callers cannot pass a
-    fabricated pass flag. `minor_compatible` remains the compatibility
-    decision; both it and a passing bound report are required to restore
-    `active`.
+    Restoration to `active` requires `can_activate(actor)` — the same
+    principal class as first activation. Default-deny when no policy is
+    wired. Marking `broken` does not require activation authority.
     """
     # Capture-at-start: no FOR UPDATE — publication must remain unblocked.
     state = connection.execute(
@@ -1338,7 +1529,18 @@ def revalidate(
         manifest_hash=started_against,
         query_hash=query_hash,
     )
-    outcome = "active" if (minor_compatible and report.passed) else "broken"
+    if minor_compatible and report.passed:
+        if not can_activate(actor):
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=(
+                    "restoring active requires activation authority"
+                    " on the bound revalidation actor"
+                ),
+            )
+        outcome = "active"
+    else:
+        outcome = "broken"
 
     # CAS-at-transition: lock, re-read, fail closed if the surface moved.
     state = connection.execute(
@@ -1399,6 +1601,57 @@ def revalidate(
         },
     )
     return outcome
+
+
+def revalidate(
+    *,
+    connection: psycopg.Connection,
+    deployment_id: UUID,
+    query_id: UUID,
+    version: int,
+    started_against: str,
+    executor: QuerySandboxExecutor,
+    fixtures: Mapping[str, OperatorFixture | Sequence[object]],
+    minor_compatible: bool,
+    actor: str,
+    can_activate: ActivationAuthority | None = None,
+) -> str:
+    """Decide what a completed revalidation may do to a suspended version (§5).
+
+    Prefer `SavedQueryRegistry.revalidate` when a host already holds a bound
+    registry. This free function is the same protocol with an explicit actor
+    and the same default-deny activation policy as the registry: restoration
+    to `active` requires `can_activate(actor)`.
+
+    Protocol (capture → unlocked execution → CAS at transition):
+
+    1. Read the authoritative surface hash without holding the publication
+       lock through EXPLAIN/fixtures.
+    2. Load the stored SQL and run operator-owned fixtures through the real
+       `QuerySandboxExecutor` while unlocked, so a concurrent
+       `publish_surface_hash` is not blocked by the validator.
+    3. Lock, re-read the authoritative hash, and compare-and-swap the version
+       transition only when `started_against` is still current and the version
+       is still `pending_revalidation`. Otherwise raise `SurfaceMoved`; the
+       version remains pending for a fresh validation against the new hash.
+
+    Fixture success comes only from that execution — callers cannot pass a
+    fabricated pass flag. `minor_compatible` remains the compatibility
+    decision; both it, a passing bound report, and activation authority are
+    required to restore `active`.
+    """
+    return _revalidate_version(
+        connection=connection,
+        deployment_id=deployment_id,
+        query_id=query_id,
+        version=version,
+        started_against=started_against,
+        executor=executor,
+        fixtures=fixtures,
+        minor_compatible=minor_compatible,
+        actor=actor,
+        can_activate=can_activate or default_deny_activation,
+    )
 
 
 def seed_shipped_examples(
@@ -1478,27 +1731,6 @@ def _json(value: dict[str, Any]) -> str:
     import json
 
     return json.dumps(value, sort_keys=True)
-
-
-def _draft_metadata_bytes(
-    *,
-    description: str | None,
-    declared_interpretation: str | None,
-    parameter_schema: dict[str, Any],
-    declared_result_schema: dict[str, Any],
-    default_limits: dict[str, Any],
-    validation_report: dict[str, Any],
-) -> int:
-    """Byte contribution of draft registry metadata toward the §5 ceiling."""
-    parts = (
-        description or "",
-        declared_interpretation or "",
-        _json(parameter_schema),
-        _json(declared_result_schema),
-        _json(default_limits),
-        _json(validation_report),
-    )
-    return sum(len(part.encode()) for part in parts)
 
 
 def validate_parameter_schema(schema: dict[str, Any]) -> dict[str, Any]:
