@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+import re
 from uuid import UUID
 from uuid import uuid4
 
@@ -1369,7 +1370,7 @@ def test_http_explain_rejects_execution_only_fields(migrated: str) -> None:
 
 
 def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) -> None:
-    """Authenticated open execution routes forward principal into the facade."""
+    """Authenticated open execution authenticates once and forwards principal."""
     from rememberstack.adapters.testing import FakeModelProvider
     from rememberstack.model import AuthenticatedContext
     from rememberstack.model import PerimeterCredential
@@ -1385,54 +1386,71 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
         """Records principal on every execution-bearing open entry point."""
 
         def __init__(self, inner: OpenQueryFacade) -> None:
+            """Wrap one facade and record principals on execution entry points."""
             self._inner = inner
 
         @property
         def deployment_id(self) -> UUID:
+            """Forward the wrapped deployment identity."""
             return self._inner.deployment_id
 
         def query_sql(self, **kwargs: object) -> object:
+            """Record principal then run sandboxed SQL."""
             seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
             return self._inner.query_sql(**kwargs)  # type: ignore[arg-type]
 
         def explain_sql(self, **kwargs: object) -> object:
+            """Record principal then explain sandboxed SQL."""
             seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
             return self._inner.explain_sql(**kwargs)  # type: ignore[arg-type]
 
         def query_cypher(self, **kwargs: object) -> object:
+            """Record principal then refuse Cypher (unavailable in this fixture)."""
             seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
             raise SandboxRejection(
                 code=QueryErrorCode.P2_UNAVAILABLE, message="no cypher in this proof"
             )
 
         def explain_cypher(self, **kwargs: object) -> object:
+            """Record principal then refuse Cypher explain (unavailable here)."""
             seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
             raise SandboxRejection(
                 code=QueryErrorCode.P2_UNAVAILABLE, message="no cypher in this proof"
             )
 
         def describe_query_space(self, **kwargs: object) -> object:
+            """Content-only discovery; do not invent a principal."""
             return self._inner.describe_query_space(**kwargs)  # type: ignore[arg-type]
 
         def search_query_space(self, **kwargs: object) -> object:
+            """Content-only search; do not invent a principal."""
             return self._inner.search_query_space(**kwargs)  # type: ignore[arg-type]
 
         def list_saved_queries(self, **kwargs: object) -> object:
+            """List saved queries without recording a principal."""
             return self._inner.list_saved_queries(**kwargs)  # type: ignore[arg-type]
 
         def describe_saved_query(self, **kwargs: object) -> object:
+            """Describe a saved query without recording a principal."""
             return self._inner.describe_saved_query(**kwargs)  # type: ignore[arg-type]
 
         def run_saved_query(self, **kwargs: object) -> object:
+            """Record principal then run a saved query."""
             seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
             return self._inner.run_saved_query(**kwargs)  # type: ignore[arg-type]
 
     class _Auth:
-        """Maps the good token to a distinct principal string."""
+        """Maps the good token to a distinct principal and counts authenticate calls."""
+
+        def __init__(self) -> None:
+            """Start with zero observed perimeter authentications."""
+            self.authenticate_calls = 0
 
         def authenticate(
             self, *, credential: PerimeterCredential
         ) -> AuthenticatedContext:
+            """Authenticate the bearer token and count the call."""
+            self.authenticate_calls += 1
             if credential.value.get_secret_value() == b"good-token":
                 return AuthenticatedContext(
                     deployment_id=_DEPLOYMENT, principal="alice-agent"
@@ -1455,6 +1473,7 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
         deployment_id=_DEPLOYMENT,
     )
     tracking = _TrackingFacade(_facade(migrated))
+    auth = _Auth()
     app = build_api(
         engine=query_engine,
         deployment_id=_DEPLOYMENT,
@@ -1462,11 +1481,12 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
         readiness=_OpenBoundary(),
         surface=surface,
         open_query=tracking,  # type: ignore[arg-type]
-        auth=_Auth(),  # type: ignore[arg-type]
+        auth=auth,  # type: ignore[arg-type]
     )
     client = TestClient(app)
     headers = {"Authorization": "Bearer good-token"}
 
+    # One execution request must authenticate exactly once (shared perimeter dep).
     assert (
         client.post(
             "/query/sql",
@@ -1475,6 +1495,9 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
         ).status_code
         == 200
     )
+    assert auth.authenticate_calls == 1
+    assert seen == ["alice-agent"]
+
     assert (
         client.post(
             "/query/sql/explain",
@@ -1510,79 +1533,157 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
     )
     # Discovery stays content-free: no principal recorded for space.
     assert client.get("/query/space", headers=headers).status_code == 200
+    # Five execution routes + one discovery request, one auth each.
+    assert auth.authenticate_calls == 6
     assert seen == ["alice-agent"] * 5
 
 
-def test_selfhost_shares_kill_switches_and_audit_and_refuses_foreign_generation() -> (
-    None
-):
-    """Executors accept shared kill/audit objects; selfhost_embed_query gates generation."""
+def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
+    migrated: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SelfHostProfile.api() shares kill/audit and binds the E1 generation gate."""
+    from rememberstack.adapters.selfhost import LocalFSObjectStore
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.profiles.selfhost import selfhost_embed_query
-    from rememberstack.surfaces.query_sandbox.audit import AuditTrail
-    from rememberstack.surfaces.query_sandbox.audit import KillSwitches
-    from rememberstack.surfaces.query_sandbox.cypher_executor import (
-        CypherSandboxExecutor,
-    )
-    from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+    from rememberstack.profiles.selfhost import SelfHostProfile
+    from rememberstack.profiles.selfhost import SelfHostSettings
+    from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
 
-    # Composition only: both executors accept the same KillSwitches + AuditTrail.
-    kill_switches = KillSwitches()
-    audit_trail = AuditTrail()
-    deployment = uuid4()
+    # api() reports model bindings through OpenRouter settings; no network call.
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
 
-    def _connect() -> object:
-        raise AssertionError("connect unused in this composition proof")
+    lance_root = tmp_path / "lance"
+    projection_work_root = tmp_path / "projection-work"
+    graph_cache_root = tmp_path / "graph-cache"
+    forget_manifest_root = tmp_path / "forget-manifests"
+    objects_root = tmp_path / "objects"
+    for path in (
+        lance_root,
+        projection_work_root,
+        graph_cache_root,
+        forget_manifest_root,
+        objects_root,
+    ):
+        path.mkdir(parents=True, exist_ok=True)
 
-    class _Reader:
-        deployment_id = deployment
+    store = LocalFSObjectStore(root=objects_root)
+    engine = create_engine(migrated)
+    profile = SelfHostProfile(
+        settings=SelfHostSettings(
+            deployment_id=_DEPLOYMENT,
+            lance_root=lance_root,
+            projection_work_root=projection_work_root,
+            graph_cache_root=graph_cache_root,
+            forget_manifest_root=forget_manifest_root,
+            migration_config=_ROOT / "alembic.ini",
+        ),
+        engine=engine,
+        raw_store=store,  # type: ignore[arg-type]
+        artifact_store=store,  # type: ignore[arg-type]
+        corpusfs_store=store,  # type: ignore[arg-type]
+        snapshot_store=store,  # type: ignore[arg-type]
+        model_provider=FakeModelProvider(),  # type: ignore[arg-type]
+    )
 
-    sql = QuerySandboxExecutor(
-        deployment_id=deployment,
-        connect=_connect,  # type: ignore[arg-type]
-        kill_switches=kill_switches,
-        audit=audit_trail,
-    )
-    cypher = CypherSandboxExecutor(
-        deployment_id=deployment,
-        reader=_Reader(),
-        connect=_connect,  # type: ignore[arg-type]
-        kill_switches=kill_switches,
-        audit=audit_trail,
-    )
-    assert sql._kills is kill_switches  # noqa: SLF001
-    assert cypher._kills is kill_switches  # noqa: SLF001
-    assert sql._audit is audit_trail  # noqa: SLF001
-    assert cypher._audit is audit_trail  # noqa: SLF001
+    captured: list[OpenQueryFacade] = []
+    original_init = OpenQueryFacade.__init__
 
-    # Production gate: unpinned and current generation succeed; foreign refuses.
-    provider = FakeModelProvider()
-    embedding_model = "test/e1-embed"
-    unpinned = selfhost_embed_query(
-        model_provider=provider, embedding_model=embedding_model, query="hello"
-    )
-    current = selfhost_embed_query(
-        model_provider=provider,
-        embedding_model=embedding_model,
-        query="hello",
-        embedder_generation=embedding_model,
-    )
-    assert unpinned == current
-    assert len(unpinned) > 0
+    def _capturing_init(self: OpenQueryFacade, **kwargs: object) -> None:
+        """Record the facade that production self-host composition constructs."""
+        original_init(self, **kwargs)  # type: ignore[misc]
+        captured.append(self)
+
+    monkeypatch.setattr(OpenQueryFacade, "__init__", _capturing_init)
+    try:
+        app = profile.api()
+    finally:
+        profile.close()
+
+    assert app.title == "RememberStack query API"
+    assert len(captured) == 1
+    facade = captured[0]
+    assert facade._cypher is not None  # noqa: SLF001
+    # Production composition: one KillSwitches and one enabled AuditTrail for both.
+    assert facade._sql._kills is facade._cypher._kills  # noqa: SLF001
+    assert facade._sql._audit is facade._cypher._audit  # noqa: SLF001
+    assert facade._sql._audit._enabled is True  # noqa: SLF001
+    # Production-bound E1 embed partial rejects a foreign/pinned generation.
+    embed = facade._sql._embed  # noqa: SLF001
+    assert embed is not None
     with pytest.raises(SandboxRejection) as raised:
-        selfhost_embed_query(
-            model_provider=provider,
-            embedding_model=embedding_model,
-            query="hello",
-            embedder_generation="other/model",
-        )
+        embed(query="hello", embedder_generation="other/model")
     assert raised.value.code is QueryErrorCode.GENERATION_UNAVAILABLE
 
 
-def test_bound_headline_preserves_fact_claim_evidence_backticks() -> None:
-    """Shared prose authority keeps the design's backticks on fact_claim_evidence."""
-    from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE
+def _bound_headline_from_design_blockquote() -> str:
+    """Derive the full two-layer headline from the binding design blockquote.
 
-    assert "`fact_claim_evidence`" in TWO_LAYER_HEADLINE
-    assert TWO_LAYER_HEADLINE_FULL.startswith(TWO_LAYER_HEADLINE)
-    assert TWO_LAYER_HEADLINE_NOTE in TWO_LAYER_HEADLINE_FULL
+    The design is the authority; this returns paragraph + note with only the
+    blockquote markers removed and hard-wrapped lines rejoined. No implementation
+    constant is consulted.
+    """
+    design = (_ROOT / "plan/designs/open_query_space_design.md").read_text(
+        encoding="utf-8"
+    )
+    marker = "**Bound two-layer retrieval headline (reused verbatim):**"
+    start = design.index(marker) + len(marker)
+    body_lines: list[str] = []
+    for line in design[start:].lstrip("\n").splitlines():
+        if line.startswith("> "):
+            body_lines.append(line[2:])
+        elif line == ">":
+            body_lines.append("")
+        elif line.startswith(">"):
+            body_lines.append(line[1:])
+        else:
+            break
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for line in body_lines:
+        if line == "":
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        current.append(line)
+    if current:
+        paragraphs.append(" ".join(current))
+    return "\n\n".join(paragraphs)
+
+
+def _normalize_headline_whitespace(text: str) -> str:
+    """Collapse whitespace runs for defensible equality of prose copies."""
+    return re.sub(r"\s+", " ", text.strip())
+
+
+_OSS_HEADLINE_DOC_PATHS: tuple[Path, ...] = (
+    _ROOT / "website/src/app/docs/concepts/page.mdx",
+    _ROOT / "website/src/app/docs/mounts/page.mdx",
+    _ROOT / "website/src/app/docs/reference/api/page.mdx",
+    _ROOT / "website/src/app/docs/reference/cli/page.mdx",
+    _ROOT / "website/src/app/docs/reference/mcp/page.mdx",
+)
+
+
+def test_bound_headline_matches_design_and_documentation_copies() -> None:
+    """Design blockquote, discovery, and five OSS docs share the full headline."""
+    from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
+
+    design_headline = _bound_headline_from_design_blockquote()
+    # Preserve the design's backticks and D41/D54 note in the derived text.
+    assert "`fact_claim_evidence`" in design_headline
+    assert TWO_LAYER_HEADLINE_NOTE in design_headline
+
+    discovery_headline = describe_query_space().headline
+    assert "`fact_claim_evidence`" in discovery_headline
+    assert TWO_LAYER_HEADLINE_NOTE in discovery_headline
+    assert _normalize_headline_whitespace(design_headline) == (
+        _normalize_headline_whitespace(discovery_headline)
+    )
+
+    design_norm = _normalize_headline_whitespace(design_headline)
+    assert len(_OSS_HEADLINE_DOC_PATHS) == 5
+    for path in _OSS_HEADLINE_DOC_PATHS:
+        page = path.read_text(encoding="utf-8")
+        assert "`fact_claim_evidence`" in page
+        assert TWO_LAYER_HEADLINE_NOTE in page
+        assert design_norm in _normalize_headline_whitespace(page)
