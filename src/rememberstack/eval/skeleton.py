@@ -29,7 +29,7 @@ SKELETON_CANARIES: Final[tuple[dict[str, object], ...]] = (
     {
         "description": "S1: current employer via resolve + live works_for lookup",
         "input": {"scenario": "s1", "name": "Alice Novak", "predicate": "works_for"},
-        "expected": {"label": "Alice Novak works for Acme.", "min_evidence": 1},
+        "expected": {"label": "Alice Novak works for Acme", "min_evidence": 1},
     },
     {
         "description": "S2: semantic observation lookup (headcount)",

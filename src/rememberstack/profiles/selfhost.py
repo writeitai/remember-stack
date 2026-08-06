@@ -855,9 +855,10 @@ def _expected_components() -> dict[PipelineStage, str]:
     from rememberstack.workers import E1_EMBED_VERSION
     from rememberstack.workers import E2_EXTRACTOR_VERSION
     from rememberstack.workers import E3_NORMALIZER_VERSION
-    from rememberstack.workers import FACT_LABEL_VERSION
     from rememberstack.workers import P1_EMBED_CLAIMS_VERSION
     from rememberstack.workers import RECONCILE_VERSION
+    from rememberstack.workers.p1 import label_relation_component_version
+    from rememberstack.workers.p1 import P1Settings
 
     return {
         PipelineStage.CONVERT: E0_CONVERT_VERSION,
@@ -869,7 +870,9 @@ def _expected_components() -> dict[PipelineStage, str]:
         PipelineStage.ADJUDICATE_SUPERSESSION: ADJUDICATOR_VERSION,
         PipelineStage.EMBED_CLAIM: P1_EMBED_CLAIMS_VERSION,
         PipelineStage.RECONCILE: RECONCILE_VERSION,
-        PipelineStage.LABEL_RELATION: FACT_LABEL_VERSION,
+        PipelineStage.LABEL_RELATION: label_relation_component_version(
+            embedding_model=P1Settings().embedding_model
+        ),
     }
 
 
