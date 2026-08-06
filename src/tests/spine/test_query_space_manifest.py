@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from rememberstack.spine import CANONICAL_RECIPES
 from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
 from rememberstack.spine.query_space import build_manifest
@@ -36,6 +37,7 @@ from rememberstack.spine.query_space.canonical import CanonicalizationError
 from rememberstack.spine.query_space.deletion_matrix import MATRIX_PATH
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
+from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 
 def _golden() -> dict[str, object]:
@@ -212,6 +214,18 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         "question_context",
         "resolve_entity",
     ]
+    public = {
+        descriptor.name: descriptor
+        for descriptor in recipe_descriptors(recipes=CANONICAL_RECIPES)
+    }
+    for operation in operations:
+        assert isinstance(operation, dict)
+        descriptor = public[str(operation["name"])]
+        assert operation["description"] == descriptor.description
+        assert operation["input_schema"] == descriptor.input_schema
+        assert operation["grain"] == descriptor.output_grain
+        assert operation["intent"] == descriptor.answer_intent
+        assert operation["version"] == descriptor.version
     question = next(
         operation
         for operation in operations

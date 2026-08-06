@@ -31,10 +31,13 @@ from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ProjectionCatalog
+from rememberstack.spine.query_space import load_manifest
+from rememberstack.spine.query_space import SchemaManifestError
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import GraphRebuildWorker
 from rememberstack.workers import GraphSnapshotReader
 from rememberstack.workers import SnapshotValidationError
+from rememberstack.workers.p2 import P2_PROJECTION_SCHEMA_SHA256
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("42000000-0000-0000-0000-000000000001")
@@ -292,6 +295,15 @@ def test_rebuild_publishes_a_validated_snapshot(
     latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P2_graph")
     assert latest is not None
     assert latest["version"] == result["version"]
+    manifest_path = tmp_path / "snapshots" / str(latest["gcs_uri"]) / "MANIFEST.json"
+    artifact_manifest = json.loads(manifest_path.read_text())
+    assert artifact_manifest["projection_contract_sha256"] == (
+        P2_PROJECTION_SCHEMA_SHA256
+    )
+    assert (
+        artifact_manifest["surface_manifest_hash"]
+        == load_manifest()["surface_manifest_hash"]
+    )
 
     reader.refresh()
     graph = reader.connection()
@@ -584,4 +596,38 @@ def test_reader_rejects_a_manifest_for_another_snapshot(
         cache_dir=tmp_path / "fresh-cache",
     )
     with pytest.raises(RuntimeError, match="different snapshot"):
+        reader.refresh()
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    (
+        ("projection_contract_sha256", "projection contract"),
+        ("surface_manifest_hash", "surface manifest"),
+    ),
+)
+def test_reader_rejects_a_snapshot_from_another_surface_contract(
+    corpus: _InvariantCorpus, tmp_path: Path, field: str, message: str
+) -> None:
+    """Cached bytes cannot cross a projection-contract upgrade boundary."""
+    worker, _, catalog = _rig(corpus.engine, tmp_path)
+    worker.rebuild(
+        deployment_id=_DEPLOYMENT_ID,
+        workdir=tmp_path / "work",
+        version=f"contract-check-{field}",
+    )
+    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P2_graph")
+    assert latest is not None
+    manifest_path = tmp_path / "snapshots" / str(latest["gcs_uri"]) / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest[field] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest))
+
+    reader = GraphSnapshotReader(
+        catalog=catalog,
+        snapshot_store=LocalFSObjectStore(root=tmp_path / "snapshots"),
+        deployment_id=_DEPLOYMENT_ID,
+        cache_dir=tmp_path / "reader-cache",
+    )
+    with pytest.raises(SchemaManifestError, match=message):
         reader.refresh()

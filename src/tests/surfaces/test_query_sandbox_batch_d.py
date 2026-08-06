@@ -30,6 +30,7 @@ from sqlalchemy import text
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.query_space import load_manifest
+from rememberstack.spine.query_space import SchemaManifestError
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditEvent
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
@@ -505,6 +506,14 @@ class _NoSnapshot:
         raise RuntimeError("no published P2 snapshot exists yet")
 
 
+class _WrongProjectionContract:
+    """A published generation built for another graph contract."""
+
+    def pinned(self) -> object:
+        """Fail before any graph connection is leased or executed."""
+        raise SchemaManifestError("snapshot projection contract does not match")
+
+
 class _IncompleteSnapshot:
     """A reader that leases a connection but cannot describe its generation."""
 
@@ -948,6 +957,13 @@ def test_a_deployment_with_no_published_graph_fails_closed() -> None:
     """No snapshot is not an empty graph, and must not read as one."""
     outcome = _cypher(_NoSnapshot()).query_cypher(cypher="MATCH (e:Entity) RETURN e")
     assert outcome.error_code == QueryErrorCode.P2_UNAVAILABLE
+    assert outcome.rows == ()
+
+
+def test_a_projection_contract_mismatch_is_reported_before_execution() -> None:
+    """An old graph generation cannot inherit the current surface identity."""
+    outcome = _cypher(_WrongProjectionContract()).query_cypher(cypher="RETURN 1")
+    assert outcome.error_code == QueryErrorCode.SCHEMA_VERSION_MISMATCH
     assert outcome.rows == ()
 
 

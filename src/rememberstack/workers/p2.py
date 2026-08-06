@@ -38,6 +38,9 @@ from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.projection import GRAPH_NODE_TABLES
 from rememberstack.spine.projection import GRAPH_REL_TABLES
 from rememberstack.spine.projection import ProjectionCatalog
+from rememberstack.spine.query_space.canonical import canonical_json_bytes
+from rememberstack.spine.query_space.manifest import load_manifest
+from rememberstack.spine.query_space.manifest import SchemaManifestError
 from rememberstack.workers.p2_analytics import GraphAnalyticsWorker
 
 P2_REBUILD_VERSION: Final = "p2-rebuild-2026.07"
@@ -89,6 +92,11 @@ P2_PROJECTION_SCHEMA: Final = {
     },
 }
 """The exhaustive public graph types/properties for this projection version."""
+
+P2_PROJECTION_SCHEMA_SHA256: Final = hashlib.sha256(
+    canonical_json_bytes(P2_PROJECTION_SCHEMA)
+).hexdigest()
+"""The exact projection contract every immutable snapshot must carry."""
 
 _VERSION_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -424,6 +432,10 @@ class GraphRebuildWorker:
                     "deployment_id": str(deployment_id),
                     "snapshot_id": str(snapshot_id),
                     "version": version,
+                    "projection_contract_sha256": P2_PROJECTION_SCHEMA_SHA256,
+                    "surface_manifest_hash": str(
+                        load_manifest()["surface_manifest_hash"]
+                    ),
                     "files": files,
                 }
             ).encode(),
@@ -532,6 +544,28 @@ class GraphSnapshotReader:
         prefix = str(latest["gcs_uri"])
         cache_parent = self._cache_dir / str(self._deployment_id) / str(identity)
         local = cache_parent / version
+        manifest = json.loads(
+            self._snapshot_store.read_bytes(key=ObjectKey(f"{prefix}/MANIFEST.json"))
+        )
+        if manifest["version"] != version:
+            raise RuntimeError(
+                f"snapshot manifest names version {manifest['version']!r},"
+                f" registry says {version!r}"
+            )
+        if manifest.get("deployment_id") != str(self._deployment_id):
+            raise RuntimeError("snapshot manifest names a different deployment")
+        if manifest.get("snapshot_id") != str(identity):
+            raise RuntimeError("snapshot manifest names a different snapshot")
+        if manifest.get("projection_contract_sha256") != P2_PROJECTION_SCHEMA_SHA256:
+            raise SchemaManifestError(
+                "snapshot projection contract does not match this build"
+            )
+        if manifest.get("surface_manifest_hash") != load_manifest().get(
+            "surface_manifest_hash"
+        ):
+            raise SchemaManifestError(
+                "snapshot surface manifest does not match this build"
+            )
         if not local.exists():
             # stage → verify → atomic rename: a half-downloaded or corrupt
             # transfer must never be mistaken for a complete snapshot on a
@@ -540,20 +574,6 @@ class GraphSnapshotReader:
             staging = cache_parent / f".staging-{version}"
             if staging.exists():
                 shutil.rmtree(staging)
-            manifest = json.loads(
-                self._snapshot_store.read_bytes(
-                    key=ObjectKey(f"{prefix}/MANIFEST.json")
-                )
-            )
-            if manifest["version"] != version:
-                raise RuntimeError(
-                    f"snapshot manifest names version {manifest['version']!r},"
-                    f" registry says {version!r}"
-                )
-            if manifest.get("deployment_id") != str(self._deployment_id):
-                raise RuntimeError("snapshot manifest names a different deployment")
-            if manifest.get("snapshot_id") != str(identity):
-                raise RuntimeError("snapshot manifest names a different snapshot")
             for relative, digest in manifest["files"].items():
                 target = _snapshot_target(root=staging, relative=relative)
                 content = self._snapshot_store.read_bytes(

@@ -51,6 +51,7 @@ from uuid import uuid4
 import psycopg
 
 from rememberstack.spine.query_space.manifest import load_manifest
+from rememberstack.spine.query_space.manifest import SchemaManifestError
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.cypher import RECURSIVE_HOPS_MAX
@@ -441,6 +442,11 @@ class CypherSandboxExecutor:
             return connection, snapshot
         except SandboxRejection:
             raise
+        except SchemaManifestError as error:
+            raise SandboxRejection(
+                code=QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+                message="the published graph snapshot uses another surface contract",
+            ) from error
         except Exception as error:
             raise SandboxRejection(
                 code=QueryErrorCode.P2_UNAVAILABLE,

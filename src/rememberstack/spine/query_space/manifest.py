@@ -573,42 +573,33 @@ def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
 def _core_operation_descriptors() -> dict[str, CanonicalValue]:
     """The three assured operations, derived from their canonical recipes."""
     from rememberstack.spine.recipes import CANONICAL_RECIPES
+    from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
     assured = {"resolve_entity", "question_context", "current_context"}
     recipes = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
     if set(recipes) & assured != assured:
         raise SchemaManifestError("the canonical recipe set lacks an assured operation")
+    public_descriptors = {
+        descriptor.name: descriptor
+        for descriptor in recipe_descriptors(
+            recipes=tuple(recipes[name] for name in sorted(assured))
+        )
+    }
     operations: list[CanonicalValue] = []
     for name in sorted(assured):
         recipe = recipes[name]
-        properties = cast(
-            "dict[str, CanonicalValue]",
-            {key: value for key, value in recipe.parameters.items()},
-        )
-        required = sorted(
-            key
-            for key, value in recipe.parameters.items()
-            if isinstance(value, dict) and value.get("required") is True
-        )
+        public = public_descriptors[name]
         chain = cast(
             "CanonicalValue", [step.model_dump(mode="json") for step in recipe.chain]
         )
         descriptor: dict[str, CanonicalValue] = {
-            "name": recipe.name,
-            "version": recipe.version,
-            "description": recipe.description,
-            "input_schema": cast(
-                "CanonicalValue",
-                {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required,
-                    "additionalProperties": False,
-                },
-            ),
+            "name": public.name,
+            "version": public.version,
+            "description": public.description,
+            "input_schema": cast("CanonicalValue", public.input_schema),
             "envelope_contract": "D49",
-            "grain": recipe.output_grain.value,
-            "intent": recipe.answer_intent.value,
+            "grain": public.output_grain,
+            "intent": public.answer_intent,
             "implementation_chain_hash": hashlib.sha256(
                 canonical_json_bytes(chain)
             ).hexdigest(),

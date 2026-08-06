@@ -246,3 +246,23 @@ Finally, LoCoMo full-v9 retains its exact v3 `question_context` descriptor and
 catalog hash. The live recipe is v4, but silently rolling a prepared v9
 protocol would make old and new runs look comparable. A later manifest-pinned
 protocol remains a distinct Batch F identity.
+
+## Final discovery and snapshot-contract corrections
+
+Each P2 artifact manifest now carries both the SHA-256 of the exhaustive
+projection schema and the current `surface_manifest_hash`. A reader checks both
+pins before opening either downloaded or previously cached bytes. Missing and
+stale pins fail as `schema_version_mismatch`, so a snapshot built by the earlier
+exporter cannot inherit the current surface identity.
+
+`describe_query_space` now returns the checked-in manifest's exact assured
+operation descriptors, full function signatures (including both Cypher entry
+points), Cypher dialect, and P2 projection contract. It retains the compact SQL
+name list for compatibility, but no longer reconstructs a smaller contract
+from parallel constants.
+
+The manifest's assured-operation input schemas now come from the same public
+descriptor renderer used by API, CLI, and MCP. Internal recipe flags therefore
+cannot leak into an invalid or different JSON Schema. These corrections reuse
+the existing manifest and descriptor authorities; they add no new registry,
+parser, RLS policy, or discovery model.
