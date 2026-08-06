@@ -1034,8 +1034,10 @@ def test_memory_client_open_query_http_methods(migrated: str) -> None:
     assert sql["termination_reason"] == "completed"
 
     space = client.describe_query_space(include_examples=True)
-    assert space["headline"] == TWO_LAYER_HEADLINE_FULL
-    assert TWO_LAYER_HEADLINE_NOTE in space["headline"]
+    headline = space["headline"]
+    assert isinstance(headline, str)
+    assert headline == TWO_LAYER_HEADLINE_FULL
+    assert TWO_LAYER_HEADLINE_NOTE in headline
     assert "sql_grammar" in space
     worked = space["worked_examples"]
     assert isinstance(worked, list)
