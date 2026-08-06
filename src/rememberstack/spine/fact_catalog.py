@@ -18,6 +18,7 @@ from sqlalchemy import JSON
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.model import FactForEmbedding
 from rememberstack.model import FactForLabeling
 from rememberstack.model import ObservationForEmbedding
 from rememberstack.model import OtherPredicateGrammarError
@@ -215,7 +216,12 @@ class FactCatalog:
     def record_fact_label(
         self, *, relation_id: UUID, label: str, label_version: str
     ) -> None:
-        """Stamp one relation's readable label, ref, and generation (D8)."""
+        """Stamp one relation's readable label (Phase L; clears embed readiness).
+
+        CAS: only updates when the label generation is not already current.
+        Clears ``fact_label_embedding_ref`` so Phase E must re-index after a
+        re-label (split label vs embed generations).
+        """
         with self._engine.begin() as connection:
             connection.execute(
                 _STAMP_FACT_LABEL,
@@ -226,10 +232,49 @@ class FactCatalog:
                 },
             )
 
+    def relations_for_embedding(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        label_version: str,
+        embed_generation: str,
+    ) -> tuple[FactForEmbedding, ...]:
+        """Labeled relations still missing this embed generation (Phase E)."""
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_RELATIONS_FOR_EMBEDDING,
+                    {
+                        "deployment_id": deployment_id,
+                        "doc_id": doc_id,
+                        "label_version": label_version,
+                        "embed_generation": embed_generation,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(FactForEmbedding.model_validate(dict(row)) for row in rows)
+
+    def record_fact_embedding(
+        self, *, relation_id: UUID, embed_generation: str
+    ) -> None:
+        """Stamp Lance readiness after a successful facts-channel upsert."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _STAMP_FACT_EMBEDDING,
+                {
+                    "relation_id": relation_id,
+                    "embed_generation": embed_generation,
+                    "embedding_ref": f"{relation_id}|{embed_generation}",
+                },
+            )
+
     def observations_for_embedding(
         self, *, deployment_id: UUID, doc_id: UUID, label_version: str
     ) -> tuple[ObservationForEmbedding, ...]:
-        """The document's observations still lacking this label generation."""
+        """The document's observations still lacking this embed generation."""
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -248,11 +293,15 @@ class FactCatalog:
     def record_observation_embedding(
         self, *, observation_id: UUID, label_version: str
     ) -> None:
-        """Stamp one observation's label ref and generation (D8)."""
+        """Stamp one observation's embed generation after Lance upsert (D8)."""
         with self._engine.begin() as connection:
             connection.execute(
                 _STAMP_OBSERVATION_EMBEDDING,
-                {"observation_id": observation_id, "label_version": label_version},
+                {
+                    "observation_id": observation_id,
+                    "label_version": label_version,
+                    "embedding_ref": f"{observation_id}|{label_version}",
+                },
             )
 
     def ensure_other_predicate(self, *, deployment_id: UUID, predicate: str) -> None:
@@ -488,9 +537,43 @@ _STAMP_FACT_LABEL = text(
     UPDATE relations
     SET fact_label = :label,
         fact_label_version = :label_version,
-        fact_label_embedding_ref = relation_id::text,
+        fact_label_embedding_ref = NULL,
         updated_at = now()
     WHERE relation_id = :relation_id
+      AND (fact_label_version IS NULL OR fact_label_version <> :label_version)
+    """
+)
+
+_SELECT_RELATIONS_FOR_EMBEDDING = text(
+    """
+    SELECT r.relation_id, r.fact_label, r.status::text AS status
+    FROM relations r
+    WHERE r.deployment_id = :deployment_id
+      AND r.fact_label IS NOT NULL
+      AND r.fact_label_version = :label_version
+      AND (
+            r.fact_label_embedding_ref IS NULL
+            OR r.fact_label_embedding_ref
+               <> (r.relation_id::text || '|' || :embed_generation)
+          )
+      AND EXISTS (
+          SELECT 1 FROM relation_evidence e
+          WHERE e.relation_id = r.relation_id AND e.doc_id = :doc_id
+      )
+    ORDER BY r.created_at, r.relation_id
+    """
+)
+
+_STAMP_FACT_EMBEDDING = text(
+    """
+    UPDATE relations
+    SET fact_label_embedding_ref = :embedding_ref,
+        updated_at = now()
+    WHERE relation_id = :relation_id
+      AND (
+            fact_label_embedding_ref IS NULL
+            OR fact_label_embedding_ref <> :embedding_ref
+          )
     """
 )
 
@@ -499,7 +582,13 @@ _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
     SELECT observation_id, obs_label, status::text AS status
     FROM observations
     WHERE observations.deployment_id = :deployment_id
-      AND (obs_label_version IS NULL OR obs_label_version <> :label_version)
+      AND (
+            obs_label_version IS NULL
+            OR obs_label_version <> :label_version
+            OR obs_label_embedding_ref IS NULL
+            OR obs_label_embedding_ref
+               <> (observation_id::text || '|' || :label_version)
+          )
       AND EXISTS (
           SELECT 1 FROM observation_evidence e
           WHERE e.observation_id = observations.observation_id
@@ -513,9 +602,15 @@ _STAMP_OBSERVATION_EMBEDDING = text(
     """
     UPDATE observations
     SET obs_label_version = :label_version,
-        obs_label_embedding_ref = observation_id::text,
+        obs_label_embedding_ref = :embedding_ref,
         updated_at = now()
     WHERE observation_id = :observation_id
+      AND (
+            obs_label_version IS NULL
+            OR obs_label_version <> :label_version
+            OR obs_label_embedding_ref IS NULL
+            OR obs_label_embedding_ref <> :embedding_ref
+          )
     """
 )
 

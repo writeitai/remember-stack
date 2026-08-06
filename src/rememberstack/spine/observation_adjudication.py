@@ -27,13 +27,13 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
-from rememberstack.model import EmbeddingRequest
 from rememberstack.model import ModelRequest
 from rememberstack.model import ObservationAssertion
 from rememberstack.model import ObservationOutcome
 from rememberstack.model import ObservationVerdict
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.spine.rank_embed_cache import RankEmbedCache
 
 OBSERVATION_ADJUDICATOR_VERSION: Final = "obs-adjudicator-2026.07b:temp0-1"
 """The observation adjudicator generation (D12; replayed on rebuild, D7).
@@ -82,11 +82,18 @@ class ObservationAdjudicator:
         engine: Engine,
         model_provider: ModelProviderPort,
         settings: ObservationSettings,
+        rank_embed_cache: RankEmbedCache | None = None,
     ) -> None:
         """Bind the adjudicator to the spine and its ladder/gate models."""
         self._engine = engine
         self._model_provider = model_provider
         self._settings = settings
+        self._rank_cache = rank_embed_cache or RankEmbedCache(
+            model_provider=model_provider,
+            embedding_model=settings.embedding_model,
+        )
+        self._last_rank_new_vector: tuple[float, ...] | None = None
+        self._last_rank_new_statement: str | None = None
 
     def add_observation(
         self,
@@ -541,18 +548,27 @@ class ObservationAdjudicator:
         call_key: str = "observation:rank",
     ) -> list[tuple[dict[str, object], float]]:
         """Similarity-rank candidates (ordering only — the block is already
-        exhaustive, so a skipped candidate can never cause a wrong cap)."""
-        texts = (statement, *(str(c["statement"]) for c in candidates))
-        response = self._model_provider.embed(
-            request=EmbeddingRequest(model=self._settings.embedding_model, texts=texts)
+        exhaustive, so a skipped candidate can never cause a wrong cap).
+
+        Open-statement vectors are memoized per embedder generation so hubs do
+        not re-embed priors on every residue assert.
+        """
+        open_items = tuple(
+            (UUID(str(candidate["observation_id"])), str(candidate["statement"]))
+            for candidate in candidates
         )
-        if meter is not None:
-            meter.record(call_key=call_key, tier="embedding", usage=response.usage)
-        vectors = response.vectors
-        query = vectors[0]
+        query, open_vectors = self._rank_cache.resolve_rank_vectors(
+            new_statement=statement,
+            open_items=open_items,
+            meter=meter,
+            call_key=call_key,
+        )
+        # Expose NEW's vector for write-through after insert (not under existing ids).
+        self._last_rank_new_vector = query
+        self._last_rank_new_statement = statement
         scored = [
             (candidate, _cosine(query, vector))
-            for candidate, vector in zip(candidates, vectors[1:], strict=True)
+            for candidate, vector in zip(candidates, open_vectors, strict=True)
         ]
         return sorted(scored, key=lambda item: item[1], reverse=True)
 
@@ -609,6 +625,15 @@ class ObservationAdjudicator:
             claim_id=claim_id,
             features=features,
         )
+        # Write-through NEW's rank vector under the new id only (never under an
+        # existing evidence-collapse target).
+        if (
+            self._last_rank_new_vector is not None
+            and self._last_rank_new_statement == statement
+        ):
+            self._rank_cache.put_observation(
+                observation_id=observation_id, vector=self._last_rank_new_vector
+            )
         return observation_id
 
     def _evidence(
