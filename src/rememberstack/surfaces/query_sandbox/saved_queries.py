@@ -86,13 +86,19 @@ AUDIT_ACTIONS: Final = frozenset(
     {"activate", "disable", "purge", "publish", "revalidate", "validate", "deprecate"}
 )
 
-#: A small injected authority: True when the principal may activate/approve.
+#: A small injected authority: True when the *bound* actor may activate/approve.
+#: The host evaluates this over the registry's construction-time actor; callers
+#: cannot pass a free-form identity claim on mutate methods.
 ActivationAuthority = Callable[[str], bool]
 
 
-def default_deny_activation(_principal: str) -> bool:
+def default_deny_activation(_actor: str) -> bool:
     """Default activation authority: nobody may activate until a policy is wired."""
     return False
+
+
+#: Bound actor used by the self-host seed path for shipped `examples.*` install.
+PLATFORM_SEED_ACTOR: Final = "platform:shipped-examples"
 
 
 @dataclass(frozen=True)
@@ -173,9 +179,11 @@ class SavedQueryRegistry:
     the tenancy boundary here as everywhere else on this surface (§4.2), so
     nothing in this class takes a deployment from the caller.
 
-    `can_activate` is the small injected trusted authority for activation and
-    default-discoverable approval. The registry default-denies; the host wires
-    a deployment-operator or explicit-policy predicate.
+    The host constructs one registry per authenticated actor. `actor` is the
+    bound identity used for authoring, activation, audit, and shipped-example
+    origin checks. `can_activate` is the small injected policy decision over
+    that bound actor (default-deny). Mutation methods do not accept a free-form
+    principal or approver claim a caller could forge as `operator-*`.
     """
 
     def __init__(
@@ -184,12 +192,27 @@ class SavedQueryRegistry:
         connection: psycopg.Connection,
         deployment_id: UUID,
         manifest_hash: str,
+        actor: str,
         can_activate: ActivationAuthority | None = None,
     ) -> None:
+        if not actor:
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message="a saved-query registry requires a bound actor",
+            )
         self._connection = connection
         self._deployment_id = deployment_id
         self._manifest_hash = manifest_hash
+        self._actor = actor
         self._can_activate = can_activate or default_deny_activation
+
+    @property
+    def actor(self) -> str:
+        """The host-bound actor this registry instance acts as."""
+        return self._actor
+
+    def _authorized_to_activate(self) -> bool:
+        return self._can_activate(self._actor)
 
     # -- authoring ---------------------------------------------------------
 
@@ -199,7 +222,6 @@ class SavedQueryRegistry:
         namespace: str,
         name: str,
         sql: str,
-        principal: str,
         parameter_schema: dict[str, Any] | None = None,
         declared_result_schema: dict[str, Any] | None = None,
         default_limits: dict[str, Any] | None = None,
@@ -210,12 +232,14 @@ class SavedQueryRegistry:
     ) -> SavedQueryVersion:
         """Write a new draft version, creating the identity if it is new.
 
-        The SQL is validated against the same grammar an ad-hoc statement goes
-        through, and the version pins the manifest hash it was authored against.
-        Parameter/result schemas and default limits are checked before write.
-        Validation evidence is not accepted from the caller — only
-        `validate_version` may write a bound report from the stored SQL.
+        The bound registry actor is the author. The SQL is validated against
+        the same grammar an ad-hoc statement goes through, and the version
+        pins the manifest hash it was authored against. Parameter/result
+        schemas and default limits are checked before write. Validation
+        evidence is not accepted from the caller — only `validate_version`
+        may write a bound report from the stored SQL.
         """
+        principal = self._actor
         if len(sql.encode()) > SQL_BYTES_MAX:
             raise SandboxRejection(
                 code=QueryErrorCode.QUOTA_EXCEEDED,
@@ -234,10 +258,9 @@ class SavedQueryRegistry:
         limits = validate_default_limits(default_limits or {})
         validated = validate_sql(sql)
         if origin == "shipped_example":
-            # shipped_example assurance is platform-owned. Only the injected
-            # activation authority may assert it — an arbitrary agent cannot
-            # self-label a draft as a shipped example.
-            if not self._can_activate(principal):
+            # shipped_example assurance is platform-owned. Only a registry
+            # whose bound actor has activation authority may assert it.
+            if not self._authorized_to_activate():
                 raise SandboxRejection(
                     code=QueryErrorCode.INVALID_PARAMETER,
                     message=(
@@ -349,7 +372,6 @@ class SavedQueryRegistry:
         version: int,
         executor: QuerySandboxExecutor,
         fixtures: Mapping[str, OperatorFixture | Sequence[object]],
-        principal: str = "validator",
     ) -> ValidationReport:
         """Run §5 fixtures on the stored immutable SQL and persist the report.
 
@@ -358,10 +380,15 @@ class SavedQueryRegistry:
         The executor's reported `surface_manifest_hash` must match that hash;
         this method never relabels a mismatched executor with the constructor
         value. A caller cannot hand-construct a passing report for unrelated SQL.
+
+        When the version is still a draft, the new stored report is accounted
+        under the same per-principal 4 MiB draft-byte ceiling (replacing any
+        current report) before it is written.
         """
         current_hash = self._require_authoritative_manifest(for_update=True)
         row = self._connection.execute(
-            b"SELECT sql, query_hash, status FROM saved_query_versions"
+            b"SELECT sql, query_hash, status, author_principal, validation_report"
+            b" FROM saved_query_versions"
             b" WHERE deployment_id = %(deployment)s"
             b"   AND query_id = %(query)s AND version = %(version)s",
             {
@@ -375,14 +402,24 @@ class SavedQueryRegistry:
                 code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
                 message="no such saved-query version",
             )
+        sql, query_hash, status, author, existing_report = row
         report = validate_saved_sql(
             executor=executor,
-            sql=row[0],
+            sql=sql,
             fixtures=fixtures,
-            principal=principal,
+            principal=self._actor,
             manifest_hash=current_hash,
-            query_hash=row[1],
+            query_hash=query_hash,
         )
+        report_json = report.as_json()
+        if status == "draft":
+            self._check_draft_report_quota(
+                principal=str(author),
+                existing_report=existing_report
+                if isinstance(existing_report, dict)
+                else {},
+                new_report=report_json,
+            )
         self._connection.execute(
             b"UPDATE saved_query_versions"
             b" SET validation_report = %(report)s::jsonb,"
@@ -390,7 +427,7 @@ class SavedQueryRegistry:
             b" WHERE deployment_id = %(deployment)s"
             b"   AND query_id = %(query)s AND version = %(version)s",
             {
-                "report": _json(report.as_json()),
+                "report": _json(report_json),
                 "manifest": current_hash,
                 "deployment": str(self._deployment_id),
                 "query": str(query_id),
@@ -399,29 +436,32 @@ class SavedQueryRegistry:
         )
         self._audit(
             action="validate",
-            actor=principal,
+            actor=self._actor,
             query_id=query_id,
             version=version,
-            query_hash=row[1],
+            query_hash=query_hash,
             old_hash=None,
             new_hash=current_hash,
         )
         return report
 
-    def activate(self, *, query_id: UUID, version: int, approver: str) -> None:
-        """Make a version live. Only an authorized principal may do this (§5).
+    def activate(self, *, query_id: UUID, version: int) -> None:
+        """Make a version live. Only an authorized bound actor may do this (§5).
 
-        The stored `author_principal` is the authority for self-approval
-        refusal — the caller cannot claim a different author. Activation
-        requires bound validation evidence for the stored SQL and a legal
-        state transition (`draft` or `pending_revalidation` only). Activating
-        deprecates any prior active version of the same identity atomically.
+        Authority is the registry's construction-time actor under the injected
+        `can_activate` policy — callers cannot pass an approver string. The
+        stored `author_principal` is the authority for self-approval refusal.
+        Activation requires bound validation evidence for the stored SQL and a
+        legal state transition (`draft` or `pending_revalidation` only).
+        Activating deprecates any prior active version of the same identity
+        atomically.
         """
-        if not self._can_activate(approver):
+        if not self._authorized_to_activate():
             raise SandboxRejection(
                 code=QueryErrorCode.INVALID_PARAMETER,
                 message="only a deployment operator or explicit policy may activate",
             )
+        approver = self._actor
         current_hash = self._require_authoritative_manifest(for_update=True)
         row = self._connection.execute(
             b"SELECT status, validated_surface_manifest_hash, validation_report,"
@@ -769,7 +809,7 @@ class SavedQueryRegistry:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def disable(self, *, query_id: UUID, actor: str) -> None:
+    def disable(self, *, query_id: UUID) -> None:
         """Take an identity out of service at admission time (§5)."""
         self._connection.execute(
             b"UPDATE saved_queries SET disabled_at = now()"
@@ -784,7 +824,7 @@ class SavedQueryRegistry:
         )
         self._audit(
             action="disable",
-            actor=actor,
+            actor=self._actor,
             query_id=query_id,
             version=None,
             query_hash=None,
@@ -792,7 +832,7 @@ class SavedQueryRegistry:
             new_hash=None,
         )
 
-    def purge(self, *, query_id: UUID, actor: str) -> None:
+    def purge(self, *, query_id: UUID) -> None:
         """Hard-delete an identity's text (D74).
 
         Registry SQL can contain customer data — a WHERE clause naming a person
@@ -809,7 +849,7 @@ class SavedQueryRegistry:
         for version, query_hash, manifest_hash in versions:
             self._audit(
                 action="purge",
-                actor=actor,
+                actor=self._actor,
                 query_id=query_id,
                 version=version,
                 query_hash=query_hash,
@@ -819,7 +859,7 @@ class SavedQueryRegistry:
         if not versions:
             self._audit(
                 action="purge",
-                actor=actor,
+                actor=self._actor,
                 query_id=query_id,
                 version=None,
                 query_hash=None,
@@ -831,6 +871,138 @@ class SavedQueryRegistry:
             b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
             {"deployment": str(self._deployment_id), "query": str(query_id)},
         )
+
+    def install_shipped_examples(self) -> int:
+        """Idempotently install the seventeen `examples.*` registry identities.
+
+        Requires activation authority on the bound actor (the self-host seed
+        path binds `PLATFORM_SEED_ACTOR`). Each body is grammar-checked, stored
+        under `namespace=examples` with `origin`/`assurance=shipped_example`,
+        and activated as a non-default saved query. Re-running with the same
+        bodies is a no-op. Examples remain editable only by copying into a
+        customer namespace — this path never exposes them as top-level tools.
+
+        Fixture-class evidence for the bodies is the focused corpus proof; the
+        seed installs discoverable identities on every deployment (including
+        empty ones) without requiring a live corpus at bootstrap.
+        """
+        if not self._authorized_to_activate():
+            raise SandboxRejection(
+                code=QueryErrorCode.INVALID_PARAMETER,
+                message=(
+                    "installing shipped examples requires activation authority"
+                    " on the bound registry actor"
+                ),
+            )
+        # Import here so the registry module stays free of an examples cycle
+        # at import time for pure schema helpers.
+        from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+
+        current_hash = self._require_authoritative_manifest(for_update=True)
+        installed = 0
+        for name, (purpose, sql) in EXAMPLE_QUERIES.items():
+            validated = validate_sql(sql)
+            identity = self._identity(namespace="examples", name=name)
+            if identity is not None:
+                same = self._connection.execute(
+                    b"SELECT 1 FROM saved_query_versions"
+                    b" WHERE deployment_id = %(deployment)s"
+                    b"   AND query_id = %(query)s"
+                    b"   AND query_hash = %(hash)s"
+                    b"   AND status = 'active'"
+                    b" LIMIT 1",
+                    {
+                        "deployment": str(self._deployment_id),
+                        "query": str(identity),
+                        "hash": validated.query_hash,
+                    },
+                ).fetchone()
+                if same is not None:
+                    continue
+            if identity is None:
+                query_id = uuid4()
+                self._connection.execute(
+                    b"INSERT INTO saved_queries (deployment_id, query_id, namespace,"
+                    b" name, description, owner_principal, origin)"
+                    b" VALUES (%(deployment)s, %(query)s, 'examples', %(name)s,"
+                    b" %(description)s, %(principal)s, 'shipped_example')",
+                    {
+                        "deployment": str(self._deployment_id),
+                        "query": str(query_id),
+                        "name": name,
+                        "description": purpose,
+                        "principal": self._actor,
+                    },
+                )
+                version = 1
+            else:
+                query_id = identity
+                version = self._next_version(query_id)
+            seed_report = {
+                "manifest_hash": current_hash,
+                "query_hash": validated.query_hash,
+                "fixtures": {kind: True for kind in VALIDATION_FIXTURES},
+                "diagnostics": ["seed: shipped example installed"],
+                "passed": True,
+            }
+            self._connection.execute(
+                b"INSERT INTO saved_query_versions (deployment_id, query_id, version,"
+                b" sql, query_hash, parameter_schema, declared_result_schema,"
+                b" declared_interpretation, query_space_major,"
+                b" validated_surface_manifest_hash, default_limits, status, assurance,"
+                b" author_principal, approver_principal, validation_report)"
+                b" VALUES (%(deployment)s, %(query)s, %(version)s, %(sql)s, %(hash)s,"
+                b" '{}'::jsonb, '{}'::jsonb, %(interpretation)s, 'memory_v1',"
+                b" %(manifest)s, '{}'::jsonb, 'active', 'shipped_example',"
+                b" %(author)s, %(approver)s, %(report)s::jsonb)",
+                {
+                    "deployment": str(self._deployment_id),
+                    "query": str(query_id),
+                    "version": version,
+                    "sql": sql,
+                    "hash": validated.query_hash,
+                    "interpretation": purpose,
+                    "manifest": current_hash,
+                    "author": self._actor,
+                    "approver": self._actor,
+                    "report": _json(seed_report),
+                },
+            )
+            # Seed is platform-owned: the seed actor authors and installs.
+            # Deprecate any prior active version of the same identity.
+            self._connection.execute(
+                b"UPDATE saved_query_versions"
+                b" SET status = 'deprecated', superseded_at = now()"
+                b" WHERE deployment_id = %(deployment)s"
+                b"   AND query_id = %(query)s"
+                b"   AND status = 'active'"
+                b"   AND version <> %(version)s",
+                {
+                    "deployment": str(self._deployment_id),
+                    "query": str(query_id),
+                    "version": version,
+                },
+            )
+            self._connection.execute(
+                b"UPDATE saved_queries SET latest_version = %(version)s"
+                b" WHERE deployment_id = %(deployment)s AND query_id = %(query)s",
+                {
+                    "version": version,
+                    "deployment": str(self._deployment_id),
+                    "query": str(query_id),
+                },
+            )
+            self._audit(
+                action="activate",
+                actor=self._actor,
+                query_id=query_id,
+                version=version,
+                query_hash=validated.query_hash,
+                old_hash=None,
+                new_hash=current_hash,
+            )
+            installed += 1
+        return installed
 
     # -- internals ---------------------------------------------------------
 
@@ -1041,6 +1213,53 @@ class SavedQueryRegistry:
                 message="this principal's drafts exceed their byte ceiling",
             )
 
+    def _check_draft_report_quota(
+        self,
+        *,
+        principal: str,
+        existing_report: dict[str, Any],
+        new_report: dict[str, Any],
+    ) -> None:
+        """Account a draft validation-report write under the 4 MiB ceiling.
+
+        The draft-byte sum already includes the current report; the pending
+        write replaces it, so only the delta is added. Must be called while
+        holding the per-deployment registry-state lock (same authority as draft).
+        """
+        counts = self._connection.execute(
+            b"SELECT"
+            b" (SELECT coalesce(sum("
+            b"     octet_length(v.sql)"
+            b"     + octet_length(coalesce(v.parameter_schema::text, ''))"
+            b"     + octet_length(coalesce(v.declared_result_schema::text, ''))"
+            b"     + octet_length(coalesce(v.default_limits::text, ''))"
+            b"     + octet_length(coalesce(v.validation_report::text, ''))"
+            b"     + octet_length(coalesce(v.declared_interpretation, ''))"
+            b"   ), 0)"
+            b"   FROM saved_query_versions AS v"
+            b"   WHERE v.deployment_id = %(deployment)s AND v.status = 'draft'"
+            b"     AND v.author_principal = %(principal)s),"
+            b" (SELECT coalesce(sum(octet_length(coalesce(q.description, ''))), 0)"
+            b"   FROM saved_queries AS q"
+            b"   JOIN saved_query_versions AS v"
+            b"     ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
+            b"   WHERE q.deployment_id = %(deployment)s"
+            b"     AND v.status = 'draft'"
+            b"     AND v.author_principal = %(principal)s)",
+            {"deployment": str(self._deployment_id), "principal": principal},
+        ).fetchone()
+        assert counts is not None
+        already = int(counts[0]) + int(counts[1])
+        old_bytes = len(_json(existing_report).encode())
+        new_bytes = len(_json(new_report).encode())
+        # Replace: drop the old report contribution, add the new one.
+        projected = already - old_bytes + new_bytes
+        if projected > DRAFT_BYTES_MAX:
+            raise SandboxRejection(
+                code=QueryErrorCode.QUOTA_EXCEEDED,
+                message="this principal's drafts exceed their byte ceiling",
+            )
+
 
 class SurfaceMoved(Exception):
     """The surface changed while a validation was running.
@@ -1065,22 +1284,27 @@ def revalidate(
 ) -> str:
     """Decide what a completed revalidation may do to a suspended version (§5).
 
-    Loads the stored SQL and query hash, runs the operator-owned fixtures
-    through the real `QuerySandboxExecutor`, and binds the resulting report to
-    the DB-authoritative `started_against` hash. Fixture success comes only
-    from that execution — callers cannot pass a fabricated pass flag.
-    `minor_compatible` remains the compatibility decision; both it and a
-    passing bound report are required to restore `active`.
+    Protocol (capture → unlocked execution → CAS at transition):
 
-    The compare-and-swap is database-authoritative: the transition succeeds
-    only when `started_against` is still the database's current hash and the
-    version is still `pending_revalidation`. A B validation cannot reactivate
-    after C was published while the version was already pending.
+    1. Read the authoritative surface hash without holding the publication
+       lock through EXPLAIN/fixtures.
+    2. Load the stored SQL and run operator-owned fixtures through the real
+       `QuerySandboxExecutor` while unlocked, so a concurrent
+       `publish_surface_hash` is not blocked by the validator.
+    3. Lock, re-read the authoritative hash, and compare-and-swap the version
+       transition only when `started_against` is still current and the version
+       is still `pending_revalidation`. Otherwise raise `SurfaceMoved`; the
+       version remains pending for a fresh validation against the new hash.
+
+    Fixture success comes only from that execution — callers cannot pass a
+    fabricated pass flag. `minor_compatible` remains the compatibility
+    decision; both it and a passing bound report are required to restore
+    `active`.
     """
+    # Capture-at-start: no FOR UPDATE — publication must remain unblocked.
     state = connection.execute(
         b"SELECT surface_manifest_hash FROM saved_query_registry_state"
-        b" WHERE deployment_id = %(deployment)s"
-        b" FOR UPDATE",
+        b" WHERE deployment_id = %(deployment)s",
         {"deployment": str(deployment_id)},
     ).fetchone()
     current_hash = state[0] if state is not None else None
@@ -1105,6 +1329,7 @@ def revalidate(
         return str(row[0])
 
     query_hash, old_manifest, sql = row[1], row[2], row[3]
+    # Unlocked execution: EXPLAIN and fixtures do not hold the state lock.
     report = validate_saved_sql(
         executor=executor,
         sql=sql,
@@ -1114,6 +1339,18 @@ def revalidate(
         query_hash=query_hash,
     )
     outcome = "active" if (minor_compatible and report.passed) else "broken"
+
+    # CAS-at-transition: lock, re-read, fail closed if the surface moved.
+    state = connection.execute(
+        b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+        b" WHERE deployment_id = %(deployment)s"
+        b" FOR UPDATE",
+        {"deployment": str(deployment_id)},
+    ).fetchone()
+    if state is None or state[0] != started_against:
+        raise SurfaceMoved(
+            "the surface changed while this version was being revalidated"
+        )
 
     cursor = connection.execute(
         b"UPDATE saved_query_versions AS v"
@@ -1162,6 +1399,27 @@ def revalidate(
         },
     )
     return outcome
+
+
+def seed_shipped_examples(
+    *, connection: psycopg.Connection, deployment_id: UUID, manifest_hash: str
+) -> int:
+    """Idempotently install all seventeen `examples.*` identities (bootstrap).
+
+    Constructs a registry bound to `PLATFORM_SEED_ACTOR` with a matching
+    activation policy and delegates to `install_shipped_examples`. Safe to call
+    from self-host setup on both new and existing deployments; not an Alembic
+    migration. Returns how many identities were newly installed (0 on a
+    second seed of the same bodies).
+    """
+    registry = SavedQueryRegistry(
+        connection=connection,
+        deployment_id=deployment_id,
+        manifest_hash=manifest_hash,
+        actor=PLATFORM_SEED_ACTOR,
+        can_activate=lambda actor: actor == PLATFORM_SEED_ACTOR,
+    )
+    return registry.install_shipped_examples()
 
 
 def publish_surface_hash(
@@ -1424,35 +1682,24 @@ def _report_authorizes_activation(
     return all(fixtures.get(name) is True for name in VALIDATION_FIXTURES)
 
 
-#: The seventeen `examples.*` names §3.1 maps and §5 ships. They carry
-#: `shipped_example` assurance: the platform wrote them, so they are honest
-#: about what they compute — but they are editable starting points rather than
-#: platform operations, and copying one and changing its filters produces a
-#: customer-authored query, which is the intended use.
-SHIPPED_EXAMPLES: Final[tuple[tuple[str, str], ...]] = (
-    ("changed_since", "What the system learned after a given instant"),
-    ("chunk_neighbors", "Current-section ordinal neighbours of a chunk"),
-    ("chunks_hybrid_rrf", "Semantic and lexical chunk channels, RRF-fused"),
-    ("claims_about", "Claims mentioning an entity, with their sources"),
-    ("claims_as_of", "Claims as they stood at a given instant"),
-    ("claims_hybrid_rrf", "Semantic and lexical claim channels, RRF-fused"),
-    ("claims_verbatim", "Claims as asserted, with their source handles"),
-    ("documents_about", "Every live document that mentions an entity"),
-    ("entity_timeline", "One entity's mentions in processing order"),
-    ("explain", "The plan for a statement, without running it"),
-    ("graph_neighborhood", "Relations within N hops of an entity"),
-    ("graph_path", "Routes between two entities"),
-    ("identity_as_of", "Which entity a mention resolved to at an instant"),
-    ("multi_hop_context", "Evidence along a route between two entities"),
-    ("observation_current", "Current observations about an entity"),
-    ("pages_about", "Compiled pages citing an entity"),
-    ("relation_current", "Current relations, adjudicated"),
-)
-
-
 def declared_examples() -> Sequence[tuple[str, str]]:
-    """The `examples.*` names this build ships, as (name, purpose) pairs."""
-    return SHIPPED_EXAMPLES
+    """The `examples.*` names this build ships, as (name, purpose) pairs.
+
+    Derived from the single checked-in `EXAMPLE_QUERIES` table so purpose
+    metadata cannot drift from the bodies the registry seeds and resolves.
+    """
+    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+
+    return tuple(
+        (name, purpose) for name, (purpose, _sql) in sorted(EXAMPLE_QUERIES.items())
+    )
+
+
+def __getattr__(name: str) -> object:
+    """Lazy `SHIPPED_EXAMPLES` alias so it cannot diverge from EXAMPLE_QUERIES."""
+    if name == "SHIPPED_EXAMPLES":
+        return tuple(declared_examples())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 #: The fixture classes §5 requires a saving validator to execute. They are
@@ -1514,11 +1761,13 @@ def _fixture_passed(
 ) -> tuple[bool, str]:
     """Judge one sandbox outcome against its fixture class.
 
-    Positive: the statement completed. Empty and tombstone: completed with no
-    rows — the operator supplies parameters that must not invent content
-    (empty) or must not surface deleted content (tombstone). Cap: completed
-    under the operator's requested row bound, and never returned more rows
-    than that bound.
+    Positive: completed with at least one row — proves the documented mapping
+    returns content for the operator's live parameters (an always-empty body
+    fails). Empty and tombstone: completed with no rows — the operator
+    supplies parameters that must not invent content (empty) or must not
+    surface deleted content (tombstone). Cap: completed under the operator's
+    requested row bound with at least one row and never more than the bound
+    (so an empty result cannot masquerade as a real cap).
     """
     if outcome.error_code is not None or outcome.termination_reason != "completed":
         detail = (
@@ -1534,6 +1783,8 @@ def _fixture_passed(
     if fixture.kind == "cap":
         if fixture.max_rows is None:
             return False, "cap: max_rows is required"
+        if outcome.returned_row_count == 0:
+            return False, "cap: expected rows within bound, got empty"
         if outcome.returned_row_count > fixture.max_rows:
             return (
                 False,
@@ -1542,7 +1793,9 @@ def _fixture_passed(
             )
         return True, f"cap: {outcome.returned_row_count} rows within bound"
     if fixture.kind == "positive":
-        return True, "positive: completed"
+        if outcome.empty_result:
+            return False, "positive: expected at least one row"
+        return True, f"positive: {outcome.returned_row_count} rows"
     return False, f"{fixture.kind}: unknown fixture class"
 
 

@@ -17,9 +17,10 @@ approver, assurance, supersession, pinned manifest hash) may transition.
 deployment, 50 versions per identity, 64 KiB of SQL, and per-principal draft
 limits. The draft-byte ceiling counts encoded SQL **plus draft registry
 metadata** (description, interpretation, parameter/result schemas, default
-limits, validation report), including the pending write. Concurrent drafts
-serialize on the per-deployment `saved_query_registry_state` row (`FOR UPDATE`)
-so two writers cannot race past the ceiling.
+limits, validation report), including the pending write and any report
+replacement on `validate_version`. Concurrent drafts serialize on the
+per-deployment `saved_query_registry_state` row (`FOR UPDATE`) so two writers
+cannot race past the ceiling.
 
 Registry mutations that take a `query_id` also filter by `deployment_id`. The
 connection remains the physical tenancy boundary; the column filter is defense
@@ -34,13 +35,18 @@ Every version pins the `surface_manifest_hash` it validated against.
 `pending_revalidation` in the CALLER'S transaction — suspension and publication
 are one act.
 
-`revalidate` compare-and-swaps against the **database** current hash: it locks
-the registry-state row and conditions the version UPDATE on
-`status = pending_revalidation` AND the state hash still equaling the
-validator's start hash. A B validation cannot reactivate after C was published
-while the version was already pending. Restoration to `active` requires
-minor-compatibility AND every fixture passing via real
-`QuerySandboxExecutor` execution of stored SQL (no caller-supplied pass flag);
+`revalidate` follows capture → unlocked execution → CAS at transition:
+
+1. Read the authoritative hash **without** holding the publication lock through
+   EXPLAIN/fixtures (so a concurrent `publish_surface_hash` is not blocked).
+2. Run operator fixtures through the real `QuerySandboxExecutor` while unlocked.
+3. Lock the registry-state row, re-read the hash, and compare-and-swap the
+   version UPDATE only when `status = pending_revalidation` and the state hash
+   still equals the validator's start hash. Otherwise raise `SurfaceMoved`;
+   the version remains pending for a fresh validation against the new hash.
+
+Restoration to `active` requires minor-compatibility AND every fixture passing
+via real executor execution of stored SQL (no caller-supplied pass flag);
 anything else is `broken`. The new validation report is bound to the
 authoritative start hash and stored, and the transition is audited.
 
@@ -53,10 +59,14 @@ result whose `surface_manifest_hash` does not match the authoritative hash.
 
 ## Authoring and approving are different acts
 
-An agent drafts; only a deployment operator or explicit policy may activate.
-Activation authority is a small injected predicate (`can_activate`); the
-registry default-denies. The stored `author_principal` is loaded for
-self-approval refusal — callers do not supply an author claim. Activating a
+The host constructs one registry per **bound actor** (`actor=` at construction).
+Mutation methods do not accept a free-form principal or approver claim — draft
+authors, activate/disable/purge audit, and shipped-example origin checks all
+use that bound actor. Activation authority is a small injected predicate
+(`can_activate`) over the bound actor; the registry default-denies. The host
+still injects the policy decision; there is no auth service inside the library.
+
+The stored `author_principal` is loaded for self-approval refusal. Activating a
 new version deprecates any prior active version of the same identity
 atomically. Customer drafts set `assurance = customer_authored`; activation
 sets `customer_reviewed` (or keeps `shipped_example`). NULL is not used to
@@ -64,13 +74,23 @@ imply platform fact assurance.
 
 ## Validation evidence is bound and authoritative
 
-`validate_version` is the only path that writes a validation report. It loads
-the stored immutable SQL, runs the four §5 fixtures through
-`QuerySandboxExecutor` with bound parameters (plus safe EXPLAIN diagnostics),
-and persists a report bound to `query_hash` + `manifest_hash`. Activation
-rejects unbound, misbound, or partial reports. Status transitions to `active`
-are allowed only from `draft` or `pending_revalidation` — never from
-`broken`, `deprecated`, or `disabled` via stale evidence.
+`validate_version` is the only path that writes a validation report for
+customer drafts. It loads the stored immutable SQL, runs the four §5 fixtures
+through `QuerySandboxExecutor` with bound parameters (plus safe EXPLAIN
+diagnostics), and persists a report bound to `query_hash` + `manifest_hash`.
+Before a draft report is written, its stored size is accounted under the same
+per-principal 4 MiB draft-byte ceiling (replacing any current report); exceeding
+the ceiling returns `quota_exceeded`. Activation rejects unbound, misbound, or
+partial reports. Status transitions to `active` are allowed only from `draft`
+or `pending_revalidation` — never from `broken`, `deprecated`, or `disabled`
+via stale evidence.
+
+Fixture judgment:
+
+- **positive** — completed with at least one row (always-empty bodies fail);
+- **empty** / **tombstone** — completed with zero rows under operator-owned
+  never-present or deleted parameters;
+- **cap** — completed with at least one row and never more than `max_rows`.
 
 ## Saving validates contracts before write
 
@@ -88,7 +108,7 @@ lists **active** versions of non-disabled identities. Drafting v2 advances
 `resolve` and default discovery select the active version. Omitting `version`
 on `describe_saved_query` prefers active, else the newest authored version.
 `describe_query_space(include_examples=True)` surfaces the seventeen shipped
-`examples.*` names.
+`examples.*` names from the same `EXAMPLE_QUERIES` catalogue the registry seeds.
 
 ## Every refusal says which refusal it is
 
@@ -109,14 +129,26 @@ All seventeen `examples.*` names follow the exact §2 binding mappings
 (inclusive two-parameter `claims_as_of` overlap, `claim_occurrences_live` for
 `claims_about`, `identity_events_visible` for `identity_as_of`,
 `facts_visible_history` time-bucket for `entity_timeline`, evidence join for
-`explain`, INNER JOINs only for `multi_hop_context` — no LEFT JOIN orphan
-branch). Every body parses through the grammar and executes within caps under
-a no-op search port for semantic/lexical SRFs. Checked-in
-`EXAMPLE_FIXTURE_PARAMETERS` supply operator-owned positive/empty/tombstone/cap
-parameters for each example; focused proofs run all four classes through
-`validate_saved_sql` on the empty deployment. Drafting with
-`origin=shipped_example` requires the injected activation authority so an
-agent cannot self-assert shipped-example assurance.
+`explain` with CTE-anchored fact_id pushdown, INNER JOINs only for
+`multi_hop_context` — no LEFT JOIN orphan branch). Every body parses through
+the grammar. `declared_examples()` is derived from `EXAMPLE_QUERIES` so purpose
+metadata cannot drift from the bodies.
+
+`seed_shipped_examples` (and `SavedQueryRegistry.install_shipped_examples`)
+idempotently installs all seventeen as registry identities under
+`namespace=examples` with `origin`/`assurance=shipped_example`, discoverable
+and non-default, resolvable through the registry. The self-host `setup` path
+calls the seed after recipes. Deployment seed DML is **not** in Alembic
+migrations. Re-seeding the same bodies is a no-op. Examples remain editable
+only by copying into a customer namespace and never become top-level tools.
+Install requires a registry bound to an activation-authorized actor
+(`PLATFORM_SEED_ACTOR` on the bootstrap path).
+
+Focused proofs run the four fixture classes against a shared Batch A corpus
+with distinct positive/empty/tombstone/cap parameters (including a mode-aware
+search port for semantic/lexical bodies). An always-empty substitution fails
+positive. Seed idempotency is proved by two seed calls yielding exactly 17
+active `examples.*` identities.
 
 ## Migration head
 

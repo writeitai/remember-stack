@@ -13,16 +13,18 @@ LEFT JOIN orphan branch.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
 from typing import Final
 from uuid import UUID
 
-#: Deterministic operator-owned fixture identities for empty-deployment proofs.
-#: Not corpus seed data — only bound parameters for the four §5 fixture classes.
-_FIXTURE_ENTITY: Final = UUID("00000000-0000-4000-8000-0000000000e1")
-_FIXTURE_OTHER: Final = UUID("00000000-0000-4000-8000-0000000000e2")
-_FIXTURE_INSTANT: Final = datetime(2024, 1, 1, tzinfo=timezone.utc)
+#: Deterministic never-present identities for the empty fixture class.
+_EMPTY_ENTITY: Final = UUID("00000000-0000-4000-8000-0000000000e1")
+_EMPTY_CHUNK: Final = UUID("00000000-0000-4000-8000-0000000000c1")
+_EMPTY_FACT: Final = UUID("00000000-0000-4000-8000-0000000000f1")
+_EMPTY_INSTANT: Final = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_FAR_FUTURE: Final = datetime(2099, 1, 1, tzinfo=timezone.utc)
 
 #: name -> (purpose, SQL). The purpose is what a caller sees in discovery; it
 #: says what the query answers, not how, because the how is right there.
@@ -116,15 +118,18 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
     ),
     "pages_about": (
         "Compiled pages that cite an entity through live page evidence",
+        # Document-target page evidence joins entity_document_mentions so the
+        # body has a positive path on the Batch A corpus (claim-target page
+        # evidence alone may not share a live mention with the entity).
         "SELECT p.artifact_id, p.page_kind, p.git_path, p.status"
         " FROM pages_live AS p"
         " JOIN page_evidence_visible AS e"
         "   ON e.deployment_id = p.deployment_id AND e.artifact_id = p.artifact_id"
-        " JOIN mentions_live AS m"
+        " JOIN entity_document_mentions AS m"
         "   ON m.deployment_id = e.deployment_id"
-        "  AND m.claim_id = e.target_id"
-        "  AND e.target_kind = 'claim'"
-        " WHERE m.resolved_entity_id = $1::uuid"
+        "  AND e.target_kind = 'document'"
+        "  AND m.doc_id = e.target_id"
+        " WHERE m.entity_id = $1::uuid"
         " GROUP BY p.artifact_id, p.page_kind, p.git_path, p.status"
         " ORDER BY p.git_path, p.artifact_id"
         " LIMIT 50",
@@ -171,17 +176,28 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
     ),
     "explain": (
         "Why the system holds a fact: history, live evidence, lineage, and source",
-        "SELECT f.fact_kind, f.fact_id, f.predicate, f.fact_label,"
+        # CTE anchors push the fact_id predicate into each view before join so
+        # the planner does not expand the full history × evidence cross product.
+        "WITH f AS ("
+        "  SELECT * FROM facts_visible_history WHERE fact_id = $1::uuid"
+        "),"
+        " e AS ("
+        "  SELECT * FROM fact_claim_evidence_live WHERE fact_id = $1::uuid"
+        "),"
+        " l AS ("
+        "  SELECT * FROM evidence_lineage WHERE fact_id = $1::uuid"
+        ")"
+        " SELECT f.fact_kind, f.fact_id, f.predicate, f.fact_label,"
         "       f.valid_from, f.valid_until, f.ingested_at,"
         "       e.stance, e.claim_id, e.source_handle, e.asserted_at,"
         "       l.doc_id, l.claim_count, l.representative_claim_id,"
         "       d.title AS source_title, d.source_kind AS document_source_kind"
-        " FROM facts_visible_history AS f"
-        " JOIN fact_claim_evidence_live AS e"
+        " FROM f"
+        " JOIN e"
         "   ON e.deployment_id = f.deployment_id"
         "  AND e.fact_kind = f.fact_kind"
         "  AND e.fact_id = f.fact_id"
-        " JOIN evidence_lineage AS l"
+        " JOIN l"
         "   ON l.deployment_id = f.deployment_id"
         "  AND l.fact_kind = f.fact_kind"
         "  AND l.fact_id = f.fact_id"
@@ -189,7 +205,6 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
         "  AND l.stance = e.stance"
         " JOIN documents_live AS d"
         "   ON d.deployment_id = l.deployment_id AND d.doc_id = l.doc_id"
-        " WHERE f.fact_id = $1::uuid"
         " ORDER BY e.stance, e.asserted_at DESC NULLS LAST, e.claim_id"
         " LIMIT 100",
     ),
@@ -236,146 +251,192 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
 }
 
 
-#: Operator-owned parameter metadata for the four §5 fixture classes, per
-#: shipped example. Positive requires successful completion (empty rows are
-#: fine). Empty and tombstone must return no rows. Cap must stay within the
-#: requested max_rows. On an empty deployment with a no-op search adapter the
-#: same bound parameters satisfy all four classes without seed infrastructure.
-EXAMPLE_FIXTURE_PARAMETERS: Final[
-    dict[str, dict[str, tuple[object, ...] | int | None]]
-] = {
-    "claims_verbatim": {
-        "positive": ("memory",),
-        "empty": ("memory",),
-        "tombstone": ("memory",),
-        "cap": ("memory",),
-        "cap_max_rows": 5,
-    },
-    "claims_about": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "claims_as_of": {
-        "positive": (_FIXTURE_INSTANT, _FIXTURE_INSTANT),
-        "empty": (_FIXTURE_INSTANT, _FIXTURE_INSTANT),
-        "tombstone": (_FIXTURE_INSTANT, _FIXTURE_INSTANT),
-        "cap": (_FIXTURE_INSTANT, _FIXTURE_INSTANT),
-        "cap_max_rows": 5,
-    },
-    "claims_hybrid_rrf": {
-        "positive": ("memory",),
-        "empty": ("memory",),
-        "tombstone": ("memory",),
-        "cap": ("memory",),
-        "cap_max_rows": 5,
-    },
-    "chunks_hybrid_rrf": {
-        "positive": ("memory",),
-        "empty": ("memory",),
-        "tombstone": ("memory",),
-        "cap": ("memory",),
-        "cap_max_rows": 5,
-    },
-    "chunk_neighbors": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "documents_about": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "pages_about": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "relation_current": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "observation_current": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "identity_as_of": {
-        "positive": (_FIXTURE_ENTITY, _FIXTURE_INSTANT),
-        "empty": (_FIXTURE_ENTITY, _FIXTURE_INSTANT),
-        "tombstone": (_FIXTURE_ENTITY, _FIXTURE_INSTANT),
-        "cap": (_FIXTURE_ENTITY, _FIXTURE_INSTANT),
-        "cap_max_rows": 5,
-    },
-    "entity_timeline": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "explain": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "multi_hop_context": {
-        "positive": (_FIXTURE_ENTITY, _FIXTURE_OTHER, "memory"),
-        "empty": (_FIXTURE_ENTITY, _FIXTURE_OTHER, "memory"),
-        "tombstone": (_FIXTURE_ENTITY, _FIXTURE_OTHER, "memory"),
-        "cap": (_FIXTURE_ENTITY, _FIXTURE_OTHER, "memory"),
-        "cap_max_rows": 5,
-    },
-    "changed_since": {
-        "positive": (_FIXTURE_INSTANT,),
-        "empty": (_FIXTURE_INSTANT,),
-        "tombstone": (_FIXTURE_INSTANT,),
-        "cap": (_FIXTURE_INSTANT,),
-        "cap_max_rows": 5,
-    },
-    "graph_neighborhood": {
-        "positive": (_FIXTURE_ENTITY,),
-        "empty": (_FIXTURE_ENTITY,),
-        "tombstone": (_FIXTURE_ENTITY,),
-        "cap": (_FIXTURE_ENTITY,),
-        "cap_max_rows": 5,
-    },
-    "graph_path": {
-        "positive": (_FIXTURE_ENTITY, _FIXTURE_OTHER),
-        "empty": (_FIXTURE_ENTITY, _FIXTURE_OTHER),
-        "tombstone": (_FIXTURE_ENTITY, _FIXTURE_OTHER),
-        "cap": (_FIXTURE_ENTITY, _FIXTURE_OTHER),
-        "cap_max_rows": 5,
-    },
-}
+#: Query text that a fixture search port maps to live claim/chunk nominations.
+SEARCH_POSITIVE_QUERY: Final = "live-hit"
+#: Query text that a fixture search port maps to zero nominations.
+SEARCH_EMPTY_QUERY: Final = "empty-miss"
+#: Query text that a fixture search port maps to tombstoned (unconfirmed) IDs.
+SEARCH_TOMBSTONE_QUERY: Final = "tombstone-miss"
 
 
-def example_operator_fixtures(name: str) -> dict[str, dict[str, object]]:
+@dataclass(frozen=True)
+class ExampleFixtureHandles:
+    """Shared corpus handles that make the four fixture classes distinct.
+
+    Built from the Batch A query-space corpus (or any deployment that exposes
+    the same shape). Positive parameters address live content; empty addresses
+    never-present IDs; tombstone addresses deleted/merged content that must
+    not surface; cap reuses positive parameters under a tight row bound.
+    """
+
+    live_entity: UUID
+    other_entity: UUID
+    empty_entity: UUID
+    tombstone_entity: UUID
+    live_chunk: UUID
+    empty_chunk: UUID
+    tombstone_chunk: UUID
+    live_fact: UUID
+    empty_fact: UUID
+    tombstone_fact: UUID
+    live_from: datetime
+    live_to: datetime
+    empty_from: datetime
+    empty_to: datetime
+    tombstone_from: datetime
+    tombstone_to: datetime
+    live_since: datetime
+    empty_since: datetime
+    tombstone_since: datetime
+
+
+def example_fixture_parameters(
+    name: str, *, handles: ExampleFixtureHandles
+) -> dict[str, tuple[object, ...] | int]:
+    """Distinct operator-owned parameters for the four §5 classes.
+
+    The four classes must not collapse to identical parameters: positive uses
+    live handles, empty uses never-present handles, tombstone uses deleted or
+    merged handles, and cap reuses positive under `cap_max_rows`.
+    """
+    h = handles
+    table: dict[str, dict[str, tuple[object, ...] | int]] = {
+        "claims_verbatim": {
+            "positive": (SEARCH_POSITIVE_QUERY,),
+            "empty": (SEARCH_EMPTY_QUERY,),
+            "tombstone": (SEARCH_TOMBSTONE_QUERY,),
+            "cap": (SEARCH_POSITIVE_QUERY,),
+            "cap_max_rows": 1,
+        },
+        "claims_about": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "claims_as_of": {
+            "positive": (h.live_from, h.live_to),
+            "empty": (h.empty_from, h.empty_to),
+            "tombstone": (h.tombstone_from, h.tombstone_to),
+            "cap": (h.live_from, h.live_to),
+            "cap_max_rows": 1,
+        },
+        "claims_hybrid_rrf": {
+            "positive": (SEARCH_POSITIVE_QUERY,),
+            "empty": (SEARCH_EMPTY_QUERY,),
+            "tombstone": (SEARCH_TOMBSTONE_QUERY,),
+            "cap": (SEARCH_POSITIVE_QUERY,),
+            "cap_max_rows": 1,
+        },
+        "chunks_hybrid_rrf": {
+            "positive": (SEARCH_POSITIVE_QUERY,),
+            "empty": (SEARCH_EMPTY_QUERY,),
+            "tombstone": (SEARCH_TOMBSTONE_QUERY,),
+            "cap": (SEARCH_POSITIVE_QUERY,),
+            "cap_max_rows": 1,
+        },
+        "chunk_neighbors": {
+            "positive": (h.live_chunk,),
+            "empty": (h.empty_chunk,),
+            "tombstone": (h.tombstone_chunk,),
+            "cap": (h.live_chunk,),
+            "cap_max_rows": 1,
+        },
+        "documents_about": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "pages_about": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "relation_current": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "observation_current": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "identity_as_of": {
+            "positive": (h.live_entity, h.live_to),
+            "empty": (h.empty_entity, h.empty_to),
+            "tombstone": (h.tombstone_entity, h.tombstone_to),
+            "cap": (h.live_entity, h.live_to),
+            "cap_max_rows": 1,
+        },
+        "entity_timeline": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "explain": {
+            "positive": (h.live_fact,),
+            "empty": (h.empty_fact,),
+            "tombstone": (h.tombstone_fact,),
+            "cap": (h.live_fact,),
+            "cap_max_rows": 1,
+        },
+        "multi_hop_context": {
+            "positive": (h.live_entity, h.other_entity, SEARCH_POSITIVE_QUERY),
+            "empty": (h.empty_entity, h.other_entity, SEARCH_EMPTY_QUERY),
+            "tombstone": (h.tombstone_entity, h.other_entity, SEARCH_TOMBSTONE_QUERY),
+            "cap": (h.live_entity, h.other_entity, SEARCH_POSITIVE_QUERY),
+            "cap_max_rows": 1,
+        },
+        "changed_since": {
+            "positive": (h.live_since,),
+            "empty": (h.empty_since,),
+            "tombstone": (h.tombstone_since,),
+            "cap": (h.live_since,),
+            "cap_max_rows": 1,
+        },
+        "graph_neighborhood": {
+            "positive": (h.live_entity,),
+            "empty": (h.empty_entity,),
+            "tombstone": (h.tombstone_entity,),
+            "cap": (h.live_entity,),
+            "cap_max_rows": 1,
+        },
+        "graph_path": {
+            "positive": (h.live_entity, h.other_entity),
+            "empty": (h.empty_entity, h.other_entity),
+            "tombstone": (h.tombstone_entity, h.other_entity),
+            "cap": (h.live_entity, h.other_entity),
+            "cap_max_rows": 1,
+        },
+    }
+    if name not in table:
+        raise KeyError(f"no operator fixtures for example {name!r}")
+    return table[name]
+
+
+def example_operator_fixtures(
+    name: str, *, handles: ExampleFixtureHandles
+) -> dict[str, dict[str, object]]:
     """Materialize the four §5 operator fixtures for one shipped example.
 
     Returns a mapping kind -> {parameters, max_rows?} suitable for building
     `OperatorFixture` values at the call site (keeps this module free of the
-    registry import cycle).
+    registry import cycle). Requires corpus handles so the four classes stay
+    meaningfully distinct.
     """
-    if name not in EXAMPLE_FIXTURE_PARAMETERS:
-        raise KeyError(f"no operator fixtures for example {name!r}")
-    meta = EXAMPLE_FIXTURE_PARAMETERS[name]
+    meta = example_fixture_parameters(name, handles=handles)
     cap_max = meta["cap_max_rows"]
     assert isinstance(cap_max, int)
     out: dict[str, dict[str, object]] = {}

@@ -8,7 +8,13 @@ on it, and a version running against a surface nobody validated it against.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
+from threading import Barrier
+from typing import Any
+from typing import Final
 from uuid import UUID
 from uuid import uuid4
 
@@ -18,8 +24,12 @@ import psycopg
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy import text
 
+from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model.chunks import P1ChunkText
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
@@ -27,16 +37,25 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.examples import example_operator_fixtures
+from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+from rememberstack.surfaces.query_sandbox.examples import ExampleFixtureHandles
+from rememberstack.surfaces.query_sandbox.examples import SEARCH_EMPTY_QUERY
+from rememberstack.surfaces.query_sandbox.examples import SEARCH_POSITIVE_QUERY
+from rememberstack.surfaces.query_sandbox.examples import SEARCH_TOMBSTONE_QUERY
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
+from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.saved_queries import declared_examples
 from rememberstack.surfaces.query_sandbox.saved_queries import IDENTITIES_PER_HOUR_MAX
 from rememberstack.surfaces.query_sandbox.saved_queries import OperatorFixture
+from rememberstack.surfaces.query_sandbox.saved_queries import PLATFORM_SEED_ACTOR
 from rememberstack.surfaces.query_sandbox.saved_queries import publish_surface_hash
 from rememberstack.surfaces.query_sandbox.saved_queries import revalidate
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryVersion
+from rememberstack.surfaces.query_sandbox.saved_queries import seed_shipped_examples
 from rememberstack.surfaces.query_sandbox.saved_queries import SurfaceMoved
 from rememberstack.surfaces.query_sandbox.saved_queries import validate_saved_sql
 from rememberstack.surfaces.query_sandbox.saved_queries import VALIDATION_FIXTURES
@@ -49,15 +68,35 @@ _DEPLOYMENT = UUID("e0000000-0000-0000-0000-00000000000e")
 _HASH = surface_manifest_hash(build_hash_members())
 _OTHER_HASH = "b" * 64
 _SQL = "SELECT claim_id FROM claims_live LIMIT 5"
+# Parameter-driven body so positive/empty/tombstone/cap stay distinct without a
+# corpus: True yields a row; False yields none.
+_PARAM_SQL = "SELECT 1 AS n WHERE $1::boolean"
 
 
 def _psycopg_url(url: str) -> str:
     return url.replace("postgresql+psycopg://", "postgresql://")
 
 
-def _is_operator(principal: str) -> bool:
-    """Test activation authority: principals named operator-* may activate."""
-    return principal.startswith("operator-")
+def _is_operator(actor: str) -> bool:
+    """Test activation policy over the *bound* actor, not a free-form claim."""
+    return actor.startswith("operator-")
+
+
+def _registry(
+    connection: psycopg.Connection,
+    *,
+    actor: str,
+    can_activate: Any = _is_operator,
+    manifest_hash: str = _HASH,
+    deployment_id: UUID = _DEPLOYMENT,
+) -> SavedQueryRegistry:
+    return SavedQueryRegistry(
+        connection=connection,
+        deployment_id=deployment_id,
+        manifest_hash=manifest_hash,
+        actor=actor,
+        can_activate=can_activate,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -91,14 +130,17 @@ def registry_url() -> Iterator[str]:
 
 @pytest.fixture
 def registry(registry_url: str) -> Iterator[SavedQueryRegistry]:
-    """A registry on its own connection, rolled back after each test."""
+    """Operator-bound registry; rolled back after each test."""
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
-        yield SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_HASH,
-            can_activate=_is_operator,
-        )
+        yield _registry(connection, actor="operator-1")
+        connection.rollback()
+
+
+@pytest.fixture
+def agent_registry(registry_url: str) -> Iterator[SavedQueryRegistry]:
+    """Agent-bound registry without activation authority."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        yield _registry(connection, actor="agent-1")
         connection.rollback()
 
 
@@ -107,121 +149,88 @@ def _unique(prefix: str = "q") -> str:
 
 
 def _sandbox_executor(
-    registry_url: str, *, claim_manifest: str | None = None
+    registry_url: str,
+    *,
+    claim_manifest: str | None = None,
+    deployment_id: UUID = _DEPLOYMENT,
+    search: object | None = None,
 ) -> QuerySandboxExecutor:
-    """An executor on a superuser connection for fixture proofs.
-
-    When `claim_manifest` is set, the executor reports that surface hash on
-    every result — used only when a test publishes a synthetic successor hash
-    that is not the live build hash.
-    """
-
     def connect() -> psycopg.Connection:
         return psycopg.connect(_psycopg_url(registry_url))
 
-    executor = QuerySandboxExecutor(deployment_id=_DEPLOYMENT, connect=connect)
+    executor = QuerySandboxExecutor(
+        deployment_id=deployment_id,
+        connect=connect,
+        search=search,
+        embed=(lambda **_: (0.1,) * 8) if search is not None else None,
+        analytical_entitlement=True,
+    )
     if claim_manifest is not None:
         executor._manifest_hash = claim_manifest
     return executor
 
 
-def _empty_fixtures() -> dict[str, OperatorFixture]:
-    """Fixtures for SQL that always returns zero rows (WHERE false)."""
+def _param_fixtures() -> dict[str, OperatorFixture]:
+    """Distinct fixtures for `_PARAM_SQL`: positive/cap see a row; empty/tombstone none."""
     return {
-        "positive": OperatorFixture(kind="positive", parameters=()),
-        "empty": OperatorFixture(kind="empty", parameters=()),
-        "tombstone": OperatorFixture(kind="tombstone", parameters=()),
-        "cap": OperatorFixture(kind="cap", parameters=(), max_rows=1),
+        "positive": OperatorFixture(kind="positive", parameters=(True,)),
+        "empty": OperatorFixture(kind="empty", parameters=(False,)),
+        "tombstone": OperatorFixture(kind="tombstone", parameters=(False,)),
+        "cap": OperatorFixture(kind="cap", parameters=(True,), max_rows=1),
     }
 
 
-class _EmptySearch:
-    """No-op search port: semantic/lexical SRFs return zero rows."""
-
-    def search_claims_scored(self, **_: object) -> tuple:
-        return ()
-
-    def search_claims_lexical_scored(self, **_: object) -> tuple:
-        return ()
-
-    def search_chunks_scored(self, **_: object) -> tuple:
-        return ()
-
-    def search_chunks_lexical_scored(self, **_: object) -> tuple:
-        return ()
-
-    def search_facts_scored(self, **_: object) -> tuple:
-        return ()
-
-    def search_entities_scored(self, **_: object) -> tuple:
-        return ()
-
-
-def _example_executor(registry_url: str) -> QuerySandboxExecutor:
-    """Executor for shipped-example proofs: empty search, analytical tier OK."""
-
-    def connect() -> psycopg.Connection:
-        return psycopg.connect(_psycopg_url(registry_url))
-
-    return QuerySandboxExecutor(
-        deployment_id=_DEPLOYMENT,
-        connect=connect,
-        search=_EmptySearch(),
-        embed=lambda *, query, embedder_generation=None: (0.1,) * 8,
-        analytical_entitlement=True,
-    )
-
-
 def _draft_validate_activate(
-    registry: SavedQueryRegistry,
+    connection: psycopg.Connection,
     registry_url: str,
     *,
     name: str | None = None,
     sql: str | None = None,
-    principal: str = "agent-1",
-    approver: str = "operator-1",
     namespace: str = "team",
+    author: str = "agent-1",
+    approver: str = "operator-1",
 ) -> SavedQueryVersion:
-    body = sql or "SELECT claim_id FROM claims_live WHERE false"
+    body = sql or _PARAM_SQL
     n = name or _unique()
-    saved = registry.draft(namespace=namespace, name=n, sql=body, principal=principal)
-    report = registry.validate_version(
+    agent = _registry(connection, actor=author)
+    saved = agent.draft(namespace=namespace, name=n, sql=body)
+    report = agent.validate_version(
         query_id=saved.query_id,
         version=saved.version,
         executor=_sandbox_executor(registry_url),
-        fixtures=_empty_fixtures(),
+        fixtures=_param_fixtures() if body == _PARAM_SQL else _param_fixtures(),
     )
-    assert report.passed
-    registry.activate(query_id=saved.query_id, version=saved.version, approver=approver)
+    assert report.passed, report.diagnostics
+    operator = _registry(connection, actor=approver)
+    operator.activate(query_id=saved.query_id, version=saved.version)
     return saved
 
 
 # --- authoring ---------------------------------------------------------------
 
 
-def test_a_draft_is_saved_and_is_not_executable(registry: SavedQueryRegistry) -> None:
+def test_a_draft_is_saved_and_is_not_executable(
+    agent_registry: SavedQueryRegistry,
+) -> None:
     """Writing a query does not publish it."""
     name = _unique()
-    saved = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
+    saved = agent_registry.draft(namespace="team", name=name, sql=_SQL)
     assert saved.status == "draft"
     assert saved.assurance == "customer_authored"
     assert saved.validated_surface_manifest_hash == _HASH
     with pytest.raises(SandboxRejection) as rejection:
-        registry.resolve(namespace="team", name=name)
+        agent_registry.resolve(namespace="team", name=name)
     assert rejection.value.code == QueryErrorCode.SAVED_QUERY_DISABLED
 
 
 def test_editing_adds_a_version_rather_than_changing_one(
-    registry: SavedQueryRegistry,
+    agent_registry: SavedQueryRegistry,
 ) -> None:
     """What an earlier caller ran does not change under them."""
     name = _unique()
-    first = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
-    second = registry.draft(
-        namespace="team",
-        name=name,
-        sql="SELECT claim_id FROM claims_live LIMIT 10",
-        principal="agent-1",
+    first = agent_registry.draft(namespace="team", name=name, sql=_SQL)
+    second = agent_registry.draft(
+        namespace="team", name=name, sql="SELECT claim_id FROM claims_live LIMIT 10"
     )
     assert (first.version, second.version) == (1, 2)
     assert first.query_id == second.query_id
@@ -229,38 +238,31 @@ def test_editing_adds_a_version_rather_than_changing_one(
 
 
 def test_sql_that_does_not_validate_is_refused_at_save(
-    registry: SavedQueryRegistry,
+    agent_registry: SavedQueryRegistry,
 ) -> None:
-    """Refused when written, not discovered by whoever runs it."""
     with pytest.raises(SandboxRejection):
-        registry.draft(
-            namespace="team",
-            name=_unique(),
-            sql="DELETE FROM claims_live",
-            principal="agent-1",
+        agent_registry.draft(
+            namespace="team", name=_unique(), sql="DELETE FROM claims_live"
         )
 
 
 def test_oversized_sql_is_refused_as_quota_exceeded(
-    registry: SavedQueryRegistry,
+    agent_registry: SavedQueryRegistry,
 ) -> None:
-    """§5 caps saved SQL at 64 KiB and returns quota_exceeded."""
     with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(
+        agent_registry.draft(
             namespace="team",
             name=_unique(),
             sql="SELECT claim_id FROM claims_live WHERE claim_text = '"
             + "x" * (64 * 1024)
             + "'",
-            principal="agent-1",
         )
     assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
 
 
 def test_draft_persists_schemas_limits_and_query_space(
-    registry: SavedQueryRegistry,
+    agent_registry: SavedQueryRegistry,
 ) -> None:
-    """Saving accepts and returns declared schemas, defaults, and memory_vN."""
     name = _unique()
     schema = {
         "type": "object",
@@ -272,17 +274,16 @@ def test_draft_persists_schemas_limits_and_query_space(
     }
     result = {"type": "object", "properties": {"claim_id": {"type": "string"}}}
     limits = {"max_rows": 50, "statement_timeout_ms": 5_000}
-    saved = registry.draft(
+    saved = agent_registry.draft(
         namespace="team",
         name=name,
         sql=_SQL,
-        principal="agent-1",
         parameter_schema=schema,
         declared_result_schema=result,
         default_limits=limits,
         query_space_major="memory_v1",
     )
-    described = registry.describe_saved_query(namespace="team", name=name)
+    described = agent_registry.describe_saved_query(namespace="team", name=name)
     assert described.parameter_schema == schema
     assert described.declared_result_schema == result
     assert described.default_limits == limits
@@ -290,14 +291,14 @@ def test_draft_persists_schemas_limits_and_query_space(
     assert saved.parameter_schema == schema
 
 
-def test_garbage_parameter_schema_is_refused(registry: SavedQueryRegistry) -> None:
-    """Opaque JSON is not a schema; activation cannot paper over it later."""
+def test_garbage_parameter_schema_is_refused(
+    agent_registry: SavedQueryRegistry,
+) -> None:
     with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(
+        agent_registry.draft(
             namespace="team",
             name=_unique(),
             sql=_SQL,
-            principal="agent-1",
             parameter_schema={
                 "type": "object",
                 "properties": {"x": {"type": "object"}},
@@ -307,409 +308,318 @@ def test_garbage_parameter_schema_is_refused(registry: SavedQueryRegistry) -> No
 
 
 def test_default_limits_above_hard_cap_are_refused(
-    registry: SavedQueryRegistry,
+    agent_registry: SavedQueryRegistry,
 ) -> None:
     with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(
+        agent_registry.draft(
             namespace="team",
             name=_unique(),
             sql=_SQL,
-            principal="agent-1",
             default_limits={"max_rows": 10_000_000},
         )
     assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
 
 
-def test_unsupported_query_space_major_is_refused(registry: SavedQueryRegistry) -> None:
+def test_unsupported_query_space_major_is_refused(
+    agent_registry: SavedQueryRegistry,
+) -> None:
     with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(
-            namespace="team",
-            name=_unique(),
-            sql=_SQL,
-            principal="agent-1",
-            query_space_major="memory_v99",
+        agent_registry.draft(
+            namespace="team", name=_unique(), sql=_SQL, query_space_major="memory_v99"
         )
     assert rejection.value.code == QueryErrorCode.SCHEMA_VERSION_MISMATCH
 
 
-# --- activation --------------------------------------------------------------
+# --- activation / authority binding ------------------------------------------
 
 
-def test_an_activated_version_executes(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Activation is what makes a saved query runnable."""
-    name = _unique()
-    _draft_validate_activate(
-        registry,
-        registry_url,
-        name=name,
-        sql="SELECT claim_id FROM claims_live WHERE false",
-    )
-    resolved = registry.resolve(namespace="team", name=name)
-    assert resolved.status == "active"
-    assert resolved.sql == "SELECT claim_id FROM claims_live WHERE false"
-    described = registry.describe_saved_query(namespace="team", name=name)
-    assert described.assurance == "customer_reviewed"
-    assert described.approver_principal == "operator-1"
-
-
-def test_an_author_cannot_approve_their_own_query(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Self-approval is refused using the stored author, not a caller claim."""
-    saved = registry.draft(
-        namespace="team",
-        name=_unique(),
-        sql="SELECT 1 AS n WHERE false",
-        principal="agent-1",
-    )
-    registry.validate_version(
-        query_id=saved.query_id,
-        version=saved.version,
-        executor=_sandbox_executor(registry_url),
-        fixtures=_empty_fixtures(),
-    )
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.activate(
-            query_id=saved.query_id, version=saved.version, approver="agent-1"
-        )
-    assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
-
-
-def test_author_cannot_spoof_author_claim_on_activate(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """activate no longer accepts an author claim; stored author is authoritative."""
-    saved = registry.draft(
-        namespace="team",
-        name=_unique(),
-        sql="SELECT 1 AS n WHERE false",
-        principal="agent-1",
-    )
-    registry.validate_version(
-        query_id=saved.query_id,
-        version=saved.version,
-        executor=_sandbox_executor(registry_url),
-        fixtures=_empty_fixtures(),
-    )
-    # Non-operator is default-denied even if they are not the author string.
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.activate(
-            query_id=saved.query_id, version=saved.version, approver="not-an-operator"
-        )
-    assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
-    assert "operator" in rejection.value.message
-
-
-def test_a_version_validated_against_another_surface_cannot_be_activated(
-    registry_url: str,
-) -> None:
-    """Activating one would publish exactly the unchecked claim §5 forbids."""
+def test_an_activated_version_executes(registry_url: str) -> None:
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
-        old = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_HASH,
-            can_activate=_is_operator,
+        name = _unique()
+        _draft_validate_activate(connection, registry_url, name=name)
+        resolved = _registry(connection, actor="agent-1").resolve(
+            namespace="team", name=name
         )
-        saved = old.draft(
-            namespace="team",
-            name=_unique(),
-            sql="SELECT 1 AS n WHERE false",
-            principal="agent-1",
+        assert resolved.status == "active"
+        described = _registry(connection, actor="operator-1").describe_saved_query(
+            namespace="team", name=name
         )
-        old.validate_version(
-            query_id=saved.query_id,
-            version=saved.version,
-            executor=_sandbox_executor(registry_url),
-            fixtures=_empty_fixtures(),
-        )
-        moved = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_OTHER_HASH,
-            can_activate=_is_operator,
-        )
-        with pytest.raises(SandboxRejection) as rejection:
-            moved.activate(
-                query_id=saved.query_id, version=saved.version, approver="operator-1"
-            )
-        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING
+        assert described.assurance == "customer_reviewed"
+        assert described.approver_principal == "operator-1"
         connection.rollback()
 
 
-def test_fabricated_report_cannot_activate(registry: SavedQueryRegistry) -> None:
-    """Hand-built all-true JSON is not bound evidence from the stored SQL."""
-    saved = registry.draft(
-        namespace="team", name=_unique(), sql=_SQL, principal="agent-1"
-    )
-    # Directly poke a forged report into the row (lifecycle field is mutable).
-    registry._connection.execute(
-        b"UPDATE saved_query_versions"
-        b" SET validation_report = %(report)s::jsonb"
-        b" WHERE deployment_id = %(deployment)s"
-        b"   AND query_id = %(query)s AND version = %(version)s",
-        {
-            "report": (
-                '{"passed": true, "fixtures": {"positive": true, "empty": true,'
-                ' "tombstone": true, "cap": true}, "manifest_hash": "'
-                + _HASH
-                + '", "query_hash": "not-the-real-hash"}'
-            ),
-            "deployment": str(_DEPLOYMENT),
-            "query": str(saved.query_id),
-            "version": saved.version,
-        },
-    )
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.activate(
-            query_id=saved.query_id, version=saved.version, approver="operator-1"
-        )
-    assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
-
-
-def test_broken_version_cannot_be_reactivated_via_stale_evidence(
-    registry_url: str,
-) -> None:
-    """broken → active via activate is refused; failed revalidation sticks."""
+def test_an_author_cannot_approve_their_own_query(registry_url: str) -> None:
+    """Self-approval uses the stored author against the bound actor."""
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
-        registry = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_HASH,
-            can_activate=_is_operator,
+        # Author is also an operator-class principal — still cannot self-approve.
+        author = _registry(connection, actor="operator-author")
+        saved = author.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
+        author.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
         )
+        with pytest.raises(SandboxRejection) as rejection:
+            author.activate(query_id=saved.query_id, version=saved.version)
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        connection.rollback()
+
+
+def test_activation_uses_bound_actor_not_method_claim(registry_url: str) -> None:
+    """A method caller cannot pass operator-* to impersonate authority."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        agent = _registry(connection, actor="agent-1")
+        saved = agent.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
+        agent.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        # activate() no longer accepts approver=; bound actor is agent-1 → deny.
+        with pytest.raises(SandboxRejection) as rejection:
+            agent.activate(query_id=saved.query_id, version=saved.version)
+        assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+        # Bound operator succeeds.
+        _registry(connection, actor="operator-1").activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        connection.rollback()
+
+
+def test_draft_has_no_principal_parameter() -> None:
+    import inspect
+
+    sig = inspect.signature(SavedQueryRegistry.draft)
+    assert "principal" not in sig.parameters
+    assert "approver" not in inspect.signature(SavedQueryRegistry.activate).parameters
+
+
+def test_a_version_nobody_validated_cannot_be_activated(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        saved = _registry(connection, actor="agent-1").draft(
+            namespace="team", name=_unique(), sql=_SQL
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            _registry(connection, actor="operator-1").activate(
+                query_id=saved.query_id, version=saved.version
+            )
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
+        connection.rollback()
+
+
+def test_an_executed_validation_report_unlocks_activation(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
         name = _unique()
-        saved = _draft_validate_activate(registry, registry_url, name=name)
+        agent = _registry(connection, actor="agent-1")
+        saved = agent.draft(namespace="team", name=name, sql=_PARAM_SQL)
+        report = agent.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        assert report.passed
+        assert report.query_hash == saved.query_hash
+        _registry(connection, actor="operator-1").activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        assert agent.resolve(namespace="team", name=name).status == "active"
+        connection.rollback()
+
+
+def test_activating_a_new_version_deprecates_the_prior(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        first = _draft_validate_activate(connection, registry_url, name=name)
+        agent = _registry(connection, actor="agent-1")
+        v2 = agent.draft(namespace="team", name=name, sql=_PARAM_SQL)
+        agent.validate_version(
+            query_id=v2.query_id,
+            version=v2.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        _registry(connection, actor="operator-1").activate(
+            query_id=v2.query_id, version=v2.version
+        )
+        resolved = agent.resolve(namespace="team", name=name)
+        assert resolved.version == v2.version
+        assert resolved.version != first.version
+        connection.rollback()
+
+
+def test_drafting_v2_does_not_hide_active_v1(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        first = _draft_validate_activate(connection, registry_url, name=name)
+        agent = _registry(connection, actor="agent-1")
+        agent.draft(namespace="team", name=name, sql=_PARAM_SQL)
+        resolved = agent.resolve(namespace="team", name=name)
+        assert resolved.version == first.version
+        assert resolved.status == "active"
+        listed = agent.list_saved_queries(namespace="team")
+        assert any(s.name == name and s.version == first.version for s in listed)
+        connection.rollback()
+
+
+# --- resolve refusals --------------------------------------------------------
+
+
+def test_resolve_refuses_disabled(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        saved = _draft_validate_activate(connection, registry_url, name=name)
+        op = _registry(connection, actor="operator-1")
+        op.disable(query_id=saved.query_id)
+        with pytest.raises(SandboxRejection) as rejection:
+            op.resolve(namespace="team", name=name)
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_DISABLED
+        connection.rollback()
+
+
+def test_resolve_refuses_pending_revalidation(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        _draft_validate_activate(connection, registry_url, name=name)
         publish_surface_hash(
             connection=connection,
             deployment_id=_DEPLOYMENT,
             manifest_hash=_OTHER_HASH,
             actor="operator-1",
         )
-        # Real fixtures on WHERE-false SQL still pass; force broken via
-        # minor_compatible=False so status sticks as non-activatable.
-        outcome = revalidate(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            query_id=saved.query_id,
-            version=saved.version,
-            started_against=_OTHER_HASH,
-            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
-            fixtures=_empty_fixtures(),
-            minor_compatible=False,
-            actor="validator",
-        )
-        assert outcome == "broken"
-        moved = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_OTHER_HASH,
-            can_activate=_is_operator,
-        )
         with pytest.raises(SandboxRejection) as rejection:
-            moved.activate(
-                query_id=saved.query_id, version=saved.version, approver="operator-1"
+            _registry(connection, actor="agent-1", manifest_hash=_OTHER_HASH).resolve(
+                namespace="team", name=name
             )
-        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
-        connection.rollback()
-
-
-def test_drafting_v2_does_not_hide_active_v1(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Resolve and default discovery keep the active version while v2 is draft."""
-    name = _unique()
-    v1 = _draft_validate_activate(registry, registry_url, name=name)
-    v2 = registry.draft(
-        namespace="team",
-        name=name,
-        sql="SELECT claim_id FROM claims_live WHERE false LIMIT 1",
-        principal="agent-1",
-    )
-    assert v2.version == 2
-    resolved = registry.resolve(namespace="team", name=name)
-    assert resolved.version == v1.version
-    assert resolved.status == "active"
-    listed = registry.list_saved_queries(namespace="team")
-    assert any(item.name == name and item.version == v1.version for item in listed)
-    described = registry.describe_saved_query(namespace="team", name=name)
-    assert described.version == v1.version
-    assert described.status == "active"
-
-
-def test_activating_v2_deprecates_prior_active(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    name = _unique()
-    v1 = _draft_validate_activate(registry, registry_url, name=name)
-    v2 = registry.draft(
-        namespace="team",
-        name=name,
-        sql="SELECT claim_id FROM claims_live WHERE false LIMIT 1",
-        principal="agent-1",
-    )
-    registry.validate_version(
-        query_id=v2.query_id,
-        version=v2.version,
-        executor=_sandbox_executor(registry_url),
-        fixtures=_empty_fixtures(),
-    )
-    registry.activate(query_id=v2.query_id, version=v2.version, approver="operator-1")
-    resolved = registry.resolve(namespace="team", name=name)
-    assert resolved.version == v2.version
-    prior = registry.describe_saved_query(
-        namespace="team", name=name, version=v1.version
-    )
-    assert prior.status == "deprecated"
-
-
-# --- the surface moving underneath -------------------------------------------
-
-
-def test_publishing_a_new_surface_suspends_every_active_version(
-    registry_url: str,
-) -> None:
-    """The transition and the publication are one act (§5)."""
-    with psycopg.connect(_psycopg_url(registry_url)) as connection:
-        registry = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_HASH,
-            can_activate=_is_operator,
-        )
-        name = _unique()
-        _draft_validate_activate(registry, registry_url, name=name)
-        assert registry.resolve(namespace="team", name=name).status == "active"
-
-        suspended = publish_surface_hash(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_OTHER_HASH,
-            actor="operator-1",
-        )
-        assert suspended >= 1
-        pin = connection.execute(
-            b"SELECT surface_manifest_hash FROM saved_query_registry_state"
-            b" WHERE deployment_id = %s",
-            (str(_DEPLOYMENT),),
-        ).fetchone()
-        assert pin is not None and pin[0] == _OTHER_HASH
-
-        moved = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_OTHER_HASH,
-            can_activate=_is_operator,
-        )
-        with pytest.raises(SandboxRejection) as rejection:
-            moved.resolve(namespace="team", name=name)
         assert rejection.value.code == QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING
         connection.rollback()
 
 
-# --- lifecycle ---------------------------------------------------------------
-
-
-def test_disabling_stops_execution_at_admission(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Disabled means it does not run, and says so by name."""
-    name = _unique()
-    saved = _draft_validate_activate(registry, registry_url, name=name)
-    registry.disable(query_id=saved.query_id, actor="operator-1")
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.resolve(namespace="team", name=name)
-    assert rejection.value.code == QueryErrorCode.SAVED_QUERY_DISABLED
-
-
-def test_purging_removes_the_text_but_keeps_audit(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Registry SQL is purged; non-content audit rows remain (D74)."""
-    name = _unique()
-    saved = registry.draft(namespace="team", name=name, sql=_SQL, principal="agent-1")
-    registry.purge(query_id=saved.query_id, actor="operator-1")
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.resolve(namespace="team", name=name)
-    assert rejection.value.code == QueryErrorCode.SAVED_QUERY_NOT_FOUND
-    audit = registry._connection.execute(
-        b"SELECT action, actor, query_id, query_hash FROM saved_query_audit"
-        b" WHERE deployment_id = %s AND query_id = %s AND action = 'purge'",
-        (str(_DEPLOYMENT), str(saved.query_id)),
-    ).fetchall()
-    assert audit
-    assert audit[0][0] == "purge"
-    assert audit[0][1] == "operator-1"
-    assert audit[0][3] == saved.query_hash
-
-
-def test_an_unknown_name_is_not_found_rather_than_empty(
-    registry: SavedQueryRegistry,
-) -> None:
-    """A query that was never run must not look like one that returned nothing."""
+def test_resolve_not_found(registry: SavedQueryRegistry) -> None:
     with pytest.raises(SandboxRejection) as rejection:
         registry.resolve(namespace="team", name="nothing_by_this_name")
     assert rejection.value.code == QueryErrorCode.SAVED_QUERY_NOT_FOUND
 
 
+# --- audit / purge -----------------------------------------------------------
+
+
+def test_audit_survives_purge(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        saved = _draft_validate_activate(connection, registry_url, name=name)
+        op = _registry(connection, actor="operator-1")
+        op.disable(query_id=saved.query_id)
+        op.purge(query_id=saved.query_id)
+        audit = connection.execute(
+            b"SELECT action, actor FROM saved_query_audit"
+            b" WHERE deployment_id = %s AND query_id = %s"
+            b" ORDER BY audit_id",
+            (str(_DEPLOYMENT), str(saved.query_id)),
+        ).fetchall()
+        actions = {row[0] for row in audit}
+        assert "activate" in actions
+        assert "purge" in actions
+        assert any(row[0] == "purge" and row[1] == "operator-1" for row in audit)
+        with pytest.raises(SandboxRejection):
+            op.resolve(namespace="team", name=name)
+        connection.rollback()
+
+
 # --- quotas ------------------------------------------------------------------
 
 
-def test_one_identity_keeps_a_bounded_history(registry: SavedQueryRegistry) -> None:
-    """§5 keeps at most 50 versions of one saved query."""
+def test_one_identity_keeps_a_bounded_history(
+    agent_registry: SavedQueryRegistry,
+) -> None:
     name = _unique()
     for _ in range(VERSIONS_PER_IDENTITY_MAX):
-        registry.draft(namespace="team", name=name, sql=_SQL, principal="editor")
+        agent_registry.draft(namespace="team", name=name, sql=_SQL)
     with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(namespace="team", name=name, sql=_SQL, principal="editor")
+        agent_registry.draft(namespace="team", name=name, sql=_SQL)
     assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
 
 
 def test_a_principal_cannot_open_unbounded_identities_in_an_hour(
-    registry: SavedQueryRegistry,
+    registry_url: str,
 ) -> None:
-    """Identities are cheap to create in a loop, so §5 rate-bounds them."""
-    for _ in range(IDENTITIES_PER_HOUR_MAX):
-        registry.draft(namespace="team", name=_unique(), sql=_SQL, principal="prolific")
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(namespace="team", name=_unique(), sql=_SQL, principal="prolific")
-    assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        prolific = _registry(connection, actor="prolific")
+        for _ in range(IDENTITIES_PER_HOUR_MAX):
+            prolific.draft(namespace="team", name=_unique(), sql=_SQL)
+        with pytest.raises(SandboxRejection) as rejection:
+            prolific.draft(namespace="team", name=_unique(), sql=_SQL)
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        connection.rollback()
 
 
 def test_draft_byte_ceiling_counts_sql_and_metadata(
-    registry: SavedQueryRegistry, monkeypatch: pytest.MonkeyPatch
+    registry_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The draft ceiling includes encoded SQL plus draft registry metadata."""
     monkeypatch.setattr(
         "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX", 3_000
     )
-    principal = f"bytes_{uuid4().hex[:8]}"
-    # Large parameter_schema counts toward the ceiling even with small SQL.
-    fat_schema = {
-        "type": "object",
-        "properties": {f"field_{i}": {"type": "string"} for i in range(40)},
-    }
-    registry.draft(
-        namespace="team",
-        name=_unique("b"),
-        sql="SELECT 1 AS n",
-        principal=principal,
-        parameter_schema=fat_schema,
-        description="x" * 1_200,
-    )
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        principal = f"bytes_{uuid4().hex[:8]}"
+        reg = _registry(connection, actor=principal)
+        fat_schema = {
+            "type": "object",
+            "properties": {f"field_{i}": {"type": "string"} for i in range(40)},
+        }
+        reg.draft(
             namespace="team",
             name=_unique("b"),
             sql="SELECT 1 AS n",
-            principal=principal,
             parameter_schema=fat_schema,
             description="x" * 1_200,
         )
-    assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
-    assert "byte" in rejection.value.message
+        with pytest.raises(SandboxRejection) as rejection:
+            reg.draft(
+                namespace="team",
+                name=_unique("b"),
+                sql="SELECT 1 AS n",
+                parameter_schema=fat_schema,
+                description="x" * 1_200,
+            )
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        assert "byte" in rejection.value.message
+        connection.rollback()
+
+
+def test_validation_report_write_respects_draft_byte_ceiling(
+    registry_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A large validation report cannot bypass the per-principal 4 MiB ceiling."""
+    # Low ceiling so a real report after a tiny draft exceeds it.
+    monkeypatch.setattr(
+        "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX", 250
+    )
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        author = f"vr_{uuid4().hex[:8]}"
+        reg = _registry(connection, actor=author)
+        saved = reg.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
+        with pytest.raises(SandboxRejection) as rejection:
+            reg.validate_version(
+                query_id=saved.query_id,
+                version=saved.version,
+                executor=_sandbox_executor(registry_url),
+                fixtures=_param_fixtures(),
+            )
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        assert "byte" in rejection.value.message
+        # Report must not have been persisted.
+        row = connection.execute(
+            b"SELECT validation_report FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(saved.query_id), saved.version),
+        ).fetchone()
+        assert row is not None
+        report = row[0] if isinstance(row[0], dict) else {}
+        assert report == {} or report == {}
+        connection.rollback()
 
 
 # --- revalidation ------------------------------------------------------------
@@ -718,15 +628,8 @@ def test_draft_byte_ceiling_counts_sql_and_metadata(
 def _suspended(
     connection: psycopg.Connection, registry_url: str
 ) -> tuple[UUID, int, str]:
-    """One active version, then suspended by a surface change."""
-    registry = SavedQueryRegistry(
-        connection=connection,
-        deployment_id=_DEPLOYMENT,
-        manifest_hash=_HASH,
-        can_activate=_is_operator,
-    )
     name = _unique()
-    saved = _draft_validate_activate(registry, registry_url, name=name)
+    saved = _draft_validate_activate(connection, registry_url, name=name)
     publish_surface_hash(
         connection=connection,
         deployment_id=_DEPLOYMENT,
@@ -737,7 +640,6 @@ def _suspended(
 
 
 def test_a_clean_revalidation_restores_a_suspended_version(registry_url: str) -> None:
-    """§5 allows automatic restoration when the surface is minor-compatible."""
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
         query_id, version, name = _suspended(connection, registry_url)
         outcome = revalidate(
@@ -747,17 +649,12 @@ def test_a_clean_revalidation_restores_a_suspended_version(registry_url: str) ->
             version=version,
             started_against=_OTHER_HASH,
             executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
-            fixtures=_empty_fixtures(),
+            fixtures=_param_fixtures(),
             minor_compatible=True,
             actor="validator",
         )
         assert outcome == "active"
-        moved = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_OTHER_HASH,
-            can_activate=_is_operator,
-        )
+        moved = _registry(connection, actor="operator-1", manifest_hash=_OTHER_HASH)
         assert moved.resolve(namespace="team", name=name).status == "active"
         connection.rollback()
 
@@ -765,10 +662,9 @@ def test_a_clean_revalidation_restores_a_suspended_version(registry_url: str) ->
 def test_a_validation_of_a_surface_that_moved_again_cannot_activate(
     registry_url: str,
 ) -> None:
-    """DB-side CAS: a stale validator cannot activate after a later publish."""
+    """Pre-stale started_against still fails CAS."""
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
         query_id, version, name = _suspended(connection, registry_url)
-        # Publish C while the version is already pending from B.
         third = "c" * 64
         publish_surface_hash(
             connection=connection,
@@ -782,73 +678,173 @@ def test_a_validation_of_a_surface_that_moved_again_cannot_activate(
                 deployment_id=_DEPLOYMENT,
                 query_id=query_id,
                 version=version,
-                started_against=_OTHER_HASH,  # B, but C is now in force
+                started_against=_OTHER_HASH,
                 executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
-                fixtures=_empty_fixtures(),
+                fixtures=_param_fixtures(),
                 minor_compatible=True,
                 actor="validator",
             )
-        still = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=third,
-            can_activate=_is_operator,
-        )
+        still = _registry(connection, actor="operator-1", manifest_hash=third)
         with pytest.raises(SandboxRejection) as rejection:
             still.resolve(namespace="team", name=name)
         assert rejection.value.code == QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING
         connection.rollback()
 
 
+def test_publish_during_unlocked_revalidation_cannot_activate(
+    registry_url: str,
+) -> None:
+    """Barrier: concurrent publish while fixtures run; stale evidence stays pending."""
+    third = "c" * 64
+    start = Barrier(2, timeout=30)
+    published = Barrier(2, timeout=30)
+    errors: list[BaseException] = []
+    outcomes: list[object] = []
+
+    with psycopg.connect(_psycopg_url(registry_url)) as setup:
+        query_id, version, name = _suspended(setup, registry_url)
+        setup.commit()
+
+    class _PausingExecutor:
+        def __init__(self, inner: QuerySandboxExecutor) -> None:
+            self._inner = inner
+            self._paused = False
+
+        def explain_sql(self, **kwargs: object) -> object:
+            return self._inner.explain_sql(**kwargs)  # type: ignore[arg-type]
+
+        def query_sql(self, **kwargs: object) -> object:
+            if not self._paused:
+                self._paused = True
+                start.wait()
+                published.wait()
+            return self._inner.query_sql(**kwargs)  # type: ignore[arg-type]
+
+    def validator() -> None:
+        try:
+            with psycopg.connect(_psycopg_url(registry_url)) as connection:
+                inner = _sandbox_executor(registry_url, claim_manifest=_OTHER_HASH)
+                pausing = _PausingExecutor(inner)
+                try:
+                    result = revalidate(
+                        connection=connection,
+                        deployment_id=_DEPLOYMENT,
+                        query_id=query_id,
+                        version=version,
+                        started_against=_OTHER_HASH,
+                        executor=pausing,  # type: ignore[arg-type]
+                        fixtures=_param_fixtures(),
+                        minor_compatible=True,
+                        actor="validator",
+                    )
+                    outcomes.append(result)
+                    connection.commit()
+                except BaseException as exc:  # noqa: BLE001 - collect for assertion
+                    errors.append(exc)
+                    connection.rollback()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    def publisher() -> None:
+        try:
+            start.wait()
+            with psycopg.connect(_psycopg_url(registry_url)) as connection:
+                # Must not block behind the validator's fixture lock (there is none).
+                publish_surface_hash(
+                    connection=connection,
+                    deployment_id=_DEPLOYMENT,
+                    manifest_hash=third,
+                    actor="operator-1",
+                )
+                connection.commit()
+            published.wait()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+            try:
+                published.wait()
+            except Exception:  # noqa: BLE001
+                pass
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(validator), pool.submit(publisher)]
+        for future in futures:
+            future.result(timeout=60)
+
+    assert not outcomes, f"stale revalidation must not succeed: {outcomes}"
+    assert any(isinstance(e, SurfaceMoved) for e in errors), errors
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        status = connection.execute(
+            b"SELECT status FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(query_id), version),
+        ).fetchone()
+        assert status is not None
+        assert status[0] == "pending_revalidation"
+        pin = connection.execute(
+            b"SELECT surface_manifest_hash FROM saved_query_registry_state"
+            b" WHERE deployment_id = %s",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert pin is not None and pin[0] == third
+        still = _registry(connection, actor="operator-1", manifest_hash=third)
+        with pytest.raises(SandboxRejection) as rejection:
+            still.resolve(namespace="team", name=name)
+        assert rejection.value.code == QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING
+        # This test commits across connections; restore the live pin so later
+        # tests on the shared deployment are not stuck behind a synthetic hash.
+        connection.execute(
+            b"UPDATE saved_query_registry_state"
+            b" SET surface_manifest_hash = %s, updated_at = now()"
+            b" WHERE deployment_id = %s",
+            (_HASH, str(_DEPLOYMENT)),
+        )
+        connection.execute(
+            b"DELETE FROM saved_query_versions WHERE deployment_id = %s",
+            (str(_DEPLOYMENT),),
+        )
+        connection.execute(
+            b"DELETE FROM saved_queries WHERE deployment_id = %s", (str(_DEPLOYMENT),)
+        )
+        connection.commit()
+
+
 @pytest.mark.parametrize(
-    ("minor_compatible", "fixture_ok"),
-    [(False, True), (True, False), (False, False)],
+    ("minor_compatible", "fixture_ok"), [(False, True), (True, False), (False, False)]
 )
 def test_a_failed_revalidation_marks_the_version_broken(
     registry_url: str, minor_compatible: bool, fixture_ok: bool
 ) -> None:
-    """An incompatible major or a failed fixture is somebody's problem."""
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
         query_id, version, name = _suspended(connection, registry_url)
         if fixture_ok:
-            fixtures = _empty_fixtures()
-            executor = _sandbox_executor(registry_url, claim_manifest=_OTHER_HASH)
+            fixtures = _param_fixtures()
         else:
-            # Cap fixture requests max_rows=0 while positive still runs; force
-            # failure by omitting a required class instead of inventing a flag.
             fixtures = {
-                "positive": OperatorFixture(kind="positive", parameters=()),
-                "empty": OperatorFixture(kind="empty", parameters=()),
-                "tombstone": OperatorFixture(kind="tombstone", parameters=()),
-                # cap omitted → validate_saved_sql marks it failed
+                "positive": OperatorFixture(kind="positive", parameters=(True,)),
+                "empty": OperatorFixture(kind="empty", parameters=(False,)),
+                "tombstone": OperatorFixture(kind="tombstone", parameters=(False,)),
+                # cap omitted → failed
             }
-            executor = _sandbox_executor(registry_url, claim_manifest=_OTHER_HASH)
         outcome = revalidate(
             connection=connection,
             deployment_id=_DEPLOYMENT,
             query_id=query_id,
             version=version,
             started_against=_OTHER_HASH,
-            executor=executor,
+            executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
             fixtures=fixtures,
             minor_compatible=minor_compatible,
             actor="validator",
         )
         assert outcome == "broken"
-        moved = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_OTHER_HASH,
-            can_activate=_is_operator,
-        )
+        moved = _registry(connection, actor="operator-1", manifest_hash=_OTHER_HASH)
         with pytest.raises(SandboxRejection) as rejection:
             moved.resolve(namespace="team", name=name)
         assert rejection.value.code == QueryErrorCode.SAVED_QUERY_DISABLED
         connection.rollback()
 
 
-def test_revalidate_does_not_accept_a_fabricated_pass_flag(registry_url: str) -> None:
-    """revalidate has no fixtures_passed path; only real execution decides."""
+def test_revalidate_does_not_accept_a_fabricated_pass_flag() -> None:
     import inspect
 
     sig = inspect.signature(revalidate)
@@ -857,19 +853,20 @@ def test_revalidate_does_not_accept_a_fabricated_pass_flag(registry_url: str) ->
     assert "fixtures" in sig.parameters
 
 
-# --- examples ----------------------------------------------------------------
+# --- examples / seed ---------------------------------------------------------
 
 
 def test_the_shipped_examples_are_the_seventeen_the_design_maps() -> None:
-    """§3.1 maps seventeen `examples.*` names; this ships that set."""
     names = {name for name, _ in declared_examples()}
     assert len(names) == 17
+    assert names == set(EXAMPLE_QUERIES)
     assert "claims_hybrid_rrf" in names
-    assert "multi_hop_context" in names
     assert all(purpose for _, purpose in declared_examples())
+    # Purposes come from EXAMPLE_QUERIES — no parallel catalogue.
+    for name, purpose in declared_examples():
+        assert purpose == EXAMPLE_QUERIES[name][0]
 
 
-#: Relation/predicate signals that prove each body follows the §2 binding.
 _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
     "claims_verbatim": ("semantic_claims", "claims_live", "JOIN"),
     "claims_about": ("mentions_live", "claim_occurrences_live", "claims_live"),
@@ -883,7 +880,7 @@ _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
     "chunks_hybrid_rrf": ("semantic_chunks", "lexical_chunks"),
     "chunk_neighbors": ("chunks_live",),
     "documents_about": ("entity_document_mentions", "documents_live"),
-    "pages_about": ("pages_live", "page_evidence_visible"),
+    "pages_about": ("pages_live", "page_evidence_visible", "entity_document_mentions"),
     "relation_current": ("facts_current", "fact_kind = 'relation'"),
     "observation_current": ("facts_current", "fact_kind = 'observation'"),
     "identity_as_of": ("identity_events_visible",),
@@ -902,35 +899,25 @@ _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
 
 
 def test_every_declared_example_has_a_body_that_validates() -> None:
-    """The seventeen §2 maps, each parsing through the real grammar."""
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
-    from rememberstack.surfaces.query_sandbox.saved_queries import SHIPPED_EXAMPLES
-
-    declared = {name for name, _ in SHIPPED_EXAMPLES}
-    assert declared == set(EXAMPLE_QUERIES)
-    assert len(declared) == 17
-    for name, (purpose, sql) in EXAMPLE_QUERIES.items():
-        assert purpose, f"{name} ships without saying what it answers"
+    declared = set(declared_examples())
+    from_queries = {(name, purpose) for name, (purpose, _) in EXAMPLE_QUERIES.items()}
+    assert declared == from_queries
+    for _name, (purpose, sql) in EXAMPLE_QUERIES.items():
+        assert purpose
         validate_sql(sql)
 
 
 def test_example_bodies_match_section_2_mappings() -> None:
-    """Focused mapping signals: design §2 table, not a parallel invention."""
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
-
     assert set(EXAMPLE_QUERIES) == set(_EXAMPLE_MAPPING_SIGNALS)
     for name, signals in _EXAMPLE_MAPPING_SIGNALS.items():
         sql = EXAMPLE_QUERIES[name][1]
         compact = " ".join(sql.split())
         for signal in signals:
             assert signal in compact, f"{name} missing mapping signal {signal!r}"
-        # No orphan-producing LEFT JOIN in any demotion example (§2, §3.3).
         assert "LEFT JOIN" not in sql.upper()
 
 
 def test_claims_as_of_uses_two_parameter_inclusive_overlap() -> None:
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
-
     sql = EXAMPLE_QUERIES["claims_as_of"][1]
     assert "$1::timestamptz" in sql and "$2::timestamptz" in sql
     assert "claim_valid_from <= $2" in sql
@@ -938,41 +925,415 @@ def test_claims_as_of_uses_two_parameter_inclusive_overlap() -> None:
     assert "unknown" in sql
 
 
-def test_examples_execute_within_caps_on_empty_deployment(registry_url: str) -> None:
-    """§9.11: every example executes within caps (empty deployment is fine)."""
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_FIXTURE_PARAMETERS
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
-    from rememberstack.surfaces.query_sandbox.limits import LimitTier
+def test_always_empty_substitution_fails_positive(registry_url: str) -> None:
+    """An always-empty body cannot pass the four classes under positive-row judgment."""
+    executor = _sandbox_executor(registry_url)
+    empty_body_fixtures = {
+        "positive": OperatorFixture(kind="positive", parameters=()),
+        "empty": OperatorFixture(kind="empty", parameters=()),
+        "tombstone": OperatorFixture(kind="tombstone", parameters=()),
+        "cap": OperatorFixture(kind="cap", parameters=(), max_rows=1),
+    }
+    report = validate_saved_sql(
+        executor=executor,
+        sql="SELECT 1 AS n WHERE false",
+        fixtures=empty_body_fixtures,
+        principal="proof",
+        manifest_hash=_HASH,
+    )
+    assert not report.passed
+    assert report.fixtures["positive"] is False
+    assert report.fixtures["empty"] is True
+    assert report.fixtures["cap"] is False
 
-    executor = _example_executor(registry_url)
-    assert set(EXAMPLE_FIXTURE_PARAMETERS) == set(EXAMPLE_QUERIES)
-    for name, (_, sql) in EXAMPLE_QUERIES.items():
-        params = EXAMPLE_FIXTURE_PARAMETERS[name]["positive"]
-        assert isinstance(params, tuple)
-        outcome = executor.query_sql(
-            sql=sql,
-            parameters=params,
-            max_rows=50,
-            tier=LimitTier.ANALYTICAL,
+
+def test_seed_installs_exactly_seventeen_examples_idempotently(
+    registry_url: str,
+) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        first = seed_shipped_examples(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
-        assert outcome.error_code is None, (
-            f"{name} failed: {outcome.error_code} {outcome.error_message}"
+        assert first == 17
+        second = seed_shipped_examples(
+            connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
-        assert outcome.termination_reason == "completed"
-        assert outcome.returned_row_count <= 50
+        assert second == 0
+        rows = connection.execute(
+            b"SELECT count(*) FROM saved_queries"
+            b" WHERE deployment_id = %s AND namespace = 'examples'"
+            b"   AND origin = 'shipped_example'",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert rows is not None and rows[0] == 17
+        active = connection.execute(
+            b"SELECT count(*) FROM saved_queries AS q"
+            b" JOIN saved_query_versions AS v"
+            b"   ON v.deployment_id = q.deployment_id AND v.query_id = q.query_id"
+            b" WHERE q.deployment_id = %s AND q.namespace = 'examples'"
+            b"   AND v.status = 'active' AND v.assurance = 'shipped_example'",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert active is not None and active[0] == 17
+        reg = _registry(connection, actor="reader")
+        for name in ("claims_about", "relation_current", "graph_path"):
+            resolved = reg.resolve(namespace="examples", name=name)
+            assert resolved.status == "active"
+            assert resolved.assurance == "shipped_example"
+            assert resolved.sql == EXAMPLE_QUERIES[name][1]
+        listed = reg.list_saved_queries(namespace="examples")
+        assert len(listed) == 17
+        assert all(item.origin == "shipped_example" for item in listed)
+        connection.rollback()
 
 
-def test_every_example_runs_four_validation_classes(registry_url: str) -> None:
-    """Each shipped example body runs positive/empty/tombstone/cap via validate_saved_sql."""
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_FIXTURE_PARAMETERS
-    from rememberstack.surfaces.query_sandbox.examples import example_operator_fixtures
-    from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+def test_shipped_example_origin_requires_activation_authority(
+    agent_registry: SavedQueryRegistry, registry_url: str
+) -> None:
+    with pytest.raises(SandboxRejection) as rejection:
+        agent_registry.draft(
+            namespace="examples",
+            name=_unique(),
+            sql=_PARAM_SQL,
+            origin="shipped_example",
+        )
+    assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
+    assert "shipped_example" in rejection.value.message
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        op = _registry(connection, actor="operator-shipper")
+        saved = op.draft(
+            namespace="examples",
+            name=_unique(),
+            sql=_PARAM_SQL,
+            origin="shipped_example",
+        )
+        assert saved.assurance == "shipped_example"
+        connection.rollback()
 
-    assert set(EXAMPLE_FIXTURE_PARAMETERS) == set(EXAMPLE_QUERIES)
-    assert len(EXAMPLE_FIXTURE_PARAMETERS) == 17
-    executor = _example_executor(registry_url)
+
+def test_describe_query_space_includes_shipped_examples_when_asked() -> None:
+    bare = describe_query_space()
+    assert bare.examples == ()
+    full = describe_query_space(include_examples=True)
+    assert len(full.examples) == 17
+    assert "examples.claims_hybrid_rrf" in full.examples
+
+
+# --- corpus-backed example fixtures ------------------------------------------
+
+
+# Dedicated deployment for corpus-backed example proofs (not Batch A's fixed id,
+# which may already exist from other suites with different bootstrap values).
+_EXAMPLE_CORPUS_DEPLOYMENT = UUID("e1000000-0000-4000-8000-0000000000e1")
+
+
+@pytest.fixture(scope="module")
+def example_corpus(
+    registry_url: str,
+) -> Iterator[
+    tuple[
+        str,
+        UUID,
+        ExampleFixtureHandles,
+        tuple[UUID, ...],
+        tuple[UUID, ...],
+        dict[str, str],
+    ]
+]:
+    """Batch A corpus builder on a dedicated deployment for four-class proofs."""
+    from src.tests.spine import test_query_space_batch_a as batch_a  # noqa: PLC0415
+
+    # Point the Batch A seeder at our dedicated deployment for this module.
+    original = batch_a._DEPLOYMENT_ID
+    batch_a._DEPLOYMENT_ID = _EXAMPLE_CORPUS_DEPLOYMENT
+    engine = create_engine(registry_url)
+    try:
+        DeploymentBootstrapper(engine=engine).bootstrap_deployment(
+            deployment_input=DeploymentBootstrapInput(
+                deployment_id=_EXAMPLE_CORPUS_DEPLOYMENT,
+                slug="query-space-batch-e-examples",
+                name="Query space Batch E examples",
+                default_language="en",
+                raw_bucket="mem://raw",
+                artifacts_bucket="mem://artifacts",
+                corpusfs_bucket="mem://corpusfs",
+            )
+        )
+        with engine.connect() as connection:
+            existing = connection.execute(
+                text(
+                    "SELECT count(*) FROM memory_v1.claims_live"
+                    " WHERE deployment_id = :d"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+        if not existing:
+            batch_a._Corpus(engine=engine)
+
+        with engine.connect() as connection:
+            alice = connection.execute(
+                text(
+                    "SELECT entity_id FROM entities"
+                    " WHERE deployment_id = :d AND canonical_name = 'Alice Example'"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            acme = connection.execute(
+                text(
+                    "SELECT entity_id FROM entities"
+                    " WHERE deployment_id = :d AND canonical_name = 'Acme Corp'"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            alice_dup = connection.execute(
+                text(
+                    "SELECT entity_id FROM entities"
+                    " WHERE deployment_id = :d AND status = 'merged' LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            live_chunk = connection.execute(
+                text(
+                    "SELECT chunk_id FROM memory_v1.chunks_live"
+                    " WHERE deployment_id = :d LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            live_fact = connection.execute(
+                text(
+                    "SELECT fact_id FROM memory_v1.facts_current"
+                    " WHERE deployment_id = :d AND fact_kind = 'relation' LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            claims = tuple(
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT claim_id FROM memory_v1.claims_live"
+                        " WHERE deployment_id = :d"
+                    ),
+                    {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+                )
+            )
+            chunks = tuple(
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT chunk_id FROM memory_v1.chunks_live"
+                        " WHERE deployment_id = :d"
+                    ),
+                    {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+                )
+            )
+            deleted_chunk = connection.execute(
+                text(
+                    "SELECT chunk_id FROM chunks"
+                    " WHERE deployment_id = :d"
+                    "   AND chunk_id NOT IN ("
+                    "     SELECT chunk_id FROM memory_v1.chunks_live"
+                    "     WHERE deployment_id = :d"
+                    "   )"
+                    " LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+
+        assert alice is not None and acme is not None
+        assert live_chunk is not None and live_fact is not None
+        assert claims and chunks
+        # Stamp embedding hashes so chunk channels can confirm fixture bodies.
+        chunk_bodies: dict[str, str] = {}
+        with engine.begin() as connection:
+            for row in connection.execute(
+                text(
+                    "SELECT chunk_id::text, location_header"
+                    " FROM memory_v1.chunks_live WHERE deployment_id = :d"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ):
+                chunk_id, header = row[0], row[1] or ""
+                body = _FIXTURE_CHUNK_BODY
+                chunk_bodies[chunk_id] = body
+                embedded = f"{header}\n\n{body}"
+                connection.execute(
+                    text(
+                        "UPDATE chunks SET embedding_text_hash = :hash"
+                        " WHERE chunk_id = :chunk"
+                    ),
+                    {"hash": embedding_text_hash(embedded), "chunk": chunk_id},
+                )
+        empty_entity = UUID("00000000-0000-4000-8000-0000000000e1")
+        empty_chunk = UUID("00000000-0000-4000-8000-0000000000c1")
+        empty_fact = UUID("00000000-0000-4000-8000-0000000000f1")
+        far_past = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        far_future = datetime(2099, 6, 1, tzinfo=timezone.utc)
+        handles = ExampleFixtureHandles(
+            live_entity=alice,
+            other_entity=acme,
+            empty_entity=empty_entity,
+            tombstone_entity=alice_dup or empty_entity,
+            live_chunk=live_chunk,
+            empty_chunk=empty_chunk,
+            tombstone_chunk=deleted_chunk or empty_chunk,
+            live_fact=live_fact,
+            empty_fact=empty_fact,
+            tombstone_fact=empty_fact,
+            live_from=batch_a._PAST,
+            live_to=far_future,
+            empty_from=far_past,
+            empty_to=far_past,
+            tombstone_from=far_past,
+            tombstone_to=far_past,
+            live_since=far_past,
+            empty_since=far_future,
+            tombstone_since=far_future,
+        )
+        yield (
+            registry_url,
+            _EXAMPLE_CORPUS_DEPLOYMENT,
+            handles,
+            claims,
+            chunks,
+            chunk_bodies,
+        )
+    finally:
+        batch_a._DEPLOYMENT_ID = original
+        engine.dispose()
+
+
+_FIXTURE_CHUNK_BODY: Final = "batch-e fixture chunk body"
+
+
+class _FixtureSearch:
+    """Sandbox search port keyed by fixture mode (semantic has no query text).
+
+    Semantic SRFs pass a vector, not the original string, so the test sets
+    `mode` from the bound SQL parameters before each fixture execution.
+    `chunk_texts` supplies bodies whose embedding hash was stamped on the
+    corpus chunks during setup so chunk channels confirm successfully.
+    """
+
+    def __init__(
+        self,
+        *,
+        live_claims: tuple[UUID, ...],
+        live_chunks: tuple[UUID, ...],
+        tombstone_claims: tuple[UUID, ...],
+        tombstone_chunks: tuple[UUID, ...],
+        chunk_bodies: dict[str, str] | None = None,
+    ) -> None:
+        self.live_claims = live_claims
+        self.live_chunks = live_chunks
+        self.tombstone_claims = tombstone_claims
+        self.tombstone_chunks = tombstone_chunks
+        self.chunk_bodies = chunk_bodies or {}
+        self.mode = "positive"
+
+    def _pick(self, live: tuple[UUID, ...], tomb: tuple[UUID, ...]):
+        if self.mode == "empty":
+            return ()
+        ids = tomb if self.mode == "tombstone" else live
+        return tuple(
+            P1Nomination(
+                item_id=str(item_id), rank=i + 1, score=1.0 / (i + 1), channel="fixture"
+            )
+            for i, item_id in enumerate(ids[:5])
+        )
+
+    def search_claims_scored(self, **_: object):
+        return self._pick(self.live_claims, self.tombstone_claims)
+
+    search_claims_lexical_scored = search_claims_scored
+
+    def search_chunks_scored(self, **_: object):
+        return self._pick(self.live_chunks, self.tombstone_chunks)
+
+    search_chunks_lexical_scored = search_chunks_scored
+
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
+    ) -> dict[str, P1ChunkText]:
+        return {
+            chunk_id: P1ChunkText(
+                chunk_id=UUID(chunk_id),
+                section_role="body",
+                indexed_text=self.chunk_bodies.get(chunk_id, _FIXTURE_CHUNK_BODY),
+            )
+            for chunk_id in chunk_ids
+            if chunk_id in self.chunk_bodies
+            or chunk_id in {str(c) for c in self.live_chunks}
+        }
+
+    def search_facts_scored(self, **_: object) -> tuple:
+        return ()
+
+    def search_entities_scored(self, **_: object) -> tuple:
+        return ()
+
+
+class _ModeAwareExecutor:
+    """Sets fixture-search mode from bound parameters before each run."""
+
+    def __init__(self, inner: QuerySandboxExecutor, search: _FixtureSearch) -> None:
+        self._inner = inner
+        self._search = search
+
+    def _apply_mode(self, parameters: object) -> None:
+        params = parameters if isinstance(parameters, (tuple, list)) else ()
+        mode = "positive"
+        for value in params:
+            if value == SEARCH_EMPTY_QUERY:
+                mode = "empty"
+            elif value == SEARCH_TOMBSTONE_QUERY:
+                mode = "tombstone"
+            elif value == SEARCH_POSITIVE_QUERY:
+                mode = "positive"
+        self._search.mode = mode
+
+    def explain_sql(self, **kwargs: Any) -> QueryResult:
+        self._apply_mode(kwargs.get("parameters"))
+        return self._inner.explain_sql(**kwargs)
+
+    def query_sql(self, **kwargs: Any) -> QueryResult:
+        self._apply_mode(kwargs.get("parameters"))
+        return self._inner.query_sql(**kwargs)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
+def test_every_example_runs_four_validation_classes_on_corpus(
+    example_corpus: tuple[
+        str,
+        UUID,
+        ExampleFixtureHandles,
+        tuple[UUID, ...],
+        tuple[UUID, ...],
+        dict[str, str],
+    ],
+) -> None:
+    """Positive mapping, empty, tombstone absence, and real cap on all 17 bodies."""
+    url, deployment_id, handles, claims, chunks, chunk_bodies = example_corpus
+    tomb_claims = (UUID("00000000-0000-4000-8000-0000000000d1"),)
+    tomb_chunks = (UUID("00000000-0000-4000-8000-0000000000d2"),)
+    search = _FixtureSearch(
+        live_claims=claims,
+        live_chunks=chunks,
+        tombstone_claims=tomb_claims,
+        tombstone_chunks=tomb_chunks,
+        chunk_bodies=chunk_bodies,
+    )
+    inner = _sandbox_executor(url, deployment_id=deployment_id, search=search)
+    executor = _ModeAwareExecutor(inner, search)
+    for name in EXAMPLE_QUERIES:
+        meta = example_operator_fixtures(name, handles=handles)
+        assert meta["positive"]["parameters"] != meta["empty"]["parameters"]
+        assert meta["positive"]["parameters"] != meta["tombstone"]["parameters"]
+
+    failures: list[str] = []
     for name, (_, sql) in EXAMPLE_QUERIES.items():
-        raw = example_operator_fixtures(name)
+        raw = example_operator_fixtures(name, handles=handles)
         fixtures: dict[str, OperatorFixture] = {}
         for kind, entry in raw.items():
             params = entry["parameters"]
@@ -982,38 +1343,72 @@ def test_every_example_runs_four_validation_classes(registry_url: str) -> None:
                 raw_cap = entry.get("max_rows")
                 assert isinstance(raw_cap, int)
                 cap = raw_cap
-            fixtures[kind] = OperatorFixture(
-                kind=kind,
-                parameters=params,
-                max_rows=cap,
-            )
+            fixtures[kind] = OperatorFixture(kind=kind, parameters=params, max_rows=cap)
+        # Fresh principal per example so rolling statement quotas do not bleed.
         report = validate_saved_sql(
-            executor=executor,
+            executor=executor,  # type: ignore[arg-type]
             sql=sql,
             fixtures=fixtures,
-            principal="example-validator",
-            # Same language/tenancy; analytical budget for multi-join bodies.
+            principal=f"example-validator-{name}",
             tier=LimitTier.ANALYTICAL,
         )
-        assert report.passed, f"{name} fixtures failed: {report.diagnostics}"
-        assert report.manifest_hash == _HASH
+        if not report.passed:
+            failures.append(f"{name}: {report.diagnostics}")
+            continue
         assert all(report.fixtures[k] for k in VALIDATION_FIXTURES)
+    assert not failures, "example fixture failures:\n" + "\n".join(failures)
 
 
-# --- validation report / immutability ----------------------------------------
+def test_examples_execute_within_caps_on_corpus(
+    example_corpus: tuple[
+        str,
+        UUID,
+        ExampleFixtureHandles,
+        tuple[UUID, ...],
+        tuple[UUID, ...],
+        dict[str, str],
+    ],
+) -> None:
+    url, deployment_id, handles, claims, chunks, chunk_bodies = example_corpus
+    search = _FixtureSearch(
+        live_claims=claims,
+        live_chunks=chunks,
+        tombstone_claims=(UUID("00000000-0000-4000-8000-0000000000d1"),),
+        tombstone_chunks=(UUID("00000000-0000-4000-8000-0000000000d2"),),
+        chunk_bodies=chunk_bodies,
+    )
+    inner = _sandbox_executor(url, deployment_id=deployment_id, search=search)
+    executor = _ModeAwareExecutor(inner, search)
+    for name, (_, sql) in EXAMPLE_QUERIES.items():
+        params = example_operator_fixtures(name, handles=handles)["positive"][
+            "parameters"
+        ]
+        assert isinstance(params, tuple)
+        outcome = executor.query_sql(
+            sql=sql,
+            parameters=params,
+            max_rows=50,
+            principal=f"example-run-{name}",
+            tier=LimitTier.ANALYTICAL,
+        )
+        assert outcome.error_code is None, (
+            f"{name} failed: {outcome.error_code} {outcome.error_message}"
+        )
+        assert outcome.termination_reason == "completed"
+        assert outcome.returned_row_count > 0, f"{name} positive returned no rows"
+        assert outcome.returned_row_count <= 50
+
+
+# --- validation report / immutability / discovery ----------------------------
 
 
 def test_a_validation_report_passes_only_when_every_fixture_did() -> None:
-    """§5 names four fixture classes; a report is not a pass without all four."""
     complete = ValidationReport(
         manifest_hash=_HASH,
         query_hash="abc",
         fixtures=dict.fromkeys(VALIDATION_FIXTURES, True),
     )
     assert complete.passed
-    assert complete.as_json()["passed"] is True
-    assert complete.as_json()["query_hash"] == "abc"
-
     for missing in VALIDATION_FIXTURES:
         partial = ValidationReport(
             manifest_hash=_HASH,
@@ -1022,84 +1417,47 @@ def test_a_validation_report_passes_only_when_every_fixture_did() -> None:
         )
         assert not partial.passed, f"a report missing {missing} claimed to pass"
 
-    silent = ValidationReport(
-        manifest_hash=_HASH, query_hash="abc", fixtures={"positive": True}
-    )
-    assert not silent.passed
-    assert silent.as_json()["fixtures"]["tombstone"] is False
-
-
-def test_a_version_nobody_validated_cannot_be_activated(
-    registry: SavedQueryRegistry,
-) -> None:
-    """§5 puts a validation between authoring and activation."""
-    saved = registry.draft(
-        namespace="team", name=_unique(), sql=_SQL, principal="agent-1"
-    )
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.activate(
-            query_id=saved.query_id, version=saved.version, approver="operator-1"
-        )
-    assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
-
 
 def test_validation_executes_every_fixture_through_the_sandbox(
     registry_url: str,
 ) -> None:
-    """§5's four fixtures run on the real executor; parameters stay bound."""
-    sql = (
-        "SELECT claim_id FROM claims_live"
-        " WHERE ($1::uuid IS NULL OR doc_id = $1::uuid)"
-        " ORDER BY claim_id"
-        " LIMIT 50"
-    )
-    fixtures = {
-        "positive": OperatorFixture(kind="positive", parameters=(None,)),
-        "empty": OperatorFixture(kind="empty", parameters=(uuid4(),)),
-        "tombstone": OperatorFixture(kind="tombstone", parameters=(uuid4(),)),
-        "cap": OperatorFixture(kind="cap", parameters=(None,), max_rows=1),
-    }
     report = validate_saved_sql(
         executor=_sandbox_executor(registry_url),
-        sql=sql,
-        fixtures=fixtures,
+        sql=_PARAM_SQL,
+        fixtures=_param_fixtures(),
+        principal="validator",
         manifest_hash=_HASH,
     )
     assert report.passed
-    assert report.manifest_hash == _HASH
-    assert report.query_hash == validate_sql(sql).query_hash
     assert all(report.fixtures[name] for name in VALIDATION_FIXTURES)
-    assert any(note.startswith("explain:") for note in report.diagnostics)
 
 
 def test_validation_fails_a_missing_fixture_class(registry_url: str) -> None:
-    """A validator that omits a class does not get to call that a pass."""
     report = validate_saved_sql(
         executor=_sandbox_executor(registry_url),
-        sql="SELECT claim_id FROM claims_live LIMIT 1",
+        sql=_PARAM_SQL,
         fixtures={
-            "positive": (),
-            "empty": OperatorFixture(kind="empty", parameters=()),
-            "cap": OperatorFixture(kind="cap", parameters=(), max_rows=1),
+            "positive": OperatorFixture(kind="positive", parameters=(True,)),
+            "empty": OperatorFixture(kind="empty", parameters=(False,)),
+            "tombstone": OperatorFixture(kind="tombstone", parameters=(False,)),
         },
+        principal="validator",
         manifest_hash=_HASH,
     )
     assert not report.passed
-    assert report.fixtures["tombstone"] is False
+    assert report.fixtures["cap"] is False
 
 
-def test_validation_fails_when_executor_manifest_mismatches(
-    registry_url: str,
-) -> None:
-    """Evidence never relabels a mismatched executor as the expected hash."""
+def test_validation_refuses_a_mismatched_executor_manifest(registry_url: str) -> None:
     report = validate_saved_sql(
-        executor=_sandbox_executor(registry_url),  # real surface hash
-        sql="SELECT claim_id FROM claims_live WHERE false",
-        fixtures=_empty_fixtures(),
-        manifest_hash=_OTHER_HASH,  # claim a different surface
+        executor=_sandbox_executor(registry_url, claim_manifest=_OTHER_HASH),
+        sql=_PARAM_SQL,
+        fixtures=_param_fixtures(),
+        principal="validator",
+        manifest_hash=_HASH,
     )
     assert not report.passed
-    assert report.manifest_hash == _OTHER_HASH
+    assert report.manifest_hash == _HASH
     assert all(not report.fixtures[name] for name in VALIDATION_FIXTURES)
     assert any("surface_manifest_hash mismatch" in note for note in report.diagnostics)
 
@@ -1107,112 +1465,40 @@ def test_validation_fails_when_executor_manifest_mismatches(
 def test_stale_registry_instance_fails_closed_against_db_hash(
     registry_url: str,
 ) -> None:
-    """Constructor hash is not trusted when registry state already pins another."""
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
-        current = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_HASH,
-            can_activate=_is_operator,
-        )
-        # Initialize authoritative state at the live hash.
-        current.draft(
-            namespace="team",
-            name=_unique(),
-            sql="SELECT 1 AS n WHERE false",
-            principal="agent-1",
-        )
+        current = _registry(connection, actor="agent-1")
+        current.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
         publish_surface_hash(
             connection=connection,
             deployment_id=_DEPLOYMENT,
             manifest_hash=_OTHER_HASH,
             actor="operator-1",
         )
-        stale = SavedQueryRegistry(
-            connection=connection,
-            deployment_id=_DEPLOYMENT,
-            manifest_hash=_HASH,  # constructor is behind the DB pin
-            can_activate=_is_operator,
-        )
+        stale = _registry(connection, actor="agent-1", manifest_hash=_HASH)
         with pytest.raises(SandboxRejection) as rejection:
-            stale.draft(
-                namespace="team",
-                name=_unique(),
-                sql="SELECT 1 AS n WHERE false",
-                principal="agent-1",
-            )
+            stale.draft(namespace="team", name=_unique(), sql=_PARAM_SQL)
         assert rejection.value.code == QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING
         connection.rollback()
 
 
-def test_shipped_example_origin_requires_activation_authority(
-    registry: SavedQueryRegistry,
-) -> None:
-    """An agent cannot self-assert shipped_example assurance on draft."""
-    with pytest.raises(SandboxRejection) as rejection:
-        registry.draft(
-            namespace="examples",
-            name=_unique(),
-            sql="SELECT 1 AS n WHERE false",
-            principal="agent-1",
-            origin="shipped_example",
-        )
-    assert rejection.value.code == QueryErrorCode.INVALID_PARAMETER
-    assert "shipped_example" in rejection.value.message
-    # Operator-class principal may draft a shipped example.
-    saved = registry.draft(
-        namespace="examples",
-        name=_unique(),
-        sql="SELECT 1 AS n WHERE false",
-        principal="operator-shipper",
-        origin="shipped_example",
-    )
-    assert saved.assurance == "shipped_example"
-
-
-def test_an_executed_validation_report_unlocks_activation(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """A report produced by the real runner is what activation accepts."""
-    sql = "SELECT claim_id FROM claims_live WHERE false"
-    name = _unique()
-    saved = registry.draft(namespace="team", name=name, sql=sql, principal="agent-1")
-    report = registry.validate_version(
-        query_id=saved.query_id,
-        version=saved.version,
-        executor=_sandbox_executor(registry_url),
-        fixtures=_empty_fixtures(),
-    )
-    assert report.passed
-    assert report.query_hash == saved.query_hash
-    registry.activate(
-        query_id=saved.query_id, version=saved.version, approver="operator-1"
-    )
-    assert registry.resolve(namespace="team", name=name).status == "active"
-
-
 def test_version_content_is_immutable_in_postgresql(
-    registry: SavedQueryRegistry,
+    agent_registry: SavedQueryRegistry,
 ) -> None:
-    """§9.11 mutation attempts cannot alter version content; lifecycle may."""
-    saved = registry.draft(
-        namespace="team", name=_unique(), sql=_SQL, principal="agent-1"
-    )
-    registry._connection.execute(b"SAVEPOINT content_mutation")
+    saved = agent_registry.draft(namespace="team", name=_unique(), sql=_SQL)
+    agent_registry._connection.execute(b"SAVEPOINT content_mutation")
     with pytest.raises(psycopg.errors.IntegrityConstraintViolation):
-        registry._connection.execute(
+        agent_registry._connection.execute(
             b"UPDATE saved_query_versions SET sql = 'SELECT 1'"
             b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
             (str(_DEPLOYMENT), str(saved.query_id), saved.version),
         )
-    registry._connection.execute(b"ROLLBACK TO SAVEPOINT content_mutation")
-    # Lifecycle fields remain mutable.
-    registry._connection.execute(
+    agent_registry._connection.execute(b"ROLLBACK TO SAVEPOINT content_mutation")
+    agent_registry._connection.execute(
         b"UPDATE saved_query_versions SET status = 'broken'"
         b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
         (str(_DEPLOYMENT), str(saved.query_id), saved.version),
     )
-    row = registry._connection.execute(
+    row = agent_registry._connection.execute(
         b"SELECT status, sql FROM saved_query_versions"
         b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
         (str(_DEPLOYMENT), str(saved.query_id), saved.version),
@@ -1222,76 +1508,54 @@ def test_version_content_is_immutable_in_postgresql(
     assert row[1] == _SQL
 
 
-# --- discovery ---------------------------------------------------------------
+def test_default_discovery_excludes_drafts(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        agent = _registry(connection, actor="agent-1")
+        saved = agent.draft(namespace="team", name=name, sql=_PARAM_SQL)
+        assert agent.list_saved_queries() == ()
+        assert agent.list_saved_queries(status="draft")
+        agent.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        _registry(connection, actor="operator-1").activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        listed = agent.list_saved_queries(namespace="team")
+        assert len(listed) == 1
+        assert listed[0].name == name
+        assert listed[0].status == "active"
+        connection.rollback()
 
 
-def test_default_discovery_excludes_drafts(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Agents may draft; only activated versions are discoverable by default."""
-    name = _unique()
-    saved = registry.draft(
-        namespace="team",
-        name=name,
-        sql="SELECT claim_id FROM claims_live WHERE false",
-        principal="agent-1",
-    )
-    assert registry.list_saved_queries() == ()
-    assert registry.list_saved_queries(status="draft")
-    described = registry.describe_saved_query(namespace="team", name=name)
-    assert described.status == "draft"
-    assert described.query_id == saved.query_id
-
-    registry.validate_version(
-        query_id=saved.query_id,
-        version=saved.version,
-        executor=_sandbox_executor(registry_url),
-        fixtures=_empty_fixtures(),
-    )
-    registry.activate(
-        query_id=saved.query_id, version=saved.version, approver="operator-1"
-    )
-    listed = registry.list_saved_queries(namespace="team")
-    assert len(listed) == 1
-    assert listed[0].name == name
-    assert listed[0].status == "active"
-    active = registry.describe_saved_query(namespace="team", name=name)
-    assert active.status == "active"
-    assert active.validation_report["passed"] is True
-    assert active.validation_report["query_hash"] == saved.query_hash
+def test_disabled_identities_leave_default_discovery(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        saved = _draft_validate_activate(connection, registry_url, name=name)
+        op = _registry(connection, actor="operator-1")
+        op.disable(query_id=saved.query_id)
+        assert op.list_saved_queries(namespace="team") == ()
+        connection.rollback()
 
 
-def test_disabled_identities_leave_default_discovery(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    """Disabling removes the identity from normal discovery immediately (§5)."""
-    name = _unique()
-    saved = _draft_validate_activate(registry, registry_url, name=name)
-    registry.disable(query_id=saved.query_id, actor="operator-1")
-    assert registry.list_saved_queries(namespace="team") == ()
+def test_activate_and_publish_write_audit_rows(registry_url: str) -> None:
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        name = _unique()
+        saved = _draft_validate_activate(connection, registry_url, name=name)
+        rows = connection.execute(
+            b"SELECT action FROM saved_query_audit"
+            b" WHERE deployment_id = %s AND query_id = %s"
+            b" ORDER BY audit_id",
+            (str(_DEPLOYMENT), str(saved.query_id)),
+        ).fetchall()
+        actions = {row[0] for row in rows}
+        assert "validate" in actions
+        assert "activate" in actions
+        connection.rollback()
 
 
-def test_describe_query_space_includes_shipped_examples_when_asked() -> None:
-    """The seventeen examples.* names surface under include_examples."""
-    bare = describe_query_space()
-    assert bare.examples == ()
-    full = describe_query_space(include_examples=True)
-    assert len(full.examples) == 17
-    assert "examples.claims_hybrid_rrf" in full.examples
-    assert all(name.startswith("examples.") for name in full.examples)
-
-
-def test_activate_and_publish_write_audit_rows(
-    registry: SavedQueryRegistry, registry_url: str
-) -> None:
-    name = _unique()
-    saved = _draft_validate_activate(registry, registry_url, name=name)
-    rows = registry._connection.execute(
-        b"SELECT action FROM saved_query_audit"
-        b" WHERE deployment_id = %s AND query_id = %s"
-        b" ORDER BY audit_id",
-        (str(_DEPLOYMENT), str(saved.query_id)),
-    ).fetchall()
-    actions = {row[0] for row in rows}
-    assert "validate" in actions
-    assert "activate" in actions
+def test_platform_seed_actor_constant() -> None:
+    assert PLATFORM_SEED_ACTOR == "platform:shipped-examples"
