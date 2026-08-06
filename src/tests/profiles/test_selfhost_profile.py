@@ -179,10 +179,7 @@ def test_model_bindings_report_embedding_provider_without_secrets(
 
 @pytest.mark.parametrize(
     ("configured", "reported"),
-    (
-        ("nebius,deepinfra,siliconflow", "nebius,deepinfra,siliconflow"),
-        ("", "unset"),
-    ),
+    (("nebius,deepinfra,siliconflow", "nebius,deepinfra,siliconflow"), ("", "unset")),
 )
 def test_model_bindings_report_embedding_provider_order(
     monkeypatch: pytest.MonkeyPatch, configured: str, reported: str
