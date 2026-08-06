@@ -3061,7 +3061,7 @@ _CURRENT_FACT_EVIDENCE = text(
         FROM unnest(
             CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[])
         ) WITH ORDINALITY AS confirmed(fact_id, kind, nomination_rank)
-    ), links AS (
+    ), links AS MATERIALIZED (
         SELECT requested.fact_id, requested.kind, requested.nomination_rank,
                e.claim_id, e.doc_id, e.stance::text AS stance
         FROM requested
@@ -3069,7 +3069,7 @@ _CURRENT_FACT_EVIDENCE = text(
           ON e.deployment_id = :deployment_id
          AND e.fact_kind = requested.kind
          AND e.fact_id = requested.fact_id
-    ), totals AS (
+    ), totals AS MATERIALIZED (
         SELECT requested.fact_id, requested.kind, lineage.stance,
                count(*)::bigint AS evidence_total
         FROM requested
