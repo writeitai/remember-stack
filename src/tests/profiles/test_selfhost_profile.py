@@ -169,6 +169,30 @@ def test_model_bindings_report_embedding_provider_without_secrets(
 
 
 @pytest.mark.parametrize(
+    ("configured", "reported"),
+    (
+        ("nebius,deepinfra,siliconflow", "nebius,deepinfra,siliconflow"),
+        ("", "unset"),
+    ),
+)
+def test_model_bindings_report_embedding_provider_order(
+    monkeypatch: pytest.MonkeyPatch, configured: str, reported: str
+) -> None:
+    """Readiness fingerprints the ordered shortlist without secrets."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert (
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER:"
+        " ${REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER:-}"
+    ) in compose
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER", configured)
+
+    bindings = _model_bindings()
+
+    assert bindings["openrouter_embedding_provider_order"] == reported
+
+
+@pytest.mark.parametrize(
     ("configured", "reported"), (("64000", "64000"), ("", "32000"))
 )
 def test_compose_and_model_bindings_expose_max_completion_tokens(

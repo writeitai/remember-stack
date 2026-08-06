@@ -51,7 +51,8 @@ Exported in the shell that invokes the CLI (values live in the host's
 
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
-REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER  # prefer nebius,deepinfra,siliconflow (see design/operations/openrouter-embedding-routing.md)
+# REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER     # hard pin only; avoid for long drains
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
 REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # claims_verbatim embeds queries; 30s default times out
 ```
