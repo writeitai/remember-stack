@@ -37,6 +37,12 @@ FACT_LABEL_VERSION: Final = "p1-fact-label-2026.07b:temp0-1"
 """The fact-labeler prompt generation (regenerated only on version bump).
 07b pins temperature=0.0 — generation parameters are part of provenance."""
 
+_DEFAULT_EMBED_BATCH_SIZE: Final = 64
+"""Default texts per embeddings HTTP call (OpenRouter hosts cap input length)."""
+
+_OPENROUTER_EMBED_INPUT_CAP: Final = 1024
+"""Hard upper bound observed on OpenRouter embedding hosts (422 above this)."""
+
 _FACT_LABEL_PROMPT: Final = (
     "Write one short natural sentence stating this fact, nothing else: "
     "{subject} —[{predicate}]→ {object}"
@@ -50,6 +56,10 @@ class P1Settings(BaseSettings):
 
     embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
     label_model: str = Field(default="openai/gpt-5.6-luna")
+    embed_batch_size: int = Field(
+        default=_DEFAULT_EMBED_BATCH_SIZE, ge=1, le=_OPENROUTER_EMBED_INPUT_CAP
+    )
+    """Max texts per embeddings request for claims/facts (provider array cap)."""
 
 
 class EmbedClaimsHandler:
@@ -74,7 +84,7 @@ class EmbedClaimsHandler:
         self._chunker_version = chunker_version
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Embed the version's not-yet-embedded claims as one document batch."""
+        """Embed the version's not-yet-embedded claims in provider-safe batches."""
         source = self._chunk_catalog.chunk_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
@@ -88,32 +98,39 @@ class EmbedClaimsHandler:
         )
         if not claims:
             return HandlerOutcome()  # replay: refs already stamped (D7)
-        response = self._model_provider.embed(
-            request=EmbeddingRequest(
-                model=self._settings.embedding_model,
-                texts=tuple(claim.claim_text for claim in claims),
-            )
-        )
-        meter.record(call_key="embed_claims", tier="embedding", usage=response.usage)
-        self._claim_index.upsert_claims(
-            rows=tuple(
-                P1ClaimRow(
-                    claim_id=claim.claim_id,
-                    deployment_id=work.deployment_id,
-                    doc_id=claim.doc_id,
-                    chunk_id=claim.chunk_id,
-                    text=claim.claim_text,
-                    is_current_testimony=claim.is_current_testimony,
-                    is_attributed=claim.is_attributed,
-                    vector=vector,
+        batch_size = self._settings.embed_batch_size
+        for batch_start in range(0, len(claims), batch_size):
+            batch = claims[batch_start : batch_start + batch_size]
+            response = self._model_provider.embed(
+                request=EmbeddingRequest(
+                    model=self._settings.embedding_model,
+                    texts=tuple(claim.claim_text for claim in batch),
                 )
-                for claim, vector in zip(claims, response.vectors, strict=True)
             )
-        )
-        self._claim_catalog.record_claim_embeddings(
-            claim_ids=tuple(claim.claim_id for claim in claims),
-            embedding_version=self._settings.embedding_model,
-        )
+            meter.record(
+                call_key=f"embed_claims:{batch_start}",
+                tier="embedding",
+                usage=response.usage,
+            )
+            self._claim_index.upsert_claims(
+                rows=tuple(
+                    P1ClaimRow(
+                        claim_id=claim.claim_id,
+                        deployment_id=work.deployment_id,
+                        doc_id=claim.doc_id,
+                        chunk_id=claim.chunk_id,
+                        text=claim.claim_text,
+                        is_current_testimony=claim.is_current_testimony,
+                        is_attributed=claim.is_attributed,
+                        vector=vector,
+                    )
+                    for claim, vector in zip(batch, response.vectors, strict=True)
+                )
+            )
+            self._claim_catalog.record_claim_embeddings(
+                claim_ids=tuple(claim.claim_id for claim in batch),
+                embedding_version=self._settings.embedding_model,
+            )
         return HandlerOutcome()
 
 
@@ -199,30 +216,36 @@ class LabelFactsHandler:
             )
             if not rows:
                 return HandlerOutcome()
-            response = self._model_provider.embed(
-                request=EmbeddingRequest(
-                    model=self._settings.embedding_model,
-                    texts=tuple(row.label for row in rows),
+            batch_size = self._settings.embed_batch_size
+            for batch_start in range(0, len(rows), batch_size):
+                batch = rows[batch_start : batch_start + batch_size]
+                response = self._model_provider.embed(
+                    request=EmbeddingRequest(
+                        model=self._settings.embedding_model,
+                        texts=tuple(row.label for row in batch),
+                    )
                 )
-            )
-            meter.record(call_key="embed_facts", tier="embedding", usage=response.usage)
-            self._fact_index.upsert_facts(
-                rows=tuple(
+                meter.record(
+                    call_key=f"embed_facts:{batch_start}",
+                    tier="embedding",
+                    usage=response.usage,
+                )
+                embedded = tuple(
                     row.model_copy(update={"vector": vector})
-                    for row, vector in zip(rows, response.vectors, strict=True)
+                    for row, vector in zip(batch, response.vectors, strict=True)
                 )
-            )
-            for row in rows:  # stamps only after the index write landed
-                if row.kind == "relation":
-                    self._facts.record_fact_label(
-                        relation_id=row.fact_id,
-                        label=row.label,
-                        label_version=generation,
-                    )
-                else:
-                    self._facts.record_observation_embedding(
-                        observation_id=row.fact_id, label_version=generation
-                    )
+                self._fact_index.upsert_facts(rows=embedded)
+                for row in embedded:  # stamps only after the index write landed
+                    if row.kind == "relation":
+                        self._facts.record_fact_label(
+                            relation_id=row.fact_id,
+                            label=row.label,
+                            label_version=generation,
+                        )
+                    else:
+                        self._facts.record_observation_embedding(
+                            observation_id=row.fact_id, label_version=generation
+                        )
         return HandlerOutcome()
 
 
