@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 import json
 from pathlib import Path
 import sys
@@ -30,12 +31,16 @@ from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
+from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
+from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
 from rememberstack.spine import seed_canonical_recipes
 from rememberstack.spine import seed_graph_recipes
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -238,6 +243,31 @@ def _query_role_connect_factory(*, engine: Engine):
     return connect
 
 
+def selfhost_embed_query(
+    *,
+    model_provider: ModelProviderPort,
+    embedding_model: str,
+    query: str,
+    embedder_generation: str | None = None,
+) -> tuple[float, ...]:
+    """Embed one query text with the same model the E1 path stamps.
+
+    The configured E1 embedding model is the only generation this host can
+    produce. A supplied generation that differs fails closed with
+    ``generation_unavailable`` (D80); unpinned or current-model calls keep
+    normal embed behavior.
+    """
+    if embedder_generation is not None and embedder_generation != embedding_model:
+        raise SandboxRejection(
+            code=QueryErrorCode.GENERATION_UNAVAILABLE,
+            message="requested embedder_generation is not available on this host",
+        )
+    response = model_provider.embed(
+        request=EmbeddingRequest(model=embedding_model, texts=(query,))
+    )
+    return tuple(response.vectors[0])
+
+
 def _provision_query_role_password(
     *, connection: psycopg.Connection, engine: Engine
 ) -> None:
@@ -383,7 +413,6 @@ class SelfHostProfile:
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
         from rememberstack.adapters.selfhost.lance import LanceChunkIndex
-        from rememberstack.model import EmbeddingRequest
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
@@ -395,6 +424,8 @@ class SelfHostProfile:
         from rememberstack.surfaces import QueryEngine
         from rememberstack.surfaces import RecipeExecutor
         from rememberstack.surfaces import RecipeSurface
+        from rememberstack.surfaces.query_sandbox.audit import AuditTrail
+        from rememberstack.surfaces.query_sandbox.audit import KillSwitches
         from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
         from rememberstack.surfaces.query_sandbox.cypher_executor import (
             CypherSandboxExecutor,
@@ -421,17 +452,16 @@ class SelfHostProfile:
         embedding_model = e1_settings.embedding_model
         # Shared enabled recorder for the §8 dual-surface measurement window.
         migration_usage = MigrationUsageCounters()
+        # One admission + audit authority for SQL and Cypher so concurrency and
+        # rolling spend are combined and §7 events actually emit.
+        kill_switches = KillSwitches()
+        audit_trail = AuditTrail()
         query_role_connect = _query_role_connect_factory(engine=self._engine)
-
-        def embed_query(
-            *, query: str, embedder_generation: str | None = None
-        ) -> tuple[float, ...]:
-            """Embed one query text with the same model the E1 path stamps."""
-            del embedder_generation  # generation is fixed by E1 settings above
-            response = self._model_provider.embed(
-                request=EmbeddingRequest(model=embedding_model, texts=(query,))
-            )
-            return tuple(response.vectors[0])
+        embed_query = partial(
+            selfhost_embed_query,
+            model_provider=self._model_provider,
+            embedding_model=embedding_model,
+        )
 
         query_engine = QueryEngine(
             engine=self._engine,
@@ -444,11 +474,15 @@ class SelfHostProfile:
             connect=query_role_connect,
             search=search_index,
             embed=embed_query,
+            kill_switches=kill_switches,
+            audit=audit_trail,
         )
         cypher_executor = CypherSandboxExecutor(
             deployment_id=self._settings.deployment_id,
             reader=graph_reader,
             connect=query_role_connect,
+            kill_switches=kill_switches,
+            audit=audit_trail,
         )
         manifest_hash = surface_manifest_hash(build_hash_members())
         open_query = OpenQueryFacade(

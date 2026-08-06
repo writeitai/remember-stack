@@ -144,7 +144,9 @@ def describe_query_space(
         schema=str(views_schema["schema"]),
         schema_major=int(views_schema["schema_major"]),
         surface_manifest_hash=str(manifest["surface_manifest_hash"]),
-        headline=TWO_LAYER_HEADLINE,
+        # First-call discovery returns the full bound headline, including the
+        # design's D41/D54 parenthetical (design opening block, reused verbatim).
+        headline=TWO_LAYER_HEADLINE_FULL,
         retrieval_choices=RETRIEVAL_CHOICES,
         honesty_warnings=HONESTY_WARNINGS,
         worked_examples=bound_worked_examples(),

@@ -160,9 +160,16 @@ def evaluate_noninferiority(*, metrics: Mapping[str, Any]) -> dict[str, object]:
         "d54_violations",
         "cross_deployment_violations",
     ):
-        value = int(open_arm[code])
+        # Zero-violation criterion applies to both arms (§8); a legacy
+        # violation must not pass cutover either.
+        legacy_value = int(legacy[code])
+        open_value = int(open_arm[code])
         gates.append(
-            _gate(name=code, passed=value == 0, detail={"open": value, "required": 0})
+            _gate(
+                name=code,
+                passed=legacy_value == 0 and open_value == 0,
+                detail={"legacy": legacy_value, "open": open_value, "required": 0},
+            )
         )
 
     for metric, label in (

@@ -129,7 +129,7 @@ class PipelineReadinessPort(Protocol):
 
 
 class SqlQueryRequest(BaseModel):
-    """Body for `POST /query/sql` and `POST /query/sql/explain`."""
+    """Body for `POST /query/sql` (execution fields allowed)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -138,8 +138,17 @@ class SqlQueryRequest(BaseModel):
     max_rows: int | None = Field(default=None, ge=0)
 
 
+class SqlExplainRequest(BaseModel):
+    """Body for `POST /query/sql/explain` — sql and parameters only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql: str
+    parameters: list[Any] = Field(default_factory=list)
+
+
 class CypherQueryRequest(BaseModel):
-    """Body for `POST /query/cypher` and `POST /query/cypher/explain`."""
+    """Body for `POST /query/cypher` (execution fields allowed)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -147,6 +156,15 @@ class CypherQueryRequest(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     max_rows: int | None = Field(default=None, ge=0)
     confirm: bool = False
+
+
+class CypherExplainRequest(BaseModel):
+    """Body for `POST /query/cypher/explain` — cypher and parameters only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cypher: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunSavedQueryRequest(BaseModel):
@@ -191,12 +209,13 @@ def build_api(
             " one deployment is one trust domain (D50)"
         )
     readiness.ensure_ready(deployment_id=deployment_id)
+    # One perimeter dependency instance so app-level gating and open-query
+    # principal injection share the same authenticate call per request.
+    perimeter_dep = (
+        _perimeter(auth=auth, deployment_id=deployment_id) if auth is not None else None
+    )
     dependencies = [
-        *(
-            [Depends(_perimeter(auth=auth, deployment_id=deployment_id))]
-            if auth is not None
-            else []
-        ),
+        *([Depends(perimeter_dep)] if perimeter_dep is not None else []),
         Depends(_admission(admission=admission, deployment_id=deployment_id)),
     ]
     app = FastAPI(
@@ -290,7 +309,7 @@ def build_api(
     if surface is not None:
         _mount_recipes(app=app, surface=surface)
     if open_query is not None:
-        _mount_open_query(app=app, open_query=open_query)
+        _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
     if ingest is not None:
         _mount_ingest(app=app, ingest=ingest, deployment_id=deployment_id)
     if connectors is not None:
@@ -303,32 +322,54 @@ def build_api(
     return app
 
 
-def _mount_open_query(*, app: FastAPI, open_query: OpenQueryFacade) -> None:
+def _mount_open_query(
+    *, app: FastAPI, open_query: OpenQueryFacade, perimeter: Any | None = None
+) -> None:
     """Add the nine §3.1 open-query routes when the facade is composed.
 
     Paths are short and consistent under `/query/…`. Legacy `/recipes` and
     `/recipe/{name}` are untouched. Sandbox and registry failures map to typed
     HTTP status + public error code without private engine detail.
+
+    When a perimeter dependency is composed, every execution-bearing route
+    forwards ``AuthenticatedContext.principal`` into the facade. Content-only
+    discovery and metadata routes stay content-free and do not invent
+    principals. Without auth, the facade default principal is unchanged.
     """
+    principal_dep = _open_query_principal_dependency(perimeter=perimeter)
 
     @app.post("/query/sql", response_model=QueryResult)
-    def query_sql(body: SqlQueryRequest) -> QueryResult:
+    def query_sql(
+        body: SqlQueryRequest,
+        principal: Annotated[str | None, Depends(principal_dep)] = None,
+    ) -> QueryResult:
         """One sandboxed SQL statement; QueryResult/v1."""
         return _open_call(
             lambda: open_query.query_sql(
-                sql=body.sql, parameters=body.parameters, max_rows=body.max_rows
+                sql=body.sql,
+                parameters=body.parameters,
+                max_rows=body.max_rows,
+                principal=principal,
             )
         )
 
     @app.post("/query/sql/explain", response_model=QueryResult)
-    def explain_sql(body: SqlQueryRequest) -> QueryResult:
+    def explain_sql(
+        body: SqlExplainRequest,
+        principal: Annotated[str | None, Depends(principal_dep)] = None,
+    ) -> QueryResult:
         """EXPLAIN one SQL statement without executing it."""
         return _open_call(
-            lambda: open_query.explain_sql(sql=body.sql, parameters=body.parameters)
+            lambda: open_query.explain_sql(
+                sql=body.sql, parameters=body.parameters, principal=principal
+            )
         )
 
     @app.post("/query/cypher", response_model=QueryResult)
-    def query_cypher(body: CypherQueryRequest) -> QueryResult:
+    def query_cypher(
+        body: CypherQueryRequest,
+        principal: Annotated[str | None, Depends(principal_dep)] = None,
+    ) -> QueryResult:
         """One read-only Cypher statement over the published snapshot."""
         return _open_call(
             lambda: open_query.query_cypher(
@@ -336,15 +377,19 @@ def _mount_open_query(*, app: FastAPI, open_query: OpenQueryFacade) -> None:
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 confirm=body.confirm,
+                principal=principal,
             )
         )
 
     @app.post("/query/cypher/explain", response_model=QueryResult)
-    def explain_cypher(body: CypherQueryRequest) -> QueryResult:
+    def explain_cypher(
+        body: CypherExplainRequest,
+        principal: Annotated[str | None, Depends(principal_dep)] = None,
+    ) -> QueryResult:
         """Engine plan for one Cypher statement without executing it."""
         return _open_call(
             lambda: open_query.explain_cypher(
-                cypher=body.cypher, parameters=body.parameters
+                cypher=body.cypher, parameters=body.parameters, principal=principal
             )
         )
 
@@ -440,7 +485,10 @@ def _mount_open_query(*, app: FastAPI, open_query: OpenQueryFacade) -> None:
 
     @app.post("/query/saved/{namespace}/{name}/run", response_model=QueryResult)
     def run_saved_query(
-        namespace: str, name: str, body: RunSavedQueryRequest
+        namespace: str,
+        name: str,
+        body: RunSavedQueryRequest,
+        principal: Annotated[str | None, Depends(principal_dep)] = None,
     ) -> QueryResult:
         """Execute one active saved query through the same SQL executor."""
         return _open_call(
@@ -450,8 +498,33 @@ def _mount_open_query(*, app: FastAPI, open_query: OpenQueryFacade) -> None:
                 version=body.version,
                 parameters=body.parameters,
                 max_rows=body.max_rows,
+                principal=principal,
             )
         )
+
+
+def _open_query_principal_dependency(*, perimeter: Any | None) -> Any:
+    """Build the FastAPI dependency that yields the execution principal.
+
+    With a perimeter, reuses the same ``_perimeter`` dependency and returns
+    ``AuthenticatedContext.principal``. Without auth, returns ``None`` so the
+    facade keeps its default principal — no invented identity.
+    """
+    if perimeter is None:
+
+        def anonymous_principal() -> None:
+            """No auth perimeter; leave principal selection to the facade."""
+            return None
+
+        return anonymous_principal
+
+    def authenticated_principal(
+        ctx: Annotated[AuthenticatedContext, Depends(perimeter)],
+    ) -> str:
+        """Forward the perimeter principal into execution-bearing open routes."""
+        return ctx.principal
+
+    return authenticated_principal
 
 
 def _open_call(action):  # noqa: ANN001, ANN202

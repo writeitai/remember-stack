@@ -32,7 +32,7 @@ TWO_LAYER_HEADLINE: Final = (
     " supersession-adjudicated, clocked on two time axes (when a fact held in"
     " the world, and when the system learned it), evidence-counted per"
     " distinct source—repetition is not corroboration—and"
-    " contradiction-tracked. The fact_claim_evidence association is the"
+    " contradiction-tracked. The `fact_claim_evidence` association is the"
     " auditable bridge between the layers, recording which claims support or"
     " contradict each fact. Query claims to inspect testimony; query facts to"
     " answer current-truth questions, then follow the bridge to see why the"

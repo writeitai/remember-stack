@@ -27,7 +27,17 @@ class RecipeMcpServer:
     def __init__(
         self, *, surface: RecipeSurface, open_query: OpenQueryFacade | None = None
     ) -> None:
-        """Bind the MCP server to the shared recipe surface and optional facade."""
+        """Bind the MCP server to the shared recipe surface and optional facade.
+
+        Fail closed when both authorities are composed for different
+        deployments — one MCP server is one trust domain (D50), matching the
+        HTTP/facade composition check.
+        """
+        if open_query is not None and open_query.deployment_id != surface.deployment_id:
+            raise ValueError(
+                "the recipe surface and the open-query facade serve different"
+                " deployments — one deployment is one trust domain (D50)"
+            )
         self._surface = surface
         self._open_query = open_query
 

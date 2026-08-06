@@ -156,7 +156,9 @@ def test_facade_query_sql_and_discovery(migrated: str) -> None:
     assert result.grade == "exploratory_tabular"
     assert result.saved_query is None
     space = facade.describe_query_space(include_examples=True)
-    assert space.headline == TWO_LAYER_HEADLINE
+    assert space.headline == TWO_LAYER_HEADLINE_FULL
+    assert TWO_LAYER_HEADLINE_NOTE in space.headline
+    assert "`fact_claim_evidence`" in space.headline
     assert space.retrieval_choices == RETRIEVAL_CHOICES
     assert space.honesty_warnings == HONESTY_WARNINGS
     assert len(space.worked_examples) >= 8
@@ -438,7 +440,9 @@ def test_http_open_routes_and_legacy_recipes_untouched(migrated: str) -> None:
     space = client.get("/query/space")
     assert space.status_code == 200
     space_body = space.json()
-    assert space_body["headline"] == TWO_LAYER_HEADLINE
+    assert space_body["headline"] == TWO_LAYER_HEADLINE_FULL
+    assert TWO_LAYER_HEADLINE_NOTE in space_body["headline"]
+    assert "`fact_claim_evidence`" in space_body["headline"]
     assert "core_operation_descriptors" in space_body
     assert "function_signatures" in space_body
     assert "cypher_dialect" in space_body
@@ -1029,7 +1033,8 @@ def test_memory_client_open_query_http_methods(migrated: str) -> None:
     assert sql["termination_reason"] == "completed"
 
     space = client.describe_query_space(include_examples=True)
-    assert space["headline"] == TWO_LAYER_HEADLINE
+    assert space["headline"] == TWO_LAYER_HEADLINE_FULL
+    assert TWO_LAYER_HEADLINE_NOTE in space["headline"]
     assert "sql_grammar" in space
     worked = space["worked_examples"]
     assert isinstance(worked, list)
@@ -1081,7 +1086,8 @@ def test_cli_open_query_parse_and_dispatch(migrated: str, monkeypatch, capsys) -
 
     assert main(["query", "space", "--include-examples"]) == 0
     space_out = json.loads(capsys.readouterr().out)
-    assert space_out["headline"] == TWO_LAYER_HEADLINE
+    assert space_out["headline"] == TWO_LAYER_HEADLINE_FULL
+    assert TWO_LAYER_HEADLINE_NOTE in space_out["headline"]
     assert "sql_grammar" in space_out
 
     assert (
@@ -1141,3 +1147,442 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
         load_manifest()["surface_manifest_hash"]
         == "6234117e1cf4897d6c31d634dc587deed1dd00a3b2f1d71de4a768b8078c2d21"
     )
+
+
+# --- Batch F correction pass regressions ------------------------------------
+
+
+def test_sql_max_rows_zero_means_zero_rows(migrated: str) -> None:
+    """SQL max_rows=0 returns no rows and discloses row_cap=0 (matches Cypher)."""
+    facade = _facade(migrated)
+    outcome = facade.query_sql(sql="SELECT 1 AS n", max_rows=0)
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.returned_row_count == 0
+    assert list(outcome.rows) == []
+    assert outcome.limits.row_cap == 0
+
+
+def test_saved_query_caller_max_rows_zero_override(migrated: str) -> None:
+    """Caller max_rows=0 wins over a positive stored default on run_saved_query."""
+    from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryVersion
+
+    class _Stub:
+        """Registry stub with a positive stored max_rows default."""
+
+        @property
+        def deployment_id(self) -> UUID:
+            return _DEPLOYMENT
+
+        def list_saved_queries(self, **_: object) -> tuple:
+            return ()
+
+        def describe_saved_query(self, **_: object) -> SavedQueryDescription:
+            raise AssertionError("not used")
+
+        def resolve(self, **_: object) -> SavedQueryVersion:
+            return SavedQueryVersion(
+                query_id=uuid4(),
+                version=1,
+                namespace="customer",
+                name="limits_probe",
+                sql="SELECT 1 AS n",
+                query_hash="fixed-for-zero-rows-override",
+                parameter_schema={},
+                status="active",
+                validated_surface_manifest_hash=_HASH,
+                assurance="customer_authored",
+                default_limits={"max_rows": 7},
+            )
+
+    facade = OpenQueryFacade(
+        deployment_id=_DEPLOYMENT,
+        sql=_sql_executor(migrated),
+        saved_queries=_Stub(),  # type: ignore[arg-type]
+    )
+    outcome = facade.run_saved_query(
+        namespace="customer", name="limits_probe", parameters=(), max_rows=0
+    )
+    assert outcome.termination_reason == "completed", outcome.error_message
+    assert outcome.returned_row_count == 0
+    assert outcome.limits.row_cap == 0
+    assert outcome.saved_query is not None
+    assert set(outcome.saved_query) == {
+        "query_id",
+        "namespace",
+        "name",
+        "version",
+        "query_hash",
+    }
+
+
+def test_mcp_rejects_mixed_deployment_composition(migrated: str) -> None:
+    """Local MCP refuses recipe surface + open-query facade from different deployments."""
+    from rememberstack.adapters.testing import FakeModelProvider
+    from rememberstack.spine import RecipeRegistry
+    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.surfaces import QueryEngine
+    from rememberstack.surfaces import RecipeExecutor
+    from rememberstack.surfaces import RecipeSurface
+
+    engine = create_engine(migrated)
+    other = uuid4()
+    seed_canonical_recipes(
+        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    )
+    surface = RecipeSurface(
+        registry=RecipeRegistry(engine=engine),
+        executor=RecipeExecutor(
+            query_engine=QueryEngine(
+                engine=engine,
+                search_index=_NullSearch(),
+                model_provider=FakeModelProvider(),
+                embedding_model="test/embed",
+            )
+        ),
+        deployment_id=other,
+    )
+    with pytest.raises(ValueError, match="different deployment"):
+        RecipeMcpServer(surface=surface, open_query=_facade(migrated))
+
+
+def test_offline_gate_requires_zero_violations_on_both_arms() -> None:
+    """Legacy-arm D41/D48/D54/cross-deployment violations fail the §8 gate."""
+    metrics = {
+        "legacy": {
+            "success_rate": 80.0,
+            "critical_categories": {"A": 90.0},
+            "d41_violations": 1,
+            "d48_violations": 0,
+            "d54_violations": 0,
+            "cross_deployment_violations": 0,
+            "p95_latency_ms": 100.0,
+            "metered_cost": 10.0,
+            "invalid_sql_rate": 0.0,
+            "invalid_cypher_rate": 0.0,
+            "caps_and_drops_visible": True,
+        },
+        "open": {
+            "success_rate": 81.0,
+            "success_delta_lower_95": -1.0,
+            "critical_categories": {"A": 88.0},
+            "d41_violations": 0,
+            "d48_violations": 0,
+            "d54_violations": 0,
+            "cross_deployment_violations": 0,
+            "p95_latency_ms": 120.0,
+            "metered_cost": 12.0,
+            "invalid_sql_rate": 0.04,
+            "invalid_cypher_rate": 0.03,
+            "caps_and_drops_visible": True,
+        },
+    }
+    report = evaluate_noninferiority(metrics=metrics)
+    assert report["passed"] is False
+    d41 = next(g for g in report["gates"] if g["name"] == "d41_violations")  # type: ignore[index]
+    assert d41["passed"] is False
+    assert d41["detail"]["legacy"] == 1
+    assert d41["detail"]["open"] == 0
+    assert d41["detail"]["required"] == 0
+
+
+def test_mcp_rejects_explicit_null_for_string_and_integer_fields() -> None:
+    """Present null is a type error for schema string/integer fields; omission defaults."""
+    from rememberstack.surfaces.query_sandbox.mcp_tools import (
+        validate_open_query_arguments,
+    )
+
+    with pytest.raises(SandboxRejection, match="pattern"):
+        validate_open_query_arguments(
+            name="describe_query_space", arguments={"pattern": None}
+        )
+    with pytest.raises(SandboxRejection, match="namespace"):
+        validate_open_query_arguments(
+            name="list_saved_queries", arguments={"namespace": None}
+        )
+    with pytest.raises(SandboxRejection, match="status"):
+        validate_open_query_arguments(
+            name="list_saved_queries", arguments={"status": None}
+        )
+    with pytest.raises(SandboxRejection, match="version"):
+        validate_open_query_arguments(
+            name="describe_saved_query",
+            arguments={
+                "namespace": "examples",
+                "name": "relation_current",
+                "version": None,
+            },
+        )
+    with pytest.raises(SandboxRejection, match="version"):
+        validate_open_query_arguments(
+            name="run_saved_query",
+            arguments={
+                "namespace": "examples",
+                "name": "relation_current",
+                "version": None,
+            },
+        )
+    with pytest.raises(SandboxRejection, match="max_rows"):
+        validate_open_query_arguments(
+            name="query_sql", arguments={"sql": "SELECT 1", "max_rows": None}
+        )
+    # Omission still applies defaults (not a type error).
+    omitted = validate_open_query_arguments(name="describe_query_space", arguments={})
+    assert omitted["pattern"] is None
+    assert omitted["include_examples"] is False
+    listed = validate_open_query_arguments(name="list_saved_queries", arguments={})
+    assert listed["namespace"] is None
+    assert listed["status"] is None
+
+
+def test_http_explain_rejects_execution_only_fields(migrated: str) -> None:
+    """SQL/Cypher explain routes 422 on max_rows/confirm; query routes still accept them."""
+    app = _open_api(migrated)
+    client = TestClient(app)
+
+    sql_extra = client.post(
+        "/query/sql/explain", json={"sql": "SELECT 1", "parameters": [], "max_rows": 1}
+    )
+    assert sql_extra.status_code == 422
+
+    sql_ok = client.post(
+        "/query/sql/explain", json={"sql": "SELECT 1", "parameters": []}
+    )
+    assert sql_ok.status_code == 200
+
+    query_ok = client.post(
+        "/query/sql", json={"sql": "SELECT 1 AS n", "parameters": [], "max_rows": 1}
+    )
+    assert query_ok.status_code == 200
+    assert query_ok.json()["limits"]["row_cap"] == 1
+
+    cypher_extra = client.post(
+        "/query/cypher/explain",
+        json={"cypher": "RETURN 1", "parameters": {}, "max_rows": 1, "confirm": True},
+    )
+    assert cypher_extra.status_code == 422
+
+    cypher_confirm_only = client.post(
+        "/query/cypher/explain",
+        json={"cypher": "RETURN 1", "parameters": {}, "confirm": False},
+    )
+    assert cypher_confirm_only.status_code == 422
+
+
+def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) -> None:
+    """Authenticated open execution routes forward principal into the facade."""
+    from rememberstack.adapters.testing import FakeModelProvider
+    from rememberstack.model import AuthenticatedContext
+    from rememberstack.model import PerimeterCredential
+    from rememberstack.spine import RecipeRegistry
+    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.surfaces import QueryEngine
+    from rememberstack.surfaces import RecipeExecutor
+    from rememberstack.surfaces import RecipeSurface
+
+    seen: list[str | None] = []
+
+    class _TrackingFacade:
+        """Records principal on every execution-bearing open entry point."""
+
+        def __init__(self, inner: OpenQueryFacade) -> None:
+            self._inner = inner
+
+        @property
+        def deployment_id(self) -> UUID:
+            return self._inner.deployment_id
+
+        def query_sql(self, **kwargs: object) -> object:
+            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
+            return self._inner.query_sql(**kwargs)  # type: ignore[arg-type]
+
+        def explain_sql(self, **kwargs: object) -> object:
+            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
+            return self._inner.explain_sql(**kwargs)  # type: ignore[arg-type]
+
+        def query_cypher(self, **kwargs: object) -> object:
+            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
+            raise SandboxRejection(
+                code=QueryErrorCode.P2_UNAVAILABLE, message="no cypher in this proof"
+            )
+
+        def explain_cypher(self, **kwargs: object) -> object:
+            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
+            raise SandboxRejection(
+                code=QueryErrorCode.P2_UNAVAILABLE, message="no cypher in this proof"
+            )
+
+        def describe_query_space(self, **kwargs: object) -> object:
+            return self._inner.describe_query_space(**kwargs)  # type: ignore[arg-type]
+
+        def search_query_space(self, **kwargs: object) -> object:
+            return self._inner.search_query_space(**kwargs)  # type: ignore[arg-type]
+
+        def list_saved_queries(self, **kwargs: object) -> object:
+            return self._inner.list_saved_queries(**kwargs)  # type: ignore[arg-type]
+
+        def describe_saved_query(self, **kwargs: object) -> object:
+            return self._inner.describe_saved_query(**kwargs)  # type: ignore[arg-type]
+
+        def run_saved_query(self, **kwargs: object) -> object:
+            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
+            return self._inner.run_saved_query(**kwargs)  # type: ignore[arg-type]
+
+    class _Auth:
+        """Maps the good token to a distinct principal string."""
+
+        def authenticate(
+            self, *, credential: PerimeterCredential
+        ) -> AuthenticatedContext:
+            if credential.value.get_secret_value() == b"good-token":
+                return AuthenticatedContext(
+                    deployment_id=_DEPLOYMENT, principal="alice-agent"
+                )
+            raise ValueError("unknown credential")
+
+    engine = create_engine(migrated)
+    seed_canonical_recipes(
+        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    )
+    query_engine = QueryEngine(
+        engine=engine,
+        search_index=_NullSearch(),
+        model_provider=FakeModelProvider(),
+        embedding_model="test/embed",
+    )
+    surface = RecipeSurface(
+        registry=RecipeRegistry(engine=engine),
+        executor=RecipeExecutor(query_engine=query_engine),
+        deployment_id=_DEPLOYMENT,
+    )
+    tracking = _TrackingFacade(_facade(migrated))
+    app = build_api(
+        engine=query_engine,
+        deployment_id=_DEPLOYMENT,
+        admission=_OpenBoundary(),
+        readiness=_OpenBoundary(),
+        surface=surface,
+        open_query=tracking,  # type: ignore[arg-type]
+        auth=_Auth(),  # type: ignore[arg-type]
+    )
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer good-token"}
+
+    assert (
+        client.post(
+            "/query/sql",
+            headers=headers,
+            json={"sql": "SELECT 1 AS n", "parameters": []},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/query/sql/explain",
+            headers=headers,
+            json={"sql": "SELECT 1", "parameters": []},
+        ).status_code
+        == 200
+    )
+    # Cypher is unavailable in this fixture; principal must still be forwarded.
+    assert (
+        client.post(
+            "/query/cypher",
+            headers=headers,
+            json={"cypher": "RETURN 1", "parameters": {}},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/query/cypher/explain",
+            headers=headers,
+            json={"cypher": "RETURN 1", "parameters": {}},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/query/saved/examples/relation_current/run",
+            headers=headers,
+            json={"parameters": [str(uuid4())]},
+        ).status_code
+        == 200
+    )
+    # Discovery stays content-free: no principal recorded for space.
+    assert client.get("/query/space", headers=headers).status_code == 200
+    assert seen == ["alice-agent"] * 5
+
+
+def test_selfhost_shares_kill_switches_and_audit_and_refuses_foreign_generation() -> (
+    None
+):
+    """Executors accept shared kill/audit objects; selfhost_embed_query gates generation."""
+    from rememberstack.adapters.testing import FakeModelProvider
+    from rememberstack.profiles.selfhost import selfhost_embed_query
+    from rememberstack.surfaces.query_sandbox.audit import AuditTrail
+    from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+    from rememberstack.surfaces.query_sandbox.cypher_executor import (
+        CypherSandboxExecutor,
+    )
+    from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+
+    # Composition only: both executors accept the same KillSwitches + AuditTrail.
+    kill_switches = KillSwitches()
+    audit_trail = AuditTrail()
+    deployment = uuid4()
+
+    def _connect() -> object:
+        raise AssertionError("connect unused in this composition proof")
+
+    class _Reader:
+        deployment_id = deployment
+
+    sql = QuerySandboxExecutor(
+        deployment_id=deployment,
+        connect=_connect,  # type: ignore[arg-type]
+        kill_switches=kill_switches,
+        audit=audit_trail,
+    )
+    cypher = CypherSandboxExecutor(
+        deployment_id=deployment,
+        reader=_Reader(),
+        connect=_connect,  # type: ignore[arg-type]
+        kill_switches=kill_switches,
+        audit=audit_trail,
+    )
+    assert sql._kills is kill_switches  # noqa: SLF001
+    assert cypher._kills is kill_switches  # noqa: SLF001
+    assert sql._audit is audit_trail  # noqa: SLF001
+    assert cypher._audit is audit_trail  # noqa: SLF001
+
+    # Production gate: unpinned and current generation succeed; foreign refuses.
+    provider = FakeModelProvider()
+    embedding_model = "test/e1-embed"
+    unpinned = selfhost_embed_query(
+        model_provider=provider, embedding_model=embedding_model, query="hello"
+    )
+    current = selfhost_embed_query(
+        model_provider=provider,
+        embedding_model=embedding_model,
+        query="hello",
+        embedder_generation=embedding_model,
+    )
+    assert unpinned == current
+    assert len(unpinned) > 0
+    with pytest.raises(SandboxRejection) as raised:
+        selfhost_embed_query(
+            model_provider=provider,
+            embedding_model=embedding_model,
+            query="hello",
+            embedder_generation="other/model",
+        )
+    assert raised.value.code is QueryErrorCode.GENERATION_UNAVAILABLE
+
+
+def test_bound_headline_preserves_fact_claim_evidence_backticks() -> None:
+    """Shared prose authority keeps the design's backticks on fact_claim_evidence."""
+    from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE
+
+    assert "`fact_claim_evidence`" in TWO_LAYER_HEADLINE
+    assert TWO_LAYER_HEADLINE_FULL.startswith(TWO_LAYER_HEADLINE)
+    assert TWO_LAYER_HEADLINE_NOTE in TWO_LAYER_HEADLINE_FULL

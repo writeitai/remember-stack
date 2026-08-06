@@ -5,9 +5,10 @@ registry entries and never become top-level MCP tools. Local and remote MCP
 servers share these descriptors and dispatch helpers so tools/list and
 tools/call stay aligned.
 
-Argument validation is strict: wrong types, bool-as-int, out-of-range
+Argument validation is strict: wrong types (including a key present with
+JSON null when the schema declares string/integer), bool-as-int, out-of-range
 integers, missing required fields, and unknown extra keys are rejected
-rather than coerced.
+rather than coerced. Omission of optional fields still applies defaults.
 
 This module stays dependency-light for the base client wheel: descriptors and
 argument validation import only the public error taxonomy. Server-only types
@@ -302,7 +303,8 @@ def validate_open_query_arguments(
         if "confirm" in args:
             validated["confirm"] = _require_bool(args["confirm"], field="confirm")
     elif name == "describe_query_space":
-        if "pattern" in args and args["pattern"] is not None:
+        # Explicit null is a type error for string fields; only omission defaults.
+        if "pattern" in args:
             validated["pattern"] = _require_str(args["pattern"], field="pattern")
         else:
             validated["pattern"] = None
@@ -319,12 +321,18 @@ def validate_open_query_arguments(
         else:
             validated["k"] = 10
     elif name == "list_saved_queries":
-        validated["namespace"] = _optional_str(args.get("namespace"), field="namespace")
-        validated["status"] = _optional_str(args.get("status"), field="status")
+        if "namespace" in args:
+            validated["namespace"] = _require_str(args["namespace"], field="namespace")
+        else:
+            validated["namespace"] = None
+        if "status" in args:
+            validated["status"] = _require_str(args["status"], field="status")
+        else:
+            validated["status"] = None
     elif name == "describe_saved_query":
         validated["namespace"] = _require_str(args["namespace"], field="namespace")
         validated["name"] = _require_str(args["name"], field="name")
-        if "version" in args and args["version"] is not None:
+        if "version" in args:
             validated["version"] = _require_int(
                 args["version"], field="version", minimum=1
             )
@@ -333,7 +341,7 @@ def validate_open_query_arguments(
     elif name == "run_saved_query":
         validated["namespace"] = _require_str(args["namespace"], field="namespace")
         validated["name"] = _require_str(args["name"], field="name")
-        if "version" in args and args["version"] is not None:
+        if "version" in args:
             validated["version"] = _require_int(
                 args["version"], field="version", minimum=1
             )
@@ -537,13 +545,6 @@ def _require_str(value: object, *, field: str) -> str:
             code=QueryErrorCode.INVALID_PARAMETER, message=f"{field} must be a string"
         )
     return value
-
-
-def _optional_str(value: object, *, field: str) -> str | None:
-    """Accept a string or None; reject other types without coercion."""
-    if value is None:
-        return None
-    return _require_str(value, field=field)
 
 
 def _require_bool(value: object, *, field: str) -> bool:
