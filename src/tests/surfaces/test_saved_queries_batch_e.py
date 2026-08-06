@@ -866,6 +866,95 @@ def test_draft_byte_ceiling_counts_identity_description_once(
         connection.rollback()
 
 
+def test_draft_byte_ceiling_counts_stored_description_on_first_redraft(
+    registry_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Activate leaves no draft; a new draft counts stored description once.
+
+    Proves the identity-level description is pending when EXISTS is still
+    false before INSERT, and that a large ignored caller description is not
+    counted for an existing identity.
+    """
+    import json
+
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        author = f"redraft_{uuid4().hex[:8]}"
+        name = _unique("rd")
+        description = "d" * 500
+        sql_active = "SELECT 1 AS n WHERE $1::boolean"
+        sql_new = "SELECT 2 AS n"
+        agent = _registry(connection, actor=author)
+        saved = agent.draft(
+            namespace="team", name=name, sql=sql_active, description=description
+        )
+        report = agent.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_sandbox_executor(registry_url),
+            fixtures=_param_fixtures(),
+        )
+        assert report.passed, report.diagnostics
+        _registry(connection, actor="operator-1").activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        # No drafts remain for this principal; EXISTS description sum is 0.
+        # Pending first redraft: new SQL/metadata + stored description once.
+        pending = connection.execute(
+            b"SELECT"
+            b"  octet_length(%(sql)s)"
+            b"  + octet_length(coalesce(%(description)s, ''))"
+            b"  + octet_length(coalesce(%(interpretation)s, ''))"
+            b"  + octet_length((%(params)s::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + octet_length(('{}'::jsonb)::text)"
+            b"  + (SELECT octet_length(coalesce(q.description, ''))"
+            b"     FROM saved_queries AS q"
+            b"     WHERE q.deployment_id = %(d)s AND q.query_id = %(qid)s)",
+            {
+                "sql": sql_new,
+                "description": None,
+                "interpretation": None,
+                "params": json.dumps({}, sort_keys=True),
+                "d": str(_DEPLOYMENT),
+                "qid": str(saved.query_id),
+            },
+        ).fetchone()
+        assert pending is not None
+        exact = int(pending[0])
+        # Exact boundary accepted with a huge ignored caller description.
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX", exact
+        )
+        agent.draft(
+            namespace="team",
+            name=name,
+            sql=sql_new,
+            description="ignored-caller-description-must-not-count" * 40,
+        )
+        # Roll the accepted draft back out of status so the same pending
+        # projection can be refused one byte under the ceiling.
+        connection.execute(
+            b"UPDATE saved_query_versions SET status = 'deprecated'"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(saved.query_id), saved.version + 1),
+        )
+        monkeypatch.setattr(
+            "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX",
+            exact - 1,
+        )
+        with pytest.raises(SandboxRejection) as rejection:
+            agent.draft(
+                namespace="team",
+                name=name,
+                sql=sql_new,
+                description="still-ignored" * 40,
+            )
+        assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+        assert "byte" in rejection.value.message
+        connection.rollback()
+
+
 # --- revalidation ------------------------------------------------------------
 
 

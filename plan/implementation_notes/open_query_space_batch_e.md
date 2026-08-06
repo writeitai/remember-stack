@@ -20,8 +20,12 @@ metadata** (description, interpretation, parameter/result schemas, default
 limits, validation report), including the pending write and any report
 replacement on `validate_version`. Description is identity-level
 (`saved_queries` once): draft and report-replacement accounting count it once
-per draft identity via EXISTS, not once per draft version; a later version of
-an existing identity does not count a caller `description` that is not stored.
+per draft identity via EXISTS, not once per draft version. A later version of
+an existing identity never counts a caller `description` that is not stored.
+When the principal authors a first draft on an existing identity that currently
+has no draft for them (for example after activation moved the prior version out
+of draft), the pre-INSERT EXISTS sum is still false, so accounting adds the
+already-stored `saved_queries.description` once as pending.
 Pending and replacement JSONB sizes are measured in PostgreSQL with the same
 `octet_length(value::jsonb::text)` representation used for stored rows — not
 Python `json.dumps` byte counts. Concurrent drafts serialize on the

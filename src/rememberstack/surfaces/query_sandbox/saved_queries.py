@@ -294,9 +294,15 @@ class SavedQueryRegistry:
         identity = self._identity(namespace=namespace, name=name)
         if identity is not None:
             self._reject_customer_mutation_of_shipped(query_id=identity, action="draft")
-        # Description lives on `saved_queries` once per identity. A later
-        # version of an existing identity does not store a new description, so
-        # a caller-supplied value must not count toward the draft-byte ceiling.
+        # Description lives on `saved_queries` once per identity and counts
+        # toward the draft-byte ceiling once whenever this principal holds a
+        # draft for that identity. New identities store the caller description
+        # → count it as pending. Existing identities never store a
+        # caller-supplied description, so it never counts; if this principal
+        # already holds a draft, the stored EXISTS sum already includes the
+        # description. If they do not yet hold a draft (e.g. after activate),
+        # `_check_quotas` counts the already-stored description as pending
+        # because EXISTS is still false before INSERT.
         pending_description = description if identity is None else None
         pending_meta = self._pending_draft_metadata_bytes(
             description=pending_description,
@@ -1442,6 +1448,21 @@ class SavedQueryRegistry:
         # Ceiling includes encoded SQL plus draft registry metadata about to
         # be written, not only what is already stored.
         pending = len(sql.encode()) + pending_metadata_bytes
+        # First draft on an existing identity: the identity-level description
+        # is not yet in the EXISTS sum (no draft for this principal), but it
+        # will be after INSERT. Count the already-stored description once.
+        # Caller-supplied description for existing identities is never stored
+        # and must not be counted (pending_metadata already excludes it).
+        if identity is not None and not existing_draft_identity:
+            stored_desc = self._connection.execute(
+                b"SELECT octet_length(coalesce(description, ''))"
+                b" FROM saved_queries"
+                b" WHERE deployment_id = %(deployment)s"
+                b"   AND query_id = %(query)s",
+                {"deployment": str(self._deployment_id), "query": str(identity)},
+            ).fetchone()
+            if stored_desc is not None:
+                pending += int(stored_desc[0])
         already = int(draft_version_bytes) + int(draft_description_bytes)
         if already + pending > DRAFT_BYTES_MAX:
             raise SandboxRejection(
