@@ -73,6 +73,17 @@ V9 results are not comparable to v8 or earlier.
     that had anchors available. Measure which anchor forms still fail
     before another prompt round.
 
+## Tier 4 — ingest / normalize efficiency (proposal only)
+
+11. **Observation adjudication cost shape (E3).** Large single-doc
+    `normalize_relations` tails are dominated by hub entity observation
+    adjudication (re-embed open set every residue assert; up to
+    `hub_top_k` pairwise small-model verdicts). Unchosen algorithmic
+    options (embed cache, multi-candidate verdict, free collapse,
+    batch dedupe, entity parallelism, stage split) are parked in
+    [`../proposals/observation-adjudication-efficiency.md`](../proposals/observation-adjudication-efficiency.md)
+    — not binding until promoted.
+
 ## Standing infra/process items
 
 - Keep the benchmark-host snapshot current after each engine release
