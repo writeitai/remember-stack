@@ -100,3 +100,17 @@ def clamp_rows(*, tier: TierLimits, requested: int | None) -> int:
     if requested is None:
         return tier.returned_rows_default
     return max(1, min(requested, tier.returned_rows_hard))
+
+
+def clamp_bytes(*, tier: TierLimits, requested: int | None) -> int:
+    """The effective returned-byte cap: the default, raised at most to the hard cap."""
+    if requested is None:
+        return tier.returned_bytes_default
+    return max(1, min(requested, tier.returned_bytes_hard))
+
+
+def clamp_timeout_ms(*, tier: TierLimits, requested: int | None) -> int:
+    """The effective statement timeout: the default, raised at most to the hard cap."""
+    if requested is None:
+        return tier.statement_timeout_ms_default
+    return max(1, min(requested, tier.statement_timeout_ms_hard))

@@ -526,8 +526,12 @@ def test_discovery_serves_manifest_and_headline() -> None:
 
 
 def test_discovery_search_ranks_relevant_views() -> None:
-    names = [view.name for view in search_query_space(query="current facts", k=3)]
+    hits = search_query_space(query="current facts", k=3)
+    names = [hit.name for hit in hits]
     assert "facts_current" in names
+    assert all(
+        hit.kind in {"view", "function", "core_operation", "example"} for hit in hits
+    )
     with pytest.raises(SandboxRejection):
         search_query_space(query="facts", k=0)
 

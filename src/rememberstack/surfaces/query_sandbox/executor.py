@@ -36,7 +36,9 @@ from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
+from rememberstack.surfaces.query_sandbox.limits import clamp_bytes
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
+from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
@@ -204,6 +206,11 @@ class QuerySandboxExecutor:
         self._kills = kill_switches or KillSwitches()
         self._manifest_hash = surface_manifest_hash(build_hash_members())
 
+    @property
+    def deployment_id(self) -> UUID:
+        """The one deployment this executor serves."""
+        return self._deployment_id
+
     # -- public entry points (§3.1) ------------------------------------------
 
     def query_sql(
@@ -212,14 +219,23 @@ class QuerySandboxExecutor:
         sql: str,
         parameters: Sequence[object] = (),
         max_rows: int | None = None,
+        statement_timeout_ms: int | None = None,
+        max_bytes: int | None = None,
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str = "agent",
     ) -> QueryResult:
-        """One sandboxed statement; `QueryResult/v1` in every outcome."""
+        """One sandboxed statement; `QueryResult/v1` in every outcome.
+
+        Optional ``statement_timeout_ms`` and ``max_bytes`` override the tier
+        defaults for this one execution and are clamped to the tier hard caps
+        (used by ``run_saved_query`` stored defaults).
+        """
         return self._run(
             sql=sql,
             parameters=parameters,
             max_rows=max_rows,
+            statement_timeout_ms=statement_timeout_ms,
+            max_bytes=max_bytes,
             tier=tier,
             principal=principal,
             explain=False,
@@ -238,6 +254,8 @@ class QuerySandboxExecutor:
             sql=sql,
             parameters=parameters,
             max_rows=None,
+            statement_timeout_ms=None,
+            max_bytes=None,
             tier=tier,
             principal=principal,
             explain=True,
@@ -251,6 +269,8 @@ class QuerySandboxExecutor:
         sql: str,
         parameters: Sequence[object],
         max_rows: int | None,
+        statement_timeout_ms: int | None,
+        max_bytes: int | None,
         tier: LimitTier,
         principal: str,
         explain: bool,
@@ -262,10 +282,12 @@ class QuerySandboxExecutor:
             tier = LimitTier.INTERACTIVE
         limits = TIER_LIMITS[tier]
         row_cap = clamp_rows(tier=limits, requested=max_rows)
+        byte_cap = clamp_bytes(tier=limits, requested=max_bytes)
+        timeout_ms = clamp_timeout_ms(tier=limits, requested=statement_timeout_ms)
         result_limits = ResultLimits(
             row_cap=row_cap,
-            byte_cap=limits.returned_bytes_default,
-            statement_timeout_ms=limits.statement_timeout_ms_default,
+            byte_cap=byte_cap,
+            statement_timeout_ms=timeout_ms,
             analytical_tier=tier is LimitTier.ANALYTICAL,
         )
 
@@ -351,7 +373,8 @@ class QuerySandboxExecutor:
                 parameters=parameters,
                 limits_model=result_limits,
                 row_cap=row_cap,
-                byte_cap=limits.returned_bytes_default,
+                byte_cap=byte_cap,
+                statement_timeout_ms=timeout_ms,
                 tier=tier,
                 explain=explain,
                 request_id=request_id,
@@ -375,6 +398,7 @@ class QuerySandboxExecutor:
         limits_model: ResultLimits,
         row_cap: int,
         byte_cap: int,
+        statement_timeout_ms: int,
         tier: LimitTier,
         explain: bool,
         request_id: UUID,
@@ -404,7 +428,9 @@ class QuerySandboxExecutor:
             )
 
         try:
-            with self._transaction(limits_ms=limits) as cursor:
+            with self._transaction(
+                limits_ms=limits, statement_timeout_ms=statement_timeout_ms
+            ) as cursor:
                 # Confirmation and execution share ONE transaction, so they
                 # share one snapshot. Confirming in a separate transaction
                 # would freeze rows that were live then into a statement that
@@ -649,7 +675,8 @@ class QuerySandboxExecutor:
         return outcome
 
     @contextmanager
-    def _transaction(self, *, limits_ms):  # noqa: ANN001, ANN202
+    def _transaction(self, *, limits_ms, statement_timeout_ms: int):  # noqa: ANN001, ANN202
+        """Open one REPEATABLE READ transaction with the effective request GUCs."""
         connection = self._connect()
         try:
             # A pooled connection may carry state from an earlier request —
@@ -687,7 +714,7 @@ class QuerySandboxExecutor:
                             " SET LOCAL from_collapse_limit = 1;"
                             " SET LOCAL max_parallel_workers_per_gather = 0"
                         ).format(
-                            pgsql.Literal(limits_ms.statement_timeout_ms_default),
+                            pgsql.Literal(statement_timeout_ms),
                             pgsql.Literal(limits_ms.lock_timeout_ms),
                             pgsql.Literal(limits_ms.idle_transaction_ms),
                             pgsql.Literal(f"{limits_ms.work_mem_kib}kB"),

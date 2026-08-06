@@ -6,10 +6,25 @@ export const metadata = {
 
 # Mounts and the Consumption Skill
 
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated current
+worldview (“what the system currently holds true”):
+supersession-adjudicated, clocked on two time axes (when a fact held in
+the world, and when the system learned it), evidence-counted per
+distinct source—repetition is not corroboration—and
+contradiction-tracked. The fact_claim_evidence association is the
+auditable bridge between the layers, recording which claims support or
+contradict each fact. Query claims to inspect testimony; query facts to
+answer current-truth questions, then follow the bridge to see why the
+system believes the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
+
 RememberStack is designed for coding agents that already know how to navigate
 files well. A deployment can therefore give an agent four read-only filesystem
-views, plus a generated `SKILL.md` that explains how to use those views and the
-query API together.
+views, plus a generated `SKILL.md` that explains how to use those views with
+open SQL/Cypher, assured operations, and the query API.
 
 ## The four read-only views
 
@@ -34,12 +49,13 @@ deployment.
 When mounts are available, prefer them for navigation, reading, and grep. Use
 the API, CLI, or MCP tools for operations without a filesystem equivalent:
 
-- semantic search;
-- graph neighborhoods and paths;
+- open SQL (`query_sql`) and full read-only Cypher (`query_cypher`);
+- schema discovery (`describe_query_space`);
+- semantic/lexical nomination SRFs inside SQL;
+- live graph helpers and snapshot graph traversal;
 - `valid_at` or `believed_at` time-travel;
-- fact-to-evidence hydration;
-- decision transcripts;
-- change feeds and deltas.
+- fact-to-evidence hydration and saved queries;
+- decision transcripts and change feeds.
 
 An environment that cannot mount the deployment still has the API/CLI/MCP
 route. The generated skill states that it is unmounted and directs the agent to
@@ -50,21 +66,18 @@ those surfaces instead of advertising paths that do not exist.
 `ConsumptionSkillSurface` reads the live deployment name, language,
 special-purpose scopes, current Plane K page count, and latest active recipe
 versions from PostgreSQL. It combines them with the published mount locations
-and renders a versioned, standard `SKILL.md`.
+and renders a versioned, standard `SKILL.md` (skill revision `2.0.0`).
 
-The skill teaches one default motion:
+The skill opens with the bound two-layer headline, then presents three neutral
+choices — Cypher for native graph power with point-in-time semantics, SQL for
+live/evidence-composable reads, and the three assured operations for one-call
+typed answers — with the four bound SQL examples (wrong claim-window query and
+`facts_current` replacement, predicate vocabulary, full audit trail, and
+latest-contradicting-testimony divergence) plus snapshot-ID-to-live composition.
 
-1. **Orient on Plane K.** Read the knowledge checkout or use an orientation
-   recipe such as `pages_about`.
-2. **Verify on the spine.** Use fact-grain relations or observations for
-   anything that answers “is this true now?”
-3. **Audit on evidence.** Hydrate the fact to claims, source spans, documents,
-   and raw media when the stakes demand it.
-
-Plane K is not implemented yet, so current deployments honestly render its
-state as known-empty. A cold agent is instructed to attempt orientation, then
-fall back to P3 when mounted or search when unmounted—never to invent the
-missing synthesis.
+When Plane K is empty, the skill says so honestly and prefers open query or P3
+rather than inventing synthesis. Compatibility recipe adapters remain listed
+when enabled but are not the default steering language.
 
 The renderer can return the artifact without writing it, or publish it
 atomically so a harness never reads a partially-written skill:

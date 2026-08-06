@@ -13,6 +13,9 @@ from rememberstack.eval.harness import EvalHarness
 from rememberstack.eval.lifecycle import flag_rate_by_extractor
 from rememberstack.eval.lifecycle import register_lifecycle_evaluator
 from rememberstack.eval.lifecycle import run_lifecycle_suite
+from rememberstack.eval.open_query_noninferiority import estimate_paid_run
+from rememberstack.eval.open_query_noninferiority import evaluate_noninferiority
+from rememberstack.eval.open_query_noninferiority import load_arm_metrics
 from rememberstack.eval.operational_scale import OPERATIONAL_SCALE_VERSION
 from rememberstack.eval.operational_scale import record_operational_scale_report
 from rememberstack.eval.resolution import PRECISION_FLOOR
@@ -50,4 +53,7 @@ __all__ = (
     "SKELETON_CANARIES",
     "make_skeleton_evaluator",
     "seed_skeleton_canaries",
+    "estimate_paid_run",
+    "evaluate_noninferiority",
+    "load_arm_metrics",
 )

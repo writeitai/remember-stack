@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from rememberstack.surfaces.http_api import build_api as build_api
     from rememberstack.surfaces.mcp import RecipeMcpServer as RecipeMcpServer
     from rememberstack.surfaces.query_engine import QueryEngine as QueryEngine
+    from rememberstack.surfaces.query_sandbox.open_query import (
+        OpenQueryFacade as OpenQueryFacade,
+    )
     from rememberstack.surfaces.recipe_executor import EXECUTABLE_OPS as EXECUTABLE_OPS
     from rememberstack.surfaces.recipe_executor import (
         RecipeExecutionError as RecipeExecutionError,
@@ -55,6 +58,10 @@ _EXPORTS = {
         "rememberstack.surfaces.recipe_surface",
         "MissingArgumentError",
     ),
+    "OpenQueryFacade": (
+        "rememberstack.surfaces.query_sandbox.open_query",
+        "OpenQueryFacade",
+    ),
     "QueryEngine": ("rememberstack.surfaces.query_engine", "QueryEngine"),
     "RecipeExecutionError": (
         "rememberstack.surfaces.recipe_executor",
@@ -85,6 +92,7 @@ __all__ = (
     "MemoryApiError",
     "MemoryClient",
     "MissingArgumentError",
+    "OpenQueryFacade",
     "QueryEngine",
     "RecipeExecutionError",
     "RecipeExecutor",

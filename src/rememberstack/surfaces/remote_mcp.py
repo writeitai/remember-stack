@@ -1,10 +1,15 @@
 """MCP protocol logic backed by the remote typed SDK, safe in the base wheel."""
 
+from __future__ import annotations
+
 import json
 import sys
 from typing import TextIO
 
 from rememberstack import __version__
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
+from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
@@ -12,28 +17,48 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class RemoteRecipeMcpServer:
-    """Render remote deployment recipes as MCP tools and proxy calls to it."""
+    """Render remote recipes and open-query tools; proxy calls to the API."""
 
     def __init__(self, *, client: MemoryClient) -> None:
         self._client = client
 
     def list_tools(self) -> dict[str, object]:
-        """The MCP ``tools/list`` result from the deployment registry."""
-        return {
-            "tools": [
-                {
-                    "name": descriptor.name,
-                    "description": descriptor.description,
-                    "inputSchema": descriptor.input_schema,
-                }
-                for descriptor in self._client.recipes()
-            ]
-        }
+        """The MCP ``tools/list`` result: recipes plus static open-query tools."""
+        tools: list[dict[str, object]] = [
+            {
+                "name": descriptor.name,
+                "description": descriptor.description,
+                "inputSchema": descriptor.input_schema,
+            }
+            for descriptor in self._client.recipes()
+        ]
+        # Remote MCP always advertises the nine infrastructure tools; calls
+        # fail typed if the deployment has not composed the open facade.
+        tools.extend(open_query_tool_descriptors())
+        return {"tools": tools}
 
     def call_tool(
         self, *, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        """The MCP ``tools/call`` result containing one envelope JSON block."""
+        """The MCP ``tools/call`` result containing one JSON text block."""
+        if name in OPEN_QUERY_TOOL_NAMES:
+            try:
+                payload = self._client.call_open_query(name=name, arguments=arguments)
+            except (
+                MemoryApiError,
+                SandboxRejection,
+                ValueError,
+                TypeError,
+                KeyError,
+            ) as error:
+                return {
+                    "content": [{"type": "text", "text": str(error)}],
+                    "isError": True,
+                }
+            return {
+                "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
+                "isError": False,
+            }
         try:
             envelope = self._client.run_recipe(name=name, arguments=arguments)
         except (MemoryApiError, ValueError) as error:

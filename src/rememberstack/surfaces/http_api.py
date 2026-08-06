@@ -17,6 +17,7 @@ itself never touches adapters.
 from datetime import datetime
 from datetime import timedelta
 from typing import Annotated
+from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Protocol
@@ -28,6 +29,9 @@ from fastapi import FastAPI
 from fastapi import Header
 from fastapi import HTTPException
 from fastapi import Query
+from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import Field
 from pydantic import SecretBytes
 
 from rememberstack.model import AuthenticatedContext
@@ -44,6 +48,10 @@ from rememberstack.model import ToolDescriptor
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
+from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
+from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.recipe_surface import InvalidArgumentError
 from rememberstack.surfaces.recipe_surface import MissingArgumentError
 from rememberstack.surfaces.recipe_surface import RecipeSurface
@@ -120,6 +128,37 @@ class PipelineReadinessPort(Protocol):
     ) -> PipelineReadinessReport: ...
 
 
+class SqlQueryRequest(BaseModel):
+    """Body for `POST /query/sql` and `POST /query/sql/explain`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql: str
+    parameters: list[Any] = Field(default_factory=list)
+    max_rows: int | None = Field(default=None, ge=0)
+
+
+class CypherQueryRequest(BaseModel):
+    """Body for `POST /query/cypher` and `POST /query/cypher/explain`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cypher: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    max_rows: int | None = Field(default=None, ge=0)
+    confirm: bool = False
+
+
+class RunSavedQueryRequest(BaseModel):
+    """Body for `POST /query/saved/{namespace}/{name}/run`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int | None = Field(default=None, ge=1)
+    parameters: list[Any] = Field(default_factory=list)
+    max_rows: int | None = Field(default=None, ge=0)
+
+
 def build_api(
     *,
     engine: QueryEngine,
@@ -127,6 +166,7 @@ def build_api(
     admission: AdmissionPort,
     readiness: ReadinessPort,
     surface: RecipeSurface | None = None,
+    open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
@@ -134,14 +174,20 @@ def build_api(
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
-    `surface` adds registry-rendered recipes; `ingest` exposes the E0 write
-    gate; `connectors` manages deployment-side connector configuration; and
-    `auth` gates every endpoint on one perimeter credential. Each capability
-    is explicitly composed; absent services do not pretend to exist.
+    `surface` adds registry-rendered recipes; `open_query` adds the §3.1 open
+    query routes; `ingest` exposes the E0 write gate; `connectors` manages
+    deployment-side connector configuration; and `auth` gates every endpoint
+    on one perimeter credential. Each capability is explicitly composed;
+    absent services do not pretend to exist.
     """
     if surface is not None and surface.deployment_id != deployment_id:
         raise ValueError(
             "the recipe surface and the API serve different deployments —"
+            " one deployment is one trust domain (D50)"
+        )
+    if open_query is not None and open_query.deployment_id != deployment_id:
+        raise ValueError(
+            "the open-query facade and the API serve different deployments —"
             " one deployment is one trust domain (D50)"
         )
     readiness.ensure_ready(deployment_id=deployment_id)
@@ -243,6 +289,8 @@ def build_api(
 
     if surface is not None:
         _mount_recipes(app=app, surface=surface)
+    if open_query is not None:
+        _mount_open_query(app=app, open_query=open_query)
     if ingest is not None:
         _mount_ingest(app=app, ingest=ingest, deployment_id=deployment_id)
     if connectors is not None:
@@ -253,6 +301,204 @@ def build_api(
         )
 
     return app
+
+
+def _mount_open_query(*, app: FastAPI, open_query: OpenQueryFacade) -> None:
+    """Add the nine §3.1 open-query routes when the facade is composed.
+
+    Paths are short and consistent under `/query/…`. Legacy `/recipes` and
+    `/recipe/{name}` are untouched. Sandbox and registry failures map to typed
+    HTTP status + public error code without private engine detail.
+    """
+
+    @app.post("/query/sql", response_model=QueryResult)
+    def query_sql(body: SqlQueryRequest) -> QueryResult:
+        """One sandboxed SQL statement; QueryResult/v1."""
+        return _open_call(
+            lambda: open_query.query_sql(
+                sql=body.sql, parameters=body.parameters, max_rows=body.max_rows
+            )
+        )
+
+    @app.post("/query/sql/explain", response_model=QueryResult)
+    def explain_sql(body: SqlQueryRequest) -> QueryResult:
+        """EXPLAIN one SQL statement without executing it."""
+        return _open_call(
+            lambda: open_query.explain_sql(sql=body.sql, parameters=body.parameters)
+        )
+
+    @app.post("/query/cypher", response_model=QueryResult)
+    def query_cypher(body: CypherQueryRequest) -> QueryResult:
+        """One read-only Cypher statement over the published snapshot."""
+        return _open_call(
+            lambda: open_query.query_cypher(
+                cypher=body.cypher,
+                parameters=body.parameters,
+                max_rows=body.max_rows,
+                confirm=body.confirm,
+            )
+        )
+
+    @app.post("/query/cypher/explain", response_model=QueryResult)
+    def explain_cypher(body: CypherQueryRequest) -> QueryResult:
+        """Engine plan for one Cypher statement without executing it."""
+        return _open_call(
+            lambda: open_query.explain_cypher(
+                cypher=body.cypher, parameters=body.parameters
+            )
+        )
+
+    @app.get("/query/space")
+    def describe_query_space(
+        pattern: str | None = None, include_examples: bool = False
+    ) -> dict[str, object]:
+        """Manifest-backed schema discovery (content-free)."""
+        from rememberstack.surfaces.query_sandbox.discovery import (
+            query_space_description_payload,
+        )
+
+        description = _open_call(
+            lambda: open_query.describe_query_space(
+                pattern=pattern, include_examples=include_examples
+            )
+        )
+        return query_space_description_payload(description)
+
+    @app.get("/query/space/search")
+    def search_query_space(
+        query: Annotated[str, Query(min_length=1)],
+        k: Annotated[int, Query(ge=1, le=25)] = 10,
+    ) -> list[dict[str, object]]:
+        """Search checked-in manifest text only."""
+        hits = _open_call(lambda: open_query.search_query_space(query=query, k=k))
+        return [
+            {
+                "kind": hit.kind,
+                "name": hit.name,
+                "score": hit.score,
+                "purpose": hit.purpose,
+                "tags": list(hit.tags),
+            }
+            for hit in hits
+        ]
+
+    @app.get("/query/saved")
+    def list_saved_queries(
+        namespace: str | None = None, status: str | None = None
+    ) -> list[dict[str, object]]:
+        """Registry metadata for discoverable saved queries."""
+        rows = _open_call(
+            lambda: open_query.list_saved_queries(namespace=namespace, status=status)
+        )
+        return [
+            {
+                "query_id": str(row.query_id),
+                "namespace": row.namespace,
+                "name": row.name,
+                "version": row.version,
+                "status": row.status,
+                "description": row.description,
+                "origin": row.origin,
+                "assurance": row.assurance,
+                "query_hash": row.query_hash,
+                "validated_surface_manifest_hash": row.validated_surface_manifest_hash,
+            }
+            for row in rows
+        ]
+
+    @app.get("/query/saved/{namespace}/{name}")
+    def describe_saved_query(
+        namespace: str, name: str, version: int | None = None
+    ) -> dict[str, object]:
+        """One immutable saved-query version."""
+        detail = _open_call(
+            lambda: open_query.describe_saved_query(
+                namespace=namespace, name=name, version=version
+            )
+        )
+        return {
+            "query_id": str(detail.query_id),
+            "namespace": detail.namespace,
+            "name": detail.name,
+            "version": detail.version,
+            "status": detail.status,
+            "description": detail.description,
+            "origin": detail.origin,
+            "assurance": detail.assurance,
+            "sql": detail.sql,
+            "query_hash": detail.query_hash,
+            "parameter_schema": detail.parameter_schema,
+            "declared_result_schema": detail.declared_result_schema,
+            "declared_interpretation": detail.declared_interpretation,
+            "query_space_major": detail.query_space_major,
+            "default_limits": detail.default_limits,
+            "validated_surface_manifest_hash": detail.validated_surface_manifest_hash,
+            "validation_report": detail.validation_report,
+            "author_principal": detail.author_principal,
+            "approver_principal": detail.approver_principal,
+        }
+
+    @app.post("/query/saved/{namespace}/{name}/run", response_model=QueryResult)
+    def run_saved_query(
+        namespace: str, name: str, body: RunSavedQueryRequest
+    ) -> QueryResult:
+        """Execute one active saved query through the same SQL executor."""
+        return _open_call(
+            lambda: open_query.run_saved_query(
+                namespace=namespace,
+                name=name,
+                version=body.version,
+                parameters=body.parameters,
+                max_rows=body.max_rows,
+            )
+        )
+
+
+def _open_call(action):  # noqa: ANN001, ANN202
+    """Run one open-query action, mapping typed sandbox failures to HTTP."""
+    try:
+        return action()
+    except SandboxRejection as error:
+        raise HTTPException(
+            status_code=_sandbox_status(error.code),
+            detail={"code": error.code.value, "message": error.message},
+        ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422, detail={"code": "invalid_parameter", "message": str(error)}
+        ) from error
+
+
+def _sandbox_status(code: QueryErrorCode) -> int:
+    """Map public sandbox codes to stable HTTP statuses without private detail."""
+    if code in (QueryErrorCode.SAVED_QUERY_NOT_FOUND, QueryErrorCode.P2_UNAVAILABLE):
+        return 404
+    if code in (
+        QueryErrorCode.SAVED_QUERY_DISABLED,
+        QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
+        QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
+        QueryErrorCode.QUOTA_EXCEEDED,
+        QueryErrorCode.CONCURRENCY_EXCEEDED,
+        QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+    ):
+        return 409
+    if code in (
+        QueryErrorCode.PG_UNAVAILABLE,
+        QueryErrorCode.LANCE_UNAVAILABLE,
+        QueryErrorCode.CORPUS_BODY_UNAVAILABLE,
+        QueryErrorCode.GENERATION_UNAVAILABLE,
+    ):
+        return 503
+    if code in (
+        QueryErrorCode.STATEMENT_TIMEOUT,
+        QueryErrorCode.LOCK_TIMEOUT,
+        QueryErrorCode.CANCELLED,
+        QueryErrorCode.RESOURCE_LIMIT,
+        QueryErrorCode.EXECUTION_ERROR,
+        QueryErrorCode.CONFIRMATION_FAILED,
+    ):
+        return 500
+    return 422
 
 
 def _mount_pipeline_readiness(
