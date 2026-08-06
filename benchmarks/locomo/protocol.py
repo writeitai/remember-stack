@@ -53,12 +53,7 @@ _FROZEN_V9_QUESTION_CONTEXT = ToolDescriptor(
         "type": "object",
         "properties": {
             "query": {"type": "string"},
-            "k": {
-                "type": "integer",
-                "default": 50,
-                "minimum": 1,
-                "maximum": 100,
-            },
+            "k": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
             "candidate_k": {
                 "type": "integer",
                 "default": 200,
@@ -113,6 +108,7 @@ def frozen_v9_tool_catalog() -> tuple[ToolDescriptor, ...]:
         else descriptor
         for descriptor in recipe_descriptors(recipes=recipes)
     )
+
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
 RememberStack deployment. You may call only the public recipe tools listed
