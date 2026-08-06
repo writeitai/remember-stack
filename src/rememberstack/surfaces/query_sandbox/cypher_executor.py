@@ -158,6 +158,11 @@ class CypherSandboxExecutor:
         self._kills = kill_switches or KillSwitches()
         self._analytical_entitlement = analytical_entitlement
 
+    @property
+    def deployment_id(self) -> UUID:
+        """The one deployment this Cypher executor serves."""
+        return self._deployment_id
+
     def query_cypher(
         self,
         *,

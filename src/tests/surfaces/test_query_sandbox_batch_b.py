@@ -28,7 +28,7 @@ from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.discovery import search_query_space
-from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE
+from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE_FULL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
@@ -505,7 +505,7 @@ def test_discovery_serves_manifest_and_headline() -> None:
     members = load_manifest()["hash_members"]
     assert description.schema == "memory_v1"
     assert len(description.views) == 24
-    assert description.headline == TWO_LAYER_HEADLINE
+    assert description.headline == TWO_LAYER_HEADLINE_FULL
     assert set(description.functions) == PUBLIC_SRF_NAMES
     assert description.limits == {
         tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()
@@ -526,8 +526,12 @@ def test_discovery_serves_manifest_and_headline() -> None:
 
 
 def test_discovery_search_ranks_relevant_views() -> None:
-    names = [view.name for view in search_query_space(query="current facts", k=3)]
+    hits = search_query_space(query="current facts", k=3)
+    names = [hit.name for hit in hits]
     assert "facts_current" in names
+    assert all(
+        hit.kind in {"view", "function", "core_operation", "example"} for hit in hits
+    )
     with pytest.raises(SandboxRejection):
         search_query_space(query="facts", k=0)
 

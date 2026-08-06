@@ -1,34 +1,159 @@
 export const metadata = {
   title: "API Reference",
   description:
-    "The HTTP query API: the zero-LLM primitives and the registry-rendered recipes, each returning the self-accounting envelope, behind one auth perimeter.",
+    "The HTTP query API: open query space entry points, zero-LLM primitives, and registry-rendered recipes — each returning a typed result behind one auth perimeter.",
 };
 
 # API Reference
 
-The HTTP API is a thin, typed veneer over one deployment. Every query endpoint
-returns the same **envelope** — the answer plus a machine-readable
-account of itself (its grain, validity, freshness, and any typed "no"). No
-query endpoint calls an LLM, and reads never trigger writes. An explicitly
-composed ingest capability is the sole client write path and always enters E0.
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated current
+worldview (“what the system currently holds true”):
+supersession-adjudicated, clocked on two time axes (when a fact held in
+the world, and when the system learned it), evidence-counted per
+distinct source—repetition is not corroboration—and
+contradiction-tracked. The `fact_claim_evidence` association is the
+auditable bridge between the layers, recording which claims support or
+contradict each fact. Query claims to inspect testimony; query facts to
+answer current-truth questions, then follow the bridge to see why the
+system believes the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
+
+The HTTP API is a thin, typed veneer over one deployment. Open SQL and
+Cypher return **`QueryResult/v1`**. Assured operations and legacy recipe
+adapters return the D49 **envelope**. No query endpoint calls an LLM, and
+reads never trigger writes. An explicitly composed ingest capability is the
+sole client write path and always enters E0.
 
 Three things are true of every deployment's API:
 
+- **Open routes are additive.** When the open-query facade is composed, the
+  nine §3.1 entry points mount under `/query/…`. Legacy `/recipes` and
+  `/recipe/{name}` keep their existing contracts during the dual-surface
+  window. Default cutover has **not** run; no deprecation headers are emitted
+  yet.
 - **The recipe endpoints render from the registry.** `GET /recipes` _is_ the
   deployment's active recipe rows; the CLI and MCP surfaces render the same
   set, so the three surfaces are always in lockstep.
 - **The API is the one enforcement point.** When a deployment configures an
   auth perimeter, every endpoint is gated on a valid credential for _that_
   deployment before any read runs — one deployment is one trust domain.
-- **Failures are typed.** A "no" is a structured negative in the envelope
-  (`unknown_entity`, `known_empty`, `boundary`); an unroutable request is an
+- **Failures are typed.** Open-query failures map to a public error code and
+  message; envelope endpoints use structured negatives
+  (`unknown_entity`, `known_empty`, `boundary`). An unroutable request is an
   ordinary HTTP status.
+
+## Open query space (additive)
+
+Choose among three neutral surfaces: native snapshot Cypher with
+`built_at`/age, live/evidence-composable SQL, and the three assured typed
+operations (`resolve_entity`, `question_context`, `current_context`).
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| `POST` | `/query/sql` | One sandboxed statement; `QueryResult/v1` |
+| `POST` | `/query/sql/explain` | `EXPLAIN` without execution |
+| `POST` | `/query/cypher` | Read-only Cypher over the published P2 snapshot |
+| `POST` | `/query/cypher/explain` | Engine plan without execution |
+| `GET` | `/query/space` | Manifest-backed schema discovery (full first-call payload) |
+| `GET` | `/query/space/search` | Search checked-in manifest text only |
+| `GET` | `/query/saved` | Saved-query registry metadata |
+| `GET` | `/query/saved/{namespace}/{name}` | One immutable version |
+| `POST` | `/query/saved/{namespace}/{name}/run` | Execute active saved SQL |
+
+`GET /query/space` opens with the two-layer headline, the three retrieval
+choices, honesty warnings, and worked examples (contrast pair, predicate
+vocabulary, full audit trail, two-layer divergence, native Cypher
+traversal/aggregation, snapshot-ID-to-live SQL, semantic-to-relational). It
+also exposes the full authoritative discovery members (views, function
+signatures, core operation descriptors, SQL grammar, Cypher dialect, P2
+projection, and tier limits). Docs copy the bound example text; they do not
+import Python modules.
+
+The four design-bound facts-layer examples ship verbatim:
+
+**Contrast pair.** WRONG current-truth (claim validity windows are testimony,
+not what the system currently believes):
+
+```sql
+SELECT claim_id, claim_text, claim_valid_from, claim_valid_until
+FROM claims_live
+WHERE claim_valid_from <= $1::timestamptz
+  AND (claim_valid_until IS NULL
+       OR claim_valid_until >= $1::timestamptz);
+```
+
+RIGHT replacement — start from adjudicated current facts and join testimony:
+
+```sql
+SELECT f.*, e.claim_id, e.stance, e.source_handle
+FROM facts_current AS f
+JOIN fact_claim_evidence_live AS e
+  USING (deployment_id, fact_kind, fact_id)
+ORDER BY f.fact_kind, f.fact_id, e.stance, e.claim_id;
+```
+
+**Predicate-vocabulary discovery.** Discover the deployed fact vocabulary
+before writing predicate filters:
+
+```sql
+SELECT predicate, count(*) FROM facts_current GROUP BY 1 ORDER BY 2 DESC;
+```
+
+**Full audit trail.** Walk fact → live evidence association → immutable claim
+→ live source lineage:
+
+```sql
+SELECT f.fact_kind, f.fact_id, f.predicate,
+       e.stance, e.source_handle,
+       c.claim_id, c.claim_text, c.asserted_at,
+       d.doc_id
+FROM facts_current AS f
+JOIN fact_claim_evidence_live AS e
+  USING (deployment_id, fact_kind, fact_id)
+JOIN claims_live AS c
+  USING (deployment_id, claim_id)
+JOIN documents_live AS d
+  ON d.deployment_id = c.deployment_id
+ AND d.doc_id = c.doc_id
+WHERE f.fact_id = $1::uuid
+ORDER BY e.stance, c.asserted_at DESC, d.doc_id, c.claim_id;
+```
+
+**Two-layer divergence.** A current adjudicated fact whose newest current
+testimony contradicts it:
+
+```sql
+WITH ranked_testimony AS (
+  SELECT e.deployment_id, e.fact_kind, e.fact_id,
+         e.claim_id, e.stance, c.claim_text, c.asserted_at,
+         row_number() OVER (
+           PARTITION BY e.deployment_id, e.fact_kind, e.fact_id
+           ORDER BY c.asserted_at DESC NULLS LAST, c.claim_id
+         ) AS testimony_rank
+  FROM fact_claim_evidence_live AS e
+  JOIN claims_live AS c
+    USING (deployment_id, claim_id)
+)
+SELECT f.*, r.claim_id, r.claim_text, r.asserted_at, r.stance
+FROM facts_current AS f
+JOIN ranked_testimony AS r
+  USING (deployment_id, fact_kind, fact_id)
+WHERE r.testimony_rank = 1
+  AND r.stance = 'contradicts';
+```
+
+Shipped `examples.*` identities run only through
+`POST /query/saved/examples/{name}/run` — never as top-level tools.
 
 ## Recipes — the registry, rendered
 
-A recipe is a named, frozen composition of the primitives. The recipe surface
-is the recommended entry point: it is what the MCP tool list and the CLI also
-use.
+A recipe is a named, frozen composition of the primitives. During the dual-
+surface window the recipe surface remains the compatibility path for Envelope
+adapters; open SQL/Cypher and the three assured operations are first-class
+alternatives.
 
 ### `GET /recipes`
 

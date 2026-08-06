@@ -25,6 +25,59 @@ if TYPE_CHECKING:
     from rememberstack.surfaces.query_sandbox.result import QueryResult
 
 
+@dataclass
+class MigrationUsageCounters:
+    """Content-free dual-surface call counts for the §8 removal gate.
+
+    Counts only surface class and operation name — never arguments, SQL/Cypher
+    text, rows, or bodies. Operators feed these aggregates into the <1%
+    compatibility-adapter removal measurement; this seam does not emit
+    deprecation warnings or dates (default cutover has not passed).
+    """
+
+    enabled: bool = True
+    compatibility_adapter_calls: int = 0
+    open_query_calls: int = 0
+    core_operation_calls: int = 0
+    by_operation: dict[str, int] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    @classmethod
+    def disabled(cls) -> "MigrationUsageCounters":
+        """A no-op counter for hosts that do not measure yet."""
+        counters = cls(enabled=False)
+        return counters
+
+    def record(self, *, surface: str, operation: str) -> None:
+        """Increment one content-free call counter.
+
+        `surface` is one of `compatibility_adapter`, `open_query`, or
+        `core_operation`. `operation` is a short name (recipe name or facade
+        entry point) used only as an aggregate key.
+        """
+        if not self.enabled:
+            return
+        with self._lock:
+            if surface == "compatibility_adapter":
+                self.compatibility_adapter_calls += 1
+            elif surface == "open_query":
+                self.open_query_calls += 1
+            elif surface == "core_operation":
+                self.core_operation_calls += 1
+            key = f"{surface}:{operation}"
+            self.by_operation[key] = self.by_operation.get(key, 0) + 1
+
+    def snapshot(self) -> dict[str, object]:
+        """Return a content-free aggregate snapshot for operator pipelines."""
+        with self._lock:
+            return {
+                "compatibility_adapter_calls": self.compatibility_adapter_calls,
+                "open_query_calls": self.open_query_calls,
+                "core_operation_calls": self.core_operation_calls,
+                "by_operation": dict(self.by_operation),
+            }
+
+
 @dataclass(frozen=True)
 class AuditEvent:
     """One attempt's non-content telemetry record."""
