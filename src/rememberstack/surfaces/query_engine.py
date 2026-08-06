@@ -17,6 +17,7 @@ from datetime import datetime
 from datetime import UTC
 from itertools import batched
 import math
+from typing import cast
 from typing import Final
 from typing import Literal
 from typing import TYPE_CHECKING
@@ -63,6 +64,7 @@ from rememberstack.model import Truncation
 from rememberstack.model import Validity
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.entity_registry import normalized_lemma
 
@@ -117,6 +119,18 @@ MULTI_HOP_QUESTION_CONTEXT_K: Final = 50
 
 MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K: Final = 200
 """The existing question-context recipe's per-channel nomination cap."""
+
+QUESTION_CONTEXT_ENTITY_CAP: Final = 20
+"""Maximum confirmed entity candidates in `question_context` v4."""
+
+QUESTION_CONTEXT_ENTITY_NOMINATION_CAP: Final = QUESTION_CONTEXT_ENTITY_CAP + 1
+"""Maximum exact or semantic candidates admitted per v4 entity channel."""
+
+QUESTION_CONTEXT_FACT_CAP: Final = 30
+"""Maximum current facts in the opt-in v4 fact channel."""
+
+QUESTION_CONTEXT_EVIDENCE_PER_FACT: Final = 3
+"""The v4 fact channel reuses `current_context`'s fixed default depth."""
 
 _EVIDENCE_STANCES: Final = ("supports", "contradicts")
 """Stable two-stance order for selection and exact-total disclosure."""
@@ -523,6 +537,13 @@ class QueryEngine:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
+            # The coordinate-complete live evidence views expand into a deep
+            # authorization tree. Preserve this bounded query's written order
+            # so PostgreSQL does not exhaust memory exploring equivalent plans.
+            connection.exec_driver_sql("SET LOCAL jit = off")
+            connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
+            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
             fact_rows = (
                 connection.execute(
                     _CONFIRM_CURRENT_FACTS,
@@ -646,6 +667,122 @@ class QueryEngine:
             ),
         )
 
+    def question_context(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 50,
+        candidate_k: int = 200,
+        include_facts: bool = False,
+        include_entities: bool = False,
+    ) -> Envelope:
+        """High-recall claim/chunk context with two opt-in v4 channels.
+
+        The default remains the v3 hybrid claim/chunk answer. Facts reuse the
+        existing `current_context` authority instead of duplicating its D48,
+        both-stance, and 60-association rules. Entity resolution and semantic
+        nominations are deduplicated, then confirmed together through
+        `memory_v1.entities_current` before any candidate is returned.
+        """
+        _validate_question_context_bounds(k=k, candidate_k=candidate_k)
+        base = self._question_context_retrieval(
+            deployment_id=deployment_id, query=query, k=k, candidate_k=candidate_k
+        )
+        fact_context = (
+            self.current_context(
+                deployment_id=deployment_id,
+                query=query,
+                k=min(k, QUESTION_CONTEXT_FACT_CAP),
+                evidence_per_fact=QUESTION_CONTEXT_EVIDENCE_PER_FACT,
+            )
+            if include_facts
+            else None
+        )
+        entities: tuple[EntityCandidate, ...] = ()
+        entity_drops = 0
+        entity_truncated = False
+        entity_estimated = 0
+        if include_entities:
+            (entities, entity_drops, entity_truncated, entity_estimated) = (
+                self._question_context_entities(
+                    deployment_id=deployment_id, query=query
+                )
+            )
+
+        evidence_by_id = {record.claim_id: record for record in base.evidence}
+        if fact_context is not None:
+            for record in fact_context.evidence:
+                evidence_by_id.setdefault(record.claim_id, record)
+        evidence = tuple(evidence_by_id.values())
+        facts = fact_context.facts if fact_context is not None else ()
+        fact_evidence = fact_context.fact_evidence if fact_context is not None else ()
+        evidence_totals = (
+            fact_context.evidence_totals if fact_context is not None else ()
+        )
+
+        base_truncated = bool(base.truncation and base.truncation.truncated)
+        fact_truncated = bool(
+            fact_context
+            and fact_context.truncation
+            and fact_context.truncation.truncated
+        )
+        truncated = base_truncated or fact_truncated or entity_truncated
+        returned = len(evidence) + len(base.chunks) + len(facts) + len(entities)
+        estimated = returned
+        exact = True
+        if base.truncation is not None:
+            estimated += max(
+                0, base.truncation.estimated_total - base.truncation.returned
+            )
+            exact = exact and base.truncation.total_is_exact
+        if fact_context is not None and fact_context.truncation is not None:
+            estimated += max(
+                0,
+                fact_context.truncation.estimated_total
+                - fact_context.truncation.returned,
+            )
+            exact = exact and fact_context.truncation.total_is_exact
+        if include_entities:
+            estimated += max(0, entity_estimated - len(entities))
+            exact = exact and not entity_truncated
+
+        has_payload = bool(evidence or base.chunks or facts or entities)
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            entities=entities,
+            facts=facts,
+            evidence=evidence,
+            fact_evidence=fact_evidence,
+            evidence_totals=evidence_totals,
+            chunks=base.chunks,
+            freshness=_freshness(),
+            truncation=(
+                Truncation(
+                    truncated=True,
+                    returned=returned,
+                    estimated_total=max(estimated, returned + 1),
+                    total_is_exact=exact,
+                )
+                if truncated
+                else None
+            ),
+            dropped_by_hydration=(
+                base.dropped_by_hydration
+                + (fact_context.dropped_by_hydration if fact_context else 0)
+                + entity_drops
+            ),
+            negative=(
+                None
+                if has_payload
+                else Negative(
+                    kind=NegativeKind.KNOWN_EMPTY,
+                    explanation=f"no question context confirms for {query!r}",
+                    workaround="broaden the query or inspect source artifacts",
+                )
+            ),
+        )
+
     def multi_hop_context(
         self,
         *,
@@ -708,6 +845,11 @@ class QueryEngine:
             with self._engine.connect().execution_options(
                 isolation_level="REPEATABLE READ"
             ) as connection:
+                # The invariant-compiled authority views are deliberately deep.
+                # Preserve the written join order for this bounded hydration query
+                # so PostgreSQL does not exhaust memory exploring equivalent plans.
+                connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+                connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
                 evidence_rows = (
                     connection.execute(
                         _MULTI_HOP_EDGE_EVIDENCE,
@@ -1810,7 +1952,12 @@ class QueryEngine:
             connection.close()
 
     def _question_context_retrieval(
-        self, *, deployment_id: UUID, query: str
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = MULTI_HOP_QUESTION_CONTEXT_K,
+        candidate_k: int = MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
     ) -> Envelope:
         """Run the stock question-context mechanics inside a compound op.
 
@@ -1825,14 +1972,11 @@ class QueryEngine:
             semantic = self.nominate_claims(
                 deployment_id=deployment_id,
                 query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                k=candidate_k,
                 channel="semantic",
             )
             lexical = self.nominate_claims(
-                deployment_id=deployment_id,
-                query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
-                channel="bm25",
+                deployment_id=deployment_id, query=query, k=candidate_k, channel="bm25"
             )
             fused = self.fuse(
                 rankings=(
@@ -1845,7 +1989,7 @@ class QueryEngine:
                 deployment_id=deployment_id,
                 claim_ids=tuple(item.item_id for item in fused.ranking),
                 ranking=fused.ranking,
-                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+                limit=k,
                 group_exact_text=True,
             )
 
@@ -1853,14 +1997,11 @@ class QueryEngine:
             semantic = self.nominate_chunks(
                 deployment_id=deployment_id,
                 query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+                k=candidate_k,
                 channel="semantic",
             )
             lexical = self.nominate_chunks(
-                deployment_id=deployment_id,
-                query=query,
-                k=MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
-                channel="bm25",
+                deployment_id=deployment_id, query=query, k=candidate_k, channel="bm25"
             )
             fused = self.fuse(
                 rankings=(
@@ -1873,12 +2014,93 @@ class QueryEngine:
                 deployment_id=deployment_id,
                 chunk_ids=tuple(item.item_id for item in fused.ranking),
                 ranking=fused.ranking,
-                limit=MULTI_HOP_QUESTION_CONTEXT_K,
+                limit=k,
             )
 
         return self.combine_evidence(
             inputs=(hydrate_claim_context(), hydrate_chunk_context())
         )
+
+    def _question_context_entities(
+        self, *, deployment_id: UUID, query: str
+    ) -> tuple[tuple[EntityCandidate, ...], int, bool, int]:
+        """Resolution-first semantic entities, confirmed once in PostgreSQL."""
+        with self._engine.connect() as connection:
+            resolved_rows = (
+                connection.execute(
+                    _QUESTION_CONTEXT_RESOLVE_T0,
+                    {
+                        "deployment_id": deployment_id,
+                        "lemma": normalized_lemma(surface=query),
+                        "entity_type": None,
+                        "candidate_limit": QUESTION_CONTEXT_ENTITY_NOMINATION_CAP,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        search = getattr(self._search_index, "search_entities_scored", None)
+        if not callable(search):
+            raise RuntimeError(
+                "include_entities needs the semantic entity nomination channel"
+            )
+        nominations = cast(
+            "tuple[P1Nomination, ...]",
+            search(
+                deployment_id=str(deployment_id),
+                vector=self._embed(query=query),
+                k=QUESTION_CONTEXT_ENTITY_NOMINATION_CAP,
+                entity_type=None,
+            ),
+        )
+        ordered: list[tuple[UUID, str, int]] = [
+            (row["entity_id"], "T0", 0) for row in resolved_rows
+        ]
+        malformed = 0
+        for nomination in nominations:
+            try:
+                ordered.append((UUID(str(nomination.item_id)), "semantic", 0))
+            except (AttributeError, ValueError):
+                malformed += 1
+        deduplicated: list[tuple[UUID, str, int]] = []
+        seen: set[UUID] = set()
+        for item in ordered:
+            if item[0] in seen:
+                continue
+            seen.add(item[0])
+            deduplicated.append(item)
+        if not deduplicated:
+            return (), malformed, False, 0
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            rows = (
+                connection.execute(
+                    _CONFIRM_CONTEXT_ENTITIES,
+                    {
+                        "deployment_id": deployment_id,
+                        "entity_ids": [item[0] for item in deduplicated],
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        confirmed = {row["entity_id"]: row for row in rows}
+        confirmed_entities = tuple(
+            EntityCandidate(
+                entity_id=entity_id,
+                canonical_name=str(confirmed[entity_id]["canonical_name"]),
+                type=str(confirmed[entity_id]["entity_type"]),
+                tier=tier,
+                context_hits=context_hits,
+            )
+            for entity_id, tier, context_hits in deduplicated
+            if entity_id in confirmed
+        )
+        truncated = len(confirmed_entities) > QUESTION_CONTEXT_ENTITY_CAP
+        entities = confirmed_entities[:QUESTION_CONTEXT_ENTITY_CAP]
+        dropped = malformed + len(deduplicated) - len(confirmed_entities)
+        return entities, dropped, truncated, len(confirmed_entities)
 
     def _resolve_recipe_entity(
         self, *, deployment_id: UUID, entity: str, grain: Grain
@@ -2258,6 +2480,14 @@ def _validate_current_context_bounds(*, k: int, evidence_per_fact: int) -> None:
         raise ValueError("current_context k must be between 1 and 30")
     if not 1 <= evidence_per_fact <= 5:
         raise ValueError("evidence_per_fact must be between 1 and 5")
+
+
+def _validate_question_context_bounds(*, k: int, candidate_k: int) -> None:
+    """Enforce the retained question-context v4 public bounds."""
+    if not 1 <= k <= 100:
+        raise ValueError("question_context k must be between 1 and 100")
+    if not 1 <= candidate_k <= 400:
+        raise ValueError("question_context candidate_k must be between 1 and 400")
 
 
 def _validate_multi_hop_context_bounds(
@@ -2679,8 +2909,7 @@ _CHUNK_NEIGHBORS = text(
     """
 )
 
-_RESOLVE_T0 = text(
-    """
+_RESOLVE_T0_SQL = """
     WITH RECURSIVE matched AS (
         SELECT entities.entity_id, entities.canonical_name, entities.type,
                entities.status, entities.merged_into
@@ -2703,6 +2932,24 @@ _RESOLVE_T0 = text(
     FROM matched
     WHERE status = 'active'
       AND (CAST(:entity_type AS text) IS NULL OR type = :entity_type)
+    """
+
+_RESOLVE_T0 = text(_RESOLVE_T0_SQL)
+
+_QUESTION_CONTEXT_RESOLVE_T0 = text(
+    _RESOLVE_T0_SQL
+    + """
+    ORDER BY canonical_name, entity_id
+    LIMIT :candidate_limit
+    """
+)
+
+_CONFIRM_CONTEXT_ENTITIES = text(
+    """
+    SELECT entity_id, canonical_name, entity_type
+    FROM memory_v1.entities_current
+    WHERE deployment_id = :deployment_id
+      AND entity_id = ANY(:entity_ids)
     """
 )
 
@@ -2814,48 +3061,49 @@ _CURRENT_FACT_EVIDENCE = text(
         FROM unnest(
             CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[])
         ) WITH ORDINALITY AS confirmed(fact_id, kind, nomination_rank)
-    ), links AS (
+    ), links AS MATERIALIZED (
         SELECT requested.fact_id, requested.kind, requested.nomination_rank,
                e.claim_id, e.doc_id, e.stance::text AS stance
         FROM requested
-        JOIN relation_evidence e
-          ON requested.kind = 'relation'
-         AND e.deployment_id = :deployment_id
-         AND e.relation_id = requested.fact_id
-        UNION ALL
-        SELECT requested.fact_id, requested.kind, requested.nomination_rank,
-               e.claim_id, e.doc_id, e.stance::text AS stance
+        JOIN memory_v1.fact_claim_evidence_live e
+          ON e.deployment_id = :deployment_id
+         AND e.fact_kind = requested.kind
+         AND e.fact_id = requested.fact_id
+    ), totals AS MATERIALIZED (
+        SELECT requested.fact_id, requested.kind, lineage.stance,
+               count(*)::bigint AS evidence_total
         FROM requested
-        JOIN observation_evidence e
-          ON requested.kind = 'observation'
-         AND e.deployment_id = :deployment_id
-         AND e.observation_id = requested.fact_id
+        JOIN memory_v1.evidence_lineage lineage
+          ON lineage.deployment_id = :deployment_id
+         AND lineage.fact_kind = requested.kind
+         AND lineage.fact_id = requested.fact_id
+        GROUP BY requested.fact_id, requested.kind, lineage.stance
     ), eligible AS (
         SELECT links.fact_id, links.kind, links.nomination_rank, links.stance,
                c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
                c.char_start, c.char_end, c.is_attributed,
-               c.is_current_testimony, c.asserted_at, c.claim_valid_from,
+               true AS is_current_testimony, c.asserted_at, c.claim_valid_from,
                c.claim_valid_until, c.claim_valid_precision::text,
                c.claim_valid_kind::text, d.title AS document_title,
                d.source_kind, c.ingested_at AS evidence_ingested_at,
-               count(*) OVER (
-                   PARTITION BY links.fact_id, links.stance
-               ) AS evidence_total,
+               totals.evidence_total,
                row_number() OVER (
                    PARTITION BY links.fact_id, links.stance, links.doc_id
                    ORDER BY c.asserted_at DESC NULLS LAST,
                             c.ingested_at DESC, c.claim_id
                ) AS lineage_claim_rank
         FROM links
-        JOIN claims c
+        JOIN memory_v1.claims_live c
           ON c.deployment_id = :deployment_id
          AND c.claim_id = links.claim_id
          AND c.doc_id = links.doc_id
-        LEFT JOIN documents d
+        JOIN memory_v1.documents_live d
           ON d.deployment_id = c.deployment_id
          AND d.doc_id = c.doc_id
-        WHERE c.is_current_testimony
-          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+        JOIN totals
+          ON totals.fact_id = links.fact_id
+         AND totals.kind = links.kind
+         AND totals.stance = links.stance
     ), diverse AS (
         SELECT eligible.*,
                row_number() OVER (
@@ -2865,6 +3113,7 @@ _CURRENT_FACT_EVIDENCE = text(
                             evidence_ingested_at DESC, doc_id, claim_id
                ) AS stance_rank
         FROM eligible
+        WHERE lineage_claim_rank = 1
     )
     SELECT fact_id, kind, stance, evidence_total, stance_rank,
            claim_id, doc_id, chunk_id, claim_text, source_span,
@@ -2885,14 +3134,17 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         SELECT relation_id, graph_rank
         FROM unnest(CAST(:relation_ids AS uuid[])) WITH ORDINALITY
              AS nominated(relation_id, graph_rank)
-    ), confirmed AS (
+    ), confirmed AS MATERIALIZED (
         SELECT requested.graph_rank, r.relation_id AS fact_id,
                r.subject_entity_id AS subject_id,
                r.object_entity_id AS object_id, r.predicate,
-               r.fact_label AS fact, r.evidence_count,
+               r.fact_label AS fact,
+               r.evidence_count_current AS evidence_count,
                r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
-               subject.canonical_name AS subject_name, subject.type AS subject_type,
-               object.canonical_name AS object_name, object.type AS object_type,
+               subject.canonical_name AS subject_name,
+               subject.type::text AS subject_type,
+               object.canonical_name AS object_name,
+               object.type::text AS object_type,
                EXISTS (
                    SELECT 1
                    FROM review_queue q
@@ -2902,9 +3154,13 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                      AND (q.candidate ->> 'fact_id') = r.relation_id::text
                ) AS support_withdrawn
         FROM requested
-        JOIN relations r
+        JOIN memory_v1.graph_edges_visible_history r
           ON r.deployment_id = :deployment_id
          AND r.relation_id = requested.relation_id
+        -- The graph view already proved both endpoints current. These base
+        -- joins hydrate names and types only; repeating entities_current here
+        -- expands its full authorization plan twice without changing
+        -- membership.
         JOIN entities subject
           ON subject.deployment_id = r.deployment_id
          AND subject.entity_id = r.subject_entity_id
@@ -2918,35 +3174,44 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         SELECT confirmed.fact_id, confirmed.graph_rank,
                e.claim_id, e.doc_id, e.stance::text AS stance
         FROM confirmed
-        JOIN relation_evidence e
+        JOIN memory_v1.fact_claim_evidence_live e
           ON e.deployment_id = :deployment_id
-         AND e.relation_id = confirmed.fact_id
+         AND e.fact_kind = 'relation'
+         AND e.fact_id = confirmed.fact_id
+    ), totals AS (
+        SELECT confirmed.fact_id, lineage.stance,
+               count(*)::bigint AS evidence_total
+        FROM confirmed
+        JOIN memory_v1.evidence_lineage lineage
+          ON lineage.deployment_id = :deployment_id
+         AND lineage.fact_kind = 'relation'
+         AND lineage.fact_id = confirmed.fact_id
+        GROUP BY confirmed.fact_id, lineage.stance
     ), eligible AS (
         SELECT links.fact_id, links.graph_rank, links.stance,
                c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
                c.char_start, c.char_end, c.is_attributed,
-               c.is_current_testimony, c.asserted_at, c.claim_valid_from,
+               true AS is_current_testimony, c.asserted_at, c.claim_valid_from,
                c.claim_valid_until, c.claim_valid_precision::text,
                c.claim_valid_kind::text, d.title AS document_title,
                d.source_kind, c.ingested_at AS evidence_ingested_at,
-               count(*) OVER (
-                   PARTITION BY links.fact_id, links.stance
-               ) AS evidence_total,
+               totals.evidence_total,
                row_number() OVER (
                    PARTITION BY links.fact_id, links.stance, links.doc_id
                    ORDER BY c.asserted_at DESC NULLS LAST,
                             c.ingested_at DESC, c.claim_id
                ) AS lineage_claim_rank
         FROM links
-        JOIN claims c
+        JOIN memory_v1.claims_live c
           ON c.deployment_id = :deployment_id
          AND c.claim_id = links.claim_id
          AND c.doc_id = links.doc_id
-        LEFT JOIN documents d
+        JOIN memory_v1.documents_live d
           ON d.deployment_id = c.deployment_id
          AND d.doc_id = c.doc_id
-        WHERE c.is_current_testimony
-          AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
+        JOIN totals
+          ON totals.fact_id = links.fact_id
+         AND totals.stance = links.stance
     ), diverse AS (
         SELECT eligible.*,
                row_number() OVER (
@@ -2956,6 +3221,7 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                             evidence_ingested_at DESC, doc_id, claim_id
                ) AS stance_rank
         FROM eligible
+        WHERE lineage_claim_rank = 1
     ), limited AS (
         SELECT *
         FROM diverse

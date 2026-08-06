@@ -1681,6 +1681,7 @@ def _forbidden_identifiers(*, corpus: _Corpus, target_id: str) -> set[str]:
         ),
         "claim": (corpus.claim["a"],),
         "fact_provenance": (corpus.fact["current"],),
+        "p2_edge": (corpus.fact["current"],),
         "k_target": (
             corpus.doc["kcited"],
             corpus.version["kcited.v1"],
@@ -1775,7 +1776,7 @@ def _apply_deletion(*, connection: Connection, corpus: _Corpus, target_id: str) 
             {"claim": corpus.claim["a"]},
         )
         return
-    if target_id == "fact_provenance":
+    if target_id in {"fact_provenance", "p2_edge"}:
         connection.execute(
             text("DELETE FROM relation_evidence WHERE relation_id = :relation"),
             {"relation": corpus.fact["current"]},
@@ -1908,7 +1909,7 @@ def test_deferred_matrix_cells_name_the_batch_that_will_execute_them(
     """A target this batch cannot build is recorded, not silently omitted."""
     cells = _matrix_cells()
     deferred = {target.target_id for target in DELETION_TARGETS if target.deferred}
-    assert deferred == {"p1_candidate", "p2_edge", "corpus_body"}
+    assert deferred == {"p1_candidate", "corpus_body"}
     for (target_id, _surface), cell in cells.items():
         if target_id in deferred:
             assert cell["status"] == "deferred"

@@ -16,6 +16,15 @@ from rememberstack.profiles.selfhost import _SUPPORTED_WORKER_STAGES
 _ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_selfhost_setup_seeds_shipped_examples() -> None:
+    """Self-host setup installs examples.* via the registry seed path, not Alembic."""
+    from rememberstack.profiles import selfhost as selfhost_mod
+
+    source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
+    assert "seed_shipped_examples" in source
+    assert "seed_canonical_recipes" in source
+
+
 def test_selfhost_composes_every_implemented_continuous_route() -> None:
     """Ten real handlers run; enum-only/fused stages do not get dummy workers."""
     assert _SUPPORTED_WORKER_STAGES == (

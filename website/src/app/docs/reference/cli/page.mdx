@@ -1,10 +1,25 @@
 export const metadata = {
   title: "CLI Reference",
   description:
-    "The client-first remember command line: query, ingest, manage connectors, inspect operations and budgets, serve MCP, and drive the local review queue.",
+    "The client-first remember command line: open query space, recipes, ingest, connectors, ops, budgets, MCP, and review.",
 };
 
 # CLI Reference
+
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated current
+worldview (“what the system currently holds true”):
+supersession-adjudicated, clocked on two time axes (when a fact held in
+the world, and when the system learned it), evidence-counted per
+distinct source—repetition is not corroboration—and
+contradiction-tracked. The `fact_claim_evidence` association is the
+auditable bridge between the layers, recording which claims support or
+contradict each fact. Query claims to inspect testimony; query facts to
+answer current-truth questions, then follow the bridge to see why the
+system believes the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
 
 The `remember` command ships in the dependency-light base wheel. Query, ingest,
 connector management, and MCP all talk to the deployment API at `REMEMBERSTACK_API_URL`
@@ -20,8 +35,12 @@ remember --version
 
 ## `remember query`
 
-Because query renders the same recipe surface the API and MCP do, all three
-are always in lockstep.
+Choose among native snapshot Cypher, live SQL, and the three assured
+operations. Legacy `list` / `run` remain the recipe adapters; open-query
+subcommands are additive. No deprecation warnings are emitted yet — default
+cutover has not passed the paid noninferiority gate. Recipe `list` / `run`
+render the same recipe surface the API and MCP do, so those three stay in
+lockstep.
 
 ### `remember query list`
 
@@ -45,6 +64,38 @@ Runs one recipe by name over `key=value` arguments and prints the envelope as
 JSON. Arguments are coerced by the recipe's declared types. An unknown recipe
 or a missing required argument prints the API's error to stderr and exits
 nonzero.
+
+### Open query space (additive)
+
+When the deployment API composes the open-query facade:
+
+| Subcommand | Purpose |
+| --- | --- |
+| `remember query sql` | One sandboxed SQL statement → `QueryResult/v1` |
+| `remember query explain-sql` | `EXPLAIN` without execution |
+| `remember query cypher` | Read-only snapshot Cypher |
+| `remember query explain-cypher` | Cypher plan without execution |
+| `remember query space` | Manifest-backed discovery (two-layer headline + full members) |
+| `remember query search-space` | Search checked-in manifest text only |
+| `remember query list-saved` | Saved-query registry metadata |
+| `remember query describe-saved` | One immutable version |
+| `remember query run-saved` | Execute active saved SQL |
+
+```bash
+remember query space --include-examples
+remember query sql 'SELECT count(*)::int AS n FROM documents_live'
+remember query run-saved examples relation_current --parameters '["<entity-uuid>"]'
+```
+
+## `remember eval open-query-gate`
+
+Offline arithmetic for the §8 hybrid noninferiority gate. Never starts a paid
+run or calls a model.
+
+```bash
+remember eval open-query-gate --estimate --cases 100 --arms 2 --calls-per-case 3 --unit-cost 0.01
+remember eval open-query-gate --metrics ./arm-metrics.json
+```
 
 ## `remember ingest`
 

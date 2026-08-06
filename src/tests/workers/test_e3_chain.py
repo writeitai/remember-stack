@@ -661,7 +661,7 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
             text("SELECT obs_label_version FROM observations")
         ).scalar_one()
     assert stamped == 2
-    assert relation["fact_label"] == "Alice Novak works for Acme."
+    assert relation["fact_label"] == "Alice Novak works for Acme"
     assert relation["fact_label_version"] is not None
     assert relation["fact_label_embedding_ref"] is not None
     assert observation_version is not None

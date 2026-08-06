@@ -146,8 +146,8 @@ class DeletionTarget(BaseModel):
 
     @property
     def deferred(self) -> bool:
-        """True when this batch does not build the target's object class."""
-        return self.executed_in != "A"
+        """True until the named batch supplies this target's executable gate."""
+        return bool(self.deferred_reason)
 
 
 _PUBLIC_SURFACES: Final = tuple(
@@ -387,16 +387,24 @@ DELETION_TARGETS: Final = (
             "Delete the relation behind a projected edge, then read the snapshot "
             "before and after the next rebuild."
         ),
-        identifier_classes=("fact", "entity"),
+        identifier_classes=("fact",),
         forbidden_identifiers=(
-            "The edge and its endpoint identifiers in any generation built after the "
-            "deletion; a generation built before it may still return them, but only "
-            "with its own earlier built_at and the snapshot_graph grade."
+            "The edge identifier in any generation built after the deletion; a "
+            "generation built before it may still return the edge and endpoints, but "
+            "only with its own earlier built_at and the snapshot_graph grade."
         ),
         executed_in="D",
-        deferred_reason=(
-            "the P2 snapshot projection, its generation boundary, and the Cypher "
-            "surface that reads it are Batch D"
+        applicable_surfaces=(
+            "memory_v1.changes_visible",
+            "memory_v1.evidence_lineage",
+            "memory_v1.fact_claim_evidence_live",
+            "memory_v1.facts_current",
+            "memory_v1.facts_visible_history",
+            "memory_v1.graph_edges_current",
+            "memory_v1.graph_edges_visible_history",
+            "memory_v1.page_evidence_visible",
+            "public.v_memory_fact_visible",
+            "public.v_memory_page_citation_visible",
         ),
     ),
     DeletionTarget(

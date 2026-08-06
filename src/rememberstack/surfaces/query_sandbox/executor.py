@@ -36,7 +36,9 @@ from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
+from rememberstack.surfaces.query_sandbox.limits import clamp_bytes
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
+from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
@@ -53,6 +55,11 @@ _EVALUATED_AT_RELATIONS: Final = frozenset(
 # As-of functions answer at an instant the caller names, which is equally a
 # single applied instant; every other public function is not instant-scoped.
 _AS_OF_FUNCTIONS: Final = frozenset({"facts_as_of"})
+_GRAPH_FUNCTIONS: Final = frozenset({"graph_neighborhood", "graph_path"})
+_GRAPH_CAP_SETTING: Final = "rememberstack.graph_cap_reached"
+_GRAPH_CAP_WARNING: Final = (
+    "one or more graph helpers reached an internal depth, edge, or path cap"
+)
 
 _TYPE_NAMES: Final = {
     16: "boolean",
@@ -199,6 +206,11 @@ class QuerySandboxExecutor:
         self._kills = kill_switches or KillSwitches()
         self._manifest_hash = surface_manifest_hash(build_hash_members())
 
+    @property
+    def deployment_id(self) -> UUID:
+        """The one deployment this executor serves."""
+        return self._deployment_id
+
     # -- public entry points (§3.1) ------------------------------------------
 
     def query_sql(
@@ -207,14 +219,23 @@ class QuerySandboxExecutor:
         sql: str,
         parameters: Sequence[object] = (),
         max_rows: int | None = None,
+        statement_timeout_ms: int | None = None,
+        max_bytes: int | None = None,
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str = "agent",
     ) -> QueryResult:
-        """One sandboxed statement; `QueryResult/v1` in every outcome."""
+        """One sandboxed statement; `QueryResult/v1` in every outcome.
+
+        Optional ``statement_timeout_ms`` and ``max_bytes`` override the tier
+        defaults for this one execution and are clamped to the tier hard caps
+        (used by ``run_saved_query`` stored defaults).
+        """
         return self._run(
             sql=sql,
             parameters=parameters,
             max_rows=max_rows,
+            statement_timeout_ms=statement_timeout_ms,
+            max_bytes=max_bytes,
             tier=tier,
             principal=principal,
             explain=False,
@@ -233,6 +254,8 @@ class QuerySandboxExecutor:
             sql=sql,
             parameters=parameters,
             max_rows=None,
+            statement_timeout_ms=None,
+            max_bytes=None,
             tier=tier,
             principal=principal,
             explain=True,
@@ -246,6 +269,8 @@ class QuerySandboxExecutor:
         sql: str,
         parameters: Sequence[object],
         max_rows: int | None,
+        statement_timeout_ms: int | None,
+        max_bytes: int | None,
         tier: LimitTier,
         principal: str,
         explain: bool,
@@ -257,10 +282,12 @@ class QuerySandboxExecutor:
             tier = LimitTier.INTERACTIVE
         limits = TIER_LIMITS[tier]
         row_cap = clamp_rows(tier=limits, requested=max_rows)
+        byte_cap = clamp_bytes(tier=limits, requested=max_bytes)
+        timeout_ms = clamp_timeout_ms(tier=limits, requested=statement_timeout_ms)
         result_limits = ResultLimits(
             row_cap=row_cap,
-            byte_cap=limits.returned_bytes_default,
-            statement_timeout_ms=limits.statement_timeout_ms_default,
+            byte_cap=byte_cap,
+            statement_timeout_ms=timeout_ms,
             analytical_tier=tier is LimitTier.ANALYTICAL,
         )
 
@@ -346,7 +373,8 @@ class QuerySandboxExecutor:
                 parameters=parameters,
                 limits_model=result_limits,
                 row_cap=row_cap,
-                byte_cap=limits.returned_bytes_default,
+                byte_cap=byte_cap,
+                statement_timeout_ms=timeout_ms,
                 tier=tier,
                 explain=explain,
                 request_id=request_id,
@@ -370,6 +398,7 @@ class QuerySandboxExecutor:
         limits_model: ResultLimits,
         row_cap: int,
         byte_cap: int,
+        statement_timeout_ms: int,
         tier: LimitTier,
         explain: bool,
         request_id: UUID,
@@ -380,6 +409,8 @@ class QuerySandboxExecutor:
         limits = TIER_LIMITS[tier]
         semantic_invocations: tuple[SemanticInvocation, ...] = ()
         bridge_parameters: dict[str, object] = {}
+        graph_cap_reached = False
+        uses_graph_helper = bool(set(validated.referenced_functions) & _GRAPH_FUNCTIONS)
         executable = validated.sql
         needs_projection, needs_embedder = required_adapters(validated.srf_bindings)
         if not explain and (
@@ -397,7 +428,9 @@ class QuerySandboxExecutor:
             )
 
         try:
-            with self._transaction(limits_ms=limits) as cursor:
+            with self._transaction(
+                limits_ms=limits, statement_timeout_ms=statement_timeout_ms
+            ) as cursor:
                 # Confirmation and execution share ONE transaction, so they
                 # share one snapshot. Confirming in a separate transaction
                 # would freeze rows that were live then into a statement that
@@ -448,6 +481,8 @@ class QuerySandboxExecutor:
                 # Always a mapping, never None: psycopg's placeholder binding is
                 # what the escaping in the gate assumes, and it must not
                 # switch on and off with the parameter count.
+                if uses_graph_helper:
+                    cursor.execute(f"SET LOCAL {_GRAPH_CAP_SETTING} = 'false'".encode())
                 cursor.execute(statement.encode(), bound)
                 columns = tuple(
                     ResultColumn(
@@ -460,6 +495,15 @@ class QuerySandboxExecutor:
                     for d in (cursor.description or ())
                 )
                 raw = cursor.fetchmany(row_cap + 1)
+                if uses_graph_helper and not explain:
+                    cursor.execute(
+                        (
+                            f"SELECT current_setting('{_GRAPH_CAP_SETTING}', true)"
+                            "::boolean"
+                        ).encode()
+                    )
+                    cap_row = cursor.fetchone()
+                    graph_cap_reached = bool(cap_row and cap_row[0])
         except SandboxRejection as rejection:
             return self._failure(
                 rejection.code,
@@ -565,6 +609,16 @@ class QuerySandboxExecutor:
                 }
             )
         )
+        truncation_reason = (
+            "row_cap"
+            if truncated
+            else (
+                "byte_cap"
+                if byte_truncated
+                else ("graph_cap" if graph_cap_reached else None)
+            )
+        )
+        warnings = (_GRAPH_CAP_WARNING,) if graph_cap_reached else ()
 
         outcome = QueryResult(
             request_id=request_id,
@@ -579,16 +633,15 @@ class QuerySandboxExecutor:
             returned_row_count=len(kept),
             returned_byte_count=encoded_bytes,
             limits=limits_model,
-            truncated=truncated or byte_truncated,
-            truncation_reason=(
-                "row_cap" if truncated else ("byte_cap" if byte_truncated else None)
-            ),
+            truncated=truncated or byte_truncated or graph_cap_reached,
+            truncation_reason=truncation_reason,
             ordered_result=validated.ordered_result,
             empty_result=not kept,
             execution_started_at=started,
             evaluated_at=evaluated_at,
             pg_snapshot_at=pg_snapshot_at,
             elapsed_ms=(time.monotonic() - clock) * 1000,
+            warnings=warnings,
             semantic_invocations=semantic_invocations,
         )
         self._audit.emit(outcome=outcome, principal=principal)
@@ -622,7 +675,8 @@ class QuerySandboxExecutor:
         return outcome
 
     @contextmanager
-    def _transaction(self, *, limits_ms):  # noqa: ANN001, ANN202
+    def _transaction(self, *, limits_ms, statement_timeout_ms: int):  # noqa: ANN001, ANN202
+        """Open one REPEATABLE READ transaction with the effective request GUCs."""
         connection = self._connect()
         try:
             # A pooled connection may carry state from an earlier request —
@@ -656,9 +710,11 @@ class QuerySandboxExecutor:
                             " SET LOCAL lock_timeout = {};"
                             " SET LOCAL idle_in_transaction_session_timeout = {};"
                             " SET LOCAL work_mem = {};"
+                            " SET LOCAL join_collapse_limit = 1;"
+                            " SET LOCAL from_collapse_limit = 1;"
                             " SET LOCAL max_parallel_workers_per_gather = 0"
                         ).format(
-                            pgsql.Literal(limits_ms.statement_timeout_ms_default),
+                            pgsql.Literal(statement_timeout_ms),
                             pgsql.Literal(limits_ms.lock_timeout_ms),
                             pgsql.Literal(limits_ms.idle_transaction_ms),
                             pgsql.Literal(f"{limits_ms.work_mem_kib}kB"),

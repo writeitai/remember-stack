@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 import json
 from pathlib import Path
 import sys
@@ -12,6 +13,8 @@ from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
+import psycopg
+from psycopg import sql as pg_sql
 from pydantic import Field
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
@@ -28,12 +31,16 @@ from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
+from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
+from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
 from rememberstack.spine import seed_canonical_recipes
 from rememberstack.spine import seed_graph_recipes
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -140,6 +147,154 @@ class _FreshDeploymentReadiness:
         return ()
 
 
+class _SelfHostSavedQueryReads:
+    """Per-call registry reads over a short-lived spine connection.
+
+    Saved-query metadata lives outside the query role's grants. Each method
+    opens an app connection, delegates to `SavedQueryRegistry`, and closes —
+    so the open-query facade never holds a long-lived registry session.
+    """
+
+    def __init__(
+        self, *, engine: Engine, deployment_id: UUID, manifest_hash: str
+    ) -> None:
+        self._engine = engine
+        self._deployment_id = deployment_id
+        self._manifest_hash = manifest_hash
+
+    @property
+    def deployment_id(self) -> UUID:
+        """The one deployment this read proxy serves."""
+        return self._deployment_id
+
+    def list_saved_queries(
+        self, *, namespace: str | None = None, status: str | None = None
+    ):
+        """Delegate list discovery to a short-lived registry instance."""
+        return self._with_registry(
+            lambda registry: registry.list_saved_queries(
+                namespace=namespace, status=status
+            )
+        )
+
+    def describe_saved_query(
+        self, *, namespace: str, name: str, version: int | None = None
+    ):
+        """Delegate describe to a short-lived registry instance."""
+        return self._with_registry(
+            lambda registry: registry.describe_saved_query(
+                namespace=namespace, name=name, version=version
+            )
+        )
+
+    def resolve(self, *, namespace: str, name: str, version: int | None = None):
+        """Delegate active-version resolve to a short-lived registry instance."""
+        return self._with_registry(
+            lambda registry: registry.resolve(
+                namespace=namespace, name=name, version=version
+            )
+        )
+
+    def _with_registry(self, action):  # noqa: ANN001, ANN202
+        """Open one short-lived registry, run ``action``, and close."""
+        from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
+            PLATFORM_SEED_ACTOR,
+        )
+        from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
+            SavedQueryRegistry,
+        )
+
+        with self._engine.connect() as sa_connection:
+            raw = sa_connection.connection.dbapi_connection
+            assert isinstance(raw, psycopg.Connection)
+            registry = SavedQueryRegistry(
+                connection=raw,
+                deployment_id=self._deployment_id,
+                manifest_hash=self._manifest_hash,
+                actor=PLATFORM_SEED_ACTOR,
+            )
+            return action(registry)
+
+
+def _query_role_connect_factory(*, engine: Engine):
+    """Bind a query-role connection factory to one profile engine URL.
+
+    Uses psycopg keyword arguments so passwords containing ``@``, ``:``, or
+    ``/`` cannot corrupt a reconstructed DSN. Derives host/port/database/
+    password from the injected profile engine rather than reloading settings.
+    """
+    from rememberstack.spine.migrations.versions.p9_02_0023_query_space_roles import (  # noqa: PLC0415
+        query_role_name,
+    )
+
+    url = engine.url
+    database = url.database or ""
+    role = query_role_name(database)
+    password = url.password or ""
+    host = url.host or "localhost"
+    port = int(url.port or 5432)
+
+    def connect() -> psycopg.Connection:
+        """Open as the deployment query role with keyword connection args."""
+        return psycopg.connect(
+            host=host, port=port, dbname=database, user=role, password=password
+        )
+
+    return connect
+
+
+def selfhost_embed_query(
+    *,
+    model_provider: ModelProviderPort,
+    embedding_model: str,
+    query: str,
+    embedder_generation: str | None = None,
+) -> tuple[float, ...]:
+    """Embed one query text with the same model the E1 path stamps.
+
+    The configured E1 embedding model is the only generation this host can
+    produce. A supplied generation that differs fails closed with
+    ``generation_unavailable`` (D80); unpinned or current-model calls keep
+    normal embed behavior.
+    """
+    if embedder_generation is not None and embedder_generation != embedding_model:
+        raise SandboxRejection(
+            code=QueryErrorCode.GENERATION_UNAVAILABLE,
+            message="requested embedder_generation is not available on this host",
+        )
+    response = model_provider.embed(
+        request=EmbeddingRequest(model=embedding_model, texts=(query,))
+    )
+    return tuple(response.vectors[0])
+
+
+def _provision_query_role_password(
+    *, connection: psycopg.Connection, engine: Engine
+) -> None:
+    """Deploy-time provisioning: set the query-role password from the engine URL.
+
+    Runs only from ``SelfHostProfile.setup()``, never during API request or
+    startup composition. Migrations create a LOGIN NOINHERIT role without a
+    password; self-host reuses the spine password so the sandbox can open as
+    that role after ``DISCARD ALL`` (SET ROLE is not viable). No PostgreSQL RLS.
+    """
+    from rememberstack.spine.migrations.versions.p9_02_0023_query_space_roles import (  # noqa: PLC0415
+        query_role_name,
+    )
+
+    url = engine.url
+    database = url.database or ""
+    role = query_role_name(database)
+    password = url.password or ""
+    # Identifiers cannot be parameterized; the role name is derived from the
+    # database name the deployment already owns.
+    connection.execute(
+        pg_sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+            pg_sql.Identifier(role), pg_sql.Literal(password)
+        )
+    )
+
+
 class SelfHostProfile:
     """Compose the complete continuous E/P1 path plus aggregate P2/P3 builds."""
 
@@ -230,6 +385,30 @@ class SelfHostProfile:
             registry=RecipeRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
+        # Install the seventeen examples.* saved-query identities (idempotent).
+        # Not an Alembic migration: deployment seed DML lives in setup/bootstrap.
+        from rememberstack.spine.query_space.canonical import (  # noqa: PLC0415
+            surface_manifest_hash,
+        )
+        from rememberstack.spine.query_space.manifest import (  # noqa: PLC0415
+            build_hash_members,
+        )
+        from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
+            seed_shipped_examples,
+        )
+
+        with self._engine.connect() as sa_connection:
+            raw = sa_connection.connection.dbapi_connection
+            assert isinstance(raw, psycopg.Connection)
+            seed_shipped_examples(
+                connection=raw,
+                deployment_id=self._settings.deployment_id,
+                manifest_hash=surface_manifest_hash(build_hash_members()),
+            )
+            # Deploy-time only: provision the query-role password so setup-time
+            # composition can open as that role later. Never run from api().
+            _provision_query_role_password(connection=raw, engine=self._engine)
+            sa_connection.commit()
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
@@ -238,11 +417,21 @@ class SelfHostProfile:
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine.query_space.canonical import surface_manifest_hash
+        from rememberstack.spine.query_space.manifest import build_hash_members
         from rememberstack.surfaces import build_api
         from rememberstack.surfaces import GraphQueries
         from rememberstack.surfaces import QueryEngine
         from rememberstack.surfaces import RecipeExecutor
         from rememberstack.surfaces import RecipeSurface
+        from rememberstack.surfaces.query_sandbox.audit import AuditTrail
+        from rememberstack.surfaces.query_sandbox.audit import KillSwitches
+        from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
+        from rememberstack.surfaces.query_sandbox.cypher_executor import (
+            CypherSandboxExecutor,
+        )
+        from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+        from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
         from rememberstack.workers import E1Settings
         from rememberstack.workers import GraphSnapshotReader
         from rememberstack.workers.e0 import UploadIngestor
@@ -252,19 +441,60 @@ class SelfHostProfile:
         # silently desync search from the embed stage.
         e1_settings = E1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
-        graph_queries = GraphQueries(
-            reader=GraphSnapshotReader(
-                catalog=projection_catalog,
-                snapshot_store=self._snapshot_store,
-                deployment_id=self._settings.deployment_id,
-                cache_dir=self._settings.graph_cache_root,
-            )
+        graph_reader = GraphSnapshotReader(
+            catalog=projection_catalog,
+            snapshot_store=self._snapshot_store,
+            deployment_id=self._settings.deployment_id,
+            cache_dir=self._settings.graph_cache_root,
         )
+        graph_queries = GraphQueries(reader=graph_reader)
+        search_index = LanceChunkIndex(root=self._settings.lance_root)
+        embedding_model = e1_settings.embedding_model
+        # Shared enabled recorder for the §8 dual-surface measurement window.
+        migration_usage = MigrationUsageCounters()
+        # One admission + audit authority for SQL and Cypher so concurrency and
+        # rolling spend are combined and §7 events actually emit.
+        kill_switches = KillSwitches()
+        audit_trail = AuditTrail()
+        query_role_connect = _query_role_connect_factory(engine=self._engine)
+        embed_query = partial(
+            selfhost_embed_query,
+            model_provider=self._model_provider,
+            embedding_model=embedding_model,
+        )
+
         query_engine = QueryEngine(
             engine=self._engine,
-            search_index=LanceChunkIndex(root=self._settings.lance_root),
+            search_index=search_index,
             model_provider=self._model_provider,
-            embedding_model=e1_settings.embedding_model,
+            embedding_model=embedding_model,
+        )
+        sql_executor = QuerySandboxExecutor(
+            deployment_id=self._settings.deployment_id,
+            connect=query_role_connect,
+            search=search_index,
+            embed=embed_query,
+            kill_switches=kill_switches,
+            audit=audit_trail,
+        )
+        cypher_executor = CypherSandboxExecutor(
+            deployment_id=self._settings.deployment_id,
+            reader=graph_reader,
+            connect=query_role_connect,
+            kill_switches=kill_switches,
+            audit=audit_trail,
+        )
+        manifest_hash = surface_manifest_hash(build_hash_members())
+        open_query = OpenQueryFacade(
+            deployment_id=self._settings.deployment_id,
+            sql=sql_executor,
+            cypher=cypher_executor,
+            saved_queries=_SelfHostSavedQueryReads(
+                engine=self._engine,
+                deployment_id=self._settings.deployment_id,
+                manifest_hash=manifest_hash,
+            ),
+            usage=migration_usage,
         )
         app = build_api(
             engine=query_engine,
@@ -281,7 +511,9 @@ class SelfHostProfile:
                     query_engine=query_engine, graph_queries=graph_queries
                 ),
                 deployment_id=self._settings.deployment_id,
+                usage=migration_usage,
             ),
+            open_query=open_query,
             ingest=UploadIngestor(
                 catalog=DocumentCatalog(engine=self._engine),
                 raw_store=self._raw_store,
@@ -623,9 +855,10 @@ def _expected_components() -> dict[PipelineStage, str]:
     from rememberstack.workers import E1_EMBED_VERSION
     from rememberstack.workers import E2_EXTRACTOR_VERSION
     from rememberstack.workers import E3_NORMALIZER_VERSION
-    from rememberstack.workers import FACT_LABEL_VERSION
     from rememberstack.workers import P1_EMBED_CLAIMS_VERSION
     from rememberstack.workers import RECONCILE_VERSION
+    from rememberstack.workers.p1 import label_relation_component_version
+    from rememberstack.workers.p1 import P1Settings
 
     return {
         PipelineStage.CONVERT: E0_CONVERT_VERSION,
@@ -637,7 +870,9 @@ def _expected_components() -> dict[PipelineStage, str]:
         PipelineStage.ADJUDICATE_SUPERSESSION: ADJUDICATOR_VERSION,
         PipelineStage.EMBED_CLAIM: P1_EMBED_CLAIMS_VERSION,
         PipelineStage.RECONCILE: RECONCILE_VERSION,
-        PipelineStage.LABEL_RELATION: FACT_LABEL_VERSION,
+        PipelineStage.LABEL_RELATION: label_relation_component_version(
+            embedding_model=P1Settings().embedding_model
+        ),
     }
 
 
