@@ -1,0 +1,74 @@
+# Maps source areas to integration test directories / compose.
+# Shared-core paths expand to a broader pack (see ci.yml).
+quality:
+  - 'src/**'
+  - 'benchmarks/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+  - '.github/workflows/**'
+  - '.github/ci/**'
+  - 'ruff.toml'
+  - 'alembic.ini'
+
+unit:
+  - 'src/**'
+  - 'benchmarks/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+  - '.github/ci/unit-paths.txt'
+
+contract:
+  - 'src/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+  - 'alembic.ini'
+  - 'src/rememberstack/spine/migrations/**'
+  - '.github/ci/contract-smoke-paths.txt'
+
+workers:
+  - 'src/rememberstack/workers/**'
+  - 'src/rememberstack/spine/**'
+  - 'src/rememberstack/model/**'
+  - 'src/tests/workers/**'
+  - 'src/tests/spine/**'
+
+surfaces:
+  - 'src/rememberstack/surfaces/**'
+  - 'src/rememberstack/spine/query_space/**'
+  - 'src/rememberstack/spine/projection.py'
+  - 'src/rememberstack/spine/resolver.py'
+  - 'src/rememberstack/core/**'
+  - 'src/tests/surfaces/**'
+  - 'src/tests/eval/**'
+
+adapters:
+  - 'src/rememberstack/adapters/**'
+  - 'src/rememberstack/profiles/**'
+  - 'src/tests/adapters/**'
+  - 'src/tests/profiles/**'
+  - 'src/tests/spikes/**'
+  - 'src/tests/test_*.py'
+
+compose:
+  - 'compose.yaml'
+  - 'Dockerfile'
+  - '.github/compose/**'
+  - '.env.example'
+  - 'src/rememberstack/profiles/**'
+  - 'src/rememberstack/adapters/selfhost/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+
+# Touching these forces the broad integration pack on PRs.
+shared_core:
+  - 'src/rememberstack/model/**'
+  - 'src/rememberstack/ports/**'
+  - 'src/rememberstack/spine/**'
+  - 'src/rememberstack/workers/base.py'
+  - 'src/rememberstack/profiles/**'
+
+# CI control plane changes must exercise soft lanes on their own PR.
+ci_control:
+  - '.github/workflows/ci.yml'
+  - '.github/workflows/ci-nightly.yml'
+  - '.github/ci/**'

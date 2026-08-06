@@ -1,0 +1,8 @@
+src/tests/spine/test_migrations.py
+src/tests/spine/test_rank_embed_cache.py
+src/tests/eval/test_harness_skeleton.py
+src/tests/test_smoke.py
+src/tests/model/test_component_version.py
+src/tests/model/test_deployment.py
+src/tests/core/test_embedding_input_policy.py
+src/tests/adapters/test_openrouter.py
