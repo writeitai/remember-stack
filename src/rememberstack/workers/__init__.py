@@ -64,6 +64,7 @@ from rememberstack.workers.knowledge_writer import KnowledgeWriterSettings
 from rememberstack.workers.operations import DeadLetterReplayer
 from rememberstack.workers.p1 import EmbedClaimsHandler
 from rememberstack.workers.p1 import FACT_LABEL_VERSION
+from rememberstack.workers.p1 import label_relation_component_version
 from rememberstack.workers.p1 import LabelFactsHandler
 from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.p1 import P1Settings
@@ -99,6 +100,7 @@ __all__ = (
     "ExtractClaimsHandler",
     "EmbedClaimsHandler",
     "FACT_LABEL_VERSION",
+    "label_relation_component_version",
     "LabelFactsHandler",
     "KnowledgeRoutingDriver",
     "KnowledgeAuthoredSynchronizer",

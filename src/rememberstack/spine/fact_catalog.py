@@ -258,15 +258,23 @@ class FactCatalog:
         return tuple(FactForEmbedding.model_validate(dict(row)) for row in rows)
 
     def record_fact_embedding(
-        self, *, relation_id: UUID, embed_generation: str
+        self,
+        *,
+        relation_id: UUID,
+        label_version: str,
+        embed_generation: str,
     ) -> None:
-        """Stamp Lance readiness after a successful facts-channel upsert."""
+        """Stamp Lance readiness after a successful facts-channel upsert.
+
+        CAS: only when the label generation still matches what was selected
+        for this Phase E batch.
+        """
         with self._engine.begin() as connection:
             connection.execute(
                 _STAMP_FACT_EMBEDDING,
                 {
                     "relation_id": relation_id,
-                    "embed_generation": embed_generation,
+                    "label_version": label_version,
                     "embedding_ref": f"{relation_id}|{embed_generation}",
                 },
             )
@@ -570,6 +578,7 @@ _STAMP_FACT_EMBEDDING = text(
     SET fact_label_embedding_ref = :embedding_ref,
         updated_at = now()
     WHERE relation_id = :relation_id
+      AND fact_label_version = :label_version
       AND (
             fact_label_embedding_ref IS NULL
             OR fact_label_embedding_ref <> :embedding_ref

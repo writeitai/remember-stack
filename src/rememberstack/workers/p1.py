@@ -37,6 +37,16 @@ P1_EMBED_CLAIMS_VERSION: Final = "p1-embed-claims-2026.07"
 FACT_LABEL_VERSION: Final = "p1-fact-label-2026.08:deterministic-s4"
 """Fact-label generation: deterministic predicate surface templates (S4/S1)."""
 
+
+def label_relation_component_version(*, embedding_model: str) -> str:
+    """Work-ledger component version so embed-model bumps re-enqueue Phase E.
+
+    Label text generation is ``FACT_LABEL_VERSION``; embed generation is
+    ``FACT_LABEL_VERSION+{embedding_model}``. The processing_state identity must
+    include the embed model or a model-only change never re-runs the stage.
+    """
+    return f"{FACT_LABEL_VERSION}+{embedding_model}"
+
 _DEFAULT_EMBED_BATCH_SIZE: Final = 64
 """Default texts per embeddings HTTP call (OpenRouter hosts cap input length)."""
 
@@ -187,7 +197,9 @@ class LabelFactsHandler:
         """Label (checkpointed) then embed facts still lacking this generation."""
         doc_id = _payload_uuid(work=work, field="doc_id")
         label_generation = FACT_LABEL_VERSION
-        embed_generation = f"{FACT_LABEL_VERSION}+{self._settings.embedding_model}"
+        embed_generation = label_relation_component_version(
+            embedding_model=self._settings.embedding_model
+        )
         with self._facts.label_lock(deployment_id=work.deployment_id):
             # Phase L — deterministic labels, durable per relation.
             for relation in self._facts.relations_for_labeling(
@@ -263,6 +275,7 @@ class LabelFactsHandler:
                     if row.kind == "relation":
                         self._facts.record_fact_embedding(
                             relation_id=row.fact_id,
+                            label_version=label_generation,
                             embed_generation=embed_generation,
                         )
                     else:
