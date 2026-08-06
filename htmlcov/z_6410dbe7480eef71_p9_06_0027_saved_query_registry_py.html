@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Coverage for src/rememberstack/spine/migrations/versions/p9_06_0027_saved_query_registry.py: 100.0%</title>
+    <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
+    <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
+    <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
+</head>
+<body class="pyfile">
+<header>
+    <div class="content">
+        <h1>
+            <span class="text">Coverage for </span><b>src<span class="sep">/</span>rememberstack<span class="sep">/</span>spine<span class="sep">/</span>migrations<span class="sep">/</span>versions<span class="sep">/</span>p9_06_0027_saved_query_registry.py</b>:
+            <span class="pc_cov">100.0%</span>
+        </h1>
+        <aside id="help_panel_wrapper">
+            <input id="help_panel_state" type="checkbox">
+            <label for="help_panel_state">
+                <img id="keyboard_icon" src="keybd_closed_cb_900cfef5.png" alt="Show/hide keyboard shortcuts">
+            </label>
+            <div id="help_panel">
+                <p class="legend">Shortcuts on this page</p>
+                <div class="keyhelp">
+                    <p>
+                        <kbd>r</kbd>
+                        <kbd>m</kbd>
+                        <kbd>x</kbd>
+                        <kbd>p</kbd>
+                        &nbsp; toggle line displays
+                    </p>
+                    <p>
+                        <kbd>j</kbd>
+                        <kbd>k</kbd>
+                        &nbsp; next/prev highlighted chunk
+                    </p>
+                    <p>
+                        <kbd>0</kbd> &nbsp; (zero) top of page
+                    </p>
+                    <p>
+                        <kbd>1</kbd> &nbsp; (one) first highlighted chunk
+                    </p>
+                    <p>
+                        <kbd>[</kbd>
+                        <kbd>]</kbd>
+                        &nbsp; prev/next file
+                    </p>
+                    <p>
+                        <kbd>u</kbd> &nbsp; up to the index
+                    </p>
+                    <p>
+                        <kbd>?</kbd> &nbsp; show/hide this help
+                    </p>
+                </div>
+            </div>
+        </aside>
+        <h2>
+            <span class="text">13 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">13<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
+        </h2>
+        <p class="text">
+            <a id="prevFileLink" class="nav" href="z_6410dbe7480eef71_p9_05_0026_graph_helpers_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
+            <a id="nextFileLink" class="nav" href="z_f78672e8a2243142_observation_adjudication_py.html">&#xbb; next</a>
+            &nbsp; &nbsp; &nbsp;
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-08-06 13:32 +0000
+        </p>
+        <aside class="hidden">
+            <button type="button" class="button_next_chunk" data-shortcut="j"></button>
+            <button type="button" class="button_prev_chunk" data-shortcut="k"></button>
+            <button type="button" class="button_top_of_page" data-shortcut="0"></button>
+            <button type="button" class="button_first_chunk" data-shortcut="1"></button>
+            <button type="button" class="button_prev_file" data-shortcut="["></button>
+            <button type="button" class="button_next_file" data-shortcut="]"></button>
+            <button type="button" class="button_to_index" data-shortcut="u"></button>
+            <button type="button" class="button_show_hide_help" data-shortcut="?"></button>
+        </aside>
+    </div>
+</header>
+<main id="source">
+    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">"""Create the saved-query registry: identities and immutable versions (&#167;5).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">A saved query has a stable identity and an append-only history. Editing one</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">does not change what an earlier caller ran &#8212; it adds a version &#8212; because a</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">saved query is something other people's work depends on, and silently changing</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">what a name means is the failure this shape exists to prevent.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="str">Every version pins the `surface_manifest_hash` it was validated against. When</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="str">that hash changes, active versions move to `pending_revalidation` in the SAME</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="str">transaction that publishes the new hash, so there is no instant at which a</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="str">version claims validation against a surface that no longer exists. That state</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="str">is deliberately non-executable: a query validated against a different surface</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="str">is a query nobody has checked.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="str">Registry SQL can contain customer data &#8212; a WHERE clause naming a person is</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="str">customer data &#8212; so the tables carry no dependency that would prevent a hard</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="str">delete, and D74 purges the text while audit keeps only ids, hashes, actor, and</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t"><span class="str">action. Version *content* is immutable in PostgreSQL; only lifecycle fields</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t"><span class="str">may transition.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="key">from</span> <span class="nam">alembic</span> <span class="key">import</span> <span class="nam">op</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="nam">revision</span><span class="op">:</span> <span class="nam">str</span> <span class="op">=</span> <span class="str">"p9_06_0027"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="nam">down_revision</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="str">"p9_05_0026"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="nam">branch_labels</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="nam">depends_on</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="com"># &#167;5 registry bounds. They are enforced in the application, where a violation</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t"><span class="com"># can be reported as `quota_exceeded` with something useful to say; the CHECKs</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t"><span class="com"># here are the backstop that keeps a bug from writing something the contract</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t"><span class="com"># says cannot exist.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t"><span class="nam">_SQL_BYTES_MAX</span> <span class="op">=</span> <span class="num">64</span> <span class="op">*</span> <span class="num">1024</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t"><span class="nam">_VERSIONS_PER_IDENTITY_MAX</span> <span class="op">=</span> <span class="num">50</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="nam">_DDL</span> <span class="op">=</span> <span class="fst">f"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t"><span class="fst">CREATE TYPE saved_query_status AS ENUM (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="fst">  'draft', 'pending_revalidation', 'active', 'deprecated', 'disabled', 'broken'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t"><span class="fst">CREATE TYPE saved_query_origin AS ENUM (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t"><span class="fst">  'human', 'agent', 'import', 'shipped_example'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t44" href="#t44">44</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t45" href="#t45">45</a></span><span class="t"><span class="fst">CREATE TYPE saved_query_assurance AS ENUM (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t46" href="#t46">46</a></span><span class="t"><span class="fst">  'customer_authored', 'customer_reviewed', 'shipped_example'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t48" href="#t48">48</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t"><span class="fst">CREATE TABLE saved_queries (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t"><span class="fst">  deployment_id   uuid NOT NULL REFERENCES deployments(deployment_id)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t"><span class="fst">                    ON DELETE CASCADE,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t"><span class="fst">  query_id        uuid NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t"><span class="fst">  namespace       text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="fst">  name            text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t"><span class="fst">  description     text,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t"><span class="fst">  owner_principal text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t"><span class="fst">  origin          saved_query_origin NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t"><span class="fst">  created_at      timestamptz NOT NULL DEFAULT now(),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t"><span class="fst">  disabled_at     timestamptz,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t"><span class="fst">  latest_version  integer,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t"><span class="fst">  PRIMARY KEY (query_id),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t"><span class="fst">  UNIQUE (deployment_id, query_id),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t"><span class="fst">  -- One name means one thing inside a deployment.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t"><span class="fst">  UNIQUE (deployment_id, namespace, name),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t"><span class="fst">  CONSTRAINT saved_queries_namespace_shape</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t"><span class="fst">    CHECK (namespace ~ '^[a-z][a-z0-9_]*$'),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t"><span class="fst">  CONSTRAINT saved_queries_name_shape</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t"><span class="fst">    CHECK (name ~ '^[a-z][a-z0-9_]*$')</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t"><span class="fst">COMMENT ON TABLE saved_queries IS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t"><span class="fst">  'Stable identity of a saved query. Versions are append-only in saved_query_versions; editing a saved query adds a version rather than changing what an earlier caller ran.';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t"><span class="fst">CREATE TABLE saved_query_versions (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t"><span class="fst">  deployment_id                  uuid NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t"><span class="fst">  query_id                       uuid NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t"><span class="fst">  version                        integer NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t"><span class="fst">  sql                            text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t"><span class="fst">  query_hash                     text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t"><span class="fst">  parameter_schema               jsonb NOT NULL DEFAULT '{{</span><span class="fst">}}</span><span class="fst">'::jsonb,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="fst">  declared_result_schema         jsonb NOT NULL DEFAULT '{{</span><span class="fst">}}</span><span class="fst">'::jsonb,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t"><span class="fst">  declared_interpretation        text,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t"><span class="fst">  query_space_major              text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t"><span class="fst">  validated_surface_manifest_hash text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t"><span class="fst">  default_limits                 jsonb NOT NULL DEFAULT '{{</span><span class="fst">}}</span><span class="fst">'::jsonb,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t"><span class="fst">  status                         saved_query_status NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t"><span class="fst">  assurance                      saved_query_assurance,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t"><span class="fst">  author_principal               text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t"><span class="fst">  approver_principal             text,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="fst">  validation_report              jsonb NOT NULL DEFAULT '{{</span><span class="fst">}}</span><span class="fst">'::jsonb,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t"><span class="fst">  created_at                     timestamptz NOT NULL DEFAULT now(),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="fst">  superseded_at                  timestamptz,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t"><span class="fst">  PRIMARY KEY (query_id, version),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t"><span class="fst">  UNIQUE (deployment_id, query_id, version),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t"><span class="fst">  FOREIGN KEY (deployment_id, query_id)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t"><span class="fst">    REFERENCES saved_queries(deployment_id, query_id) ON DELETE CASCADE,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t"><span class="fst">  CONSTRAINT saved_query_versions_positive CHECK (version >= 1),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t"><span class="fst">  CONSTRAINT saved_query_versions_bounded</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t"><span class="fst">    CHECK (version &lt;= </span><span class="op">{</span><span class="nam">_VERSIONS_PER_IDENTITY_MAX</span><span class="op">}</span><span class="fst">),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t"><span class="fst">  CONSTRAINT saved_query_versions_sql_size</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t"><span class="fst">    CHECK (octet_length(sql) &lt;= </span><span class="op">{</span><span class="nam">_SQL_BYTES_MAX</span><span class="op">}</span><span class="fst">),</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t"><span class="fst">  -- An activated version was approved by someone. Recording who is the whole</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t"><span class="fst">  -- point of separating activation from authorship.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t"><span class="fst">  CONSTRAINT saved_query_versions_active_is_approved</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t"><span class="fst">    CHECK (status &lt;> 'active' OR approver_principal IS NOT NULL)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t"><span class="fst">COMMENT ON TABLE saved_query_versions IS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t"><span class="fst">  'Immutable versions of a saved query. Content columns cannot change after insert; only lifecycle fields (status, validation, approver, assurance, supersession, pinned manifest hash) may transition. Each pins the surface_manifest_hash it was validated against.';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="fst">COMMENT ON COLUMN saved_query_versions.validated_surface_manifest_hash IS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t"><span class="fst">  'The exact surface this version was validated against. A version whose hash is not the current one is not executable until it has been revalidated.';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t"><span class="fst">COMMENT ON COLUMN saved_query_versions.assurance IS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t"><span class="fst">  'Who stands behind the meaning of the query. customer_authored is the draft default; customer_reviewed is set on activation of customer SQL; shipped_example is platform-written starting points. None of these raise the result grade above exploratory_tabular, and none means platform fact assurance.';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t"><span class="fst">CREATE INDEX saved_query_versions_by_status</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t"><span class="fst">  ON saved_query_versions (deployment_id, status);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t"><span class="fst">-- Drafts are excluded from default discovery, and the draft quotas in &#167;5 are</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t"><span class="fst">-- per principal, so both are counted by this index rather than by a scan.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t"><span class="fst">CREATE INDEX saved_query_versions_drafts_by_author</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t"><span class="fst">  ON saved_query_versions (deployment_id, author_principal)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t"><span class="fst">  WHERE status = 'draft';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t"><span class="fst">ALTER TABLE saved_queries</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t"><span class="fst">  ADD CONSTRAINT saved_queries_latest_version_exists</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="fst">  FOREIGN KEY (query_id, latest_version)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="fst">  REFERENCES saved_query_versions(query_id, version)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t"><span class="fst">  DEFERRABLE INITIALLY DEFERRED;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="fst">-- Authoritative current surface hash for this deployment. Publication and the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t"><span class="fst">-- active&#8594;pending_revalidation suspension write it in one transaction; a</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t"><span class="fst">-- revalidation CAS conditions its transition on this row still holding the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t"><span class="fst">-- hash the validator observed when it started.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t"><span class="fst">CREATE TABLE saved_query_registry_state (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t"><span class="fst">  deployment_id           uuid PRIMARY KEY</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t"><span class="fst">    REFERENCES deployments(deployment_id) ON DELETE CASCADE,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t"><span class="fst">  surface_manifest_hash   text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t"><span class="fst">  updated_at              timestamptz NOT NULL DEFAULT now()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t"><span class="fst">COMMENT ON TABLE saved_query_registry_state IS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t"><span class="fst">  'Per-deployment surface-manifest pin for saved-query revalidation CAS. publish_surface_hash writes the new hash and suspends active versions in the same transaction; revalidate succeeds only when this hash still equals the validator start hash.';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t"><span class="fst">-- Non-content governance evidence. Hard-delete purges customer SQL text but</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t"><span class="fst">-- these rows remain: only IDs, hashes, actor, action, and timestamps.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t"><span class="fst">CREATE TABLE saved_query_audit (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t"><span class="fst">  audit_id      bigserial PRIMARY KEY,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t"><span class="fst">  deployment_id uuid NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t"><span class="fst">  query_id      uuid,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t"><span class="fst">  version       integer,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t"><span class="fst">  query_hash    text,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t"><span class="fst">  actor         text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t"><span class="fst">  action        text NOT NULL,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t"><span class="fst">  old_hash      text,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t"><span class="fst">  new_hash      text,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t"><span class="fst">  created_at    timestamptz NOT NULL DEFAULT now()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t"><span class="fst">);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t"><span class="fst">CREATE INDEX saved_query_audit_by_deployment</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t"><span class="fst">  ON saved_query_audit (deployment_id, created_at);</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t"><span class="fst">COMMENT ON TABLE saved_query_audit IS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t"><span class="fst">  'Non-reversible, non-content audit of saved-query governance transitions (activate, disable, purge, publish, revalidate). Survives hard deletion of registry content.';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t"><span class="fst">-- Content columns are immutable. Lifecycle fields may transition.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t"><span class="fst">CREATE FUNCTION saved_query_versions_reject_content_mutation()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t"><span class="fst">RETURNS trigger</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t"><span class="fst">LANGUAGE plpgsql</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t"><span class="fst">AS $$</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t"><span class="fst">BEGIN</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t"><span class="fst">  IF NEW.sql IS DISTINCT FROM OLD.sql</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t"><span class="fst">     OR NEW.query_hash IS DISTINCT FROM OLD.query_hash</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t"><span class="fst">     OR NEW.parameter_schema IS DISTINCT FROM OLD.parameter_schema</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t"><span class="fst">     OR NEW.declared_result_schema IS DISTINCT FROM OLD.declared_result_schema</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t"><span class="fst">     OR NEW.declared_interpretation IS DISTINCT FROM OLD.declared_interpretation</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t"><span class="fst">     OR NEW.query_space_major IS DISTINCT FROM OLD.query_space_major</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t179" href="#t179">179</a></span><span class="t"><span class="fst">     OR NEW.default_limits IS DISTINCT FROM OLD.default_limits</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t180" href="#t180">180</a></span><span class="t"><span class="fst">     OR NEW.author_principal IS DISTINCT FROM OLD.author_principal</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t181" href="#t181">181</a></span><span class="t"><span class="fst">     OR NEW.created_at IS DISTINCT FROM OLD.created_at</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t182" href="#t182">182</a></span><span class="t"><span class="fst">     OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t183" href="#t183">183</a></span><span class="t"><span class="fst">     OR NEW.query_id IS DISTINCT FROM OLD.query_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t184" href="#t184">184</a></span><span class="t"><span class="fst">     OR NEW.version IS DISTINCT FROM OLD.version</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t"><span class="fst">  THEN</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t"><span class="fst">    RAISE EXCEPTION</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t"><span class="fst">      'saved_query_versions content is immutable after insert'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t"><span class="fst">      USING ERRCODE = 'integrity_constraint_violation';</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t"><span class="fst">  END IF;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t"><span class="fst">  RETURN NEW;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t"><span class="fst">END;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t192" href="#t192">192</a></span><span class="t"><span class="fst">$$;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t193" href="#t193">193</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t194" href="#t194">194</a></span><span class="t"><span class="fst">CREATE TRIGGER saved_query_versions_immutable_content</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t195" href="#t195">195</a></span><span class="t"><span class="fst">  BEFORE UPDATE ON saved_query_versions</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t"><span class="fst">  FOR EACH ROW</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t"><span class="fst">  EXECUTE FUNCTION saved_query_versions_reject_content_mutation();</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t"><span class="fst">"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t"><span class="nam">_DROP</span> <span class="op">=</span> <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t"><span class="str">DROP TRIGGER IF EXISTS saved_query_versions_immutable_content ON saved_query_versions;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t"><span class="str">DROP FUNCTION IF EXISTS saved_query_versions_reject_content_mutation();</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t"><span class="str">DROP TABLE IF EXISTS saved_query_audit;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t"><span class="str">DROP TABLE IF EXISTS saved_query_registry_state;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t"><span class="str">ALTER TABLE saved_queries DROP CONSTRAINT IF EXISTS saved_queries_latest_version_exists;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t"><span class="str">DROP TABLE IF EXISTS saved_query_versions;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t"><span class="str">DROP TABLE IF EXISTS saved_queries;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t"><span class="str">DROP TYPE IF EXISTS saved_query_assurance;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t"><span class="str">DROP TYPE IF EXISTS saved_query_origin;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t"><span class="str">DROP TYPE IF EXISTS saved_query_status;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t"><span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t"><span class="key">def</span> <span class="nam">upgrade</span><span class="op">(</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">    <span class="str">"""Create the registry tables, immutability trigger, state pin, and audit."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">    <span class="nam">op</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="nam">_DDL</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t"><span class="key">def</span> <span class="nam">downgrade</span><span class="op">(</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">    <span class="str">"""Drop the registry. Versions are data, so this is destructive."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">    <span class="nam">op</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="nam">_DROP</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+</main>
+<footer>
+    <div class="content">
+        <p>
+            <a class="nav" href="z_6410dbe7480eef71_p9_05_0026_graph_helpers_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
+            <a class="nav" href="z_f78672e8a2243142_observation_adjudication_py.html">&#xbb; next</a>
+            &nbsp; &nbsp; &nbsp;
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-08-06 13:32 +0000
+        </p>
+    </div>
+</footer>
+</body>
+</html>
