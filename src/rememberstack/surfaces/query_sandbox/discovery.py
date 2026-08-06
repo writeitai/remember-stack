@@ -15,6 +15,7 @@ from typing import Final
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
 
 # Bound in the design's opening block ("Bound two-layer retrieval headline
 # (reused verbatim)") — discovery, the consumption skill, and the OSS docs
@@ -91,6 +92,14 @@ def describe_query_space(
     signatures = cast("dict[str, Any]", members["function_signatures"])
     signature_entries = cast("list[dict[str, Any]]", signatures["functions"])
     limits_member = cast("dict[str, Any]", members["limits"])
+    # Shipped examples are discoverable names under the examples namespace.
+    # Customer saved queries are listed via list_saved_queries; drafts are not
+    # included here and are excluded from that listing by default (§5).
+    examples = (
+        tuple(f"examples.{name}" for name in sorted(EXAMPLE_QUERIES))
+        if include_examples
+        else ()
+    )
     return QuerySpaceDescription(
         schema=str(views_schema["schema"]),
         schema_major=int(views_schema["schema_major"]),
@@ -111,9 +120,7 @@ def describe_query_space(
         function_signatures=cast("dict[str, object]", signatures),
         cypher_dialect=cast("dict[str, object]", limits_member["cypher_dialect"]),
         p2_projection=cast("dict[str, object]", limits_member["p2_projection"]),
-        # The saved-query registry (Batch E) populates these; until then the
-        # flag is honored with an empty set either way.
-        examples=() if not include_examples else (),
+        examples=examples,
     )
 
 

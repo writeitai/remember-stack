@@ -22,14 +22,18 @@ from sqlalchemy import create_engine
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.saved_queries import declared_examples
 from rememberstack.surfaces.query_sandbox.saved_queries import IDENTITIES_PER_HOUR_MAX
+from rememberstack.surfaces.query_sandbox.saved_queries import OperatorFixture
 from rememberstack.surfaces.query_sandbox.saved_queries import publish_surface_hash
 from rememberstack.surfaces.query_sandbox.saved_queries import revalidate
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
 from rememberstack.surfaces.query_sandbox.saved_queries import SurfaceMoved
+from rememberstack.surfaces.query_sandbox.saved_queries import validate_saved_sql
 from rememberstack.surfaces.query_sandbox.saved_queries import VALIDATION_FIXTURES
 from rememberstack.surfaces.query_sandbox.saved_queries import ValidationReport
 from rememberstack.surfaces.query_sandbox.saved_queries import VERSIONS_PER_IDENTITY_MAX
@@ -371,6 +375,7 @@ def test_a_clean_revalidation_restores_a_suspended_version(registry_url: str) ->
         query_id, version, name = _suspended(connection)
         outcome = revalidate(
             connection=connection,
+            deployment_id=_DEPLOYMENT,
             query_id=query_id,
             version=version,
             started_against=_OTHER_HASH,
@@ -400,6 +405,7 @@ def test_a_validation_of_a_surface_that_moved_again_cannot_activate(
         with pytest.raises(SurfaceMoved):
             revalidate(
                 connection=connection,
+                deployment_id=_DEPLOYMENT,
                 query_id=query_id,
                 version=version,
                 started_against=_OTHER_HASH,
@@ -430,6 +436,7 @@ def test_a_failed_revalidation_marks_the_version_broken(
         query_id, version, name = _suspended(connection)
         outcome = revalidate(
             connection=connection,
+            deployment_id=_DEPLOYMENT,
             query_id=query_id,
             version=version,
             started_against=_OTHER_HASH,
@@ -546,3 +553,211 @@ def test_a_partial_validation_does_not_activate(registry: SavedQueryRegistry) ->
             author="agent-1",
         )
     assert rejection.value.code == QueryErrorCode.SAVED_QUERY_INCOMPATIBLE
+
+
+# --- fixture execution through the real sandbox ------------------------------
+
+
+def _sandbox_executor(registry_url: str) -> QuerySandboxExecutor:
+    """An executor on a superuser connection for fixture proofs.
+
+    These tests prove the validator routes through QuerySandboxExecutor with
+    bound parameters. Role-isolation proofs live in Batch B; here the registry
+    migration and fixture judgments are the subject.
+    """
+
+    def connect() -> psycopg.Connection:
+        return psycopg.connect(_psycopg_url(registry_url))
+
+    return QuerySandboxExecutor(deployment_id=_DEPLOYMENT, connect=connect)
+
+
+def test_validation_executes_every_fixture_through_the_sandbox(
+    registry_url: str,
+) -> None:
+    """§5's four fixtures run on the real executor; parameters stay bound."""
+    # Parameterized SQL: a missing bind would fail, proving parameters are not
+    # rendered into the text and that each fixture supplies its own bindings.
+    sql = (
+        "SELECT claim_id FROM claims_live"
+        " WHERE ($1::uuid IS NULL OR doc_id = $1::uuid)"
+        " ORDER BY claim_id"
+        " LIMIT 50"
+    )
+    # No matching doc_id → empty/tombstone. Cap clamps to one row when data
+    # exists and to zero when it does not; either way the bound is respected.
+    fixtures = {
+        "positive": OperatorFixture(kind="positive", parameters=(None,)),
+        "empty": OperatorFixture(kind="empty", parameters=(uuid4(),)),
+        "tombstone": OperatorFixture(kind="tombstone", parameters=(uuid4(),)),
+        "cap": OperatorFixture(kind="cap", parameters=(None,), max_rows=1),
+    }
+    report = validate_saved_sql(
+        executor=_sandbox_executor(registry_url),
+        sql=sql,
+        fixtures=fixtures,
+        manifest_hash=_HASH,
+    )
+    assert report.passed
+    assert all(report.fixtures[name] for name in VALIDATION_FIXTURES)
+    assert any(note.startswith("explain:") for note in report.diagnostics)
+
+
+def test_validation_fails_a_missing_fixture_class(registry_url: str) -> None:
+    """A validator that omits a class does not get to call that a pass."""
+    report = validate_saved_sql(
+        executor=_sandbox_executor(registry_url),
+        sql="SELECT claim_id FROM claims_live LIMIT 1",
+        fixtures={
+            "positive": (),
+            "empty": OperatorFixture(kind="empty", parameters=()),
+            "cap": OperatorFixture(kind="cap", parameters=(), max_rows=1),
+            # tombstone deliberately omitted
+        },
+        manifest_hash=_HASH,
+    )
+    assert not report.passed
+    assert report.fixtures["tombstone"] is False
+    assert any("tombstone: fixture not provided" in note for note in report.diagnostics)
+
+
+def test_validation_marks_empty_fixture_failed_when_rows_return(
+    registry_url: str,
+) -> None:
+    """Empty/tombstone fixtures require an empty result, not merely success."""
+    # Unfiltered SELECT from a view can return rows when the deployment has
+    # data; even on an empty deployment the positive path still completes.
+    # Force a non-empty empty-fixture failure with a VALUES row the operator
+    # incorrectly offered as an "empty" case.
+    report = validate_saved_sql(
+        executor=_sandbox_executor(registry_url),
+        sql="SELECT 1 AS n",
+        fixtures={
+            "positive": (),
+            "empty": (),
+            "tombstone": (),
+            "cap": OperatorFixture(kind="cap", parameters=(), max_rows=1),
+        },
+        manifest_hash=_HASH,
+    )
+    assert not report.passed
+    assert report.fixtures["positive"] is True
+    assert report.fixtures["empty"] is False
+    assert report.fixtures["tombstone"] is False
+
+
+def test_an_executed_validation_report_unlocks_activation(
+    registry: SavedQueryRegistry, registry_url: str
+) -> None:
+    """A report produced by the real runner is what activation accepts."""
+    sql = "SELECT claim_id FROM claims_live WHERE false"
+    fixtures = {
+        "positive": (),
+        "empty": (),
+        "tombstone": (),
+        "cap": OperatorFixture(kind="cap", parameters=(), max_rows=1),
+    }
+    report = validate_saved_sql(
+        executor=_sandbox_executor(registry_url),
+        sql=sql,
+        fixtures=fixtures,
+        manifest_hash=_HASH,
+    )
+    assert report.passed
+    name = _unique()
+    saved = registry.draft(
+        namespace="team", name=name, sql=sql, principal="agent-1", report=report
+    )
+    registry.activate(
+        query_id=saved.query_id,
+        version=saved.version,
+        approver="operator-1",
+        author="agent-1",
+    )
+    assert registry.resolve(namespace="team", name=name).status == "active"
+
+
+# --- discovery ---------------------------------------------------------------
+
+
+def test_default_discovery_excludes_drafts(registry: SavedQueryRegistry) -> None:
+    """Agents may draft; only activated versions are discoverable by default."""
+    name = _unique()
+    saved = registry.draft(
+        namespace="team",
+        name=name,
+        sql=_SQL,
+        principal="agent-1",
+        report=_passing_report(),
+    )
+    assert registry.list_saved_queries() == ()
+    assert registry.list_saved_queries(status="draft")
+    described = registry.describe_saved_query(namespace="team", name=name)
+    assert described.status == "draft"
+    assert described.query_id == saved.query_id
+
+    registry.activate(
+        query_id=saved.query_id,
+        version=saved.version,
+        approver="operator-1",
+        author="agent-1",
+    )
+    listed = registry.list_saved_queries(namespace="team")
+    assert len(listed) == 1
+    assert listed[0].name == name
+    assert listed[0].status == "active"
+    active = registry.describe_saved_query(namespace="team", name=name)
+    assert active.status == "active"
+    assert active.validation_report["passed"] is True
+
+
+def test_disabled_identities_leave_default_discovery(
+    registry: SavedQueryRegistry,
+) -> None:
+    """Disabling removes the identity from normal discovery immediately (§5)."""
+    name = _unique()
+    saved = registry.draft(
+        namespace="team",
+        name=name,
+        sql=_SQL,
+        principal="agent-1",
+        report=_passing_report(),
+    )
+    registry.activate(
+        query_id=saved.query_id,
+        version=saved.version,
+        approver="operator-1",
+        author="agent-1",
+    )
+    registry.disable(query_id=saved.query_id)
+    assert registry.list_saved_queries(namespace="team") == ()
+
+
+def test_describe_query_space_includes_shipped_examples_when_asked() -> None:
+    """The seventeen examples.* names surface under include_examples."""
+    bare = describe_query_space()
+    assert bare.examples == ()
+    full = describe_query_space(include_examples=True)
+    assert len(full.examples) == 17
+    assert "examples.claims_hybrid_rrf" in full.examples
+    assert all(name.startswith("examples.") for name in full.examples)
+
+
+def test_draft_byte_ceiling_counts_the_sql_being_written(
+    registry: SavedQueryRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The draft ceiling includes the SQL about to be written, not only stored."""
+    # Shrink the ceiling so the proof is one small draft, not hundreds of
+    # identities that would trip the per-hour bound first.
+    monkeypatch.setattr(
+        "rememberstack.surfaces.query_sandbox.saved_queries.DRAFT_BYTES_MAX", 1_000
+    )
+    body = "SELECT claim_id FROM claims_live WHERE claim_text = '" + ("x" * 600) + "'"
+    principal = f"bytes_{uuid4().hex[:8]}"
+    registry.draft(namespace="team", name=_unique("b"), sql=body, principal=principal)
+    with pytest.raises(SandboxRejection) as rejection:
+        registry.draft(
+            namespace="team", name=_unique("b"), sql=body, principal=principal
+        )
+    assert rejection.value.code == QueryErrorCode.QUOTA_EXCEEDED
+    assert "byte" in rejection.value.message
