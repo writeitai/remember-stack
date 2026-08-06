@@ -332,6 +332,13 @@ def _current_context(
     return engine.current_context(deployment_id=deployment_id, **kwargs)
 
 
+def _question_context(
+    engine: QueryEngine, deployment_id: UUID, kwargs: dict[str, Any]
+) -> Envelope:
+    """The maintained high-recall question-context compound operation."""
+    return engine.question_context(deployment_id=deployment_id, **kwargs)
+
+
 _SINGLE_OP_HANDLERS = {
     "resolve": _resolve,
     "lookup_relations": _lookup_relations,
@@ -350,6 +357,7 @@ _SINGLE_OP_HANDLERS = {
     "claims_as_of": _claims_as_of,
     "chunk_neighbors": _chunk_neighbors,
     "current_context": _current_context,
+    "question_context": _question_context,
 }
 
 EXECUTABLE_OPS = frozenset(_SINGLE_OP_HANDLERS) | {

@@ -6,7 +6,22 @@ export const metadata = {
 
 # Concepts
 
-Everything in RememberStack rests on one distinction: **what a source said** is not the same thing as **what is currently true**. Sources go stale, contradict each other, and get corrected. A memory that conflates the two either serves outdated statements as facts or silently rewrites history. This page defines the small vocabulary the whole system — and every answer it returns — is built from.
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated current
+worldview (“what the system currently holds true”):
+supersession-adjudicated, clocked on two time axes (when a fact held in
+the world, and when the system learned it), evidence-counted per
+distinct source—repetition is not corroboration—and
+contradiction-tracked. The `fact_claim_evidence` association is the
+auditable bridge between the layers, recording which claims support or
+contradict each fact. Query claims to inspect testimony; query facts to
+answer current-truth questions, then follow the bridge to see why the
+system believes the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
+
+Everything in RememberStack rests on that distinction: **what a source said** is not the same thing as **what is currently true**. Sources go stale, contradict each other, and get corrected. A memory that conflates the two either serves outdated statements as facts or silently rewrites history. This page defines the small vocabulary the whole system — and every answer it returns — is built from.
 
 **The courtroom analogy** carries most of it: claims are the *transcript* (immutable testimony — who said what, when), facts are the *verdict* (the current adjudicated position, revisable as evidence arrives), and evidence is the recorded link between the two.
 
@@ -30,7 +45,7 @@ Every answer the system returns is typed with the **grain** of what it contains,
 - **`evidence`** — claims: what sources *asserted*, possibly stale, superseded, or contradictory. This answers "who said what, when" — and is never allowed to pose as a current fact.
 - **`compiled`** — knowledge pages: pre-paid synthesis with a freshness timestamp, useful for orientation before verifying specifics on the fact layer.
 
-The default reading motion for an agent is **orient → verify → audit**: skim compiled knowledge to get oriented, verify anything load-bearing against the fact layer, and drill into claims and raw sources when the stakes demand it.
+Agents choose among three neutral retrieval surfaces: **native snapshot Cypher** (with mandatory `built_at` and age), **live SQL** for evidence-composable reads, and the three **assured operations** (`resolve_entity`, `question_context`, `current_context`) for one-call typed Envelope answers. Compiled knowledge still helps orientation when mounts expose plane K, but open query is first-class rather than recipe-steered.
 
 ## Two clocks
 

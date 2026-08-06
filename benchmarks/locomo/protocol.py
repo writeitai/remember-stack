@@ -36,6 +36,38 @@ ANSWER_READER_RETRY_BUDGET: Final = 2
 EXPECTED_TOOL_CATALOG_SHA256: Final = (
     "55b76e36bfc65b18740822d60831e0ef103866007093a8ba64253e00952bb29e"
 )
+# `question_context` is v4 in the live catalog, but a full-v9 run is an
+# immutable benchmark protocol. Keep its v3 descriptor here rather than
+# silently changing the meaning of an existing prepared-run identity.
+_FROZEN_V9_QUESTION_CONTEXT = ToolDescriptor(
+    name="question_context",
+    description=(
+        "High-recall question context: hybrid claim retrieval plus hybrid"
+        " live-source retrieval. Returns atomic claims and source chunks as"
+        " separately typed evidence, refilling confirmation drops from each"
+        " already-fetched ranked tail. Exact-text claim groups report"
+        " distinct-lineage corroboration and confirmed member ids; neither"
+        " payload is current-fact truth."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "k": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+            "candidate_k": {
+                "type": "integer",
+                "default": 200,
+                "minimum": 1,
+                "maximum": 400,
+            },
+        },
+        "additionalProperties": False,
+        "required": ["query"],
+    },
+    output_grain="evidence",
+    answer_intent="assertion_history",
+    version=3,
+)
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
     "structure",
@@ -54,6 +86,29 @@ STRONG_ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
 STRONG_ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 TEMPERATURE: Final = 0.0
+
+
+def frozen_v9_tool_catalog() -> tuple[ToolDescriptor, ...]:
+    """Return the exact tool descriptors pinned by the full-v9 protocol.
+
+    The live catalog may evolve during the dual-surface migration. Full-v9
+    remains comparable only to deployments serving its frozen descriptors;
+    the later surface-manifest protocol is a distinct benchmark identity.
+    """
+    from rememberstack.spine import CANONICAL_RECIPES
+    from rememberstack.spine import GRAPH_RECIPES
+    from rememberstack.surfaces.recipe_surface import recipe_descriptors
+
+    recipes = tuple(
+        sorted((*CANONICAL_RECIPES, *GRAPH_RECIPES), key=lambda recipe: recipe.name)
+    )
+    return tuple(
+        _FROZEN_V9_QUESTION_CONTEXT
+        if descriptor.name == "question_context"
+        else descriptor
+        for descriptor in recipe_descriptors(recipes=recipes)
+    )
+
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
 RememberStack deployment. You may call only the public recipe tools listed

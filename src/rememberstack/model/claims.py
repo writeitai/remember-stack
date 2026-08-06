@@ -254,6 +254,16 @@ class FactForLabeling(BaseModel):
     status: _NonEmpty
 
 
+class FactForEmbedding(BaseModel):
+    """One labeled relation still needing a P1 fact vector for this embed gen."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    relation_id: UUID
+    fact_label: _NonEmpty
+    status: _NonEmpty
+
+
 class ObservationForEmbedding(BaseModel):
     """One observation as the label stage loads it (obs_label is the text)."""
 

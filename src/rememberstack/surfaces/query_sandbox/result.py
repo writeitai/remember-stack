@@ -51,7 +51,25 @@ class P2Snapshot(BaseModel):
     snapshot_id: UUID
     snapshot_version: str
     built_at: datetime
-    age_seconds: float
+    age_seconds: float = Field(ge=0)
+
+
+class GraphConfirmation(BaseModel):
+    """What `confirm=true` checked, and what it withheld (§3.5).
+
+    These are unique confirmable-id counts, and `confirmed + dropped_stale`
+    equals `nominated`. Confirmation checks live membership of projected entity
+    and relation ids; it does not make any other part of the result live, and
+    the result keeps its `snapshot_graph` grade.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    requested: int
+    nominated: int
+    confirmed: int
+    dropped_stale: int
+    pg_confirmed_at: datetime | None = None
 
 
 class SemanticInvocation(BaseModel):
@@ -91,11 +109,19 @@ class QueryResult(BaseModel):
     request_id: UUID
     deployment_id: UUID
     surface_manifest_hash: str
-    query_space_schema: Literal["memory_v1"] = "memory_v1"
+    # Null for Cypher (§4.4): the graph surface does not read the memory_v1
+    # SQL schema, and naming it would tell a caller their rows came from views
+    # they did not query.
+    query_space_schema: Literal["memory_v1"] | None = "memory_v1"
     query_hash: str
     query_language: Literal["sql", "cypher"] = "sql"
     saved_query: dict[str, str] | None = None
     referenced_views: tuple[str, ...] = ()
+    #: The graph labels/types and properties a Cypher statement referenced.
+    #: Null means the pinned engine supplied no structural parse metadata;
+    #: an empty tuple is reserved for a known-empty dependency set.
+    referenced_graph_types: tuple[str, ...] | None = None
+    referenced_graph_properties: tuple[str, ...] | None = None
     referenced_functions: tuple[str, ...] = ()
     source_grain_tags: tuple[str, ...] = ()
     columns: tuple[ResultColumn, ...] = ()
@@ -120,3 +146,4 @@ class QueryResult(BaseModel):
     warnings: tuple[str, ...] = ()
     semantic_invocations: tuple[SemanticInvocation, ...] = ()
     p2_snapshot: P2Snapshot | None = None
+    confirmation: GraphConfirmation | None = None

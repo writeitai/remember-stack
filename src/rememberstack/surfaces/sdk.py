@@ -129,6 +129,242 @@ class MemoryClient:
             endpoint=f"POST /recipe/{name}",
         )
 
+    def query_sql(
+        self,
+        *,
+        sql: str,
+        parameters: list[object] | tuple[object, ...] = (),
+        max_rows: int | None = None,
+    ) -> dict[str, object]:
+        """Run one sandboxed SQL statement; returns QueryResult/v1 as a dict."""
+        body: dict[str, object] = {"sql": sql, "parameters": list(parameters)}
+        if max_rows is not None:
+            body["max_rows"] = max_rows
+        payload = self._json("POST", "/query/sql", json_body=body)
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200, detail="POST /query/sql did not return an object"
+            )
+        return payload
+
+    def explain_sql(
+        self, *, sql: str, parameters: list[object] | tuple[object, ...] = ()
+    ) -> dict[str, object]:
+        """EXPLAIN one SQL statement without executing it."""
+        payload = self._json(
+            "POST",
+            "/query/sql/explain",
+            json_body={"sql": sql, "parameters": list(parameters)},
+        )
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200,
+                detail="POST /query/sql/explain did not return an object",
+            )
+        return payload
+
+    def query_cypher(
+        self,
+        *,
+        cypher: str,
+        parameters: Mapping[str, object] | None = None,
+        max_rows: int | None = None,
+        confirm: bool = False,
+    ) -> dict[str, object]:
+        """Run one read-only Cypher statement; returns QueryResult/v1 as a dict."""
+        body: dict[str, object] = {
+            "cypher": cypher,
+            "parameters": dict(parameters or {}),
+            "confirm": confirm,
+        }
+        if max_rows is not None:
+            body["max_rows"] = max_rows
+        payload = self._json("POST", "/query/cypher", json_body=body)
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200, detail="POST /query/cypher did not return an object"
+            )
+        return payload
+
+    def explain_cypher(
+        self, *, cypher: str, parameters: Mapping[str, object] | None = None
+    ) -> dict[str, object]:
+        """Engine plan for one Cypher statement without executing it."""
+        payload = self._json(
+            "POST",
+            "/query/cypher/explain",
+            json_body={"cypher": cypher, "parameters": dict(parameters or {})},
+        )
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200,
+                detail="POST /query/cypher/explain did not return an object",
+            )
+        return payload
+
+    def describe_query_space(
+        self, *, pattern: str | None = None, include_examples: bool = False
+    ) -> dict[str, object]:
+        """Manifest-backed schema discovery."""
+        params: dict[str, str | int] = {
+            "include_examples": "true" if include_examples else "false"
+        }
+        if pattern is not None:
+            params["pattern"] = pattern
+        payload = self._json("GET", "/query/space", params=params)
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200, detail="GET /query/space did not return an object"
+            )
+        return payload
+
+    def search_query_space(self, *, query: str, k: int = 10) -> list[dict[str, object]]:
+        """Search checked-in manifest text only."""
+        payload = self._json(
+            "GET", "/query/space/search", params={"query": query, "k": k}
+        )
+        if not isinstance(payload, list):
+            raise MemoryApiError(
+                status_code=200, detail="GET /query/space/search did not return a list"
+            )
+        return [item for item in payload if isinstance(item, dict)]
+
+    def list_saved_queries(
+        self, *, namespace: str | None = None, status: str | None = None
+    ) -> list[dict[str, object]]:
+        """List saved-query registry metadata."""
+        params: dict[str, str | int] = {}
+        if namespace is not None:
+            params["namespace"] = namespace
+        if status is not None:
+            params["status"] = status
+        payload = self._json("GET", "/query/saved", params=params if params else None)
+        if not isinstance(payload, list):
+            raise MemoryApiError(
+                status_code=200, detail="GET /query/saved did not return a list"
+            )
+        return [item for item in payload if isinstance(item, dict)]
+
+    def describe_saved_query(
+        self, *, namespace: str, name: str, version: int | None = None
+    ) -> dict[str, object]:
+        """Describe one saved-query version."""
+        params: dict[str, str | int] = {}
+        if version is not None:
+            params["version"] = version
+        payload = self._json(
+            "GET", f"/query/saved/{namespace}/{name}", params=params if params else None
+        )
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200,
+                detail=f"GET /query/saved/{namespace}/{name} did not return an object",
+            )
+        return payload
+
+    def run_saved_query(
+        self,
+        *,
+        namespace: str,
+        name: str,
+        parameters: list[object] | tuple[object, ...] = (),
+        version: int | None = None,
+        max_rows: int | None = None,
+    ) -> dict[str, object]:
+        """Execute one active saved query; returns QueryResult/v1 as a dict."""
+        body: dict[str, object] = {"parameters": list(parameters)}
+        if version is not None:
+            body["version"] = version
+        if max_rows is not None:
+            body["max_rows"] = max_rows
+        payload = self._json(
+            "POST", f"/query/saved/{namespace}/{name}/run", json_body=body
+        )
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200,
+                detail=(
+                    f"POST /query/saved/{namespace}/{name}/run did not return an object"
+                ),
+            )
+        return payload
+
+    def call_open_query(self, *, name: str, arguments: Mapping[str, object]) -> object:
+        """Dispatch one open-query infrastructure tool name through the HTTP API.
+
+        Used by remote MCP so local and remote tools/list/call stay aligned
+        without duplicating route knowledge in the transport loop. Arguments
+        are validated strictly (same rules as local MCP) before the HTTP call.
+        """
+        from rememberstack.surfaces.query_sandbox.mcp_tools import (
+            validate_open_query_arguments,
+        )
+
+        args = validate_open_query_arguments(name=name, arguments=arguments)
+        if name == "query_sql":
+            return self.query_sql(
+                sql=str(args["sql"]),
+                parameters=list(_sdk_param_list(args.get("parameters"))),
+                max_rows=_optional_sdk_int(args.get("max_rows")),
+            )
+        if name == "explain_sql":
+            return self.explain_sql(
+                sql=str(args["sql"]),
+                parameters=list(_sdk_param_list(args.get("parameters"))),
+            )
+        if name == "query_cypher":
+            params = args.get("parameters")
+            return self.query_cypher(
+                cypher=str(args["cypher"]),
+                parameters=params if isinstance(params, Mapping) else None,
+                max_rows=_optional_sdk_int(args.get("max_rows")),
+                confirm=bool(args.get("confirm", False)),
+            )
+        if name == "explain_cypher":
+            params = args.get("parameters")
+            return self.explain_cypher(
+                cypher=str(args["cypher"]),
+                parameters=params if isinstance(params, Mapping) else None,
+            )
+        if name == "describe_query_space":
+            return self.describe_query_space(
+                pattern=(
+                    str(args["pattern"]) if args.get("pattern") is not None else None
+                ),
+                include_examples=bool(args.get("include_examples", False)),
+            )
+        if name == "search_query_space":
+            k_value = _optional_sdk_int(args.get("k"))
+            return self.search_query_space(
+                query=str(args["query"]), k=10 if k_value is None else k_value
+            )
+        if name == "list_saved_queries":
+            return self.list_saved_queries(
+                namespace=(
+                    str(args["namespace"])
+                    if args.get("namespace") is not None
+                    else None
+                ),
+                status=(
+                    str(args["status"]) if args.get("status") is not None else None
+                ),
+            )
+        if name == "describe_saved_query":
+            return self.describe_saved_query(
+                namespace=str(args["namespace"]),
+                name=str(args["name"]),
+                version=_optional_sdk_int(args.get("version")),
+            )
+        if name == "run_saved_query":
+            return self.run_saved_query(
+                namespace=str(args["namespace"]),
+                name=str(args["name"]),
+                version=_optional_sdk_int(args.get("version")),
+                parameters=list(_sdk_param_list(args.get("parameters"))),
+                max_rows=_optional_sdk_int(args.get("max_rows")),
+            )
+        raise ValueError(f"unknown open-query tool {name!r}")
+
     def resolve(
         self,
         *,
@@ -367,6 +603,26 @@ class MemoryClient:
                 status_code=response.status_code,
                 detail=f"{method} {path} returned invalid JSON",
             ) from error
+
+
+def _optional_sdk_int(value: object) -> int | None:
+    """Coerce an optional integer argument without treating bool as int."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("expected an integer")
+    return value
+
+
+def _sdk_param_list(value: object) -> list[object]:
+    """Coerce optional positional parameters to a list for SQL tools."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    raise ValueError("parameters must be a JSON array")
 
 
 def _validated(model: type[_ModelT], payload: object, *, endpoint: str) -> _ModelT:

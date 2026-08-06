@@ -27,7 +27,13 @@ from rememberstack.model import Envelope
 from rememberstack.model import Recipe
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.spine.recipes import RecipeRegistry
+from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
 from rememberstack.surfaces.recipe_executor import RecipeExecutor
+
+#: The three retained platform intent operations (§2 / §3.1).
+_CORE_OPERATION_NAMES = frozenset(
+    {"resolve_entity", "question_context", "current_context"}
+)
 
 
 class UnknownRecipeError(Exception):
@@ -45,6 +51,7 @@ class InvalidArgumentError(Exception):
 # How a recipe's declared parameter type renders into JSON Schema, and how a
 # transport's text argument coerces back to what the primitives expect.
 _TYPE_SCHEMA: dict[str, dict[str, object]] = {
+    "boolean": {"type": "boolean"},
     "uuid": {"type": "string", "format": "uuid"},
     "string": {"type": "string"},
     "integer": {"type": "integer"},
@@ -68,6 +75,18 @@ def _coerce_integer(value: object) -> int:
     return int(str(value))
 
 
+def _coerce_boolean(value: object) -> bool:
+    """Coerce transport booleans without treating arbitrary text as true."""
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"expected true or false, got {value!r}")
+
+
 def _coerce_timestamp(value: object) -> datetime:
     """Coerce a transport argument to a UTC datetime (ISO 8601).
 
@@ -84,6 +103,7 @@ def _coerce_timestamp(value: object) -> datetime:
 
 
 _COERCERS: dict[str, Any] = {
+    "boolean": _coerce_boolean,
     "uuid": _coerce_uuid,
     "string": str,
     "integer": _coerce_integer,
@@ -95,12 +115,23 @@ class RecipeSurface:
     """Render and run the deployment's recipes — the shared surface logic."""
 
     def __init__(
-        self, *, registry: RecipeRegistry, executor: RecipeExecutor, deployment_id: UUID
+        self,
+        *,
+        registry: RecipeRegistry,
+        executor: RecipeExecutor,
+        deployment_id: UUID,
+        usage: MigrationUsageCounters | None = None,
     ) -> None:
-        """Bind the surface to the registry, the executor, and the deployment."""
+        """Bind the surface to the registry, the executor, and the deployment.
+
+        Usage counters default to a disabled no-op. Hosts that measure the
+        §8 dual-surface denominator inject an enabled recorder (self-host
+        does this from ``api()``).
+        """
         self._registry = registry
         self._executor = executor
         self._deployment_id = deployment_id
+        self._usage = usage if usage is not None else MigrationUsageCounters.disabled()
 
     @property
     def deployment_id(self) -> UUID:
@@ -130,6 +161,12 @@ class RecipeSurface:
         recipe = self._registry.by_name(deployment_id=self._deployment_id, name=name)
         if recipe is None:
             raise UnknownRecipeError(name)
+        surface = (
+            "core_operation"
+            if recipe.name in _CORE_OPERATION_NAMES
+            else "compatibility_adapter"
+        )
+        self._usage.record(surface=surface, operation=recipe.name)
         return self._executor.execute(
             deployment_id=self._deployment_id,
             recipe=recipe,

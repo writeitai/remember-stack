@@ -54,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_connectors(args)
         if args.command == "mcp":
             return _run_mcp()
+        if args.command == "eval":
+            return _run_eval(args)
     except MemoryApiError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -170,15 +172,147 @@ def _run_query(args: argparse.Namespace) -> int:
             for descriptor in client.recipes():
                 print(descriptor.model_dump_json())
             return 0
-        try:
-            arguments = dict(_split_arg(pair) for pair in args.arg)
-        except ValueError as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
-        print(
-            client.run_recipe(name=args.recipe, arguments=arguments).model_dump_json()
-        )
-        return 0
+        if args.query_command == "run":
+            try:
+                arguments = dict(_split_arg(pair) for pair in args.arg)
+            except ValueError as error:
+                print(f"error: {error}", file=sys.stderr)
+                return 2
+            print(
+                client.run_recipe(
+                    name=args.recipe, arguments=arguments
+                ).model_dump_json()
+            )
+            return 0
+        return _run_open_query(client=client, args=args)
+
+
+def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
+    """Additive open-query CLI commands over the same SDK."""
+    command = args.query_command
+    try:
+        if command == "sql":
+            print(
+                json.dumps(
+                    client.query_sql(
+                        sql=args.statement,
+                        parameters=_json_list(args.parameters),
+                        max_rows=args.max_rows,
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "explain-sql":
+            print(
+                json.dumps(
+                    client.explain_sql(
+                        sql=args.statement, parameters=_json_list(args.parameters)
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "cypher":
+            print(
+                json.dumps(
+                    client.query_cypher(
+                        cypher=args.statement,
+                        parameters=_json_object(args.parameters),
+                        max_rows=args.max_rows,
+                        confirm=bool(args.confirm),
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "explain-cypher":
+            print(
+                json.dumps(
+                    client.explain_cypher(
+                        cypher=args.statement, parameters=_json_object(args.parameters)
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "space":
+            print(
+                json.dumps(
+                    client.describe_query_space(
+                        pattern=args.pattern,
+                        include_examples=bool(args.include_examples),
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "search-space":
+            print(
+                json.dumps(
+                    client.search_query_space(query=args.query, k=args.k), default=str
+                )
+            )
+            return 0
+        if command == "list-saved":
+            print(
+                json.dumps(
+                    client.list_saved_queries(
+                        namespace=args.namespace, status=args.status
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "describe-saved":
+            print(
+                json.dumps(
+                    client.describe_saved_query(
+                        namespace=args.namespace, name=args.name, version=args.version
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+        if command == "run-saved":
+            print(
+                json.dumps(
+                    client.run_saved_query(
+                        namespace=args.namespace,
+                        name=args.name,
+                        version=args.version,
+                        parameters=_json_list(args.parameters),
+                        max_rows=args.max_rows,
+                    ),
+                    default=str,
+                )
+            )
+            return 0
+    except (ValueError, json.JSONDecodeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(f"error: unknown query command {command!r}", file=sys.stderr)
+    return 2
+
+
+def _json_list(raw: str | None) -> list[object]:
+    """Parse an optional JSON array of bound parameters."""
+    if not raw:
+        return []
+    value = json.loads(raw)
+    if not isinstance(value, list):
+        raise ValueError("parameters must be a JSON array")
+    return value
+
+
+def _json_object(raw: str | None) -> dict[str, object]:
+    """Parse an optional JSON object of named Cypher parameters."""
+    if not raw:
+        return {}
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("parameters must be a JSON object")
+    return value
 
 
 def _run_ingest(args: argparse.Namespace) -> int:
@@ -239,6 +373,46 @@ def _run_mcp() -> int:
     """Expose the remote deployment recipe registry over MCP stdio."""
     with MemoryClient.from_settings() as client:
         return serve_mcp_stdio(server=RemoteRecipeMcpServer(client=client))
+
+
+def _run_eval(args: argparse.Namespace) -> int:
+    """Offline open-query noninferiority gate and paid-run estimate (no models)."""
+    from rememberstack.eval.open_query_noninferiority import (  # noqa: PLC0415
+        estimate_paid_run,
+    )
+    from rememberstack.eval.open_query_noninferiority import (  # noqa: PLC0415
+        evaluate_noninferiority,
+    )
+    from rememberstack.eval.open_query_noninferiority import (  # noqa: PLC0415
+        load_arm_metrics,
+    )
+
+    if args.eval_command != "open-query-gate":
+        print(f"error: unknown eval command {args.eval_command!r}", file=sys.stderr)
+        return 2
+    if args.estimate or args.metrics is None:
+        plan = estimate_paid_run(
+            cases=args.cases,
+            arms=args.arms,
+            calls_per_case=args.calls_per_case,
+            unit_cost=args.unit_cost,
+        )
+        print(json.dumps(plan, indent=2, default=str))
+        if args.metrics is None and not args.estimate:
+            print(
+                "note: pass --metrics <file.json> to evaluate offline gates;"
+                " this command never starts a paid run.",
+                file=sys.stderr,
+            )
+        return 0
+    try:
+        metrics = load_arm_metrics(path=args.metrics)
+        report = evaluate_noninferiority(metrics=metrics)
+    except (OSError, ValueError, json.JSONDecodeError, TypeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(report, indent=2, default=str))
+    return 0 if report.get("passed") else 1
 
 
 def query_list(*, client: httpx.Client) -> int:
@@ -401,13 +575,107 @@ def _build_parser() -> argparse.ArgumentParser:
     rebuild.add_argument("--workdir", type=Path, required=True)
     rebuild.add_argument("--version", required=True)
 
-    query = commands.add_parser("query", help="query deployment recipes")
+    query = commands.add_parser(
+        "query", help="query deployment recipes and the open query space"
+    )
     query_commands = query.add_subparsers(dest="query_command", required=True)
     query_commands.add_parser("list", help="list the remote recipe tools")
     run = query_commands.add_parser("run", help="run one recipe by name")
     run.add_argument("recipe", help="the recipe name (see `remember query list`)")
     run.add_argument(
         "--arg", action="append", default=[], metavar="KEY=VALUE", help="repeatable"
+    )
+    sql = query_commands.add_parser("sql", help="run one sandboxed SQL statement")
+    sql.add_argument("statement", help="SQL text")
+    sql.add_argument("--parameters", help="JSON array of positional bound parameters")
+    sql.add_argument("--max-rows", type=int)
+    explain_sql = query_commands.add_parser(
+        "explain-sql", help="EXPLAIN one SQL statement without executing it"
+    )
+    explain_sql.add_argument("statement", help="SQL text")
+    explain_sql.add_argument(
+        "--parameters", help="JSON array of positional bound parameters"
+    )
+    cypher = query_commands.add_parser(
+        "cypher", help="run one read-only Cypher statement"
+    )
+    cypher.add_argument("statement", help="Cypher text")
+    cypher.add_argument("--parameters", help="JSON object of named parameters")
+    cypher.add_argument("--max-rows", type=int)
+    cypher.add_argument(
+        "--confirm",
+        action="store_true",
+        help="confirm projected Entity/RELATES ids against live PostgreSQL",
+    )
+    explain_cypher = query_commands.add_parser(
+        "explain-cypher", help="plan one Cypher statement without executing it"
+    )
+    explain_cypher.add_argument("statement", help="Cypher text")
+    explain_cypher.add_argument("--parameters", help="JSON object of named parameters")
+    space = query_commands.add_parser(
+        "space", help="describe the open query space (manifest discovery)"
+    )
+    space.add_argument("--pattern", help="optional fnmatch filter over view names")
+    space.add_argument(
+        "--include-examples",
+        action="store_true",
+        help="include shipped examples.* names",
+    )
+    search_space = query_commands.add_parser(
+        "search-space", help="search checked-in manifest text"
+    )
+    search_space.add_argument("query", help="free-text search over the manifest")
+    search_space.add_argument("--k", type=int, default=10)
+    list_saved = query_commands.add_parser(
+        "list-saved", help="list saved-query registry metadata"
+    )
+    list_saved.add_argument("--namespace")
+    list_saved.add_argument("--status")
+    describe_saved = query_commands.add_parser(
+        "describe-saved", help="describe one saved-query version"
+    )
+    describe_saved.add_argument("namespace")
+    describe_saved.add_argument("name")
+    describe_saved.add_argument("--version", type=int)
+    run_saved = query_commands.add_parser(
+        "run-saved", help="run one active saved query"
+    )
+    run_saved.add_argument("namespace")
+    run_saved.add_argument("name")
+    run_saved.add_argument("--version", type=int)
+    run_saved.add_argument(
+        "--parameters", help="JSON array of positional bound parameters"
+    )
+    run_saved.add_argument("--max-rows", type=int)
+
+    eval_cmd = commands.add_parser(
+        "eval", help="offline evaluation helpers (never starts a paid benchmark run)"
+    )
+    eval_commands = eval_cmd.add_subparsers(dest="eval_command", required=True)
+    gate = eval_commands.add_parser(
+        "open-query-gate",
+        help="offline §8 noninferiority gate or paid-run cost estimate (no model calls)",
+    )
+    gate.add_argument(
+        "--metrics",
+        type=Path,
+        help="JSON file of already-collected same-condition arm metrics",
+    )
+    gate.add_argument(
+        "--estimate",
+        action="store_true",
+        help="print the paid-run estimate/plan without evaluating metrics",
+    )
+    gate.add_argument("--cases", type=int, default=0, help="estimated case count")
+    gate.add_argument("--arms", type=int, default=2, help="arm count (legacy + open)")
+    gate.add_argument(
+        "--calls-per-case", type=int, default=1, help="mean model calls per case"
+    )
+    gate.add_argument(
+        "--unit-cost",
+        type=float,
+        default=0.0,
+        help="operator-supplied unit cost per model call (currency units)",
     )
 
     ingest = commands.add_parser("ingest", help="push a file through E0")

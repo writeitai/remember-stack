@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from rememberstack.spine import CANONICAL_RECIPES
 from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
 from rememberstack.spine.query_space import build_manifest
@@ -34,6 +35,9 @@ from rememberstack.spine.query_space import surface_manifest_hash
 from rememberstack.spine.query_space import VIEW_CONTRACTS
 from rememberstack.spine.query_space.canonical import CanonicalizationError
 from rememberstack.spine.query_space.deletion_matrix import MATRIX_PATH
+from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
+from rememberstack.surfaces.query_sandbox.grammar import validate_sql
+from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 
 def _golden() -> dict[str, object]:
@@ -163,10 +167,14 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     # vocabulary, and the columns it answers with, so a caller can read the
     # contract without executing anything.
     assert {entry["name"] for entry in published} == {  # type: ignore[index]
+        "explain_cypher",
         "facts_as_of",
         "fetch_chunk_bodies",
+        "graph_neighborhood",
+        "graph_path",
         "lexical_chunks",
         "lexical_claims",
+        "query_cypher",
         "semantic_chunks",
         "semantic_claims",
         "semantic_entities",
@@ -176,10 +184,60 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         assert isinstance(entry, dict)
         assert entry["arguments_min"] >= 1
         assert entry["columns"]
-    assert members["core_operation_descriptors"] == {
-        "contract": "memory_v1.core_operations/1",
-        "operations": [],
+    batch_d_functions = {
+        entry["name"]: entry
+        for entry in published
+        if entry["name"]
+        in {"graph_neighborhood", "graph_path", "query_cypher", "explain_cypher"}
     }
+    assert set(batch_d_functions) == {
+        "graph_neighborhood",
+        "graph_path",
+        "query_cypher",
+        "explain_cypher",
+    }
+    assert all(entry["comment"] for entry in batch_d_functions.values())
+    assert all(entry["example"] for entry in batch_d_functions.values())
+    for name in ("graph_neighborhood", "graph_path"):
+        assert "invalid_parameter_value" in batch_d_functions[name]["comment"]
+        assert "statement_timestamp()" in batch_d_functions[name]["comment"]
+        assert validate_sql(batch_d_functions[name]["example"])
+    for name in ("query_cypher", "explain_cypher"):
+        assert validate_cypher(batch_d_functions[name]["example"])
+    core = members["core_operation_descriptors"]
+    assert isinstance(core, dict)
+    assert core["contract"] == "memory_v1.core_operations/1"
+    operations = core["operations"]
+    assert isinstance(operations, list)
+    assert [operation["name"] for operation in operations] == [  # type: ignore[index]
+        "current_context",
+        "question_context",
+        "resolve_entity",
+    ]
+    public = {
+        descriptor.name: descriptor
+        for descriptor in recipe_descriptors(recipes=CANONICAL_RECIPES)
+    }
+    for operation in operations:
+        assert isinstance(operation, dict)
+        descriptor = public[str(operation["name"])]
+        assert operation["description"] == descriptor.description
+        assert operation["input_schema"] == descriptor.input_schema
+        assert operation["grain"] == descriptor.output_grain
+        assert operation["intent"] == descriptor.answer_intent
+        assert operation["version"] == descriptor.version
+    question = next(
+        operation
+        for operation in operations
+        if isinstance(operation, dict) and operation["name"] == "question_context"
+    )
+    assert question["version"] == 4
+    schema = question["input_schema"]
+    assert isinstance(schema, dict)
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties["include_facts"]["default"] is False  # type: ignore[index]
+    assert properties["include_entities"]["default"] is False  # type: ignore[index]
     limits = members["limits"]
     assert isinstance(limits, dict)
     assert sorted(limits) == [
@@ -189,6 +247,47 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         "resource_limits",
         "sql_grammar",
     ]
+    cypher = limits["cypher_dialect"]
+    assert isinstance(cypher, dict)
+    assert cypher["text_bytes_max"] == 32 * 1024
+    assert cypher["read_openings"] == ["match", "optional", "return", "unwind", "with"]
+    assert cypher["engine_rejected_mutations"] == ["create", "delete", "merge", "set"]
+    assert cypher["rejected_functions"] == [
+        "cast",
+        "hash",
+        "id",
+        "internal_id",
+        "offset",
+        "rowid",
+        "string",
+        "to_string",
+    ]
+    projection = limits["p2_projection"]
+    assert isinstance(projection, dict)
+    assert projection["contract_version"] == "p2-rebuild-2026.07"
+    assert set(projection["node_types"]) == {"Entity", "Document"}  # type: ignore[arg-type]
+    assert set(projection["edge_types"]) == {  # type: ignore[arg-type]
+        "RELATES",
+        "MENTIONED_IN",
+        "DOC_CROSSREF",
+        "IS_DOCUMENT",
+    }
+    relates = projection["edge_types"]["RELATES"]  # type: ignore[index]
+    assert set(relates) == {  # type: ignore[arg-type]
+        "relation_id",
+        "subject_id",
+        "object_id",
+        "predicate",
+        "fact",
+        "evidence_count",
+        "contradict_count",
+        "confidence",
+        "contradiction_group",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at",
+    }
 
 
 def test_manifest_definitions_are_parse_trees_and_never_sql_text() -> None:
@@ -314,11 +413,7 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     assert sum(1 for surface in private if surface["compiles_deletion"]) == 3
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
-    assert {target.target_id for target in deferred} == {
-        "p1_candidate",
-        "p2_edge",
-        "corpus_body",
-    }
+    assert {target.target_id for target in deferred} == {"p1_candidate", "corpus_body"}
     assert len(EXECUTED_TARGETS) + len(deferred) == len(DELETION_TARGETS)
     for target in deferred:
         assert target.executed_in in {"C", "D"}

@@ -26,6 +26,7 @@ from rememberstack.model import FactSupport
 from rememberstack.model import Grain
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine.settings import load_database_settings
@@ -60,10 +61,21 @@ def database_engine() -> Iterator[Engine]:
 class _QuestionIndex:
     """Question-context nominations with deliberate cross-channel duplicates."""
 
-    def __init__(self, *, claim_id: UUID, chunk_id: UUID, chunk_text: P1ChunkText):
+    def __init__(
+        self,
+        *,
+        claim_id: UUID,
+        chunk_id: UUID,
+        chunk_text: P1ChunkText,
+        fact_id: UUID,
+        entity_id: UUID,
+        entity_ids: tuple[UUID, ...] | None = None,
+    ) -> None:
         self.claim_id = str(claim_id)
         self.chunk_id = str(chunk_id)
         self.chunk_text = chunk_text
+        self.fact_id = str(fact_id)
+        self.entity_ids = tuple(str(item) for item in (entity_ids or (entity_id,)))
 
     def search_claims(self, **_: object) -> tuple[str, ...]:
         return (self.claim_id,)
@@ -88,7 +100,15 @@ class _QuestionIndex:
         return {self.chunk_id: self.chunk_text} if self.chunk_id in chunk_ids else {}
 
     def search_facts(self, **_: object) -> tuple[str, ...]:
-        return ()
+        return (self.fact_id,)
+
+    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        return tuple(
+            P1Nomination(
+                item_id=entity_id, rank=rank, score=1.0 / rank, channel="semantic"
+            )
+            for rank, entity_id in enumerate(self.entity_ids, start=1)
+        )
 
 
 class _Corpus:
@@ -100,6 +120,7 @@ class _Corpus:
         self.relations: dict[str, UUID] = {}
         self.claims: dict[str, UUID] = {}
         self.docs: dict[str, UUID] = {}
+        self.doc_chunks: dict[UUID, UUID] = {}
         self.query_chunk_id = uuid4()
         self.query_chunk_text = P1ChunkText(
             chunk_id=self.query_chunk_id,
@@ -211,6 +232,53 @@ class _Corpus:
                 stance="contradicts",
                 at=_NOW - timedelta(days=1),
             )
+        # Repeating a claim inside one source lineage must not inflate D54's
+        # evidence total. The production query therefore has to count the
+        # authoritative evidence_lineage rows, not raw claim associations.
+        self._evidence(
+            connection,
+            key="alice_beacon-support-repeat",
+            relation_key="alice_beacon",
+            stance="supports",
+            doc_id=self.docs["alice_beacon-support-0"],
+            at=_NOW + timedelta(minutes=2),
+        )
+        # A withdrawn edge still needs surviving historical provenance even
+        # though it has no current testimony. Build that state explicitly.
+        self._evidence(
+            connection,
+            key="withdrawn-historical",
+            relation_key="withdrawn",
+            stance="supports",
+            at=_NOW - timedelta(days=2),
+        )
+        connection.execute(
+            text(
+                "UPDATE claims SET is_current_testimony = false"
+                " WHERE deployment_id = :deployment AND claim_id = :claim"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "claim": self.claims["withdrawn-historical"],
+            },
+        )
+        # Entity resolution is provenance-gated. An isolated but known entity
+        # therefore needs its own live source before a no-path answer can be a
+        # typed known-empty result.
+        isolated_doc = self._document(
+            connection, key="isolated-provenance", live_chunk=False
+        )
+        connection.execute(
+            text(
+                "UPDATE documents SET document_entity_id = :entity"
+                " WHERE deployment_id = :deployment AND doc_id = :doc"
+            ),
+            {
+                "entity": self.entities["isolated"],
+                "deployment": _DEPLOYMENT_ID,
+                "doc": isolated_doc,
+            },
+        )
         tombstoned_doc = self._document(connection, key="tombstoned", live_chunk=False)
         self._evidence(
             connection,
@@ -224,6 +292,27 @@ class _Corpus:
             text("UPDATE documents SET deleted_at = :at WHERE doc_id = :doc"),
             {"at": _NOW, "doc": tombstoned_doc},
         )
+        # The v4 entity channel confirms through entities_current, whose D48
+        # membership requires a surviving document association. Give the
+        # three connected entities explicit, live document provenance instead
+        # of weakening the production view for a test fixture.
+        for entity_key, document_key in (
+            ("alice", "alice_beacon-support-0"),
+            ("beacon", "beacon_acme-support-0"),
+            ("acme", "beacon_acme-support-1"),
+            ("legacy", "withdrawn-historical"),
+        ):
+            connection.execute(
+                text(
+                    "UPDATE documents SET document_entity_id = :entity"
+                    " WHERE deployment_id = :deployment AND doc_id = :doc"
+                ),
+                {
+                    "entity": self.entities[entity_key],
+                    "deployment": _DEPLOYMENT_ID,
+                    "doc": self.docs[document_key],
+                },
+            )
 
     def _document(self, connection: Connection, *, key: str, live_chunk: bool) -> UUID:
         doc_id = uuid4()
@@ -241,11 +330,14 @@ class _Corpus:
                 "title": f"Batch D {key}",
             },
         )
-        if live_chunk:
-            self._live_chunk_document(connection, doc_id=doc_id)
+        chunk_id = self.query_chunk_id if live_chunk else uuid4()
+        self.doc_chunks[doc_id] = chunk_id
+        self._live_chunk_document(connection, doc_id=doc_id, chunk_id=chunk_id)
         return doc_id
 
-    def _live_chunk_document(self, connection: Connection, *, doc_id: UUID) -> None:
+    def _live_chunk_document(
+        self, connection: Connection, *, doc_id: UUID, chunk_id: UUID
+    ) -> None:
         version_id = uuid4()
         representation_id = uuid4()
         section_id = uuid4()
@@ -356,7 +448,7 @@ class _Corpus:
                 " 'batch-d-input', 0, 60, 'Connection context.', :at)"
             ),
             {
-                "chunk": self.query_chunk_id,
+                "chunk": chunk_id,
                 "deployment": _DEPLOYMENT_ID,
                 "doc": doc_id,
                 "version": version_id,
@@ -380,7 +472,7 @@ class _Corpus:
         doc_id = doc_id or self._document(connection, key=key, live_chunk=live_chunk)
         claim_id = uuid4()
         self.claims[key] = claim_id
-        chunk_id = self.query_chunk_id if live_chunk else uuid4()
+        chunk_id = self.doc_chunks[doc_id]
         body = f"Evidence for {key}."
         connection.execute(
             text(
@@ -437,11 +529,17 @@ class _Corpus:
             },
         )
 
-    def query_engine(self) -> QueryEngine:
+    def query_engine(
+        self, *, entity_ids: tuple[UUID, ...] | None = None
+    ) -> QueryEngine:
+        """Compose the public engine, optionally with a ranked entity fixture."""
         index = _QuestionIndex(
             claim_id=self.claims["alice_beacon-support-0"],
             chunk_id=self.query_chunk_id,
             chunk_text=self.query_chunk_text,
+            fact_id=self.relations["alice_beacon"],
+            entity_id=self.entities["acme"],
+            entity_ids=entity_ids,
         )
         return QueryEngine(
             engine=self.engine,
@@ -494,6 +592,128 @@ def _answer(corpus: tuple[_Corpus, GraphQueries], **arguments: Any):  # noqa: AN
         entity_a="Alice",
         **arguments,
     )
+
+
+def test_question_context_v4_flags_default_false(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice"
+    )
+
+    assert answer.evidence
+    assert answer.chunks
+    assert answer.facts == ()
+    assert answer.entities == ()
+
+
+def test_question_context_v4_fact_channel_reuses_current_context(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", include_facts=True
+    )
+
+    assert {fact.fact_id for fact in answer.facts} == {seeded.relations["alice_beacon"]}
+    assert answer.fact_evidence
+    assert answer.evidence_totals
+    assert len(answer.fact_evidence) <= 60
+
+
+def test_question_context_v4_entity_channel_is_resolution_first_and_confirmed(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", include_entities=True
+    )
+
+    assert [candidate.entity_id for candidate in answer.entities] == [
+        seeded.entities["alice"],
+        seeded.entities["acme"],
+    ]
+    assert [candidate.tier for candidate in answer.entities] == ["T0", "semantic"]
+
+
+def test_question_context_confirms_before_cutting_the_entity_cap(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    """A stale semantic head cannot hide the 21st, live ranked nomination."""
+    seeded, _graph = corpus
+    stale_head = tuple(uuid4() for _ in range(20))
+    engine = seeded.query_engine(entity_ids=(*stale_head, seeded.entities["acme"]))
+
+    answer = engine.question_context(
+        deployment_id=_DEPLOYMENT_ID, query="no exact alias", include_entities=True
+    )
+
+    assert [candidate.entity_id for candidate in answer.entities] == [
+        seeded.entities["acme"]
+    ]
+    assert answer.dropped_by_hydration >= len(stale_head)
+
+
+def test_question_context_bounds_exact_alias_fanout_before_confirmation(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    """A common alias cannot create an unbounded confirmation parameter set."""
+    seeded, _graph = corpus
+    with seeded.engine.begin() as connection:
+        for index in range(30):
+            entity_id = uuid4()
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    " canonical_name, normalized_name) VALUES (:entity,"
+                    " :deployment, 'Concept', :name, lower(:name))"
+                ),
+                {
+                    "entity": entity_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "name": f"Fanout {index:02d}",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                    " alias_text, normalized_lemma, provenance) VALUES"
+                    " (:alias, :deployment, :entity, 'Fanout', 'fanout',"
+                    " 'llm_canonical')"
+                ),
+                {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
+            )
+
+    engine = seeded.query_engine()
+    resolved = engine.resolve(deployment_id=_DEPLOYMENT_ID, name="Fanout")
+    assert len(resolved.entities) == 30
+
+    answer = engine.question_context(
+        deployment_id=_DEPLOYMENT_ID, query="Fanout", include_entities=True
+    )
+
+    assert [candidate.entity_id for candidate in answer.entities] == [
+        seeded.entities["acme"]
+    ]
+    assert answer.dropped_by_hydration == 21
+
+
+def test_question_context_v4_flags_work_together(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().question_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="Alice",
+        include_facts=True,
+        include_entities=True,
+    )
+
+    assert answer.facts
+    assert answer.entities
+    assert answer.evidence
+    assert answer.chunks
 
 
 def test_two_entity_path_has_both_stances_and_exact_totals(

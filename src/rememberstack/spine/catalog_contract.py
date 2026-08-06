@@ -78,6 +78,9 @@ EXPECTED_ENUMS: Final = (
     "recipe_output_grain",
     "refresh_status",
     "relation_status",
+    "saved_query_assurance",
+    "saved_query_origin",
+    "saved_query_status",
     "resolution_tier",
     "review_item_kind",
     "review_status",
@@ -153,6 +156,10 @@ EXPECTED_TABLES: Final = (
     "resolver_versions",
     "retrieval_recipes",
     "review_queue",
+    "saved_queries",
+    "saved_query_audit",
+    "saved_query_registry_state",
+    "saved_query_versions",
     "scope_interests",
     "scopes",
     "testimony_currency_events",
@@ -314,7 +321,10 @@ EMPTY_AT_HEAD: Final = (
     "predicate_signatures",
     "predicates",
 )
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 47, "f": 124, "p": 62, "u": 31, "x": 1}
+# Includes saved_query_registry_state and saved_query_audit (Batch E governance).
+# Counts are measured against a fresh head inventory; update when the registry
+# migration gains or loses constraints.
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 53, "f": 128, "p": 66, "u": 34, "x": 1}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),

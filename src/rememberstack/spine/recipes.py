@@ -327,11 +327,11 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         name="question_context",
         description="High-recall question context: hybrid claim retrieval plus"
-        " hybrid live-source retrieval. Returns atomic claims and source"
-        " chunks as separately typed evidence, refilling confirmation drops"
-        " from each already-fetched ranked tail. Exact-text claim groups report"
-        " distinct-lineage corroboration and confirmed member ids; neither"
-        " payload is current-fact truth.",
+        " hybrid live-source retrieval. Optional facts reuse current_context's"
+        " current, both-stance backing; optional entities combine exact"
+        " resolution and semantic nominations before PostgreSQL confirmation."
+        " Both optional channels default off, and every payload stays in its"
+        " typed Envelope field. Exact-text claims retain corroboration counts.",
         parameters={
             "query": {"type": "string", "required": True},
             "k": {
@@ -348,42 +348,28 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
                 "minimum": 1,
                 "maximum": 400,
             },
+            "include_facts": {"type": "boolean", "required": False, "default": False},
+            "include_entities": {
+                "type": "boolean",
+                "required": False,
+                "default": False,
+            },
         },
         chain=(
             RecipeStep(
-                op="nominate_claims",
-                settings={"channel": "semantic"},
-                bind={"query": "query", "k": "candidate_k"},
+                op="question_context",
+                bind={
+                    "query": "query",
+                    "k": "k",
+                    "candidate_k": "candidate_k",
+                    "include_facts": "include_facts",
+                    "include_entities": "include_entities",
+                },
             ),
-            RecipeStep(
-                op="nominate_claims",
-                settings={"channel": "bm25"},
-                bind={"query": "query", "k": "candidate_k"},
-            ),
-            RecipeStep(op="fuse", settings={"k": 60}, inputs=(0, 1)),
-            RecipeStep(
-                op="hydrate_claims",
-                settings={"group_exact_text": True},
-                bind={"limit": "k"},
-                inputs=(2,),
-            ),
-            RecipeStep(
-                op="nominate_chunks",
-                settings={"channel": "semantic"},
-                bind={"query": "query", "k": "candidate_k"},
-            ),
-            RecipeStep(
-                op="nominate_chunks",
-                settings={"channel": "bm25"},
-                bind={"query": "query", "k": "candidate_k"},
-            ),
-            RecipeStep(op="fuse", settings={"k": 60}, inputs=(4, 5)),
-            RecipeStep(op="hydrate_chunks", bind={"limit": "k"}, inputs=(6,)),
-            RecipeStep(op="combine_evidence", inputs=(3, 7)),
         ),
         output_grain=Grain.EVIDENCE,
         answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
-        version=3,
+        version=4,
     ),
     Recipe(
         name="documents_about",

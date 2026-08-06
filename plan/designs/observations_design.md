@@ -98,13 +98,15 @@ When a claim asserts a value/property about entity *E*:
 1. **Block (exact, exhaustive).** Fetch *E*'s **live** observations: `WHERE subject_entity_id = E AND
    invalidated_at IS NULL`. Indexed; most entities have few observations, so this is cheap and — this is
    the key property — **exhaustive for that entity**. Nothing about *E* can be missed.
-2. **Narrow (only for hubs).** If *E* has many observations, rank them by **semantic similarity** to the
-   new statement (P1/Lance over the observation label) to choose *which to compare first*. This is an
-   ordering optimization, not a membership filter: the entity block already makes **all** of *E*'s live
-   observations *available* (an exact key — no clustering can hide one). Crucially, because `supersede`
-   requires a **positive** match (step 3), a prior that top-k ranking happens to skip yields at worst a
+2. **Narrow (only for hubs).** If *E* has many observations, rank them by **embedding similarity** to the
+   new statement over open observation **statements** (versioned write-path vector cache; ordering
+   only — not Lance membership) to choose *which to compare first*. This is an ordering optimization,
+   not a membership filter: the entity block already makes **all** of *E*'s live observations
+   *available* (an exact key — no clustering can hide one). Crucially, because `supersede` requires a
+   **positive** match (step 3), a prior that top-k ranking happens to skip yields at worst a
    *duplicate coexisting observation* to reconcile later — **never** a wrong supersede. (Contrast pure
-   clustering, where a mis-clustered prior is invisible and silently duplicated.)
+   clustering, where a mis-clustered prior is invisible and silently duplicated.) P1/Lance fact
+   vectors remain a separate retrieval projection and are not required at write time.
 3. **Adjudicate (cheap-first cascade, D4).** Every outcome below first requires a **positive match on the
    same thing** — the adjudicator reading both `statement`s and judging *same property* (and, for a
    period figure, *same reporting period* and *compatible value*) **semantically**, exactly the way it

@@ -22,12 +22,13 @@ from pydantic import ValidationError
 import pytest
 from sqlalchemy.engine import make_url
 
+from rememberstack.spine.query_space import load_manifest
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.discovery import search_query_space
-from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE
+from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE_FULL
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
@@ -501,19 +502,36 @@ def test_audit_trail_is_fire_and_forget(migrated: str) -> None:
 
 def test_discovery_serves_manifest_and_headline() -> None:
     description = describe_query_space()
+    members = load_manifest()["hash_members"]
     assert description.schema == "memory_v1"
     assert len(description.views) == 24
-    assert description.headline == TWO_LAYER_HEADLINE
+    assert description.headline == TWO_LAYER_HEADLINE_FULL
     assert set(description.functions) == PUBLIC_SRF_NAMES
     assert description.limits == {
         tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()
     }
+    assert (
+        description.core_operation_descriptors == members["core_operation_descriptors"]
+    )
+    assert description.function_signatures == members["function_signatures"]
+    assert description.cypher_dialect == members["limits"]["cypher_dialect"]
+    assert description.p2_projection == members["limits"]["p2_projection"]
+    entry_points = {
+        entry["name"]
+        for entry in description.function_signatures["functions"]  # type: ignore[index]
+        if entry["channel"] == "cypher"  # type: ignore[index]
+    }
+    assert entry_points == {"query_cypher", "explain_cypher"}
     assert description.examples == ()
 
 
 def test_discovery_search_ranks_relevant_views() -> None:
-    names = [view.name for view in search_query_space(query="current facts", k=3)]
+    hits = search_query_space(query="current facts", k=3)
+    names = [hit.name for hit in hits]
     assert "facts_current" in names
+    assert all(
+        hit.kind in {"view", "function", "core_operation", "example"} for hit in hits
+    )
     with pytest.raises(SandboxRejection):
         search_query_space(query="facts", k=0)
 

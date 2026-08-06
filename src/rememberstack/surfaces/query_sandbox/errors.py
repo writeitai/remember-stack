@@ -50,7 +50,14 @@ class QueryErrorCode(StrEnum):
 class SandboxRejection(Exception):
     """One rejected or failed sandbox request, carrying only public content."""
 
-    def __init__(self, *, code: QueryErrorCode, message: str) -> None:
+    def __init__(
+        self,
+        *,
+        code: QueryErrorCode,
+        message: str,
+        engine_fault_class: str | None = None,
+    ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+        self.engine_fault_class = engine_fault_class
