@@ -1,21 +1,60 @@
 export const metadata = {
   title: "MCP Reference",
   description:
-    "The MCP surface: the tool list is the recipe registry, rendered verbatim, and every tool call runs a recipe and returns the envelope as JSON.",
+    "The MCP surface: recipe tools from the registry plus nine static open-query infrastructure tools. examples.* are never top-level tools.",
 };
 
 # MCP Reference
 
-The MCP surface exposes the deployment's recipes as MCP tools. It is not a
-second, hand-maintained tool list — **the tool list _is_ the recipe
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated current
+worldview (“what the system currently holds true”):
+supersession-adjudicated, clocked on two time axes (when a fact held in
+the world, and when the system learned it), evidence-counted per
+distinct source—repetition is not corroboration—and
+contradiction-tracked. The `fact_claim_evidence` association is the
+auditable bridge between the layers, recording which claims support or
+contradict each fact. Query claims to inspect testimony; query facts to
+answer current-truth questions, then follow the bridge to see why the
+system believes the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
+
+The MCP surface exposes the deployment's recipes as MCP tools. Recipe tools
+are not a second, hand-maintained list — **that tool list _is_ the recipe
 registry**. Adding a query pattern is adding a registry row; the tool list
 updates with no code change, exactly as the API's `/recipes` and the CLI's
-`remember query list` do. All three render the same surface.
+`remember query list` do. All three render the same recipe surface.
+
+When the open-query facade is composed, **nine static open-query
+infrastructure tools** are listed alongside recipe tools. Local and remote
+MCP share the same schemas and strict argument validation. Shipped
+`examples.*` saved queries are **never** top-level tools — they run only
+through `run_saved_query`.
+
+During the dual-surface window the twenty compatibility recipe tools remain
+callable. Default cutover has not passed the paid noninferiority gate; no
+deprecation descriptions are attached yet.
 
 ## `tools/list`
 
-Returns one tool per active recipe. Each tool carries its name, description,
-and a JSON-Schema `inputSchema` built from the recipe's typed parameters:
+Returns one tool per active recipe **plus** the nine open-query tools when
+composed:
+
+| Infrastructure tool | Purpose |
+| --- | --- |
+| `query_sql` | Sandboxed SQL → `QueryResult/v1` |
+| `explain_sql` | EXPLAIN without execution |
+| `query_cypher` | Read-only snapshot Cypher |
+| `explain_cypher` | Cypher plan without execution |
+| `describe_query_space` | Manifest-backed discovery (full first-call payload) |
+| `search_query_space` | Search manifest text only |
+| `list_saved_queries` | Registry metadata |
+| `describe_saved_query` | One immutable version |
+| `run_saved_query` | Execute active saved SQL |
+
+Recipe tools still render from the registry:
 
 ```json
 {
@@ -37,12 +76,17 @@ and a JSON-Schema `inputSchema` built from the recipe's typed parameters:
 ```
 
 The `inputSchema` is the contract an MCP client validates arguments against
-before calling — the same schema the API advertises at `/recipes`.
+before calling — the same schema the API advertises at `/recipes` for recipe
+tools, and the static schemas above for open-query tools. Open-query dispatch
+rejects wrong types, bool-as-int, missing required fields, and unknown keys
+rather than coercing them.
 
 ## `tools/call`
 
-Runs the named recipe over its arguments and returns the **envelope**
-serialized to JSON in one text content block:
+- **Recipe tools** run the named recipe and return the **envelope** serialized
+  to JSON in one text content block.
+- **Open-query tools** return `QueryResult/v1` or discovery/metadata JSON in
+  one text content block.
 
 ```json
 {
@@ -51,27 +95,32 @@ serialized to JSON in one text content block:
 }
 ```
 
-A tool the registry has no active row for, or a call missing a required
-argument, is a protocol **error result** (`isError: true`) with the reason in
-the text block — never an exception across the wire. The client re-plans
-against a stated failure.
+A tool the registry has no active row for, a call missing a required
+argument, or an open-query call with invalid argument types is a protocol
+**error result** (`isError: true`) with the reason in the text block — never
+an exception across the wire. The client re-plans against a stated failure.
 
 ## What the tools return
 
-Every tool returns the self-accounting envelope: the answer, its grain
+Recipe tools return the self-accounting envelope: the answer, its grain
 (`fact` / `evidence` / `compiled` / `composite`), its validity and freshness,
 and any typed negative. Because the grain travels with the answer, a client
 can tell a **current-fact** answer from **what a source asserted** — a recipe
 that answers "what holds now" can never be one that returns evidence (the
 registry's grain bar guarantees it).
 
+Open-query tools return `QueryResult/v1` (grade `exploratory_tabular` for SQL,
+`snapshot_graph` for Cypher) or content-free discovery payloads. Caps, drops,
+and snapshot provenance are part of the contract.
+
 ## Transport
 
 Run `remember mcp` to start the dependency-light stdio JSON-RPC server. It reaches
 the deployment at `REMEMBERSTACK_API_URL`, uses `REMEMBERSTACK_API_AUTHORIZATION` when set, renders
-`tools/list` from `GET /recipes`, and proxies `tools/call` to
-`POST /recipe/{name}`. The server supports the MCP `initialize`, `tools/list`,
-and `tools/call` lifecycle; notifications produce no response.
+`tools/list` from `GET /recipes` plus the nine open-query tools when composed,
+and proxies `tools/call` to `POST /recipe/{name}` or the matching `/query/…`
+route. The server supports the MCP `initialize`, `tools/list`, and
+`tools/call` lifecycle; notifications produce no response.
 
 The recipe registry and execution remain deployment-side. The MCP process is
 therefore a client transport, not another server composition and not a second

@@ -29,6 +29,7 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 from typing import Final
 from typing import TYPE_CHECKING
@@ -119,6 +120,7 @@ class SavedQueryVersion:
     status: str
     validated_surface_manifest_hash: str
     assurance: str | None
+    default_limits: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -209,6 +211,11 @@ class SavedQueryRegistry:
         self._manifest_hash = manifest_hash
         self._actor = actor
         self._can_activate = can_activate or default_deny_activation
+
+    @property
+    def deployment_id(self) -> UUID:
+        """The one deployment this registry serves."""
+        return self._deployment_id
 
     @property
     def actor(self) -> str:
@@ -390,6 +397,7 @@ class SavedQueryRegistry:
             status="draft",
             validated_surface_manifest_hash=current_hash,
             assurance=assurance,
+            default_limits=limits,
         )
 
     def validate_version(
@@ -672,13 +680,18 @@ class SavedQueryRegistry:
 
     # -- execution ---------------------------------------------------------
 
-    def resolve(self, *, namespace: str, name: str) -> SavedQueryVersion:
+    def resolve(
+        self, *, namespace: str, name: str, version: int | None = None
+    ) -> SavedQueryVersion:
         """The version `run_saved_query` would execute, or a stated refusal.
 
-        Resolve chooses the active version of the identity, not merely the
-        newest authored version — drafting v2 must not hide an active v1.
-        Every refusal names its reason: not found, disabled, awaiting
-        revalidation, or incompatible.
+        When `version` is omitted, resolve chooses the active version of the
+        identity, not merely the newest authored version — drafting v2 must
+        not hide an active v1. When `version` is supplied, that exact version
+        must exist and be `active`; pending, draft, disabled, broken, and
+        not-found refuse with the existing typed codes. Every refusal names
+        its reason: not found, disabled, awaiting revalidation, or
+        incompatible.
         """
         identity = self._connection.execute(
             b"SELECT query_id, disabled_at, latest_version FROM saved_queries"
@@ -702,9 +715,14 @@ class SavedQueryRegistry:
                 message=f"{namespace}.{name} is disabled",
             )
 
+        if version is not None:
+            return self._resolve_exact_active(
+                query_id=query_id, namespace=namespace, name=name, version=version
+            )
+
         active = self._connection.execute(
             b"SELECT v.version, v.sql, v.query_hash, v.parameter_schema, v.status,"
-            b" v.validated_surface_manifest_hash, v.assurance"
+            b" v.validated_surface_manifest_hash, v.assurance, v.default_limits"
             b" FROM saved_query_versions AS v"
             b" WHERE v.deployment_id = %(deployment)s"
             b"   AND v.query_id = %(query)s"
@@ -722,6 +740,7 @@ class SavedQueryRegistry:
                         f"{namespace}.{name} was validated against another surface"
                     ),
                 )
+            limits = active[7] if isinstance(active[7], dict) else {}
             return SavedQueryVersion(
                 query_id=query_id,
                 version=active[0],
@@ -733,6 +752,7 @@ class SavedQueryRegistry:
                 status=active[4],
                 validated_surface_manifest_hash=active[5],
                 assurance=active[6],
+                default_limits=limits,
             )
 
         # No active version: report the latest authored status so the caller
@@ -760,6 +780,68 @@ class SavedQueryRegistry:
         raise SandboxRejection(
             code=QueryErrorCode.SAVED_QUERY_DISABLED,
             message=f"{namespace}.{name} is {status} and does not execute",
+        )
+
+    def _resolve_exact_active(
+        self, *, query_id: UUID, namespace: str, name: str, version: int
+    ) -> SavedQueryVersion:
+        """Resolve one exact version only when it is currently active."""
+        row = self._connection.execute(
+            b"SELECT v.version, v.sql, v.query_hash, v.parameter_schema, v.status,"
+            b" v.validated_surface_manifest_hash, v.assurance, v.default_limits"
+            b" FROM saved_query_versions AS v"
+            b" WHERE v.deployment_id = %(deployment)s"
+            b"   AND v.query_id = %(query)s"
+            b"   AND v.version = %(version)s",
+            {
+                "deployment": str(self._deployment_id),
+                "query": str(query_id),
+                "version": version,
+            },
+        ).fetchone()
+        if row is None:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_NOT_FOUND,
+                message=f"no saved query named {namespace}.{name} version {version}",
+            )
+        status = row[4]
+        if status == "pending_revalidation":
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
+                message=(
+                    f"{namespace}.{name} v{version} is awaiting revalidation"
+                    " against the current surface"
+                ),
+            )
+        if status != "active":
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_DISABLED,
+                message=(
+                    f"{namespace}.{name} v{version} is {status} and does not execute"
+                ),
+            )
+        current_hash = self._require_authoritative_manifest()
+        if row[5] != current_hash:
+            raise SandboxRejection(
+                code=QueryErrorCode.SAVED_QUERY_REVALIDATION_PENDING,
+                message=(
+                    f"{namespace}.{name} v{version} was validated against another"
+                    " surface"
+                ),
+            )
+        limits = row[7] if isinstance(row[7], dict) else {}
+        return SavedQueryVersion(
+            query_id=query_id,
+            version=row[0],
+            namespace=namespace,
+            name=name,
+            sql=row[1],
+            query_hash=row[2],
+            parameter_schema=row[3] if isinstance(row[3], dict) else {},
+            status=row[4],
+            validated_surface_manifest_hash=row[5],
+            assurance=row[6],
+            default_limits=limits,
         )
 
     # -- discovery ---------------------------------------------------------
