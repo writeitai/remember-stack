@@ -17,8 +17,42 @@ def main(argv: list[str] | None = None) -> int:
         return _score_containment(args)
     if args.command == "score-official":
         return _score_official(args)
+    if args.command == "answer-retrieval":
+        return _answer_retrieval(args)
     parser.print_help()
     return 2
+
+
+def _answer_retrieval(args: argparse.Namespace) -> int:
+    """Answer BEAM probes using the full recipe + open-query retrieval plane."""
+    import os
+
+    from benchmarks.rs_harness_beam.answer_agent import answer_run_dir
+    from benchmarks.rs_harness_beam.answer_agent import AnswerAgentError
+
+    api_key = args.api_key or os.environ.get(  # noqa: TID251 — CLI boundary only
+        "REMEMBERSTACK_OPENROUTER_API_KEY"
+    )
+    if not api_key:
+        print(
+            "error: pass --api-key or set REMEMBERSTACK_OPENROUTER_API_KEY",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        summary = answer_run_dir(
+            run_dir=args.run,
+            api_url=args.api_url,
+            api_key=api_key,
+            arm=args.arm,
+            model=args.model,
+            force=args.force,
+        )
+    except AnswerAgentError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(summary, indent=2))
+    return 0
 
 
 def _score_containment(args: argparse.Namespace) -> int:
@@ -133,6 +167,16 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     score = sub.add_parser("score", help="containment placeholder scorer")
     score.add_argument("--run", required=True)
+    answer = sub.add_parser(
+        "answer-retrieval",
+        help="answer probes via full retrieval plane (recipes + open query)",
+    )
+    answer.add_argument("--run", required=True)
+    answer.add_argument("--api-url", default="http://127.0.0.1:18000")
+    answer.add_argument("--arm", default="rs")
+    answer.add_argument("--model", default="openai/gpt-5.6-luna")
+    answer.add_argument("--force", action="store_true")
+    answer.add_argument("--api-key", default=None)
     official = sub.add_parser(
         "score-official",
         help="BEAM paper scorer (nugget LLM-judge + Kendall τ-b for event_ordering)",
