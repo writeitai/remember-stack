@@ -1,6 +1,6 @@
 # LoCoMo current-surface cutover analysis
 
-**Status:** non-binding implementation analysis, 2026-08-07  
+**Status:** non-binding implementation analysis, 2026-08-07
 **Question:** how should the full LoCoMo run measure the clean-cutover system now
 shipping on `main`?
 

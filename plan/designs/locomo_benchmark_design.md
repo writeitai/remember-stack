@@ -399,10 +399,11 @@ navigation. A future mount-enabled LoCoMo harness is a separately named protocol
 
 ### Plane K
 
-The benchmark records that the stock profile has no K planner/writer runtime. `pages_about`
-remains available and honest, but an empty result is not reported as K coverage. A later K-enabled
-LoCoMo run needs explicit routing rules, repository/runtime fingerprints, K settlement in
-readiness, and a new protocol name.
+The benchmark records that the stock profile has no K planner/writer runtime,
+and the current three-operation agent surface has no K query operation. A later
+K-enabled LoCoMo run needs an explicit public operation, routing rules,
+repository/runtime fingerprints, K settlement in readiness, and a new protocol
+name.
 
 ## 5. Lifecycle ordering and readiness
 

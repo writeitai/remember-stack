@@ -58,6 +58,7 @@ from benchmarks.locomo.model import SessionDiagnosticSummary
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
+from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
 from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
@@ -1409,7 +1410,9 @@ def _answer_one(
     max_evaluator_cost_usd: Decimal,
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
     answer_agent_temperature: float = TEMPERATURE,
-    answer_agent_reasoning_effort: ReasoningEffort | None = None,
+    answer_agent_reasoning_effort: ReasoningEffort | None = (
+        ANSWER_AGENT_REASONING_EFFORT
+    ),
     max_tool_calls_per_question: int = MAX_TOOL_CALLS,
     max_agent_calls_per_question: int = MAX_AGENT_CALLS,
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,

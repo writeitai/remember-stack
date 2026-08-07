@@ -135,7 +135,10 @@ refuses to wipe an incomplete sample with persisted records, because its live is
 may be the only safe way to resume that checkpoint.
 Run the incomplete stage directly. A partial `ingest` resumes only after the
 runner proves that every live lineage and current version exactly matches its
-durable checkpoint; any unrecorded or replaced version is a hard stop.
+durable checkpoint. If that proof fails, leave the old run state untouched,
+prepare a new run directory, wipe the disposable stack, and rerun only that
+sample; the disjoint completed results can be merged later. Never edit or force
+a checkpoint forward.
 
 ## 4. Collect run directories
 

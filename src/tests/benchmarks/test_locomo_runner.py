@@ -434,6 +434,7 @@ def test_answer_and_judge_refuse_provider_resolved_model_drift() -> None:
     assert answer.failure is not None
     assert answer.failure.kind == "accounting"
     assert "not-luna" in answer.failure.message
+    assert answer_provider.requests[0].reasoning_effort == "none"
 
     judge_provider = _CostProvider(
         cost=Decimal("0.01"), resolved_model="openai/not-luna"

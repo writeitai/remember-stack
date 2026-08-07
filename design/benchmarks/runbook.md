@@ -57,12 +57,10 @@ REMEMBERSTACK_API_URL=http://127.0.0.1:18000
 REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # allow long compound retrieval requests
 ```
 
-Engine-side (in `.env`, read by the docker stack): the extraction model
-(`REMEMBERSTACK_E2_EXTRACT_MODEL`, currently `z-ai/glm-5.2`) and
-`REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` pinning glm models to
-effort `none` — glm at auto effort intermittently emits reasoning prose
-instead of JSON (issue #174), which is also the root cause of most
-dead-letter rows.
+Engine-side model bindings come from the checked-out Compose file plus its
+environment. Freeze that environment for the run and inspect the non-secret
+bindings reported by `GET /deployment`; the current stock E1-prefix, E2, E3,
+P1-label, and small adjudicator seats use `openai/gpt-5.6-luna`.
 
 ## 4. Running a single conversation (smoke or one shard)
 
@@ -97,7 +95,7 @@ Manual equivalents, when you need them:
 | `answer` refuses: "deployment did not report the exact completed pipeline and fresh P2/P3 projections" | Drain not actually complete (pending rows, or dead-letter rows which pending/running counts miss), or projections published *before* the last ingest event | Finish the true drain, re-run projections, then answer. Order matters: projections after ingest. |
 | Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api python -m rememberstack.surfaces.cli ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
 | Drain "stuck" with busy count barely moving | Relation-normalize is a single sequential worker by default; 400-claim conversations generate hours of tail | Scale workers (lease-based ledger makes this safe): `docker compose up -d --no-recreate --scale worker-normalize-relations=6 ...`. Remember `down -v` resets replica counts — re-apply scaling on every stack start. |
-| run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | Keep the matching stack and run the incomplete stage directly. `ingest` resumes only when the live lineage/current-version set exactly matches its durable checkpoints. If that proof fails, wipe the disposable stack and restart the sample; do not force the checkpoint forward. |
+| run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | If the stack matches the checkpoint, run the incomplete stage directly; `ingest` proves the exact live lineage/current-version set first. If it does not match, leave the old state untouched, prepare a new run directory, wipe the disposable stack, and rerun only that sample. Merge the disjoint completed results later. Never edit or force a checkpoint forward. |
 | Item failures recorded in run state | Per-item failures are terminal in that run | Missing items (never attempted, e.g. after a stage-level refusal) can simply be re-answered in the same run dir; genuinely failed items require a new prepared run and a freshly wiped deployment. |
 | Judge/answer cost cap hit | Caps are run-cumulative, not per-invocation | Pass generous run-absolute caps (`--max-evaluator-cost-usd`), sized from §7. |
 
@@ -125,16 +123,16 @@ recomputes the official score from item records).
 - Wall-clock: a one-conversation shard finishes in ~2.5 h (ingest+drain
   ~1–1.5 h, answer ~40 min for ~150 questions at ~12 s/q, judge ~10 min).
 
-**Known constraint (open issue):** the protocol fingerprint currently pins
-`repository_revision`, so the merged summarize refuses runs prepared at
-different commits even when every protocol identity field is identical. If
-shards ran on a newer revision than an earlier partial run, compute the
-combined score as the sum of the per-run official summaries — this is
-exact, because each item is answered in exactly one run, missing items
-score 0, and every run is scored over the same full manifest. Fix tracked
-in `next-steps.md`.
+Every shard must run the same exact repository revision. The merger rejects
+different revisions, and operators must not manually combine their summary
+numbers: such runs measured different systems.
 
-## 7. Costs and durations (measured, GLM-5.2 extraction + luna answers)
+## 7. Historical sizing estimate
+
+These figures came from the pre-v10 GLM-5.2 extraction path and are only useful
+for rough capacity planning. V10 uses the current `main` bindings and must record
+its own actual cost and duration; the provider account cap remains the hard
+monetary boundary.
 
 | Item | Cost | Time |
 | --- | --- | --- |
