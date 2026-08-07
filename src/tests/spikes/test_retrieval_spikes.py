@@ -775,6 +775,94 @@ def _resolve_context(*, engine: Engine) -> RetrievalSpikeMeasurement:
     johns = tuple(UUID(int=5_100 + index) for index in range(4))
     focals = tuple(UUID(int=5_200 + index) for index in range(4))
     with engine.begin() as connection:
+        evidence_doc = uuid4()
+        evidence_version = uuid4()
+        evidence_representation = uuid4()
+        evidence_chunk = uuid4()
+        evidence_claim = uuid4()
+        evidence_hash = f"resolve-context-{evidence_doc}"
+        connection.execute(
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                " source_ref, title) VALUES (:doc_id, :deployment_id, 'upload',"
+                " :source_ref, 'Resolve context evidence')"
+            ),
+            {
+                "doc_id": evidence_doc,
+                "deployment_id": _DEPLOYMENT_ID,
+                "source_ref": evidence_hash,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                " raw_uri) VALUES (:deployment_id, :content_hash, 'text/plain',"
+                " :raw_uri)"
+            ),
+            {
+                "deployment_id": _DEPLOYMENT_ID,
+                "content_hash": evidence_hash,
+                "raw_uri": f"mem://{evidence_hash}",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                " content_hash, version_no, status) VALUES (:version_id,"
+                " :deployment_id, :doc_id, :content_hash, 1, 'ready')"
+            ),
+            {
+                "version_id": evidence_version,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": evidence_doc,
+                "content_hash": evidence_hash,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id,"
+                " deployment_id, version_id, route, status) VALUES"
+                " (:representation_id, :deployment_id, :version_id,"
+                " 'passthrough', 'ready')"
+            ),
+            {
+                "representation_id": evidence_representation,
+                "deployment_id": _DEPLOYMENT_ID,
+                "version_id": evidence_version,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                " representation_id, ordinal, block_start, block_end,"
+                " chunk_content_hash, extraction_input_hash, char_start, char_end)"
+                " VALUES (:chunk_id, :deployment_id, :doc_id, :version_id,"
+                " :representation_id, 0, 0, 0, :content_hash, :content_hash, 0, 8)"
+            ),
+            {
+                "chunk_id": evidence_chunk,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": evidence_doc,
+                "version_id": evidence_version,
+                "representation_id": evidence_representation,
+                "content_hash": evidence_hash,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, extractor_version) VALUES (:claim_id,"
+                " :deployment_id, :doc_id, :chunk_id, 'John works on project',"
+                " 'evidence', 0, 8, true, true, 'resolve-context-spike')"
+            ),
+            {
+                "claim_id": evidence_claim,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": evidence_doc,
+                "chunk_id": evidence_chunk,
+            },
+        )
         for index, (john, focal) in enumerate(zip(johns, focals, strict=True)):
             for entity_id, name, entity_type in (
                 (john, f"John {index}", "Person"),
@@ -793,6 +881,20 @@ def _resolve_context(*, engine: Engine) -> RetrievalSpikeMeasurement:
                         "name": name,
                     },
                 )
+                connection.execute(
+                    text(
+                        "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                        " source_ref, document_entity_id, title) VALUES (:doc_id,"
+                        " :deployment_id, 'upload', :source_ref, :entity_id, :name)"
+                    ),
+                    {
+                        "doc_id": uuid4(),
+                        "deployment_id": _DEPLOYMENT_ID,
+                        "source_ref": f"resolve-entity-{entity_id}",
+                        "entity_id": entity_id,
+                        "name": name,
+                    },
+                )
             connection.execute(
                 text(
                     "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
@@ -806,6 +908,7 @@ def _resolve_context(*, engine: Engine) -> RetrievalSpikeMeasurement:
                     "entity_id": john,
                 },
             )
+            relation_id = uuid4()
             connection.execute(
                 text(
                     "INSERT INTO relations (relation_id, deployment_id,"
@@ -814,10 +917,24 @@ def _resolve_context(*, engine: Engine) -> RetrievalSpikeMeasurement:
                     " :john, 'works_on', :focal, 'resolve-context-spike')"
                 ),
                 {
-                    "relation_id": uuid4(),
+                    "relation_id": relation_id,
                     "deployment_id": _DEPLOYMENT_ID,
                     "john": john,
                     "focal": focal,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                    " claim_id, doc_id, stance, normalizer_version) VALUES"
+                    " (:deployment_id, :relation_id, :claim_id, :doc_id,"
+                    " 'supports', 'resolve-context-spike')"
+                ),
+                {
+                    "deployment_id": _DEPLOYMENT_ID,
+                    "relation_id": relation_id,
+                    "claim_id": evidence_claim,
+                    "doc_id": evidence_doc,
                 },
             )
     query = QueryEngine(
