@@ -12,3 +12,9 @@ lost in chat.
 | [`proposals/`](proposals/) | Unchosen alternatives and deferred efficiency/architecture tracks |
 
 Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
+
+## Engine design cross-links (selected)
+
+| Topic | Binding | Analysis |
+| --- | --- | --- |
+| Chunk-level E2 extract (D84) | [`../plan/designs/chunk_level_extract_design.md`](../plan/designs/chunk_level_extract_design.md) | [`../plan/analysis/chunk_level_extract_analysis.md`](../plan/analysis/chunk_level_extract_analysis.md) |
