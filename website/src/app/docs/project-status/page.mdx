@@ -1,61 +1,76 @@
 export const metadata = {
   title: "Project Status",
   description:
-    "Where RememberStack stands: the design is complete and public; implementation follows a phased roadmap. What exists today and what lands next.",
+    "What ships in RememberStack today: pre-release engine capabilities, packaging, and what remains intentionally out of scope.",
 };
 
 # Project Status
 
-RememberStack is being built **design-first**: the complete system — requirements, architecture, data model, and every load-bearing decision with its rationale — was designed and reviewed before implementation began. That design is public in the repository and is the authority these docs summarize.
+RememberStack is **pre-release** software: installable, tested, and documented for self-host use, with interfaces that may still change before a stable release.
 
-> **Pre-release software is now installable as [`v0.2.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.2.0).** Install the Python distribution from [PyPI](https://pypi.org/project/rememberstack/0.2.0/) or pull the public container from [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack). The interfaces and data model may still change before a stable release.
+Current public release: [`v0.2.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.2.0) on [PyPI](https://pypi.org/project/rememberstack/0.2.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
-## What exists today
+## What ships today
 
-- **The complete design** — in [`plan/`](https://github.com/writeitai/remember-stack/tree/main/plan): requirements, binding per-subsystem designs, the research and analyses behind them, and a build-order roadmap.
-- **The decision log** — [`decisions.md`](https://github.com/writeitai/remember-stack/blob/main/decisions.md): every architecture decision (D1, D2, …) with context, rationale, and its later refinements. If you want to know *why* something is the way it is, start there.
-- **Design-conformance evals** — a suite of acceptance checks (in [`plan/implementation_evals/`](https://github.com/writeitai/remember-stack/tree/main/plan/implementation_evals)) that judge the implementation against the binding design as it lands.
-- **Phase 0, complete** — the foundations are merged: the full PostgreSQL schema and migrations, the work ledger and worker runtime (idempotent work tracking, retries, dead-lettering), the self-host delivery shell, the deterministic blockizer with its golden regression corpus, and the eval-harness skeleton.
-- **Phase 2, complete** — the truth machinery: the full entity-resolution cascade (exact, fuzzy, phonetic, embedding, and LLM tiers with versioned per-type thresholds and golden-set precision/recall curves), order-independent clustering with fully reversible merges, ontology governance (the Work extension pack and the escape-value promotion funnel), the relation supersession cascade with append-only decision transcripts, the observation adjudicator behind its contradiction eval gate, and a review queue with a CLI whose verdicts write reversible, auditable rows.
-- **Phase 1, complete** — the walking skeleton works end to end as library code: a document ingests through upload → conversion → structure → chunking → embeddings → claim extraction (with a deterministic grounding gate and a full decision ledger) → entity resolution and fact normalization → the Lance search indexes, and is queryable through a minimal HTTP query API (resolve, lookup, search, hydrate) whose every answer carries a self-accounting envelope (grain, validity, freshness, typed negatives).
-- **Phase 4, complete** — the projections: derived, rebuildable read surfaces. The knowledge graph rebuilds whole from PostgreSQL on every cycle (zero drift by construction, entity merges become no-ops), validates before publishing — a merge cycle or a row-count mismatch aborts the snapshot loudly — and ships as an immutable snapshot that read-only readers hot-swap to. Agents query it through a typed `graph` primitive: neighborhoods and shortest paths, filtered as-of a point in world or system time, with explicit truncation markers instead of silent top-k caps and typed answers when there is nothing to return. Community detection, PageRank, k-core, and connected components run natively on each fresh snapshot and write back to PostgreSQL. And the corpus filesystem is browsable: a generated directory tree where one index file tells an agent what every document in a directory is about, canonical per-document and per-entity paths never move across rebuilds, and the original files sit deliberately off the navigation path behind audited access.
-- **Phase 5, complete** — retrieval complete. The full zero-LLM primitive set is implemented (`fuse`, `rerank`, `transcript`, `delta`, `pages_about`, enumerated `aggregate`, and a streaming batch `scan`, alongside resolve/lookup/search/graph); and the self-accounting envelope surfaces contradictions, withdrawn support, mixed-grain parts, explicit fact-to-evidence stance associations and totals, identity regime, belief horizons, freshness, and typed negatives. Hybrid claim/source mechanics refill live-confirmation drops from their already-fetched deterministic tails, while exact normalized claim duplicates collapse under the highest-ranked representative with distinct-lineage corroboration and only PostgreSQL-confirmed member IDs. The query-driven `current_context` operation reaches current relations and observations through the semantic facts channel and backs every returned fact with live testimony under a hard 60-record evidence budget. Graph expansion is available through native Cypher, live SQL helpers, and the saved `examples.multi_hop_context` pattern. API, CLI, and MCP render exactly the same three versioned assured operations; the seventeen former recipe patterns live only as `examples.*` saved queries. The consumption skill is guarded by the repeatable S58 cold-agent eval, while the retrieval spike battery records filtered Lance search at 10 million rows and graph pagination at a 100,000-edge hub. The client-first `rememberstack` base wheel contains the typed SDK, remote `remember` CLI and MCP, lineage-aware E0 ingest, and typed remote connector-management commands plus their deployment composition port, without server dependencies; `[server]`, `[connectors-watched-directory]`, and `[k]` name the heavier install surfaces.
-- **Open query space (Batches A–F, clean pre-release surface)** — versioned `memory_v1` SQL views and allowlisted executor-resolved SRFs, sandboxed SQL execution, Lance semantic/lexical bridges, PG graph helpers, full read-only Cypher over published P2 snapshots, the saved-query registry with seventeen shipped `examples.*` identities, and the API/SDK/CLI/MCP facade plus consumption-skill rewrite led by the bound two-layer headline. Exactly three D49 assured operations ship as top-level intent tools; the seventeen superseded recipe patterns are examples rather than compatibility adapters.
-- **Phase 6, complete** — Plane K now includes the deterministic control plane and crash-safe single-committer driver, exact rule routing and staleness, deterministic fact-sheet and agent-written prose bands, planner/reflection decisions with quarantine and adoption, and authored-page frontmatter, citations, watches, review flags, and debounced workflow dispatch. D73 removed the proposed K3 tier: personal or organizational principles are authored K2 content, supported by compiled scope pages and never machine-promoted or rewritten.
-- **Phase 3, complete** — the evidence lifecycle: documents that change. Watched sources poll as recorded sync cycles (a local-directory watcher ships; revision and content no-ops, debounce, source-deletion detection); an edited document becomes a new version of its lineage and the full structure route (a deterministic heading-parsed section tree, sanity-checked by a bounded flash-class judge, with a string-anchored LLM fallback for deficient trees) re-reads it; unchanged chunks reuse their prior claims, prefixes, and vectors so cost is proportional to the edit (measured hit rate 0.79 on the spike corpus); reconciliation transitions testimony currency on an append-only ledger, recounts evidence by distinct current lineages, closes solely-supported facts when the source withdrew them (at the sync-cycle barrier, so a moved section is a support swap — never a retract flicker) and flags them for review when only the toolchain changed; deletion removes a document's contribution uniformly while keeping its claims as history; and a standing `lifecycle` eval suite guards the cache/ledger/count invariants with planted regression canaries. Those lifecycle events now feed the graph, corpus filesystem, and Plane-K control plane described above.
-- **Phase 7, complete** — operational correctness now includes resumable initial-load and version-bump backfill on the same work ledger, a reproducible PostgreSQL scale battery for the designed partitions, indexes, hubs, and batching invariants, and optional per-deployment/stage/lane cost ceilings. Budget exhaustion parks healthy work durably without consuming an attempt; the local CLI reports current spend, remaining budget, tier attribution, and parked work from the same authoritative rows. Typed worker telemetry preserves complete exception chains, while bounded CLI inspection exposes pipeline/DLQ state, poison targets, P2/P3 pointers, and currency-ledger drift; an explicit one-row replay grants only additional attempts, and rebuild drills call the production P2/P3 builders. Hard-forget now purges every active library-controlled surface and replays a separately durable, content-free manifest before serving after a restore. Portability is deliberately smaller than a backup product: operators move PostgreSQL, objects, and Git with native tools; the library defines the fail-closed restore order and rebuilds P1/P2/P3. The fresh-deployment Compose profile now runs PostgreSQL, MinIO, the API, and all ten implemented continuous E/P1 routes, with explicit one-shot P2/P3 publication and machine-verifiable per-version readiness. Release engineering enforces one semantic version across PyPI, the shared API/worker GHCR image, and Compose; CI measures cold start and drills a schema downgrade followed by migrations-before-process-restart. The public [`v0.1.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.1.0) release proved the complete tag workflow across PyPI, GHCR, and GitHub Releases; trusted publishing, protected release tags, and the required repository-native bounded-CLA check are active. Timings remain measurements rather than hosted SLAs, and no export/import CLI, dashboard, billing policy, HA topology, backup scheduler, or control plane enters the library.
+### Core memory engine
 
-## The build order
+- Full evidence spine: ingest → convert → structure → chunk → claim extract → entity resolve → fact adjudicate
+- Immutable claims, adjudicated relations and observations, bi-temporal validity, supersession, contradiction groups
+- Testimony currency and lineage-based evidence counting when documents change or extractors re-run
+- Watched sources and versioned document lineages (including a local directory watcher)
 
-Implementation follows [`plan/plans/roadmap.md`](https://github.com/writeitai/remember-stack/blob/main/plan/plans/roadmap.md) — nine phases, each keyed to the designs it realizes:
+### Retrieval and agent surfaces
 
-| Phase | What it delivers |
+- Search indexes, knowledge-graph snapshots, and a browsable corpus filesystem
+- Three assured operations: `resolve_entity`, `question_context`, `current_context`
+- Open query: sandboxed SQL, read-only Cypher, saved examples, schema discovery
+- Self-accounting response envelopes (grain, freshness, contradictions, typed negatives)
+- API, CLI, and MCP in lockstep; optional filesystem mounts and a deployment-rendered consumption skill
+- Cold-agent skill checks so harnesses keep claims and facts straight
+
+### Knowledge pages
+
+- Compiled and authored markdown knowledge in git
+- Mechanical routing and staleness; authored principles are never machine-rewritten
+
+### Operations
+
+- Docker Compose single-deployment self-host (Postgres, object storage, API, continuous workers)
+- Work ledger with retries, dead-letter queue, optional spend ceilings
+- Machine-verifiable readiness; projection rebuilds; hard-forget; portable restore order
+- Optional observability exporters (off until configured)
+
+### Packaging
+
+- Client-first `rememberstack` wheel; `[server]`, connector, `[k]`, `[benchmark]`, and `[observability]` extras
+- One semantic version across PyPI, GHCR image, and Compose
+
+## Smoke-profile limits (be honest)
+
+| Area | Status in default Compose smoke |
 | --- | --- |
-| 0 | Foundations: scaffolding, migrations, task queues, the eval harness |
-| 1 | Walking skeleton — one document end-to-end, minimal retrieval |
-| 2 | Truth machinery — entity resolution, adjudication, supersession |
-| 3 | Evidence lifecycle — document versions, watched sources, efficient re-ingestion |
-| 4 | Projections — the knowledge graph and the browsable corpus filesystem |
-| 5 | Retrieval complete — full query surface, MCP/CLI, the consumption skill |
-| 6 | Plane K — compiled and authored knowledge pages |
-| 7 | Operational correctness and portability — backfill, portable scale checks, configurable budgets, failure inspection, hard-delete, release, portable restore |
-| 8 | Competitive benchmarks — published methodology and results |
+| Markdown ingest | Supported |
+| PDF / HTML / media conversion | Engine-capable; register routes — not auto-wired in the smoke profile |
+| Query-time entity resolve | Exact-name match; richer matching runs at write time |
+| Competitive benchmark scores | Operator-run protocols; not a continuous public scoreboard |
 
-## How these docs grow
+## Intentionally not in the library
 
-These pages are part of the repository and ship with the code: every change that alters user-facing behavior updates its documentation in the same pull request. The public site is organized for **progressive disclosure** (why → model → write path → read path → operate → reference), written for agents first and humans second.
+- Multi-tenant hosted control plane, billing, or dashboards
+- Production SLA claims from these docs
+- Automatic free-model routing for publication benchmarks
+- Secret management product (use your own secret store)
 
-Shipped top-level trees:
+## Docs map
 
 - [Why RememberStack](/docs) · [Getting started](/docs/getting-started) · [vs passage RAG](/docs/why)
-- [Concepts](/docs/concepts) · [Architecture](/docs/architecture) · [Knowledge (Plane K)](/docs/knowledge)
-- [Ingestion](/docs/ingestion) (+ pipeline, lifecycle)
-- [Retrieval](/docs/retrieval) (+ envelope, open query, primitives)
-- [Mounts](/docs/mounts) · [Deployment](/docs/deployment) · [Reference](/docs/reference/api)
-
-Still planned as dedicated homes (no empty stubs): configuration, evaluation methodology, troubleshooting runbook. Until those exist, binding design under [`plan/`](https://github.com/writeitai/remember-stack/tree/main/plan) is the authority for unshipped operator detail.
+- [Concepts](/docs/concepts) · [Architecture](/docs/architecture) · [Knowledge](/docs/knowledge)
+- [Ingestion](/docs/ingestion) · [Retrieval](/docs/retrieval)
+- [Mounts](/docs/mounts) · [Deployment](/docs/deployment) · [Configuration](/docs/configuration)
+- [Troubleshooting](/docs/troubleshooting) · [Evaluation](/docs/evaluation)
+- [API](/docs/reference/api) · [CLI](/docs/reference/cli) · [MCP](/docs/reference/mcp)
 
 ## Following along
 
-- Watch the [GitHub repository](https://github.com/writeitai/remember-stack) — work lands as reviewed pull requests referencing roadmap work packages.
-- Read the [decision log](https://github.com/writeitai/remember-stack/blob/main/decisions.md) for the ideas; skim merged PRs for the build.
+- [GitHub repository](https://github.com/writeitai/remember-stack) — releases and pull requests
+- [Public docs](https://docs.remember.dev) — this site, versioned with the code

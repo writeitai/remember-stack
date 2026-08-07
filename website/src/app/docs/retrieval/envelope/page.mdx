@@ -1,16 +1,14 @@
 export const metadata = {
   title: "Response envelope",
   description:
-    "Shipped D49 envelope wire contract: flat single-grain fields, freshness, contradictions, fact_evidence, typed negatives.",
+    "Response envelope wire contract: flat single-grain fields, freshness, contradictions, fact_evidence, typed negatives.",
 };
 
 # Response envelope
 
 Most systems return rows. RememberStack returns rows **plus a machine-readable account of the answer itself** — because the caller is an agent that must decide whether to act, re-query, or escalate to a human.
 
-This page documents the **shipped wire shape** for assured operations (and primitive compositions that emit the D49 envelope). Open SQL/Cypher use `QueryResult/v1` instead; see [Open query](/docs/retrieval/open-query).
-
-Source of truth in code: `src/rememberstack/model/envelope.py`.
+This page documents the **shipped wire shape** for assured operations (and primitive compositions that emit the same envelope). Open SQL/Cypher use `QueryResult/v1` instead; see [Open query](/docs/retrieval/open-query).
 
 ## Default shape: flat single-grain
 
@@ -62,7 +60,7 @@ The common case is **not** nested under `parts[]`. Top-level `grain` selects whi
 | `fact_id`, `kind`, `label` | Relation or observation identity |
 | `evidence_count` | Distinct current-testimony lineages |
 | `validity` | `{valid_from, valid_until, ingested_at, invalidated_at}` |
-| `contradiction` / `contradiction_group` | Live co-members package (S23) |
+| `contradiction` / `contradiction_group` | Live co-members package |
 | `support` | `current` \| `withdrawn` |
 
 There is **no** `confidence` field on the shipped fact record.
