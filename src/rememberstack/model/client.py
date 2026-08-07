@@ -30,7 +30,7 @@ class ConnectorNotFoundError(Exception):
 
 
 class ToolDescriptor(BaseModel):
-    """One deployment recipe rendered as a typed SDK/MCP tool."""
+    """One deployment recipe and its live implementation identity."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -40,6 +40,9 @@ class ToolDescriptor(BaseModel):
     output_grain: str
     answer_intent: str
     version: int | None = Field(default=None, ge=1)
+    implementation_chain_hash: str | None = Field(
+        default=None, min_length=64, max_length=64
+    )
 
 
 class PipelineStageReadiness(BaseModel):

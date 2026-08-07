@@ -185,8 +185,8 @@ _DELETE_RECIPES = text(
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Historical stock definitions. The frozen Full-v9 benchmark and primitive
-# regression fixtures still need these descriptors, but only the three entries
+# Historical stock definitions. Primitive regression fixtures still need these
+# descriptors, but only the three entries
 # selected into ``CANONICAL_RECIPES`` below are seeded or exposed as tools.
 # ─────────────────────────────────────────────────────────────────────────
 _STOCK_RECIPE_DEFINITIONS: tuple[Recipe, ...] = (

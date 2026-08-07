@@ -37,6 +37,7 @@ answer reasoning effort  none
 answer word cap          off (`None`)
 judge model              openai/gpt-5.6-luna
 judge temperature        0
+judge reasoning effort   none
 judge repetitions        1
 primary metric           judge accuracy
 secondary metric         official LoCoMo F1
@@ -52,9 +53,10 @@ protocol version.
 17 adapters and left exactly `resolve_entity`, `question_context`, and
 `current_context` as the shipping intent surface. V10 replaces both executable
 v9 variants; it does not preserve an old-catalog mode. Luna occupies both the
-answer and judge seats. The answer stage checks the deployment's public
-`surface_manifest_hash` and exact canonical recipe descriptors before any
-question call. Historical v9 artifacts remain self-describing, but v9 and v10
+answer and judge seats. The ingest and answer stages check the deployment's
+public `surface_manifest_hash` and exact canonical recipe descriptors. Ingest
+does so before provider preflight or upload; answer does so before any question
+call. Historical v9 artifacts remain self-describing, but v9 and v10
 scores are not comparable. Analysis:
 `plan/analysis/locomo_current_surface_cutover.md`.
 
@@ -250,6 +252,7 @@ embedding call on the **deployment's** `chunk_embedding` binding, read from
 `GET /deployment` rather than from the CLI host's environment, so the check
 covers the model the pipeline will actually use. A probe that returns `ok=false`
 fails as loudly as a transport error — reachable is not the same as usable. A
+provider-resolved chat model other than the pinned Luna identity also fails. A
 failure raises `ProviderPreflightError` and no document is sent. The preflight is
 skipped when every session is already ingested, since a full resume has no
 upload left to protect. The cost is two trivial calls;
@@ -436,9 +439,12 @@ The self-host setup seeds exactly the three canonical assured operations:
 `resolve_entity`, `question_context`, and `current_context`.
 
 The protocol pins the checked-in `surface_manifest_hash`, verifies it against
-`GET /query/space`, and requires `GET /recipes` to equal the canonical three
-descriptors. This catches both implementation-contract drift and registry
-bootstrap drift before an answer call.
+`GET /query/space` before ingestion and again before answering, and requires
+`GET /recipes` to equal the canonical three descriptors at both boundaries.
+Each descriptor carries an `implementation_chain_hash` computed from the live
+registry row, so equality covers the chain the executor will actually run, not
+only its name and schema. This catches both implementation-contract drift and
+registry bootstrap drift before remote processing or answer-model spend.
 
 No benchmark tool reads Postgres, Lance, MinIO, or internal handlers directly.
 
@@ -551,13 +557,16 @@ billing but before checkpointing.
 - Clean git revision equals `run.json`.
 - Local dataset hash and manifest validate.
 - One fresh deployment is dedicated to exactly one conversation.
+- Before upload, `documents_live` is empty; every ingest response says a new
+  version was created; before answering, the live source-ref set equals the
+  prepared sample exactly.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All ten workers are running.
 - Every prepared session has an ingest record.
 - P2/P3 one-shot build completed.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
-- Public recipe catalog hash matches.
+- Public surface hash, recipe descriptors, and live implementation-chain hashes match.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
 - Raw artifacts and failures will be retained for publication review.

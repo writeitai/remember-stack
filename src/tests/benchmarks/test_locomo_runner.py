@@ -383,6 +383,86 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
     assert provider.models == [ANSWER_AGENT_MODEL]
 
 
+def test_tool_call_that_exactly_reaches_cost_threshold_is_terminal() -> None:
+    """Billed work is returned as a record instead of being lost on the next loop."""
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal("0.30"))
+    state = _run_state()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("0.30"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.kind == "accounting"
+    assert answer.agent_call_count == 1
+    assert answer.reader_usage is not None
+    assert answer.reader_usage.cost_usd == Decimal("0.30")
+    assert state.evaluator_cost_usd == Decimal("0.30")
+    assert provider.models == [ANSWER_AGENT_MODEL]
+
+
+def test_answer_and_judge_refuse_provider_resolved_model_drift() -> None:
+    """Both Luna seats verify the model identity returned with billed usage."""
+    client, raw_client = _memory_client()
+    answer_provider = _CostProvider(
+        cost=Decimal("0.01"), resolved_model="openai/not-luna"
+    )
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=answer_provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+    assert answer.failure is not None
+    assert answer.failure.kind == "accounting"
+    assert "not-luna" in answer.failure.message
+
+    judge_provider = _CostProvider(
+        cost=Decimal("0.01"), resolved_model="openai/not-luna"
+    )
+    judge = _judge_one(
+        question=_question(),
+        answer=AnswerRecord(
+            item_id="conv-test/qa/0000",
+            sample_id="conv-test",
+            category=4,
+            question="Where?",
+            gold_answer="Prague",
+            gold_evidence=("D1:1",),
+            retrieval_succeeded=True,
+            retrieval_latency_ms=1,
+            generated_answer="Prague",
+            reader_called=True,
+            agent_call_count=1,
+            reader_attempts=1,
+        ),
+        provider=judge_provider,
+        state=_run_state(),
+        max_judge_calls=1,
+        max_evaluator_cost_usd=Decimal("1"),
+    )
+    assert judge.failure is not None
+    assert judge.failure.kind == "accounting"
+    assert "not-luna" in judge.failure.message
+
+
 @pytest.mark.parametrize(
     (
         "protocol",
@@ -491,9 +571,9 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
         "reasoning_effort" in request.model_fields_set
         for request in provider.requests[:expected_answer_calls]
     )
+    assert provider.requests[expected_answer_calls].reasoning_effort == "none"
     assert (
-        "reasoning_effort"
-        not in provider.requests[expected_answer_calls].model_fields_set
+        "reasoning_effort" in provider.requests[expected_answer_calls].model_fields_set
     )
     summary = summarize_run(run_dir=run_dir)
     assert summary.judge_correct == 1
@@ -868,10 +948,20 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
 
+    clean_surface = True
+
     def drifted_surface(request: httpx.Request) -> httpx.Response:
-        if drift_kind == "manifest" and request.url.path == "/query/space":
+        if (
+            not clean_surface
+            and drift_kind == "manifest"
+            and request.url.path == "/query/space"
+        ):
             return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
-        if drift_kind == "recipes" and request.url.path == "/recipes":
+        if (
+            not clean_surface
+            and drift_kind == "recipes"
+            and request.url.path == "/recipes"
+        ):
             return httpx.Response(200, json=[])
         return _run_transport(request)
 
@@ -890,7 +980,155 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
             client=client,
             provider=_PreflightProvider(),
         )
+        clean_surface = False
         with pytest.raises(ExecutionGuardError, match=message):
+            answer_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_questions=1,
+                max_agent_calls=9,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                client=client,
+                provider=provider,
+            )
+    finally:
+        raw_client.close()
+
+    assert provider.generated_prompts == []
+
+
+@pytest.mark.parametrize(
+    ("drift_kind", "message"),
+    (("manifest", "query surface"), ("recipes", "canonical three-operation surface")),
+)
+def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
+    drift_kind: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mismatched deployment costs nothing and receives no benchmark data."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    uploads = 0
+
+    def drifted_surface(request: httpx.Request) -> httpx.Response:
+        nonlocal uploads
+        if request.url.path == "/ingest":
+            uploads += 1
+        if drift_kind == "manifest" and request.url.path == "/query/space":
+            return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
+        if drift_kind == "recipes" and request.url.path == "/recipes":
+            return httpx.Response(200, json=[])
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(drifted_surface)
+    )
+    client = MemoryClient(client=raw_client)
+    provider = _PreflightProvider()
+    try:
+        with pytest.raises(ExecutionGuardError, match=message):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=provider,
+            )
+    finally:
+        raw_client.close()
+
+    assert provider.generate_calls == 0
+    assert provider.embed_calls == 0
+    assert uploads == 0
+
+
+def test_ingest_refuses_a_deduplicated_document_as_not_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A v10 run cannot reuse a version processed by an earlier run."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def deduplicated_ingest(request: httpx.Request) -> httpx.Response:
+        response = _run_transport(request)
+        if request.method == "POST" and request.url.path == "/ingest":
+            payload = response.json()
+            payload["created"] = False
+            return httpx.Response(200, json=payload)
+        return response
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(deduplicated_ingest),
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ExecutionGuardError, match="deduplicated"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+    finally:
+        raw_client.close()
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["ingests"] == {}
+
+
+def test_answer_refuses_extra_live_documents_before_model_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the prepared sample may be visible in the deployment being scored."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    document_checks = 0
+
+    def contaminated_deployment(request: httpx.Request) -> httpx.Response:
+        nonlocal document_checks
+        if request.method == "POST" and request.url.path == "/query/sql":
+            document_checks += 1
+            rows = (
+                []
+                if document_checks == 1
+                else [[f"{DATASET_COMMIT}/conv-test/D1"], ["unrelated/extra/document"]]
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "termination_reason": "completed",
+                    "truncated": False,
+                    "rows": rows,
+                },
+            )
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(contaminated_deployment),
+    )
+    client = MemoryClient(client=raw_client)
+    provider = FakeModelProvider(generate_router=_tool_answer_and_judge)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        with pytest.raises(ExecutionGuardError, match="exactly the prepared sample"):
             answer_sample(
                 run_dir=run_dir,
                 sample_id="conv-test",
@@ -933,7 +1171,7 @@ def test_single_run_summary_json_is_unchanged(
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v10","protocol_fingerprint":'
-        '"3f91c64a57f77840517781c710fb30d7a1471018546c0af3ccbf381c5a2c2d75",'
+        '"a5887e15c9682ab0a1347784b4aabb1986f3945f8576e22f9b168f81a46c41f4",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1190,9 +1428,12 @@ def _question() -> LoCoMoQuestion:
 class _PreflightProvider:
     """Minimal provider that only answers the pre-ingest connectivity probe."""
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(
+        self, *, fail: bool = False, resolved_model: str | None = None
+    ) -> None:
         """Optionally simulate an unusable credential."""
         self.fail = fail
+        self.resolved_model = resolved_model
         self.embed_calls = 0
         self.generate_calls = 0
         self.models: list[str] = []
@@ -1208,7 +1449,7 @@ class _PreflightProvider:
         return GeneratedResponse(
             output=response_type.model_validate({"ok": True}),
             usage=ProviderCallUsage(
-                model_name=request.model,
+                model_name=self.resolved_model or request.model,
                 tokens_in=1,
                 tokens_out=1,
                 cost_usd=Decimal("0"),
@@ -1241,11 +1482,13 @@ class _CostProvider:
         invalid_reader_completions: int = 0,
         invalid_first_step_completions: int = 0,
         first_step_provider_outage: bool = False,
+        resolved_model: str | None = None,
     ) -> None:
         self.cost = cost
         self.invalid_reader_completions = invalid_reader_completions
         self.invalid_first_step_completions = invalid_first_step_completions
         self.first_step_provider_outage = first_step_provider_outage
+        self.resolved_model = resolved_model
         self.models: list[str] = []
         self.requests: list[ModelRequest] = []
         self.answer_calls = 0
@@ -1280,7 +1523,7 @@ class _CostProvider:
                 raise OpenRouterInvalidResponseError(
                     "AnswerAgentStep: completion content is not JSON (synthetic)",
                     usage=ProviderCallUsage(
-                        model_name=request.model,
+                        model_name=self.resolved_model or request.model,
                         tokens_in=10,
                         tokens_out=1,
                         cost_usd=self.cost,
@@ -1309,7 +1552,7 @@ class _CostProvider:
         return GeneratedResponse(
             output=response_type.model_validate(payload),
             usage=ProviderCallUsage(
-                model_name=request.model,
+                model_name=self.resolved_model or request.model,
                 tokens_in=10,
                 tokens_out=1,
                 cost_usd=self.cost,
@@ -1520,6 +1763,13 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, json={"surface_manifest_hash": EXPECTED_SURFACE_MANIFEST_HASH}
         )
+    if request.method == "POST" and request.url.path == "/query/sql":
+        body = json.loads(request.content)
+        rows = [] if body["max_rows"] == 1 else [[f"{DATASET_COMMIT}/conv-test/D1"]]
+        return httpx.Response(
+            200,
+            json={"termination_reason": "completed", "truncated": False, "rows": rows},
+        )
     if request.method == "POST" and request.url.path.startswith("/recipe/"):
         return httpx.Response(200, json=_empty_envelope().model_dump(mode="json"))
     return httpx.Response(404, text="unexpected synthetic request")
@@ -1650,6 +1900,32 @@ def test_preflight_failure_stops_before_any_upload(
         raw_client.close()
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["ingests"] == {}
+
+
+def test_preflight_refuses_a_provider_resolved_to_another_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A model alias cannot silently change the model seat being measured."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(ProviderPreflightError, match="not the pinned"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(resolved_model="openai/not-luna"),
+            )
+    finally:
+        raw_client.close()
 
 
 def test_serving_revision_mismatch_is_refused_before_processing(

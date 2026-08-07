@@ -71,7 +71,10 @@ docker compose --profile operations run --rm projections
 The `answer` command then calls the public readiness endpoint. It refuses to run unless every
 requested version completed the exact composed stage generations and both P2/P3 builds began
 after that work completed. It also requires the deployment's exact prepared
-`surface_manifest_hash` and the canonical three public recipe descriptors.
+`surface_manifest_hash` and the canonical three public recipe descriptors,
+including hashes computed from the live implementation chains. Before upload,
+the live document set must be empty and every ingest must create a new version;
+before answering, the live source refs must equal the prepared sample exactly.
 There is no manual “index ready” acknowledgement.
 
 Readiness also records the API process's current non-secret model configuration for operator
@@ -94,9 +97,10 @@ attempts in `reader_attempts` and pre-tool additional calls in
 `first_step_retries`; the summary sums both signals separately. Plain provider
 outages and judge failures are not retried.
 
-The protocol pins Luna's answer-agent reasoning effort to `none` on every
-answer call. Ambient OpenRouter effort-map settings therefore cannot change the
-prepared protocol's answer behavior.
+The protocol pins Luna's reasoning effort to `none` for both answer and judge
+calls and verifies the provider-reported model identity for both seats. Ambient
+OpenRouter settings or model aliases therefore cannot silently change the
+prepared protocol.
 
 P3 is built and freshness-checked as part of the ordinary deployment, but the remote recipe
 agent has no filesystem mount. This protocol therefore does not attribute answer quality to P3
@@ -108,7 +112,7 @@ Publication samples can run concurrently on independent hosts while preserving t
 per-sample deployment isolation. The harness accepts repeated `summarize --run` flags and
 recomputes one full-manifest score from disjoint item records. See the
 [`sharding/` operator guide](sharding/README.md) for balanced planning, the per-host driver,
-forensic dumps, collection, and merge validation.
+collection, and merge validation.
 
 Historical runs used earlier protocol identities. They are not executable
 compatibility modes and are not comparable to v10.

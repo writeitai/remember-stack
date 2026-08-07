@@ -33,14 +33,14 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocols (`--protocol`, prepare-time only): `full-v5` (gpt-4o-mini
-  answer agent — measured unusable, 1–2/8 smoke, loops and invalid output)
-  and `full-v5-strong` (`openai/gpt-5.6-luna` agent, reasoning effort
-  pinned to `none` in the protocol itself). Judge is luna in both. Use
-  `full-v5-strong` for anything you intend to read.
-- The answer agent sees only what the tools return (k=10 verbatim claims
-  per query; never raw transcript), must answer in six words or fewer, and
-  is allowed 8 tool calls / 9 total agent calls per question. The reader
+- Protocol (`--protocol`, prepare-time only): `full-v10`. Both the answer
+  agent and judge use `openai/gpt-5.6-luna`; answer reasoning effort is pinned
+  to `none`. It is the sole executable protocol and is not comparable with
+  historical v1–v9 runs.
+- The answer agent sees only the envelopes returned by the current assured
+  operations (`question_context`, `current_context`, and `resolve_entity`). It
+  is allowed 8 tool calls / 9 total agent calls per question and must return
+  the shortest phrase that fully answers the question. The reader
   step auto-retries invalid (non-JSON) completions up to 2 extra attempts —
   this fired 83 times in 1540 questions, so it is load-bearing.
 
@@ -54,7 +54,7 @@ REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
 REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER  # prefer nebius,deepinfra,siliconflow (see design/operations/openrouter-embedding-routing.md)
 # REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER     # hard pin only; avoid for long drains
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # claims_verbatim embeds queries; 30s default times out
+REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # allow long compound retrieval requests
 ```
 
 Engine-side (in `.env`, read by the docker stack): the extraction model
@@ -69,14 +69,13 @@ dead-letter rows.
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v5-strong
+export LOCOMO_PROTOCOL=full-v10
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
 
-Per sample it: forensically dumps the previous store into
-`<run>/forensics/`, wipes the stack (`docker compose down -v`), starts it
-with worker scaling (`--scale worker-extract-claims=3
+Per sample it: wipes the disposable stack (`docker compose down -v`), starts
+it with worker scaling (`--scale worker-extract-claims=3
 --scale worker-normalize-relations=6 --scale worker-embed-claim=2`),
 ingests, waits for a **true drain** (6 h budget, aborts on dead-letter),
 publishes projections, answers, judges. `summarize --run <dir>` prints the
@@ -150,9 +149,8 @@ The score is the least valuable output. Keep:
 
 - The run dir(s) — `state.json` holds every answer trace including which
   claims were retrieved per question.
-- A per-conversation store dump *before each wipe* (the kit writes
-  `<run>/forensics/<sample>-<ts>.sql`): claims with valid-time, the full
-  claim-extraction decision ledger (`claim_extraction_decisions` — every
-  claimify omission, selection drop with reason, grounding rejection with
-  failed tokens). The ledger is what turns a wrong answer into a named,
-  fixable gate in minutes.
+- The run log, which records stage progress and failures.
+
+The per-sample database is disposable and is not backed up before the next
+isolated sample. Inspect it in place if a stage fails; preserve it only when a
+specific investigation needs database-level evidence.

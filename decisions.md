@@ -2758,7 +2758,13 @@ may proceed to its first tagged artifact proof after CLA activation.
 > three operations shipping on `main`: `resolve_entity`, `question_context`,
 > and `current_context`. The runner pins and verifies the authoritative
 > `surface_manifest_hash` and compares the live recipe descriptors with the
-> canonical three before answering. The obsolete v9 executable profiles and
+> canonical three before ingestion and again before answering; those
+> descriptors include hashes computed from the live registry chains. It also
+> requires an empty live corpus before upload, new versions from every ingest,
+> and the exact prepared source-ref set before answering. Both Luna seats pin
+> reasoning effort to `none` and reject a different provider-resolved model.
+> The obsolete v9
+> executable profiles and
 > their frozen 20-tool catalog are removed rather than retained as a
 > compatibility layer. Historical artifacts keep their own identities; v9
 > and v10 scores are not comparable. See

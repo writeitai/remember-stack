@@ -3,8 +3,8 @@
 A **recipe** value is a named, versioned composition of zero-LLM primitives.
 The shipping registry exposes exactly the three D83 assured operations; other
 query patterns belong in the saved-query registry under ``examples.*``. The
-older descriptor set remains private only for frozen benchmark and primitive
-regression fixtures. The load-bearing property is unchanged: a recipe adds no
+older descriptor set remains private only for primitive regression fixtures.
+The load-bearing property is unchanged: a recipe adds no
 capability, so it is exactly its ``chain`` and can be checked by replaying that
 chain and diffing the result.
 

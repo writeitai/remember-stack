@@ -136,9 +136,10 @@ class RunConfiguration(FrozenModel):
     answer_reader_retry_budget: Literal[2] = 2
     knowledge_mode: Literal["not_composed"] = "not_composed"
     answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
-    answer_agent_reasoning_effort: Literal["none"] | None = None
+    answer_agent_reasoning_effort: Literal["none"] = "none"
     answer_word_cap: int | None = Field(default=None, ge=1)
     judge_model: JudgeModel = "openai/gpt-5.6-luna"
+    judge_reasoning_effort: Literal["none"] = "none"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1

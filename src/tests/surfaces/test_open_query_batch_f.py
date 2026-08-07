@@ -934,9 +934,9 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
         CLAIMS_VERBATIM_PURPOSE,
         CLAIMS_VERBATIM_SQL,
     )
-    # Hashed manifest keeps the Batch E node-list example (not the discovery
-    # traversal body). Rolling the surface hash for first-call prose is out of
-    # scope without the Batch E pending-revalidation protocol.
+    # The hashed manifest keeps the node-list example (not the discovery
+    # traversal body). D83 rolled the surface for the clean assured-operation
+    # cut; first-call prose still is not a hash input.
     cypher_entry = next(
         entry
         for entry in load_manifest()["hash_members"]["function_signatures"]["functions"]
@@ -949,7 +949,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
     assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "6234117e1cf4897d6c31d634dc587deed1dd00a3b2f1d71de4a768b8078c2d21"
+        == "54912e5f1fc16060712d95c7b25304d7debc53c331d212c1dbb20054f66fab91"
     )
 
 

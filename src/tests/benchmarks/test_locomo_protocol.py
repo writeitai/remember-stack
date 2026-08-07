@@ -162,12 +162,22 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
 
 
 def test_current_protocol_pins_manifest_and_three_assured_operations() -> None:
-    assert EXPECTED_SURFACE_MANIFEST_HASH == load_manifest()["surface_manifest_hash"]
-    assert tuple(tool.name for tool in current_tool_catalog()) == (
+    manifest = load_manifest()
+    assert EXPECTED_SURFACE_MANIFEST_HASH == manifest["surface_manifest_hash"]
+    tools = current_tool_catalog()
+    assert tuple(tool.name for tool in tools) == (
         "current_context",
         "question_context",
         "resolve_entity",
     )
+    operations = manifest["hash_members"]["core_operation_descriptors"]["operations"]
+    expected_chain_hashes = {
+        operation["name"]: operation["implementation_chain_hash"]
+        for operation in operations
+    }
+    assert {
+        tool.name: tool.implementation_chain_hash for tool in tools
+    } == expected_chain_hashes
 
 
 def test_protocol_is_v10_and_answer_prompt_has_loop_guards() -> None:
@@ -200,6 +210,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.name == "RS-LoCoMo-Full-v10"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
+    assert protocol.judge_reasoning_effort == "none"
     assert protocol.answer_reader_retry_budget == 2
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH

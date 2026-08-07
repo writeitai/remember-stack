@@ -6,8 +6,8 @@ shipping on `main`?
 
 ## Context
 
-The LoCoMo harness still offers `RS-LoCoMo-Full-v9` and
-`RS-LoCoMo-Full-v9-strong`. Both are intentionally pinned to the retired
+Before this cut, the LoCoMo harness offered `RS-LoCoMo-Full-v9` and
+`RS-LoCoMo-Full-v9-strong`. Both were intentionally pinned to the retired
 20-recipe catalog. D83 removed those adapters before release because there are
 no users requiring compatibility. The shipping intent surface is now exactly
 `resolve_entity`, `question_context`, and `current_context`, whose public
@@ -45,16 +45,20 @@ deployment after catalog or implementation drift.
 
 Chosen. `RS-LoCoMo-Full-v10` uses Luna for both answer and judge seats, pins the
 checked-in `surface_manifest_hash`, and verifies the deployment's discovery
-response before answering. It also compares the actual public recipe list with
-the canonical three descriptors. The manifest is the durable run identity;
-the direct descriptor comparison catches registry/bootstrap drift at the exact
-surface the agent consumes.
+response before ingestion and again before answering. It also compares the
+actual public recipe list with the canonical three descriptors. The manifest is
+the durable run identity;
+the direct descriptor comparison includes hashes computed from the live
+registry chains and catches registry/bootstrap drift at the exact surface the
+agent consumes.
 
 ## Consequences
 
 - The harness has one protocol and no weak/strong or v9 compatibility branch.
-- A fresh run uses empty per-sample deployments; old benchmark databases and
-  backups are not inputs and need not be retained.
+- A fresh run proves an empty live document set before upload, rejects any
+  deduplicated ingest, and proves the exact prepared source-ref set before
+  answering. Old benchmark databases and backups are not inputs and need not be
+  retained.
 - The answer prompt mentions only capabilities the three current operations
   provide.
 - The run remains revision-stamped and refuses a deployment built from a

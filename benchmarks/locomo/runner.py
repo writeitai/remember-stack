@@ -64,6 +64,7 @@ from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
 from benchmarks.locomo.protocol import JUDGE_MODEL
+from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
 from benchmarks.locomo.protocol import MAX_AGENT_CALLS
 from benchmarks.locomo.protocol import MAX_TOOL_CALLS
 from benchmarks.locomo.protocol import official_f1
@@ -186,6 +187,7 @@ def prepare_run(
         ),
         "answer_word_cap": selected_protocol.answer_word_cap,
         "judge_model": selected_protocol.judge_model,
+        "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
@@ -258,6 +260,11 @@ def preflight_provider(
             f"chat model {answer_agent_model} answered the probe with ok=false;"
             " the provider is reachable but not usable for this run"
         )
+    if response.usage.model_name != answer_agent_model:
+        raise ProviderPreflightError(
+            f"chat model resolved as {response.usage.model_name!r}, not the pinned"
+            f" {answer_agent_model!r}"
+        )
     checks.append(f"chat {answer_agent_model}: ok")
 
     try:
@@ -295,6 +302,10 @@ def ingest_sample(
     documents = tuple(
         document for document in context.documents if document.sample_id == sample_id
     )
+    if max_documents < len(documents):
+        raise ExecutionGuardError(
+            f"max-documents {max_documents} is below prepared count {len(documents)}"
+        )
     outstanding = tuple(
         document
         for document in documents
@@ -310,6 +321,8 @@ def ingest_sample(
             serving=build.build_revision,
             when=_INGEST_STAGE,
         )
+        _require_current_query_surface(context=context, client=client)
+        _require_exact_live_source_refs(client=client, expected=())
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
         # The binding the E1 stage will actually use, per the deployment.
@@ -325,10 +338,6 @@ def ingest_sample(
             answer_agent_model=context.configuration.answer_agent_model,
         ):
             print(f"preflight: {line}", file=sys.stderr)
-    if max_documents < len(documents):
-        raise ExecutionGuardError(
-            f"max-documents {max_documents} is below prepared count {len(documents)}"
-        )
     for document in documents:
         existing = context.state.ingests.get(document.source_ref)
         if existing is not None:
@@ -349,6 +358,11 @@ def ingest_sample(
             versioning_mode="snapshot",
             source_version_ref=document.source_version_ref,
         )
+        if not ingested.created:
+            raise ExecutionGuardError(
+                "fresh LoCoMo ingestion deduplicated against existing deployment"
+                " state; wipe the deployment and prepare a new run"
+            )
         if ingested.content_hash != document.content_sha256:
             raise BenchmarkRunError(
                 f"API content hash mismatch for {document.source_ref}: "
@@ -443,18 +457,15 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
-    query_space = client.describe_query_space()
-    if query_space.get("surface_manifest_hash") != (
-        context.configuration.surface_manifest_hash
-    ):
-        raise ExecutionGuardError(
-            "deployment query surface differs from the prepared protocol"
-        )
-    tools = client.recipes()
-    if tools != current_tool_catalog():
-        raise ExecutionGuardError(
-            "deployment recipe catalog is not the canonical three-operation surface"
-        )
+    tools = _require_current_query_surface(context=context, client=client)
+    _require_exact_live_source_refs(
+        client=client,
+        expected=tuple(
+            document.source_ref
+            for document in context.documents
+            if document.sample_id == sample_id
+        ),
+    )
     remaining = tuple(
         question
         for question in questions
@@ -613,6 +624,9 @@ def judge_sample(
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
                     judge_model=context.configuration.judge_model,
                     judge_temperature=context.configuration.judge_temperature,
+                    judge_reasoning_effort=(
+                        context.configuration.judge_reasoning_effort
+                    ),
                 )
             else:
                 with tracer.question(
@@ -627,6 +641,9 @@ def judge_sample(
                         max_evaluator_cost_usd=max_evaluator_cost_usd,
                         judge_model=context.configuration.judge_model,
                         judge_temperature=context.configuration.judge_temperature,
+                        judge_reasoning_effort=(
+                            context.configuration.judge_reasoning_effort
+                        ),
                         question_trace=question_trace,
                     )
                     if question_trace is not None:
@@ -1025,6 +1042,7 @@ def _validate_run(
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
         "answer_word_cap": configuration.answer_word_cap,
         "judge_model": configuration.judge_model,
+        "judge_reasoning_effort": configuration.judge_reasoning_effort,
         "answer_agent_temperature": configuration.answer_agent_temperature,
         "judge_temperature": configuration.judge_temperature,
         "judge_repetitions": configuration.judge_repetitions,
@@ -1039,6 +1057,7 @@ def _validate_run(
     current_pin = {
         "answer_agent_model": selected_protocol.answer_agent_model,
         "judge_model": selected_protocol.judge_model,
+        "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
         "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
         "max_agent_calls_per_question": (
             selected_protocol.max_agent_calls_per_question
@@ -1249,6 +1268,55 @@ def _require_serving_revision(
     )
 
 
+def _require_current_query_surface(
+    *, context: _RunContext, client: MemoryClient
+) -> tuple[ToolDescriptor, ...]:
+    """Require the exact public query contract pinned by the prepared run."""
+    query_space = client.describe_query_space()
+    if query_space.get("surface_manifest_hash") != (
+        context.configuration.surface_manifest_hash
+    ):
+        raise ExecutionGuardError(
+            "deployment query surface differs from the prepared protocol"
+        )
+    tools = client.recipes()
+    if tools != current_tool_catalog():
+        raise ExecutionGuardError(
+            "deployment recipe catalog is not the canonical three-operation surface"
+        )
+    return tools
+
+
+def _require_exact_live_source_refs(
+    *, client: MemoryClient, expected: tuple[str, ...]
+) -> None:
+    """Require the deployment's live corpus to contain exactly one sample."""
+    result = client.query_sql(
+        sql="SELECT source_ref FROM documents_live ORDER BY source_ref",
+        max_rows=len(expected) + 1,
+    )
+    rows = result.get("rows")
+    if (
+        result.get("termination_reason") != "completed"
+        or result.get("truncated") is not False
+        or not isinstance(rows, list)
+    ):
+        raise ExecutionGuardError(
+            "deployment could not attest its exact live document set"
+        )
+    actual: list[str] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 1 or not isinstance(row[0], str):
+            raise ExecutionGuardError(
+                "deployment returned an invalid live document attestation"
+            )
+        actual.append(row[0])
+    if tuple(actual) != tuple(sorted(expected)):
+        raise ExecutionGuardError(
+            "deployment live documents are not exactly the prepared sample"
+        )
+
+
 def _require_sample_ingested(*, context: _RunContext, sample_id: str) -> None:
     """Require one complete sample mapped to exactly one deployment."""
     source_refs = {
@@ -1409,6 +1477,9 @@ def _answer_one(
             if error.usage is not None:
                 usages.append(error.usage)
                 state.evaluator_cost_usd += error.usage.cost_usd
+            model_mismatch = (
+                error.usage is not None and error.usage.model_name != answer_agent_model
+            )
             invalid_completion_attempts += 1
             if trace:
                 reader_attempts += 1
@@ -1416,10 +1487,13 @@ def _answer_one(
                 agent_observation.finish(
                     usage=error.usage,
                     latency_ms=call_latency_ms,
-                    outcome="provider_error",
+                    outcome=(
+                        "accounting_error" if model_mismatch else "provider_error"
+                    ),
                 )
             can_retry = (
-                invalid_completion_attempts <= answer_reader_retry_budget
+                not model_mismatch
+                and invalid_completion_attempts <= answer_reader_retry_budget
                 and agent_call_count < max_agent_calls_per_question
                 and prior_calls + agent_call_count < max_agent_calls
                 and state.evaluator_cost_usd < max_evaluator_cost_usd
@@ -1430,8 +1504,13 @@ def _answer_one(
                 continue
             return _failed_answer(
                 question=question,
-                kind="reader",
-                message=str(error),
+                kind="accounting" if model_mismatch else "reader",
+                message=(
+                    f"provider resolved answer model as"
+                    f" {error.usage.model_name!r}, not {answer_agent_model!r}"
+                    if model_mismatch and error.usage is not None
+                    else str(error)
+                ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
@@ -1449,16 +1528,26 @@ def _answer_one(
             if error.usage is not None:
                 usages.append(error.usage)
                 state.evaluator_cost_usd += error.usage.cost_usd
+            model_mismatch = (
+                error.usage is not None and error.usage.model_name != answer_agent_model
+            )
             if agent_observation is not None:
                 agent_observation.finish(
                     usage=error.usage,
                     latency_ms=call_latency_ms,
-                    outcome="provider_error",
+                    outcome=(
+                        "accounting_error" if model_mismatch else "provider_error"
+                    ),
                 )
             return _failed_answer(
                 question=question,
-                kind="reader",
-                message=str(error),
+                kind="accounting" if model_mismatch else "reader",
+                message=(
+                    f"provider resolved answer model as"
+                    f" {error.usage.model_name!r}, not {answer_agent_model!r}"
+                    if model_mismatch and error.usage is not None
+                    else str(error)
+                ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
@@ -1476,11 +1565,43 @@ def _answer_one(
         usages.append(response.usage)
         state.evaluator_cost_usd += response.usage.cost_usd
         step = response.output
+        if response.usage.model_name != answer_agent_model:
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=response.usage,
+                    latency_ms=call_latency_ms,
+                    outcome="accounting_error",
+                )
+            return _failed_answer(
+                question=question,
+                kind="accounting",
+                message=(
+                    f"provider resolved answer model as"
+                    f" {response.usage.model_name!r}, not {answer_agent_model!r}"
+                ),
+                retrieval_latency_ms=tool_latency_ms,
+                retrieval_succeeded=bool(trace),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
+                reader_latency_ms=agent_latency_ms,
+                claims=_claims_from_trace(
+                    trace=tuple(trace), doc_sessions=doc_sessions
+                ),
+                tool_calls=tuple(trace),
+                usages=tuple(usages),
+            )
         if agent_observation is not None and step.action == "tool":
             agent_observation.finish(
                 usage=response.usage, latency_ms=call_latency_ms, outcome="tool"
             )
-        if state.evaluator_cost_usd > max_evaluator_cost_usd:
+        threshold_exhausted_before_tool = (
+            state.evaluator_cost_usd == max_evaluator_cost_usd and step.action == "tool"
+        )
+        if (
+            state.evaluator_cost_usd > max_evaluator_cost_usd
+            or threshold_exhausted_before_tool
+        ):
             if agent_observation is not None and step.action == "answer":
                 agent_observation.finish(
                     usage=response.usage,
@@ -1491,8 +1612,8 @@ def _answer_one(
                 question=question,
                 kind="accounting",
                 message=(
-                    f"reported evaluator spend {state.evaluator_cost_usd} crossed"
-                    f" stop threshold {max_evaluator_cost_usd}"
+                    f"reported evaluator spend {state.evaluator_cost_usd} reached"
+                    f" or crossed stop threshold {max_evaluator_cost_usd}"
                 ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
@@ -1694,6 +1815,7 @@ def _judge_answer(
     max_evaluator_cost_usd: Decimal,
     judge_model: str = JUDGE_MODEL,
     judge_temperature: float = TEMPERATURE,
+    judge_reasoning_effort: ReasoningEffort | None = JUDGE_REASONING_EFFORT,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Return a local wrong for answer failures or invoke the configured judge."""
@@ -1708,6 +1830,7 @@ def _judge_answer(
         max_evaluator_cost_usd=max_evaluator_cost_usd,
         judge_model=judge_model,
         judge_temperature=judge_temperature,
+        judge_reasoning_effort=judge_reasoning_effort,
         question_trace=question_trace,
     )
 
@@ -1722,6 +1845,7 @@ def _judge_one(
     max_evaluator_cost_usd: Decimal,
     judge_model: str = JUDGE_MODEL,
     judge_temperature: float = TEMPERATURE,
+    judge_reasoning_effort: ReasoningEffort | None = JUDGE_REASONING_EFFORT,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Invoke the judge once; every call failure becomes a visible wrong."""
@@ -1747,6 +1871,7 @@ def _judge_one(
                     generated_answer=answer.generated_answer or "",
                 ),
                 temperature=judge_temperature,
+                reasoning_effort=judge_reasoning_effort,
             ),
             response_type=JudgeOutput,
         )
@@ -1767,11 +1892,14 @@ def _judge_one(
         latency_ms = _elapsed_ms(started)
         if error.usage is not None:
             state.evaluator_cost_usd += error.usage.cost_usd
+        model_mismatch = (
+            error.usage is not None and error.usage.model_name != judge_model
+        )
         if judge_observation is not None:
             judge_observation.finish(
                 usage=error.usage,
                 latency_ms=latency_ms,
-                outcome="provider_error",
+                outcome=("accounting_error" if model_mismatch else "provider_error"),
                 verdict="WRONG",
             )
         return JudgeRecord(
@@ -1780,7 +1908,15 @@ def _judge_one(
             model_called=True,
             usage=error.usage,
             latency_ms=latency_ms,
-            failure=_failure(kind="judge", message=str(error)),
+            failure=_failure(
+                kind="accounting" if model_mismatch else "judge",
+                message=(
+                    f"provider resolved judge model as"
+                    f" {error.usage.model_name!r}, not {judge_model!r}"
+                    if model_mismatch and error.usage is not None
+                    else str(error)
+                ),
+            ),
         )
     except ValidationError as error:
         latency_ms = _elapsed_ms(started)
@@ -1800,6 +1936,28 @@ def _judge_one(
         )
     state.evaluator_cost_usd += response.usage.cost_usd
     latency_ms = _elapsed_ms(started)
+    if response.usage.model_name != judge_model:
+        if judge_observation is not None:
+            judge_observation.finish(
+                usage=response.usage,
+                latency_ms=latency_ms,
+                outcome="accounting_error",
+                verdict="WRONG",
+            )
+        return JudgeRecord(
+            item_id=question.item_id,
+            label="WRONG",
+            model_called=True,
+            usage=response.usage,
+            latency_ms=latency_ms,
+            failure=_failure(
+                kind="accounting",
+                message=(
+                    f"provider resolved judge model as"
+                    f" {response.usage.model_name!r}, not {judge_model!r}"
+                ),
+            ),
+        )
     if state.evaluator_cost_usd > max_evaluator_cost_usd:
         if judge_observation is not None:
             judge_observation.finish(

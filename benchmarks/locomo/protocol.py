@@ -51,6 +51,7 @@ EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
 ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
 ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
+JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
 
 
@@ -132,6 +133,7 @@ class LoCoMoProtocol:
     judge_repetitions: int
     answer_reader_retry_budget: int
     answer_agent_reasoning_effort: str | None
+    judge_reasoning_effort: str | None
     answer_word_cap: int | None = None
 
 
@@ -152,6 +154,7 @@ _FULL_V10 = LoCoMoProtocol(
     judge_repetitions=1,
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
     answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
+    judge_reasoning_effort=JUDGE_REASONING_EFFORT,
     answer_word_cap=None,
 )
 

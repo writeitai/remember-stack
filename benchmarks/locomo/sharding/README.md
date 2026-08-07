@@ -102,19 +102,16 @@ nohup benchmarks/locomo/sharding/run_shard.sh \
 Repeat with the generated list on `bench-b` and `bench-c`. The first invocation prepares the full
 publication manifest locally. For every assigned sample the driver:
 
-1. preserves the previous sample with `pg_dumpall` (the first dump is skipped when the stack is
-   declared fresh);
-2. runs `docker compose down --volumes`, then starts every service with extract-claims ×3,
+1. runs `docker compose down --volumes`, then starts every service with extract-claims ×3,
    normalize-relations ×6, and embed-claim ×2;
-3. ingests only that sample with the isolated-deployment confirmation;
-4. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
+2. ingests only that sample with the isolated-deployment confirmation;
+3. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
    six-hour default budget, and stops immediately on a dead letter;
-5. builds projections through the Compose `operations` profile; and
-6. runs answer and judge with run-absolute caps.
+4. builds projections through the Compose `operations` profile; and
+5. runs answer and judge with run-absolute caps.
 
-The final sample also receives a forensic database dump. Dumps land under
-`RUN_DIR/forensics/` with a private process umask; they can still contain sensitive database
-content and must be handled as secrets. Progress is emitted as UTC timestamped log lines.
+Progress is emitted as UTC timestamped log lines. Sample databases are disposable benchmark
+state and are not backed up before the next isolated sample starts.
 
 The following environment variables tune the driver without changing its arguments:
 
@@ -130,11 +127,10 @@ The following environment variables tune the driver without changing its argumen
 | `LOCOMO_MAX_EVALUATOR_COST_USD` | `1000` | shared reported-spend stop threshold |
 | `LOCOMO_DRAIN_TIMEOUT_SECONDS` | `21600` | true-drain budget (six hours) |
 | `LOCOMO_DRAIN_POLL_SECONDS` | `30` | ledger poll interval |
-| `LOCOMO_FRESH_STACK` | `1` | set to `0` to dump an existing stack before the first wipe |
 
 The call ceilings cover the whole prepared publication manifest, not merely one sample. Lower
 values must still satisfy the harness's run-absolute guards. If a command fails, leave the stack
-and run directory in place for diagnosis; do not wipe the only forensic state. A restarted driver
+and run directory in place for diagnosis. A restarted driver
 refuses to wipe an incomplete sample with persisted records, because its live isolated deployment
 may be the only safe way to resume that checkpoint.
 

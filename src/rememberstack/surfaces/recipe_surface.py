@@ -9,9 +9,9 @@ place that turns a registry row into a callable tool.
 Two responsibilities:
 
 - **Render** each active recipe as a `ToolDescriptor` — name, description,
-  and a real JSON-Schema `input_schema` built from the recipe's typed
-  parameters (this is what an MCP `tools/list` returns, and what the API
-  advertises at `/recipes`).
+  a real JSON-Schema `input_schema`, and a hash computed from the live chain
+  (this is what an MCP `tools/list` returns, and what the API advertises at
+  `/recipes`).
 - **Run** a recipe by name: coerce the caller's string-ish arguments to the
   types the primitives need (a uuid string to a UUID, an ISO instant to a
   datetime), then hand them to the `RecipeExecutor`. Coercion is the surface's
@@ -20,12 +20,16 @@ Two responsibilities:
 
 from datetime import datetime
 from datetime import UTC
+import hashlib
 from typing import Any
+from typing import cast
 from uuid import UUID
 
 from rememberstack.model import Envelope
 from rememberstack.model import Recipe
 from rememberstack.model.client import ToolDescriptor
+from rememberstack.spine.query_space.canonical import canonical_json_bytes
+from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.recipes import RecipeRegistry
 from rememberstack.surfaces.recipe_executor import RecipeExecutor
 
@@ -202,6 +206,14 @@ def _descriptor(recipe: Recipe) -> ToolDescriptor:
         output_grain=recipe.output_grain.value,
         answer_intent=recipe.answer_intent.value,
         version=recipe.version,
+        implementation_chain_hash=hashlib.sha256(
+            canonical_json_bytes(
+                cast(
+                    "CanonicalValue",
+                    [step.model_dump(mode="json") for step in recipe.chain],
+                )
+            )
+        ).hexdigest(),
     )
 
 
