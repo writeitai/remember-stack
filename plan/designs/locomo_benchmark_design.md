@@ -562,11 +562,14 @@ billing but before checkpointing.
 - Clean git revision equals `run.json`.
 - Local dataset hash and manifest validate.
 - One fresh deployment is dedicated to exactly one conversation.
-- Before each upload, `documents_live` contains exactly the lineages and current
-  versions already recorded in the run checkpoint (therefore none on a fresh
-  deployment); every ingest response says a new version was created; before
-  answering, those exact checkpointed lineages and versions equal the complete
-  prepared sample.
+- Before each upload, the public join from `documents_live` to
+  `document_versions_visible` on both `deployment_id` and `doc_id` contains
+  exactly the checkpointed `(deployment_id, source_ref, doc_id, version_id)`
+  tuples (therefore none on a fresh deployment). This uses visible-version
+  identity because `documents_live.current_version_id` is a readiness pointer
+  and remains null until processing publishes ready content. Every ingest
+  response says a new version was created; before answering, the same exact
+  checkpointed tuples equal the complete prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All ten workers are running.
 - Every prepared session has an ingest record.
