@@ -42,6 +42,7 @@ from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.spine.work_ledger import _ADVISORY_LOCK_REPRESENTATION
 from rememberstack.surfaces import cli_main
 from rememberstack.workers import HandlerOutcome
 from rememberstack.workers import HandlerRegistry
@@ -99,6 +100,16 @@ def ledger(database_engine: Engine) -> WorkLedger:
         engine=database_engine,
         settings=WorkLedgerSettings(retry_backoff_base_s=0.0, retry_backoff_max_s=0.0),
     )
+
+
+def test_representation_advisory_lock_executes_on_postgres(
+    database_engine: Engine,
+) -> None:
+    """D84 uses a real PostgreSQL advisory-lock overload, not an imagined one."""
+    with database_engine.begin() as connection:
+        connection.execute(
+            _ADVISORY_LOCK_REPRESENTATION, {"representation_id": uuid4()}
+        )
 
 
 def _work(
