@@ -16,6 +16,8 @@ from sqlalchemy import bindparam
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core import ChunkerParams
+from rememberstack.core import chunker_version as packing_generation
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import PipelineStage
 from rememberstack.model import PipelineStageReadiness
@@ -67,9 +69,6 @@ class PipelineReadinessCatalog:
         # Packing generation on chunk rows includes params (D58); the CHUNK
         # processing_state component_version is the bare algorithm pin. Use the
         # default pack params for the active grid filter (compose/selfhost default).
-        from rememberstack.core import ChunkerParams
-        from rememberstack.core import chunker_version as packing_generation
-
         chunk_version = packing_generation(params=ChunkerParams())
         with self._engine.connect() as connection:
             rows = (
