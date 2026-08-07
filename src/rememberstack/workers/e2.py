@@ -248,23 +248,21 @@ class ExtractClaimsHandler:
         source = self._chunk_catalog.chunk_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
-        chunks = self._chunk_catalog.chunks_for_embedding(
+        if work.target_kind is ProcessingTarget.CHUNK:
+            return self._handle_chunk(work=work, source=source, meter=meter)
+        # Legacy document/version extract row: fan out only (ids, not full rows).
+        chunk_ids = self._chunk_catalog.list_chunk_ids(
             representation_id=source.representation_id,
             chunker_version=self._chunker_version,
         )
-        if work.target_kind is ProcessingTarget.CHUNK:
-            return self._handle_chunk(
-                work=work, source=source, chunks=chunks, meter=meter
-            )
-        # Legacy document/version extract row: fan out only (no serial Claimify).
-        if not chunks:
+        if not chunk_ids:
             return _normalize_follow_up(work=work, source=source)
         return HandlerOutcome(
             follow_up=tuple(
                 EnqueueWork(
                     deployment_id=work.deployment_id,
                     target_kind=ProcessingTarget.CHUNK,
-                    target_id=chunk.chunk_id,
+                    target_id=chunk_id,
                     stage=PipelineStage.EXTRACT_CLAIMS,
                     component_version=E2_EXTRACTOR_VERSION,
                     content_hash=work.content_hash,
@@ -272,23 +270,23 @@ class ExtractClaimsHandler:
                     payload={
                         "version_id": str(source.version_id),
                         "representation_id": str(source.representation_id),
-                        "chunk_id": str(chunk.chunk_id),
+                        "chunk_id": str(chunk_id),
                     },
                 )
-                for chunk in chunks
+                for chunk_id in chunk_ids
             )
         )
 
     def _handle_chunk(
-        self,
-        *,
-        work: ClaimedWork,
-        source: ChunkSource,
-        chunks: tuple[ChunkForEmbedding, ...],
-        meter: CostMeterPort,
+        self, *, work: ClaimedWork, source: ChunkSource, meter: CostMeterPort
     ) -> HandlerOutcome:
         """Run Claimify for one chunk and schedule the atomic barrier on complete."""
         chunk_id = work.target_id
+        chunks = self._chunk_catalog.chunks_for_extract(
+            representation_id=source.representation_id,
+            chunker_version=self._chunker_version,
+            chunk_id=chunk_id,
+        )
         index = next(
             (i for i, chunk in enumerate(chunks) if chunk.chunk_id == chunk_id), None
         )

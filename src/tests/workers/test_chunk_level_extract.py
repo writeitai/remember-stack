@@ -104,6 +104,17 @@ def test_extract_follow_up_fans_out_one_job_per_chunk() -> None:
     assert outcome.extract_chunk_barrier is None
 
 
+def test_advisory_lock_keys_are_signed_int64_safe() -> None:
+    """pg_advisory_xact_lock keys must fit signed int64 (non-negative half-space)."""
+    from uuid import UUID
+
+    rid = UUID("ffffffff-ffff-ffff-ffff-ffffffffffff").int
+    k1 = (rid >> 64) & 0x7FFFFFFFFFFFFFFF
+    k2 = rid & 0x7FFFFFFFFFFFFFFF
+    assert 0 <= k1 <= 0x7FFFFFFFFFFFFFFF
+    assert 0 <= k2 <= 0x7FFFFFFFFFFFFFFF
+
+
 def test_extract_follow_up_zero_chunks_enqueues_normalize() -> None:
     """Empty representations still chain normalize without extract jobs."""
     version_id = uuid4()
