@@ -63,6 +63,7 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
+from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
@@ -1129,7 +1130,20 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
             rows = (
                 []
                 if document_checks == 1
-                else [[f"{DATASET_COMMIT}/conv-test/D1"], ["unrelated/extra/document"]]
+                else [
+                    [
+                        "57000000-0000-0000-0000-000000000001",
+                        f"{DATASET_COMMIT}/conv-test/D1",
+                        "57000000-0000-0000-0000-000000000002",
+                        "57000000-0000-0000-0000-000000000003",
+                    ],
+                    [
+                        "57000000-0000-0000-0000-000000000001",
+                        "unrelated/extra/document",
+                        "57000000-0000-0000-0000-000000000004",
+                        "57000000-0000-0000-0000-000000000005",
+                    ],
+                ]
             )
             return httpx.Response(
                 200,
@@ -1157,7 +1171,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
             client=client,
             provider=_PreflightProvider(),
         )
-        with pytest.raises(ExecutionGuardError, match="exactly the prepared sample"):
+        with pytest.raises(ExecutionGuardError, match="checkpointed versions"):
             answer_sample(
                 run_dir=run_dir,
                 sample_id="conv-test",
@@ -1801,7 +1815,18 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
         )
     if request.method == "POST" and request.url.path == "/query/sql":
         body = json.loads(request.content)
-        rows = [] if body["max_rows"] == 1 else [[f"{DATASET_COMMIT}/conv-test/D1"]]
+        rows = (
+            []
+            if body["max_rows"] == 1
+            else [
+                [
+                    "57000000-0000-0000-0000-000000000001",
+                    f"{DATASET_COMMIT}/conv-test/D1",
+                    "57000000-0000-0000-0000-000000000002",
+                    "57000000-0000-0000-0000-000000000003",
+                ]
+            ]
+        )
         return httpx.Response(
             200,
             json={"termination_reason": "completed", "truncated": False, "rows": rows},
@@ -1902,6 +1927,103 @@ def test_ingest_forwards_and_records_assumed_utc_session_time(
             client=client,
             provider=_PreflightProvider(),
         )
+
+
+def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stopped upload resumes from its own first durable lineage and version."""
+    dataset = _synthetic_dataset()
+    first_sample = dataset.samples[0]
+    second_session = LoCoMoSession(
+        ordinal=2,
+        session_id="D2",
+        timestamp="2:00 pm on 2 May, 2023",
+        source_modified_at=datetime(2023, 5, 2, 14, tzinfo=timezone.utc),
+        source_timezone_basis="assumed_utc",
+        turns=(LoCoMoTurn(speaker="Beta", dia_id="D2:1", text="Beta visits Prague."),),
+    )
+    two_session_dataset = dataset.model_copy(
+        update={
+            "samples": (
+                first_sample.model_copy(
+                    update={"sessions": (*first_sample.sessions, second_session)}
+                ),
+            )
+        }
+    )
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    monkeypatch.setattr(runner, "load_dataset", lambda _path: two_session_dataset)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    deployment_id = UUID("57000000-0000-0000-0000-000000000001")
+    live: list[list[str]] = []
+    ingest_attempts = 0
+
+    def interrupted_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal ingest_attempts
+        if request.method == "POST" and request.url.path == "/query/sql":
+            return httpx.Response(
+                200,
+                json={
+                    "termination_reason": "completed",
+                    "truncated": False,
+                    "rows": sorted(live, key=lambda row: (row[1], row[2])),
+                },
+            )
+        if request.method == "POST" and request.url.path == "/ingest":
+            ingest_attempts += 1
+            if ingest_attempts == 2:
+                return httpx.Response(503, json={"detail": "synthetic interruption"})
+            ordinal = len(live) + 1
+            doc_id = UUID(f"57000000-0000-0000-0000-{ordinal * 2:012d}")
+            version_id = UUID(f"57000000-0000-0000-0000-{ordinal * 2 + 1:012d}")
+            source_ref = request.url.params["source_ref"]
+            live.append([str(deployment_id), source_ref, str(doc_id), str(version_id)])
+            return httpx.Response(
+                200,
+                json={
+                    "deployment_id": str(deployment_id),
+                    "doc_id": str(doc_id),
+                    "version_id": str(version_id),
+                    "content_hash": hashlib.sha256(request.content).hexdigest(),
+                    "created": True,
+                },
+            )
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(interrupted_transport),
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        with pytest.raises(MemoryApiError, match="synthetic interruption"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=2,
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+        ingests = ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=2,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+    finally:
+        raw_client.close()
+
+    assert len(ingests) == 2
+    assert ingest_attempts == 3
+    assert len(live) == 2
 
 
 def test_preflight_failure_stops_before_any_upload(
@@ -2076,6 +2198,64 @@ def test_answer_rechecks_revision_after_a_clean_ingest(
                 execute=True,
                 client=client,
                 provider=_CostProvider(cost=Decimal("0.001")),
+            )
+    finally:
+        raw_client.close()
+
+
+def test_answer_refuses_changed_version_under_the_same_source_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A familiar source name cannot hide different current document bytes."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def changed_version(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/query/sql":
+            body = json.loads(request.content)
+            if body["max_rows"] != 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "termination_reason": "completed",
+                        "truncated": False,
+                        "rows": [
+                            [
+                                "57000000-0000-0000-0000-000000000001",
+                                f"{DATASET_COMMIT}/conv-test/D1",
+                                "57000000-0000-0000-0000-000000000002",
+                                "57000000-0000-0000-0000-000000000099",
+                            ]
+                        ],
+                    },
+                )
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(changed_version)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        with pytest.raises(ExecutionGuardError, match="checkpointed versions"):
+            answer_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_questions=1,
+                max_agent_calls=9,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                client=client,
+                provider=_CostProvider(cost=Decimal(0)),
             )
     finally:
         raw_client.close()

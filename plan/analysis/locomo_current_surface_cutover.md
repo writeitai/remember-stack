@@ -55,10 +55,12 @@ agent consumes.
 ## Consequences
 
 - The harness has one protocol and no weak/strong or v9 compatibility branch.
-- A fresh run proves an empty live document set before upload, rejects any
-  deduplicated ingest, and proves the exact prepared source-ref set before
-  answering. Old benchmark databases and backups are not inputs and need not be
-  retained.
+- A fresh run starts from an empty live document set and rejects any
+  deduplicated ingest. Before every upload it proves that live lineage and
+  current-version coordinates equal its durable ingest checkpoints, which also
+  makes an interrupted upload safely resumable. Before answering it proves the
+  complete prepared sample against those same coordinates. Old benchmark
+  databases and backups are not inputs and need not be retained.
 - The answer prompt mentions only capabilities the three current operations
   provide.
 - The run remains revision-stamped and refuses a deployment built from a

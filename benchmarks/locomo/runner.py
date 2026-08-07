@@ -322,7 +322,14 @@ def ingest_sample(
             when=_INGEST_STAGE,
         )
         _require_current_query_surface(context=context, client=client)
-        _require_exact_live_source_refs(client=client, expected=())
+        _require_exact_live_ingests(
+            client=client,
+            expected=tuple(
+                record
+                for record in context.state.ingests.values()
+                if record.sample_id == sample_id
+            ),
+        )
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
         # The binding the E1 stage will actually use, per the deployment.
@@ -458,12 +465,12 @@ def answer_sample(
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
     tools = _require_current_query_surface(context=context, client=client)
-    _require_exact_live_source_refs(
+    _require_exact_live_ingests(
         client=client,
         expected=tuple(
-            document.source_ref
-            for document in context.documents
-            if document.sample_id == sample_id
+            record
+            for record in context.state.ingests.values()
+            if record.sample_id == sample_id
         ),
     )
     remaining = tuple(
@@ -1287,12 +1294,15 @@ def _require_current_query_surface(
     return tools
 
 
-def _require_exact_live_source_refs(
-    *, client: MemoryClient, expected: tuple[str, ...]
+def _require_exact_live_ingests(
+    *, client: MemoryClient, expected: tuple[IngestRecord, ...]
 ) -> None:
-    """Require the deployment's live corpus to contain exactly one sample."""
+    """Require live lineages and current versions to equal the checkpoints."""
     result = client.query_sql(
-        sql="SELECT source_ref FROM documents_live ORDER BY source_ref",
+        sql=(
+            "SELECT deployment_id, source_ref, doc_id, current_version_id "
+            "FROM documents_live ORDER BY source_ref, doc_id"
+        ),
         max_rows=len(expected) + 1,
     )
     rows = result.get("rows")
@@ -1304,16 +1314,37 @@ def _require_exact_live_source_refs(
         raise ExecutionGuardError(
             "deployment could not attest its exact live document set"
         )
-    actual: list[str] = []
+    actual: list[tuple[UUID, str, UUID, UUID]] = []
     for row in rows:
-        if not isinstance(row, list) or len(row) != 1 or not isinstance(row[0], str):
+        if not isinstance(row, list) or len(row) != 4 or not isinstance(row[1], str):
             raise ExecutionGuardError(
                 "deployment returned an invalid live document attestation"
             )
-        actual.append(row[0])
-    if tuple(actual) != tuple(sorted(expected)):
+        try:
+            actual.append(
+                (UUID(str(row[0])), row[1], UUID(str(row[2])), UUID(str(row[3])))
+            )
+        except (TypeError, ValueError) as error:
+            raise ExecutionGuardError(
+                "deployment returned an invalid live document attestation"
+            ) from error
+    checkpointed = tuple(
+        sorted(
+            (
+                (
+                    record.deployment_id,
+                    record.source_ref,
+                    record.doc_id,
+                    record.version_id,
+                )
+                for record in expected
+            ),
+            key=lambda item: (item[1], item[2]),
+        )
+    )
+    if tuple(actual) != checkpointed:
         raise ExecutionGuardError(
-            "deployment live documents are not exactly the prepared sample"
+            "deployment live documents do not exactly match checkpointed versions"
         )
 
 

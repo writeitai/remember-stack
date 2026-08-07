@@ -557,9 +557,11 @@ billing but before checkpointing.
 - Clean git revision equals `run.json`.
 - Local dataset hash and manifest validate.
 - One fresh deployment is dedicated to exactly one conversation.
-- Before upload, `documents_live` is empty; every ingest response says a new
-  version was created; before answering, the live source-ref set equals the
-  prepared sample exactly.
+- Before each upload, `documents_live` contains exactly the lineages and current
+  versions already recorded in the run checkpoint (therefore none on a fresh
+  deployment); every ingest response says a new version was created; before
+  answering, those exact checkpointed lineages and versions equal the complete
+  prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All ten workers are running.
 - Every prepared session has an ingest record.

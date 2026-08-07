@@ -72,9 +72,11 @@ The `answer` command then calls the public readiness endpoint. It refuses to run
 requested version completed the exact composed stage generations and both P2/P3 builds began
 after that work completed. It also requires the deployment's exact prepared
 `surface_manifest_hash` and the canonical three public recipe descriptors,
-including hashes computed from the live implementation chains. Before upload,
-the live document set must be empty and every ingest must create a new version;
-before answering, the live source refs must equal the prepared sample exactly.
+including hashes computed from the live implementation chains. Before each
+upload, the live lineage/current-version set must equal the run's durable
+checkpoints (empty on a new deployment), and every ingest must create a new
+version. Before answering, those exact checkpointed lineages and versions must
+equal the complete prepared sample.
 There is no manual “index ready” acknowledgement.
 
 Readiness also records the API process's current non-secret model configuration for operator

@@ -133,6 +133,9 @@ values must still satisfy the harness's run-absolute guards. If a command fails,
 and run directory in place for diagnosis. A restarted driver
 refuses to wipe an incomplete sample with persisted records, because its live isolated deployment
 may be the only safe way to resume that checkpoint.
+Run the incomplete stage directly. A partial `ingest` resumes only after the
+runner proves that every live lineage and current version exactly matches its
+durable checkpoint; any unrecorded or replaced version is a hard stop.
 
 ## 4. Collect run directories
 

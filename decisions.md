@@ -2760,8 +2760,9 @@ may proceed to its first tagged artifact proof after CLA activation.
 > `surface_manifest_hash` and compares the live recipe descriptors with the
 > canonical three before ingestion and again before answering; those
 > descriptors include hashes computed from the live registry chains. It also
-> requires an empty live corpus before upload, new versions from every ingest,
-> and the exact prepared source-ref set before answering. Both Luna seats pin
+> requires live lineage/current-version coordinates to equal durable run
+> checkpoints before every upload and before answering, and requires a new
+> version from every ingest. Both Luna seats pin
 > reasoning effort to `none` and reject a different provider-resolved model.
 > The obsolete v9
 > executable profiles and
