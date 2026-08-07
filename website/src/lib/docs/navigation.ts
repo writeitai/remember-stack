@@ -52,6 +52,9 @@ export const docsNavigation: NavItem[] = [
     children: [
       { title: "Mounts and skill", href: "/docs/mounts" },
       { title: "Self-host deployment", href: "/docs/deployment" },
+      { title: "Configuration", href: "/docs/configuration" },
+      { title: "Troubleshooting", href: "/docs/troubleshooting" },
+      { title: "Evaluation", href: "/docs/evaluation" },
       { title: "Project status", href: "/docs/project-status" },
     ],
   },

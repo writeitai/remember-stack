@@ -1,0 +1,153 @@
+export const metadata = {
+  title: "Configuration",
+  description:
+    "Self-host environment, install extras, model seats, OpenRouter, budgets, and optional observability for a RememberStack deployment.",
+};
+
+# Configuration
+
+How to bind a **single deployment** to stores, model seats, budgets, and optional exporters. This page is operator-facing and agent-scannable. Run-through: [Getting started](/docs/getting-started) · [Deployment](/docs/deployment).
+
+## TL;DR
+
+| Need | Do |
+| --- | --- |
+| Local full stack | Copy `.env.example` → `.env`, set OpenRouter key, `docker compose up` |
+| Reproducible models | Pin **explicit** model IDs — never a rotating free router |
+| Client only | `pip install rememberstack` + `REMEMBERSTACK_API_URL` |
+| Ops / budgets / DLQ | `rememberstack[server]` + `REMEMBERSTACK_DATABASE_URL` |
+| Secrets | Never commit real keys; local examples are disposable |
+
+One deployment id = one trust domain. Changing `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` creates a different deployment identity.
+
+## Install surfaces
+
+| Extra / artifact | Role |
+| --- | --- |
+| `rememberstack` (base) | Typed SDK, remote CLI/MCP, lineage-aware remote ingest |
+| `rememberstack[server]` | API, workers, Postgres/Lance/Ladybug adapters, local ops CLI |
+| `rememberstack[connectors-watched-directory]` | Names the watched-dir connector surface (stdlib) |
+| `rememberstack[k]` | Names the Plane K install surface |
+| `rememberstack[benchmark]` | LoCoMo / scorer deps |
+| `rememberstack[observability]` | Sentry-protocol + Langfuse SDKs (still opt-in by env) |
+| GHCR image / Compose | Fresh single-deployment self-host |
+
+## Environment map (self-host)
+
+Authoritative template: repository [`.env.example`](https://github.com/writeitai/remember-stack/blob/main/.env.example).
+
+### Identity and API
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Stable UUID for this deployment |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | Short slug (also default Sentry environment) |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | Human label |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | API listen port (Compose) |
+| `REMEMBERSTACK_API_URL` | Client target; defaults to `http://127.0.0.1:8000` — **must match** if you change the port |
+
+### Stores (Compose local defaults)
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_POSTGRES_*` | Postgres user/password/db for the stack |
+| `REMEMBERSTACK_MINIO_*` | MinIO access keys for object storage |
+| `REMEMBERSTACK_DATABASE_URL` | Used by local server-extra CLI tools (`budget`, `ops`) when connecting to the spine |
+
+Replace every local-only secret before any non-isolated use.
+
+### Provider (OpenRouter)
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_OPENROUTER_API_KEY` | **Required** to start the provider adapter and process a corpus |
+| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | Combined reasoning+content budget (default 32000 in example) |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | Optional hard pin of embedding host slug |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | Preferred ordered shortlist (wins over hard pin) |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | Global effort: `none`…`max` (unset = model default) |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | JSON map of model-id → effort overrides |
+
+Embedding routing policy notes: `design/operations/openrouter-embedding-routing.md` in the repo.
+
+### Model seats (optional overrides)
+
+Pin explicit IDs for reproducible runs. Unset values fall back to deployment profile defaults.
+
+| Variable | Stage |
+| --- | --- |
+| `REMEMBERSTACK_E2_EXTRACT_MODEL` | Claim extraction |
+| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | Normalization / adjudication seats as bound by profile |
+| `REMEMBERSTACK_STRUCTURER_MODEL` | **Only** string-anchor structure fallback proposer |
+| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | Bounded skeleton sanity judge (default flash-class) |
+| `REMEMBERSTACK_ROLE_MODEL` | Title-only section-role classifier |
+| `REMEMBERSTACK_SUMMARY_MODEL` | Bottom-up section summaries + root placement reduction |
+
+**Structure honesty:** routine skeleton construction is **deterministic**. Bounded summary/role/check calls still run; `STRUCTURER` is not “the whole document structure model.”
+
+Smoke conversion route is **Markdown** unless you register more converters on the deployment.
+
+### Spend ceilings (optional)
+
+```bash
+export REMEMBERSTACK_WORK_BUDGETS='[
+  {
+    "deployment_id":"<deployment-uuid>",
+    "stage":"extract_claims",
+    "lane":"steady",
+    "window_seconds":86400,
+    "ceiling_usd":"10.00"
+  }
+]'
+```
+
+- JSON list; omit a route → unlimited  
+- Use `null` lane for unlaned K/P routes  
+- Exhaustion **parks** healthy work until the window ends — does **not** burn handler attempts or invent a failure  
+- Inspect: `remember budget inspect --deployment <uuid>` (needs `[server]`)
+
+### Observability (optional, fail-closed off)
+
+Exporters stay disabled until env is non-empty.
+
+| Variable | Effect |
+| --- | --- |
+| `REMEMBERSTACK_SENTRY_DSN` | Metadata-only errors to Sentry/GlitchTip/Bugsink |
+| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | Defaults to deployment slug |
+| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | Defaults to `1.0` |
+| `LANGFUSE_PUBLIC_KEY` + `SECRET_KEY` + `HOST` | LoCoMo answer/judge traces only when **all three** set |
+
+What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/completions, exception message text as free-form dumps. Worker tags stay stage/lane/processing id. Postgres + JSON telemetry remain authoritative for retries.
+
+## Conversion and connectors
+
+| Piece | Config posture |
+| --- | --- |
+| Markdown smoke | Default Compose conversion route |
+| HTML/PDF/media | Register converter routes on the deployment (engine supports; smoke profile does not auto-route) |
+| Watched directory | Connector extra + connector management API/CLI; credentials stay deployment-side |
+| Lineage identity | `source_kind` + `source_ref` together on ingest; `versioning_mode=snapshot|living` |
+
+See [Ingestion](/docs/ingestion) and [Lifecycle](/docs/ingestion/lifecycle).
+
+## What configuration is *not*
+
+- Not multi-tenant control-plane config  
+- Not a hosted SLA or billing product  
+- Not free-tier model routing for publication benchmarks  
+- Not secret storage — use your secret manager outside git  
+
+## Progressive disclosure
+
+| Depth | Page |
+| --- | --- |
+| This page | Env + seats + budgets |
+| [Deployment](/docs/deployment) | Compose lifecycle, projections |
+| [Troubleshooting](/docs/troubleshooting) | When config fails in practice |
+| [CLI reference](/docs/reference/cli) | `budget` / `ops` command contracts |
+| Repo `.env.example` | Canonical variable list |
+
+## Next
+
+- [Deployment](/docs/deployment)  
+- [Troubleshooting](/docs/troubleshooting)  
+- [Evaluation](/docs/evaluation)  

@@ -1,0 +1,175 @@
+export const metadata = {
+  title: "Troubleshooting",
+  description:
+    "Diagnose stuck ingestion, empty retrieval, wrong grain answers, DLQ poison, budgets, projections, and readiness failures.",
+};
+
+# Troubleshooting
+
+Operator runbook for a single self-host deployment. Prefer **machine-verifiable** endpoints and CLI over guessing from logs alone.
+
+## Decision tree (start here)
+
+| Symptom | First check |
+| --- | --- |
+| Stack won’t answer HTTP | `curl /healthz` · container `docker compose ps` · port vs `REMEMBERSTACK_API_URL` |
+| Ingest accepted, nothing searchable | `POST /readiness` for `version_id` · `remember ops inspect` · model key present |
+| Empty / wrong answers | Grain misuse · readiness · projections · recipe args (`name`/`query`) |
+| Work stuck | Ledger stage status · DLQ · budget parked · poison target |
+| Graph / P3 missing | `docker compose --profile operations run --rm projections` then readiness with projections |
+
+## Health and readiness
+
+```bash
+curl --fail http://localhost:8000/healthz
+curl --fail http://localhost:8000/recipes
+```
+
+`GET /recipes` must list exactly three assured ops: `resolve_entity`, `question_context`, `current_context`.
+
+```bash
+curl --fail -X POST http://localhost:8000/readiness \
+  -H 'content-type: application/json' \
+  -d '{"version_ids":["VERSION_UUID"],"require_projections":false}'
+```
+
+| Flag | Use when |
+| --- | --- |
+| `require_projections=false` | Smoke after E/P1 chain only |
+| `require_projections=true` (default) | Graph/corpus FS must exist after projections publish |
+
+Readiness also echoes **non-secret model bindings** for the API process (configuration review, not per-document provenance).
+
+Human fallback:
+
+```bash
+docker compose exec postgres psql -U rememberstack -d rememberstack -c \
+  "SELECT stage, status FROM processing_state ORDER BY enqueued_at DESC LIMIT 40"
+```
+
+## Ingestion stuck or failed
+
+### 1. Unroutable MIME
+
+Smoke profile routes **Markdown**. PDF/HTML/audio without a registered converter → non-retryable failure for that version.
+
+**Fix:** ingest `text/markdown`, or compose additional conversion routes.
+
+### 2. Missing / bad provider key
+
+Extraction and embeddings need a live provider. Bad credentials surface as stage failures / DLQ after retries.
+
+**Fix:** set `REMEMBERSTACK_OPENROUTER_API_KEY`; re-run or `remember ops replay` for dead-lettered rows only.
+
+### 3. Stage in retry / dead_letter
+
+```bash
+remember ops inspect --deployment <deployment-uuid>
+```
+
+Needs `rememberstack[server]` + `REMEMBERSTACK_DATABASE_URL`.
+
+| Field in report | Meaning |
+| --- | --- |
+| Route/status counts | Where work is piled |
+| DLQ totals/groups | Exhausted retries |
+| Poison-target summary | Repeating bad inputs |
+| P2/P3 pointers | Projection freshness |
+| Currency-ledger audit | Testimony currency drift signals |
+
+Replay **one** DLQ row:
+
+```bash
+remember ops replay <processing-uuid> \
+  --deployment <deployment-uuid> \
+  --attempts 1
+```
+
+Does not wipe prior tracebacks; only grants additional attempts. Non-DLQ replay fails closed.
+
+### 4. Budget parked (not failed)
+
+If `REMEMBERSTACK_WORK_BUDGETS` ceilings are set, exhaustion **parks** work.
+
+```bash
+remember budget inspect --deployment <deployment-uuid>
+```
+
+Parked work resumes when the window rolls — it is not a poison DLQ.
+
+## Empty or weak retrieval
+
+| Check | Why |
+| --- | --- |
+| Readiness terminal for the version | Search before spine finish → empty |
+| Using `current_context` vs `question_context` | Wrong grain for the question |
+| Recipe body uses `query` / `name` | Wrong args → 422 or empty intent |
+| `resolve_entity` misspelling | Query resolve is **T0 exact** — use evidence search for fuzzy recall |
+| High `dropped_by_hydration` | Nominations lagging or invalidated — re-query / check freshness |
+| `negative.kind` | `unknown_entity` vs `known_empty` vs `boundary` demand different moves |
+| Projections never published | Cypher / P3 empty while facts may exist |
+
+Wrong SQL pattern (claim windows as truth) is documented in [Open query](/docs/retrieval/open-query) — start from `facts_current`.
+
+## Connection refused / wrong port
+
+If you change `REMEMBERSTACK_SELFHOST_API_PORT`, also set `REMEMBERSTACK_API_URL`. Clients default to `http://127.0.0.1:8000` independently of the listen port.
+
+## Projections (P2/P3)
+
+```bash
+docker compose --profile operations run --rm projections
+```
+
+Then readiness with `require_projections=true`.
+
+Drill rebuilds (server extra):
+
+```bash
+remember ops rebuild --plane p2 --deployment <uuid> --snapshot-root ./snapshots --workdir ./rebuild-work --version drill-…
+remember ops rebuild --plane p3 --deployment <uuid> --snapshot-root ./snapshots --workdir ./rebuild-work --version drill-…
+```
+
+Same production builders and validation path — not a second recovery stack.
+
+## Observability not appearing
+
+| Exporter | Requirement |
+| --- | --- |
+| Sentry-protocol | Non-empty `REMEMBERSTACK_SENTRY_DSN` |
+| Langfuse (LoCoMo) | **All three** of `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
+
+Empty env = exporters stay off. Ledger state still lives in Postgres.
+
+## Agent grain mistakes (look like “bugs”)
+
+| Behavior | Not a bug | Fix |
+| --- | --- | --- |
+| `question_context` “wrong CFO” after roster edit | Evidence grain / old testimony may still exist as history | `current_context` + currency rules |
+| K page stale advice | Compiled synthesis | Check `freshness.k`; verify facts |
+| One-sided contradiction | Contract violation if co-members omitted | Treat as product bug if envelope hides sides |
+| Forgotten content | Hard-forget ≈ never existed | Expect `unknown_entity` / `known_empty` |
+
+## Destructive reset (dev only)
+
+```bash
+docker compose down --volumes
+```
+
+Erases Postgres, MinIO, Lance, forget-manifest volume for the disposable stack. **Not** a production restore path.
+
+## Progressive disclosure
+
+| Depth | Page |
+| --- | --- |
+| This page | Symptom → action |
+| [Configuration](/docs/configuration) | Env and budgets |
+| [CLI reference](/docs/reference/cli) | Full `ops` / `budget` contracts |
+| [API reference](/docs/reference/api) | Readiness / ingest wire |
+| [Evaluation](/docs/evaluation) | When “wrong” is an eval signal |
+
+## Next
+
+- [Configuration](/docs/configuration)  
+- [Deployment](/docs/deployment)  
+- [Ingestion pipeline](/docs/ingestion/pipeline)  
