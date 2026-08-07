@@ -108,11 +108,11 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/retrieval/primitives` | Zero-LLM primitive catalog |
 | `/docs/mounts` | Four mounts + consumption skill |
 | `/docs/deployment` | Docker Compose self-host |
+| `/docs/configuration` | Env, model seats, budgets, observability |
+| `/docs/troubleshooting` | Stuck work, empty retrieval, DLQ, readiness |
+| `/docs/evaluation` | S58, golden sets, LoCoMo posture |
 | `/docs/project-status` | What exists vs designed |
 | `/docs/reference/api`, `cli`, `mcp` | Surface wire contracts |
-
-Still planned when their operator stories need a dedicated home (not empty stubs):
-`/docs/configuration`, `/docs/evaluation`, `/docs/troubleshooting`.
 
 Diagrams for top pages live under `public/docs/diagrams/`.
 
