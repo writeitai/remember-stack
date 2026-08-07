@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -232,6 +233,8 @@ def preflight_provider(
     *,
     provider: ModelProviderPort,
     embedding_model: str,
+    before_call: Callable[[], None],
+    record_usage: Callable[[ProviderCallUsage], None],
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
 ) -> tuple[str, ...]:
     """Prove the credential and both model kinds work before spending real time.
@@ -245,6 +248,7 @@ def preflight_provider(
     """
     checks: list[str] = []
 
+    before_call()
     try:
         response = provider.generate(
             request=ModelRequest(
@@ -252,10 +256,17 @@ def preflight_provider(
             ),
             response_type=PreflightProbe,
         )
-    except (OpenRouterProviderError, ProviderAccountingError) as error:
+    except OpenRouterProviderError as error:
+        if error.usage is not None:
+            record_usage(error.usage)
         raise ProviderPreflightError(
             f"chat model {answer_agent_model} is not usable: {error}"
         ) from error
+    except ProviderAccountingError as error:
+        raise ProviderPreflightError(
+            f"chat model {answer_agent_model} is not usable: {error}"
+        ) from error
+    record_usage(response.usage)
     if not response.output.ok:
         raise ProviderPreflightError(
             f"chat model {answer_agent_model} answered the probe with ok=false;"
@@ -268,14 +279,22 @@ def preflight_provider(
         )
     checks.append(f"chat {answer_agent_model}: ok")
 
+    before_call()
     try:
-        provider.embed(
+        embedding = provider.embed(
             request=EmbeddingRequest(model=embedding_model, texts=("preflight",))
         )
-    except (OpenRouterProviderError, ProviderAccountingError) as error:
+    except OpenRouterProviderError as error:
+        if error.usage is not None:
+            record_usage(error.usage)
         raise ProviderPreflightError(
             f"embedding model {embedding_model} is not usable: {error}"
         ) from error
+    except ProviderAccountingError as error:
+        raise ProviderPreflightError(
+            f"embedding model {embedding_model} is not usable: {error}"
+        ) from error
+    record_usage(embedding.usage)
     checks.append(f"embedding {embedding_model}: ok")
 
     return tuple(checks)
@@ -286,6 +305,7 @@ def ingest_sample(
     run_dir: Path,
     sample_id: str,
     max_documents: int,
+    max_evaluator_cost_usd: Decimal,
     execute: bool,
     isolated_deployment_confirmation: str | None,
     client: MemoryClient,
@@ -340,12 +360,31 @@ def ingest_sample(
                 "the deployment did not report an embedding model binding, so the"
                 " preflight cannot check the model the pipeline will actually use"
             )
+        def before_preflight_call() -> None:
+            """Stop before another paid probe once the shared cap is reached."""
+            _require_cost_before_call(
+                spent=context.state.evaluator_cost_usd,
+                ceiling=max_evaluator_cost_usd,
+            )
+
+        def record_preflight_usage(usage: ProviderCallUsage) -> None:
+            """Checkpoint every successfully accounted probe immediately."""
+            context.state.preflight_usages.append(usage)
+            context.state.evaluator_cost_usd += usage.cost_usd
+            _save_state(run_dir=run_dir, state=context.state)
+
         for line in preflight_provider(
             provider=provider,
             embedding_model=embedding_model,
+            before_call=before_preflight_call,
+            record_usage=record_preflight_usage,
             answer_agent_model=context.configuration.answer_agent_model,
         ):
             print(f"preflight: {line}", file=sys.stderr)
+        _require_cost_before_call(
+            spent=context.state.evaluator_cost_usd,
+            ceiling=max_evaluator_cost_usd,
+        )
     for document in documents:
         existing = context.state.ingests.get(document.source_ref)
         if existing is not None:
@@ -801,9 +840,19 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
     recorded_samples = _require_disjoint_recorded_samples(
         run_dirs=run_dirs, contexts=contexts
     )
+    samples_by_run = tuple(_recorded_samples(context=context) for context in contexts)
     combined_state = RunState(
         protocol_name=contexts[0].configuration.protocol_name,
         protocol_fingerprint=contexts[0].configuration.protocol_fingerprint,
+        ingests={
+            source_ref: record
+            for context, owned_samples in zip(contexts, samples_by_run, strict=True)
+            for source_ref, record in context.state.ingests.items()
+            if record.sample_id in owned_samples
+        },
+        preflight_usages=[
+            usage for context in contexts for usage in context.state.preflight_usages
+        ],
         answers={
             item_id: answer
             for context in contexts
@@ -877,13 +926,7 @@ def _require_disjoint_recorded_samples(
     owners: dict[str, Path] = {}
     all_recorded: set[str] = set()
     for run_dir, context in zip(run_dirs, contexts, strict=True):
-        item_samples = {
-            question.item_id: question.sample_id for question in context.questions
-        }
-        recorded = {
-            item_samples[item_id]
-            for item_id in set(context.state.answers) | set(context.state.judges)
-        }
+        recorded = _recorded_samples(context=context)
         for sample_id in sorted(recorded):
             prior = owners.get(sample_id)
             if prior is not None:
@@ -894,6 +937,17 @@ def _require_disjoint_recorded_samples(
             owners[sample_id] = run_dir
         all_recorded.update(recorded)
     return all_recorded
+
+
+def _recorded_samples(*, context: _RunContext) -> set[str]:
+    """Return samples owning any durable answer or judge record in one run."""
+    item_samples = {
+        question.item_id: question.sample_id for question in context.questions
+    }
+    return {
+        item_samples[item_id]
+        for item_id in set(context.state.answers) | set(context.state.judges)
+    }
 
 
 def _link_or_copy(source: str, destination: str) -> str:
@@ -1564,9 +1618,6 @@ def _answer_one(
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
-                reader_usage_model_name=(
-                    answer_agent_model if model_mismatch else None
-                ),
             )
         except OpenRouterProviderError as error:
             call_latency_ms = _elapsed_ms(started)
@@ -1604,9 +1655,6 @@ def _answer_one(
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
-                reader_usage_model_name=(
-                    answer_agent_model if model_mismatch else None
-                ),
             )
         call_latency_ms = _elapsed_ms(started)
         agent_latency_ms += call_latency_ms
@@ -1638,7 +1686,6 @@ def _answer_one(
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
-                reader_usage_model_name=answer_agent_model,
             )
         if agent_observation is not None and step.action == "tool":
             agent_observation.finish(
@@ -2059,7 +2106,6 @@ def _failed_answer(
     claims: tuple[RetrievedClaim, ...] = (),
     tool_calls: tuple[ToolCallRecord, ...] = (),
     usages: tuple[ProviderCallUsage, ...] = (),
-    reader_usage_model_name: str | None = None,
 ) -> AnswerRecord:
     """Build a bounded terminal failure without erasing retrieval evidence."""
     return AnswerRecord(
@@ -2081,11 +2127,7 @@ def _failed_answer(
         reader_attempts=reader_attempts,
         first_step_retries=first_step_retries,
         reader_latency_ms=reader_latency_ms,
-        reader_usage=(
-            _aggregate_usage(usages=usages, model_name=reader_usage_model_name)
-            if usages
-            else None
-        ),
+        reader_usage=_aggregate_usage(usages=usages) if usages else None,
         failure=_failure(kind=kind, message=message),
     )
 
@@ -2143,17 +2185,18 @@ def _retrieved_sessions(
     return sessions
 
 
-def _aggregate_usage(
-    *, usages: tuple[ProviderCallUsage, ...], model_name: str | None = None
-) -> ProviderCallUsage:
-    """Collapse one question's calls, allowing a terminal drift failure to persist."""
+def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUsage:
+    """Collapse calls while preserving every distinct provider model identity."""
     if not usages:
         raise ValueError("cannot aggregate an empty usage tuple")
-    model_names = {usage.model_name for usage in usages}
-    if len(model_names) != 1 and model_name is None:
-        raise BenchmarkRunError("one answer-agent trace used multiple models")
+    model_names = sorted({usage.model_name for usage in usages})
+    model_name = (
+        model_names[0]
+        if len(model_names) == 1
+        else f"mixed:{'|'.join(model_names)}"
+    )
     return ProviderCallUsage(
-        model_name=model_name or usages[0].model_name,
+        model_name=model_name,
         tokens_in=sum(usage.tokens_in for usage in usages),
         tokens_out=sum(usage.tokens_out for usage in usages),
         cost_usd=sum((usage.cost_usd for usage in usages), start=Decimal(0)),
@@ -2181,8 +2224,8 @@ def _sample_questions(
 
 def _require_cost_ceiling(*, spent: Decimal, ceiling: Decimal) -> None:
     """Require a positive reported-spend threshold no lower than persisted spend."""
-    if ceiling <= 0:
-        raise ExecutionGuardError("max-evaluator-cost-usd must be positive")
+    if not ceiling.is_finite() or ceiling <= 0:
+        raise ExecutionGuardError("max-evaluator-cost-usd must be positive and finite")
     if ceiling < spent:
         raise ExecutionGuardError(
             f"cost threshold {ceiling} is below already recorded spend {spent}"
@@ -2199,10 +2242,11 @@ def _require_cost_before_call(*, spent: Decimal, ceiling: Decimal) -> None:
 
 
 def _all_usages(*, state: RunState) -> tuple[ProviderCallUsage, ...]:
-    """Collect successful reader and judge usage records exactly once."""
+    """Collect successful preflight, reader, and judge usage records exactly once."""
     return tuple(
         usage
         for usage in (
+            *state.preflight_usages,
             *(record.reader_usage for record in state.answers.values()),
             *(record.usage for record in state.judges.values()),
         )

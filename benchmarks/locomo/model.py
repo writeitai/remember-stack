@@ -347,6 +347,7 @@ class RunState(BaseModel):
     protocol_name: ProtocolName
     protocol_fingerprint: NonEmpty
     ingests: dict[str, IngestRecord] = Field(default_factory=dict)
+    preflight_usages: list[ProviderCallUsage] = Field(default_factory=list)
     readiness: dict[str, PipelineReadinessReport] = Field(default_factory=dict)
     answers: dict[str, AnswerRecord] = Field(default_factory=dict)
     judges: dict[str, JudgeRecord] = Field(default_factory=dict)

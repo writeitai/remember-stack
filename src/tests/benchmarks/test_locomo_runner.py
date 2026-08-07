@@ -20,6 +20,7 @@ from benchmarks.locomo.dataset import DATASET_SHA256
 from benchmarks.locomo.dataset import item_ids_hash
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
+from benchmarks.locomo.model import IngestRecord
 from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import JudgeRecord
 from benchmarks.locomo.model import LoCoMoDataset
@@ -30,6 +31,7 @@ from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RunState
+from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
@@ -53,6 +55,7 @@ import pytest
 from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
 from rememberstack.model import Envelope
@@ -489,7 +492,9 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
     assert "not-luna" in answer.failure.message
     assert answer.agent_call_count == 2
     assert answer.reader_usage is not None
-    assert answer.reader_usage.model_name == ANSWER_AGENT_MODEL
+    assert answer.reader_usage.model_name == (
+        "mixed:openai/gpt-5.6-luna|openai/not-luna"
+    )
     assert answer.reader_usage.cost_usd == Decimal("0.02")
     assert state.evaluator_cost_usd == Decimal("0.02")
 
@@ -536,6 +541,7 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -706,6 +712,7 @@ def test_langfuse_fake_transport_is_observer_only_and_content_bounded(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -870,6 +877,7 @@ def test_raising_langfuse_lifecycle_cannot_change_outputs_or_state(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -945,6 +953,7 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -1006,6 +1015,7 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -1063,6 +1073,7 @@ def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -1103,6 +1114,7 @@ def test_ingest_refuses_a_deduplicated_document_as_not_fresh(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -1167,6 +1179,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -1292,6 +1305,84 @@ def test_merge_recomputes_reference_single_run_from_combined_records(
     assert merged.missing_sample_ids == []
 
 
+def test_merge_preserves_ingests_for_chunk_session_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Chunk-only retrieval keeps its source-session mapping after shard merge."""
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for run_dir, question in zip((first, second), questions, strict=True):
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+        _write_terminal_records(run_dir=run_dir, questions=(question,))
+
+    state = RunState.model_validate_json(
+        (first / "state.json").read_text(encoding="utf-8")
+    )
+    doc_id = UUID("57000000-0000-0000-0000-000000000010")
+    version_id = UUID("57000000-0000-0000-0000-000000000011")
+    source_ref = f"{DATASET_COMMIT}/conv-a/D1"
+    source_time = datetime(2023, 5, 1, 13, tzinfo=timezone.utc)
+    state.ingests[source_ref] = IngestRecord(
+        sample_id="conv-a",
+        session_id="D1",
+        source_ref=source_ref,
+        content_sha256=next(
+            document.content_sha256
+            for document in runner._load_run(run_dir=first).documents  # noqa: SLF001
+            if document.source_ref == source_ref
+        ),
+        source_modified_at=source_time,
+        source_timezone_basis="assumed_utc",
+        deployment_id=UUID("57000000-0000-0000-0000-000000000001"),
+        doc_id=doc_id,
+        version_id=version_id,
+        created=True,
+    )
+    answer = state.answers[questions[0].item_id]
+    state.answers[questions[0].item_id] = answer.model_copy(
+        update={
+            "tool_calls": (
+                ToolCallRecord(
+                    name="question_context",
+                    arguments={"query": "Where?"},
+                    latency_ms=1,
+                    response=Envelope(
+                        grain=Grain.EVIDENCE,
+                        chunks=(
+                            ChunkEvidenceResult(
+                                chunk_id=UUID(
+                                    "57000000-0000-0000-0000-000000000012"
+                                ),
+                                doc_id=doc_id,
+                                version_id=version_id,
+                                representation_id=UUID(
+                                    "57000000-0000-0000-0000-000000000013"
+                                ),
+                                chunk_text="Evidence for conv-a.",
+                                char_start=0,
+                                char_end=20,
+                                section_role="body",
+                                source_kind="locomo",
+                                source_modified_at=source_time,
+                            ),
+                        ),
+                        freshness=Freshness(pg_live_ts=source_time),
+                    ),
+                ),
+            )
+        }
+    )
+    (first / "state.json").write_text(state.model_dump_json(), encoding="utf-8")
+
+    merged = summarize_runs(run_dirs=(first, second))
+
+    assert merged.session_diagnostic.mean_session_recall == 0.5
+    assert merged.session_diagnostic.complete_session_success == 0.5
+
+
 def test_merge_lists_manifest_samples_without_any_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1377,6 +1468,7 @@ def test_remote_stage_requires_explicit_execution(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=False,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -1474,11 +1566,16 @@ class _PreflightProvider:
     """Minimal provider that only answers the pre-ingest connectivity probe."""
 
     def __init__(
-        self, *, fail: bool = False, resolved_model: str | None = None
+        self,
+        *,
+        fail: bool = False,
+        resolved_model: str | None = None,
+        cost: Decimal = Decimal(0),
     ) -> None:
         """Optionally simulate an unusable credential."""
         self.fail = fail
         self.resolved_model = resolved_model
+        self.cost = cost
         self.embed_calls = 0
         self.generate_calls = 0
         self.models: list[str] = []
@@ -1497,7 +1594,7 @@ class _PreflightProvider:
                 model_name=self.resolved_model or request.model,
                 tokens_in=1,
                 tokens_out=1,
-                cost_usd=Decimal("0"),
+                cost_usd=self.cost,
                 latency_ms=1,
             ),
         )
@@ -1511,7 +1608,7 @@ class _PreflightProvider:
                 model_name=request.model,
                 tokens_in=1,
                 tokens_out=0,
-                cost_usd=Decimal("0"),
+                cost_usd=self.cost,
                 latency_ms=1,
             ),
         )
@@ -1900,6 +1997,7 @@ def test_ingest_forwards_and_records_assumed_utc_session_time(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -1924,6 +2022,7 @@ def test_ingest_forwards_and_records_assumed_utc_session_time(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -2009,6 +2108,7 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=2,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -2018,6 +2118,7 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=2,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -2055,6 +2156,7 @@ def test_preflight_failure_stops_before_any_upload(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -2064,6 +2166,84 @@ def test_preflight_failure_stops_before_any_upload(
         raw_client.close()
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["ingests"] == {}
+
+
+def test_preflight_usage_is_checkpointed_in_the_shared_cost_ledger(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both successful probes survive in state before document processing."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(cost=Decimal("0.01")),
+        )
+    finally:
+        raw_client.close()
+
+    state = RunState.model_validate_json(
+        (run_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert len(state.preflight_usages) == 2
+    assert state.evaluator_cost_usd == Decimal("0.02")
+
+
+def test_preflight_cost_cap_stops_before_the_next_probe_or_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A paid chat probe at the cap prevents embedding and ingestion."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    uploads = 0
+
+    def count_uploads(request: httpx.Request) -> httpx.Response:
+        nonlocal uploads
+        if request.method == "POST" and request.url.path == "/ingest":
+            uploads += 1
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(count_uploads),
+    )
+    client = MemoryClient(client=raw_client)
+    provider = _PreflightProvider(cost=Decimal("0.10"))
+    try:
+        with pytest.raises(ExecutionGuardError, match="reached run threshold"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                max_evaluator_cost_usd=Decimal("0.10"),
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=provider,
+            )
+    finally:
+        raw_client.close()
+
+    state = RunState.model_validate_json(
+        (run_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert len(state.preflight_usages) == 1
+    assert state.evaluator_cost_usd == Decimal("0.10")
+    assert provider.generate_calls == 1
+    assert provider.embed_calls == 0
+    assert uploads == 0
 
 
 def test_preflight_refuses_a_provider_resolved_to_another_model(
@@ -2083,6 +2263,7 @@ def test_preflight_refuses_a_provider_resolved_to_another_model(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -2122,6 +2303,7 @@ def test_serving_revision_mismatch_is_refused_before_processing(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -2156,6 +2338,7 @@ def test_unstamped_image_is_refused_rather_than_assumed_to_match(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,
@@ -2189,6 +2372,7 @@ def test_answer_rechecks_revision_after_a_clean_ingest(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -2247,6 +2431,7 @@ def test_answer_refuses_changed_version_under_the_same_source_ref(
             run_dir=run_dir,
             sample_id="conv-test",
             max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
             execute=True,
             isolated_deployment_confirmation="conv-test",
             client=client,
@@ -2305,6 +2490,7 @@ def test_preflight_rejects_a_reachable_but_unusable_chat_model(
                 run_dir=run_dir,
                 sample_id="conv-test",
                 max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
                 isolated_deployment_confirmation="conv-test",
                 client=client,

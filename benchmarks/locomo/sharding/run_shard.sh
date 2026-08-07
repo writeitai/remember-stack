@@ -175,6 +175,7 @@ for sample_id in "${pending_samples[@]}"; do
     --run "$run_dir" \
     --sample "$sample_id" \
     --max-documents "$max_documents" \
+    --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
     --execute \
     --confirm-isolated-deployment "$sample_id"
 

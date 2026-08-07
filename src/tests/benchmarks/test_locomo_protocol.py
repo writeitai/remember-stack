@@ -1,5 +1,6 @@
 """Pure full-system LoCoMo rendering, prompt, diagnostic, and scorer proofs."""
 
+import argparse
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -267,6 +268,13 @@ def test_summarize_cli_accepts_multiple_run_flags(
     assert exit_code == 0
     assert selected == [(Path("run-a"), Path("run-b"))]
     assert capsys.readouterr().out == '{"merged_run_count":2}\n'
+
+
+@pytest.mark.parametrize("value", ("Infinity", "-Infinity", "NaN"))
+def test_cli_rejects_non_finite_cost_thresholds(value: str) -> None:
+    """A syntactically valid Decimal must not disable the paid-call stop."""
+    with pytest.raises(argparse.ArgumentTypeError, match="finite"):
+        cli._positive_decimal(value)  # noqa: SLF001
 
 
 def test_judge_never_receives_tool_trace() -> None:

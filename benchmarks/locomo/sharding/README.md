@@ -136,9 +136,11 @@ may be the only safe way to resume that checkpoint.
 Run the incomplete stage directly. A partial `ingest` resumes only after the
 runner proves that every live lineage and current version exactly matches its
 durable checkpoint. If that proof fails, leave the old run state untouched,
-prepare a new run directory, wipe the disposable stack, and rerun only that
-sample; the disjoint completed results can be merged later. Never edit or force
-a checkpoint forward.
+and inspect whether the sample has any answer or judge records. With none, a
+new run directory may rerun only that sample and merge with the old run. With
+any such record, restart every sample assigned to the old run directory: the
+merger deliberately rejects a replacement for an already-recorded sample.
+Never edit or force a checkpoint forward.
 
 ## 4. Collect run directories
 

@@ -252,8 +252,11 @@ embedding call on the **deployment's** `chunk_embedding` binding, read from
 `GET /deployment` rather than from the CLI host's environment, so the check
 covers the model the pipeline will actually use. A probe that returns `ok=false`
 fails as loudly as a transport error — reachable is not the same as usable. A
-provider-resolved chat model other than the pinned Luna identity also fails. A
-failure raises `ProviderPreflightError` and no document is sent. The preflight is
+provider-resolved chat model other than the pinned Luna identity also fails.
+Each successfully parsed usage record checkpoints immediately and contributes
+to the same positive finite run-absolute cost threshold used by answer and
+judge; reaching it stops before another probe or an upload. A failure raises
+`ProviderPreflightError` and no document is sent. The preflight is
 skipped when every session is already ingested, since a full resume has no
 upload left to protect. The cost is two trivial calls;
 the alternative is discovering the same fact after a full ingest and a retry
@@ -516,6 +519,7 @@ uv run --extra benchmark python -m benchmarks.locomo ingest \
   --run .benchmark-runs/locomo-smoke \
   --sample conv-26 \
   --max-documents 19 \
+  --max-evaluator-cost-usd 1.00 \
   --execute \
   --confirm-isolated-deployment conv-26
 

@@ -40,7 +40,6 @@ def test_usage_keeps_exact_cost_and_defaults_embedding_output_tokens() -> None:
             "model": "resolved/provider-model",
             "usage": {"prompt_tokens": 17, "cost": "0.000123"},
         },
-        requested_model="requested/model",
         latency_ms=9,
     )
 
@@ -56,6 +55,7 @@ def test_usage_keeps_exact_cost_and_defaults_embedding_output_tokens() -> None:
     (
         {},
         {"usage": {"prompt_tokens": 1}},
+        {"usage": {"prompt_tokens": 1, "cost": "0.1"}},
         {"usage": {"prompt_tokens": 1, "cost": "not-a-number"}},
     ),
 )
@@ -64,7 +64,7 @@ def test_usage_fails_closed_when_required_accounting_is_unusable(
 ) -> None:
     """Never let a worker interpret absent or malformed provider cost as zero."""
     with pytest.raises(ProviderAccountingError):
-        _usage(body=body, requested_model="requested/model", latency_ms=1)
+        _usage(body=body, latency_ms=1)
 
 
 @pytest.mark.parametrize(
