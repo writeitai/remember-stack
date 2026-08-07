@@ -34,8 +34,8 @@ Three facts drive every operational decision:
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
 - Protocol (`--protocol`, prepare-time only): `full-v10`. Both the answer
-  agent and judge use `openai/gpt-5.6-luna`; answer reasoning effort is pinned
-  to `none`. It is the sole executable protocol and is not comparable with
+  agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
+  `none` for both. It is the sole executable protocol and is not comparable with
   historical v1–v9 runs.
 - The answer agent sees only the envelopes returned by the current assured
   operations (`question_context`, `current_context`, and `resolve_entity`). It
@@ -98,7 +98,7 @@ Manual equivalents, when you need them:
 | Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api python -m rememberstack.surfaces.cli ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
 | Drain "stuck" with busy count barely moving | Relation-normalize is a single sequential worker by default; 400-claim conversations generate hours of tail | Scale workers (lease-based ledger makes this safe): `docker compose up -d --no-recreate --scale worker-normalize-relations=6 ...`. Remember `down -v` resets replica counts — re-apply scaling on every stack start. |
 | run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | For a shard dir with nothing else valuable: wipe stack + delete the run dir + start fresh. For a multi-sample run dir with completed samples: keep it — completed samples are checkpointed and skipped; only decide about the partial one. |
-| Item failures recorded in run state | Per-item failures are terminal in that run | Missing items (never attempted, e.g. after a stage-level refusal) can simply be re-answered in the same run dir; genuinely failed items need a fresh prepare. Fresh prepares over the same store are cheap — ingest dedupes (D55). |
+| Item failures recorded in run state | Per-item failures are terminal in that run | Missing items (never attempted, e.g. after a stage-level refusal) can simply be re-answered in the same run dir; genuinely failed items require a new prepared run and a freshly wiped deployment. |
 | Judge/answer cost cap hit | Caps are run-cumulative, not per-invocation | Pass generous run-absolute caps (`--max-evaluator-cost-usd`), sized from §7. |
 
 Operational hygiene that made overnight runs survivable: every long chain
