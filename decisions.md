@@ -2752,6 +2752,26 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
+> **Amended 2026-08-07 (v10 — measure the shipping clean-cutover surface):**
+> the only executable protocol is **`RS-LoCoMo-Full-v10`**. It uses
+> `openai/gpt-5.6-luna` for both answering and judging and exposes exactly the
+> three operations shipping on `main`: `resolve_entity`, `question_context`,
+> and `current_context`. The runner pins and verifies the authoritative
+> `surface_manifest_hash` and compares the live recipe descriptors with the
+> canonical three before ingestion and again before answering; those
+> descriptors include hashes computed from the live registry chains. It also
+> requires live lineage/current-version coordinates to equal durable run
+> checkpoints before every upload and before answering, and requires a new
+> version from every ingest. Both Luna seats pin
+> reasoning effort to `none` and reject a different provider-resolved model.
+> The obsolete v9
+> executable profiles and
+> their frozen 20-tool catalog are removed rather than retained as a
+> compatibility layer. Historical artifacts keep their own identities; v9
+> and v10 scores are not comparable. See
+> [`locomo_current_surface_cutover.md`](plan/analysis/locomo_current_surface_cutover.md)
+> and the companion design §2.
+
 > **Amended 2026-07-24 (protocol v2 — stronger judge):** the judge is
 > `openai/gpt-5.6-luna` and the protocol is **`RS-LoCoMo-Full-v2`**. The judge is
 > one call per question against nine agent calls, so it is the cheapest component
@@ -2891,8 +2911,9 @@ The adapter remains unshipped repository tooling. It does not vendor or download
 dataset, own deployment creation/destruction, expose benchmark-only queries, or become a general
 benchmark framework. Run-absolute call limits and a reported-spend stop threshold remain
 mandatory; provider account limits are the hard monetary boundary. Implementation and
-synthetic checks do not satisfy WP-8.2 acceptance; an owner-authorized real smoke is still
-required.
+synthetic checks alone do not produce a score. Provider execution remains
+owner-invoked; the owner authorized one fresh full v10 publication run on
+2026-08-07.
 
 **Context.** Published “LoCoMo scores” use materially different datasets, ingestion units,
 retrieval depths, answer models, judges, prompts, and repetition counts. More importantly, a
@@ -3213,9 +3234,9 @@ no one uses the library and directed a clean implementation now. Analysis:
 **Consequences.** Bootstrap atomically replaces each deployment's recipe rows
 with the three canonical descriptors, and registry reads pin their canonical
 versions, so old local seeds or same-name custom versions cannot replace or add
-tools. Full-v9 stays historical; any paid
-quality run over the shipping surface gets a new protocol identity and remains
-operator-invoked. Correctness fixtures for the three operations, per-request
+tools. Full-v9 stays historical and is not executable compatibility code;
+RS-LoCoMo-Full-v10 is the operator-invoked paid protocol over the shipping
+surface. Correctness fixtures for the three operations, per-request
 interface-shape checks, and the deploy/CI exact-definition comparator replace
 migration-parity and adapter-usage gates.
 

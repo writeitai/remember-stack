@@ -33,14 +33,14 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocols (`--protocol`, prepare-time only): `full-v5` (gpt-4o-mini
-  answer agent — measured unusable, 1–2/8 smoke, loops and invalid output)
-  and `full-v5-strong` (`openai/gpt-5.6-luna` agent, reasoning effort
-  pinned to `none` in the protocol itself). Judge is luna in both. Use
-  `full-v5-strong` for anything you intend to read.
-- The answer agent sees only what the tools return (k=10 verbatim claims
-  per query; never raw transcript), must answer in six words or fewer, and
-  is allowed 8 tool calls / 9 total agent calls per question. The reader
+- Protocol (`--protocol`, prepare-time only): `full-v10`. Both the answer
+  agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
+  `none` for both. It is the sole executable protocol and is not comparable with
+  historical v1–v9 runs.
+- The answer agent sees only the envelopes returned by the current assured
+  operations (`question_context`, `current_context`, and `resolve_entity`). It
+  is allowed 8 tool calls / 9 total agent calls per question and must return
+  the shortest phrase that fully answers the question. The reader
   step auto-retries invalid (non-JSON) completions up to 2 extra attempts —
   this fired 83 times in 1540 questions, so it is load-bearing.
 
@@ -54,29 +54,26 @@ REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
 REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER  # prefer nebius,deepinfra,siliconflow (see design/operations/openrouter-embedding-routing.md)
 # REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER     # hard pin only; avoid for long drains
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # claims_verbatim embeds queries; 30s default times out
+REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # allow long compound retrieval requests
 ```
 
-Engine-side (in `.env`, read by the docker stack): the extraction model
-(`REMEMBERSTACK_E2_EXTRACT_MODEL`, currently `z-ai/glm-5.2`) and
-`REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` pinning glm models to
-effort `none` — glm at auto effort intermittently emits reasoning prose
-instead of JSON (issue #174), which is also the root cause of most
-dead-letter rows.
+Engine-side model bindings come from the checked-out Compose file plus its
+environment. Freeze that environment for the run and inspect the non-secret
+bindings reported by `GET /deployment`; the current stock E1-prefix, E2, E3,
+P1-label, and small adjudicator seats use `openai/gpt-5.6-luna`.
 
 ## 4. Running a single conversation (smoke or one shard)
 
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v5-strong
+export LOCOMO_PROTOCOL=full-v10
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
 
-Per sample it: forensically dumps the previous store into
-`<run>/forensics/`, wipes the stack (`docker compose down -v`), starts it
-with worker scaling (`--scale worker-extract-claims=3
+Per sample it: wipes the disposable stack (`docker compose down -v`), starts
+it with worker scaling (`--scale worker-extract-claims=3
 --scale worker-normalize-relations=6 --scale worker-embed-claim=2`),
 ingests, waits for a **true drain** (6 h budget, aborts on dead-letter),
 publishes projections, answers, judges. `summarize --run <dir>` prints the
@@ -98,9 +95,9 @@ Manual equivalents, when you need them:
 | `answer` refuses: "deployment did not report the exact completed pipeline and fresh P2/P3 projections" | Drain not actually complete (pending rows, or dead-letter rows which pending/running counts miss), or projections published *before* the last ingest event | Finish the true drain, re-run projections, then answer. Order matters: projections after ingest. |
 | Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api python -m rememberstack.surfaces.cli ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
 | Drain "stuck" with busy count barely moving | Relation-normalize is a single sequential worker by default; 400-claim conversations generate hours of tail | Scale workers (lease-based ledger makes this safe): `docker compose up -d --no-recreate --scale worker-normalize-relations=6 ...`. Remember `down -v` resets replica counts — re-apply scaling on every stack start. |
-| run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | For a shard dir with nothing else valuable: wipe stack + delete the run dir + start fresh. For a multi-sample run dir with completed samples: keep it — completed samples are checkpointed and skipped; only decide about the partial one. |
-| Item failures recorded in run state | Per-item failures are terminal in that run | Missing items (never attempted, e.g. after a stage-level refusal) can simply be re-answered in the same run dir; genuinely failed items need a fresh prepare. Fresh prepares over the same store are cheap — ingest dedupes (D55). |
-| Judge/answer cost cap hit | Caps are run-cumulative, not per-invocation | Pass generous run-absolute caps (`--max-evaluator-cost-usd`), sized from §7. |
+| run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | If the stack matches the checkpoint, run the incomplete stage directly; `ingest` proves the exact live lineage/current-version set first. If it does not match and the sample has no answer/judge records, rerun that sample in a new run directory and merge it with the old run. If any answer/judge record exists, restart every sample assigned to that run directory; merging a replacement sample would correctly fail as overlap. Never edit or force a checkpoint forward. |
+| Item failures recorded in run state | Per-item failures are terminal in that run | Missing items (never attempted, e.g. after a stage-level refusal) can be answered in the same run dir. A terminal failed item requires a fresh deployment and restarting every sample assigned to that run directory; a replacement sample cannot be merged over existing records. |
+| Preflight/answer/judge cost cap hit | Caps are run-cumulative, not per-invocation | Pass a positive finite run-absolute cap (`--max-evaluator-cost-usd`), sized from §7. |
 
 Operational hygiene that made overnight runs survivable: every long chain
 runs **on the host under `nohup`** (session-side background tasks get
@@ -126,16 +123,16 @@ recomputes the official score from item records).
 - Wall-clock: a one-conversation shard finishes in ~2.5 h (ingest+drain
   ~1–1.5 h, answer ~40 min for ~150 questions at ~12 s/q, judge ~10 min).
 
-**Known constraint (open issue):** the protocol fingerprint currently pins
-`repository_revision`, so the merged summarize refuses runs prepared at
-different commits even when every protocol identity field is identical. If
-shards ran on a newer revision than an earlier partial run, compute the
-combined score as the sum of the per-run official summaries — this is
-exact, because each item is answered in exactly one run, missing items
-score 0, and every run is scored over the same full manifest. Fix tracked
-in `next-steps.md`.
+Every shard must run the same exact repository revision. The merger rejects
+different revisions, and operators must not manually combine their summary
+numbers: such runs measured different systems.
 
-## 7. Costs and durations (measured, GLM-5.2 extraction + luna answers)
+## 7. Historical sizing estimate
+
+These figures came from the pre-v10 GLM-5.2 extraction path and are only useful
+for rough capacity planning. V10 uses the current `main` bindings and must record
+its own actual cost and duration; the provider account cap remains the hard
+monetary boundary.
 
 | Item | Cost | Time |
 | --- | --- | --- |
@@ -150,9 +147,8 @@ The score is the least valuable output. Keep:
 
 - The run dir(s) — `state.json` holds every answer trace including which
   claims were retrieved per question.
-- A per-conversation store dump *before each wipe* (the kit writes
-  `<run>/forensics/<sample>-<ts>.sql`): claims with valid-time, the full
-  claim-extraction decision ledger (`claim_extraction_decisions` — every
-  claimify omission, selection drop with reason, grounding rejection with
-  failed tokens). The ledger is what turns a wrong answer into a named,
-  fixable gate in minutes.
+- The run log, which records stage progress and failures.
+
+The per-sample database is disposable and is not backed up before the next
+isolated sample. Inspect it in place if a stage fails; preserve it only when a
+specific investigation needs database-level evidence.

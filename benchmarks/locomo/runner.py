@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -58,11 +59,14 @@ from benchmarks.locomo.model import SessionDiagnosticSummary
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
+from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
+from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
 from benchmarks.locomo.protocol import JUDGE_MODEL
+from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
 from benchmarks.locomo.protocol import MAX_AGENT_CALLS
 from benchmarks.locomo.protocol import MAX_TOOL_CALLS
 from benchmarks.locomo.protocol import official_f1
@@ -185,10 +189,11 @@ def prepare_run(
         ),
         "answer_word_cap": selected_protocol.answer_word_cap,
         "judge_model": selected_protocol.judge_model,
+        "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
-        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+        "surface_manifest_hash": selected_protocol.surface_manifest_hash,
         "answer_prompt_sha256": prompt_sha256(
             template=selected_protocol.answer_prompt_template
         ),
@@ -228,6 +233,8 @@ def preflight_provider(
     *,
     provider: ModelProviderPort,
     embedding_model: str,
+    before_call: Callable[[], None],
+    record_usage: Callable[[ProviderCallUsage], None],
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
 ) -> tuple[str, ...]:
     """Prove the credential and both model kinds work before spending real time.
@@ -241,6 +248,7 @@ def preflight_provider(
     """
     checks: list[str] = []
 
+    before_call()
     try:
         response = provider.generate(
             request=ModelRequest(
@@ -248,25 +256,45 @@ def preflight_provider(
             ),
             response_type=PreflightProbe,
         )
-    except (OpenRouterProviderError, ProviderAccountingError) as error:
+    except OpenRouterProviderError as error:
+        if error.usage is not None:
+            record_usage(error.usage)
         raise ProviderPreflightError(
             f"chat model {answer_agent_model} is not usable: {error}"
         ) from error
+    except ProviderAccountingError as error:
+        raise ProviderPreflightError(
+            f"chat model {answer_agent_model} is not usable: {error}"
+        ) from error
+    record_usage(response.usage)
     if not response.output.ok:
         raise ProviderPreflightError(
             f"chat model {answer_agent_model} answered the probe with ok=false;"
             " the provider is reachable but not usable for this run"
         )
+    if response.usage.model_name != answer_agent_model:
+        raise ProviderPreflightError(
+            f"chat model resolved as {response.usage.model_name!r}, not the pinned"
+            f" {answer_agent_model!r}"
+        )
     checks.append(f"chat {answer_agent_model}: ok")
 
+    before_call()
     try:
-        provider.embed(
+        embedding = provider.embed(
             request=EmbeddingRequest(model=embedding_model, texts=("preflight",))
         )
-    except (OpenRouterProviderError, ProviderAccountingError) as error:
+    except OpenRouterProviderError as error:
+        if error.usage is not None:
+            record_usage(error.usage)
         raise ProviderPreflightError(
             f"embedding model {embedding_model} is not usable: {error}"
         ) from error
+    except ProviderAccountingError as error:
+        raise ProviderPreflightError(
+            f"embedding model {embedding_model} is not usable: {error}"
+        ) from error
+    record_usage(embedding.usage)
     checks.append(f"embedding {embedding_model}: ok")
 
     return tuple(checks)
@@ -277,6 +305,7 @@ def ingest_sample(
     run_dir: Path,
     sample_id: str,
     max_documents: int,
+    max_evaluator_cost_usd: Decimal,
     execute: bool,
     isolated_deployment_confirmation: str | None,
     client: MemoryClient,
@@ -294,6 +323,10 @@ def ingest_sample(
     documents = tuple(
         document for document in context.documents if document.sample_id == sample_id
     )
+    if max_documents < len(documents):
+        raise ExecutionGuardError(
+            f"max-documents {max_documents} is below prepared count {len(documents)}"
+        )
     outstanding = tuple(
         document
         for document in documents
@@ -309,6 +342,15 @@ def ingest_sample(
             serving=build.build_revision,
             when=_INGEST_STAGE,
         )
+        _require_current_query_surface(context=context, client=client)
+        _require_exact_live_ingests(
+            client=client,
+            expected=tuple(
+                record
+                for record in context.state.ingests.values()
+                if record.sample_id == sample_id
+            ),
+        )
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
         # The binding the E1 stage will actually use, per the deployment.
@@ -318,15 +360,29 @@ def ingest_sample(
                 "the deployment did not report an embedding model binding, so the"
                 " preflight cannot check the model the pipeline will actually use"
             )
+
+        def before_preflight_call() -> None:
+            """Stop before another paid probe once the shared cap is reached."""
+            _require_cost_before_call(
+                spent=context.state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
+            )
+
+        def record_preflight_usage(usage: ProviderCallUsage) -> None:
+            """Checkpoint every successfully accounted probe immediately."""
+            context.state.preflight_usages.append(usage)
+            context.state.evaluator_cost_usd += usage.cost_usd
+            _save_state(run_dir=run_dir, state=context.state)
+
         for line in preflight_provider(
             provider=provider,
             embedding_model=embedding_model,
+            before_call=before_preflight_call,
+            record_usage=record_preflight_usage,
             answer_agent_model=context.configuration.answer_agent_model,
         ):
             print(f"preflight: {line}", file=sys.stderr)
-    if max_documents < len(documents):
-        raise ExecutionGuardError(
-            f"max-documents {max_documents} is below prepared count {len(documents)}"
+        _require_cost_before_call(
+            spent=context.state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
         )
     for document in documents:
         existing = context.state.ingests.get(document.source_ref)
@@ -338,6 +394,14 @@ def ingest_sample(
             continue
         path = _document_path(run_dir=run_dir, document=document)
         _require_file_hash(path=path, expected=document.content_sha256)
+        _require_exact_live_ingests(
+            client=client,
+            expected=tuple(
+                record
+                for record in context.state.ingests.values()
+                if record.sample_id == sample_id
+            ),
+        )
         ingested = client.ingest(
             path,
             mime="text/markdown",
@@ -348,6 +412,11 @@ def ingest_sample(
             versioning_mode="snapshot",
             source_version_ref=document.source_version_ref,
         )
+        if not ingested.created:
+            raise ExecutionGuardError(
+                "fresh LoCoMo ingestion deduplicated against existing deployment"
+                " state; wipe the deployment and prepare a new run"
+            )
         if ingested.content_hash != document.content_sha256:
             raise BenchmarkRunError(
                 f"API content hash mismatch for {document.source_ref}: "
@@ -432,7 +501,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v9 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v10 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -442,11 +511,15 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
-    tools = client.recipes()
-    if _models_hash(values=tools) != context.configuration.tool_catalog_sha256:
-        raise ExecutionGuardError(
-            "deployment recipe catalog differs from the prepared protocol"
-        )
+    tools = _require_current_query_surface(context=context, client=client)
+    _require_exact_live_ingests(
+        client=client,
+        expected=tuple(
+            record
+            for record in context.state.ingests.values()
+            if record.sample_id == sample_id
+        ),
+    )
     remaining = tuple(
         question
         for question in questions
@@ -605,6 +678,9 @@ def judge_sample(
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
                     judge_model=context.configuration.judge_model,
                     judge_temperature=context.configuration.judge_temperature,
+                    judge_reasoning_effort=(
+                        context.configuration.judge_reasoning_effort
+                    ),
                 )
             else:
                 with tracer.question(
@@ -619,6 +695,9 @@ def judge_sample(
                         max_evaluator_cost_usd=max_evaluator_cost_usd,
                         judge_model=context.configuration.judge_model,
                         judge_temperature=context.configuration.judge_temperature,
+                        judge_reasoning_effort=(
+                            context.configuration.judge_reasoning_effort
+                        ),
                         question_trace=question_trace,
                     )
                     if question_trace is not None:
@@ -760,9 +839,19 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
     recorded_samples = _require_disjoint_recorded_samples(
         run_dirs=run_dirs, contexts=contexts
     )
+    samples_by_run = tuple(_recorded_samples(context=context) for context in contexts)
     combined_state = RunState(
         protocol_name=contexts[0].configuration.protocol_name,
         protocol_fingerprint=contexts[0].configuration.protocol_fingerprint,
+        ingests={
+            source_ref: record
+            for context, owned_samples in zip(contexts, samples_by_run, strict=True)
+            for source_ref, record in context.state.ingests.items()
+            if record.sample_id in owned_samples
+        },
+        preflight_usages=[
+            usage for context in contexts for usage in context.state.preflight_usages
+        ],
         answers={
             item_id: answer
             for context in contexts
@@ -836,13 +925,7 @@ def _require_disjoint_recorded_samples(
     owners: dict[str, Path] = {}
     all_recorded: set[str] = set()
     for run_dir, context in zip(run_dirs, contexts, strict=True):
-        item_samples = {
-            question.item_id: question.sample_id for question in context.questions
-        }
-        recorded = {
-            item_samples[item_id]
-            for item_id in set(context.state.answers) | set(context.state.judges)
-        }
+        recorded = _recorded_samples(context=context)
         for sample_id in sorted(recorded):
             prior = owners.get(sample_id)
             if prior is not None:
@@ -853,6 +936,17 @@ def _require_disjoint_recorded_samples(
             owners[sample_id] = run_dir
         all_recorded.update(recorded)
     return all_recorded
+
+
+def _recorded_samples(*, context: _RunContext) -> set[str]:
+    """Return samples owning any durable answer or judge record in one run."""
+    item_samples = {
+        question.item_id: question.sample_id for question in context.questions
+    }
+    return {
+        item_samples[item_id]
+        for item_id in set(context.state.answers) | set(context.state.judges)
+    }
 
 
 def _link_or_copy(source: str, destination: str) -> str:
@@ -973,7 +1067,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v9")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v10")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -983,7 +1077,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v9")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v10")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1017,10 +1111,11 @@ def _validate_run(
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
         "answer_word_cap": configuration.answer_word_cap,
         "judge_model": configuration.judge_model,
+        "judge_reasoning_effort": configuration.judge_reasoning_effort,
         "answer_agent_temperature": configuration.answer_agent_temperature,
         "judge_temperature": configuration.judge_temperature,
         "judge_repetitions": configuration.judge_repetitions,
-        "tool_catalog_sha256": configuration.tool_catalog_sha256,
+        "surface_manifest_hash": configuration.surface_manifest_hash,
         "answer_prompt_sha256": configuration.answer_prompt_sha256,
         "judge_prompt_sha256": configuration.judge_prompt_sha256,
         "answer_schema_sha256": configuration.answer_schema_sha256,
@@ -1031,6 +1126,7 @@ def _validate_run(
     current_pin = {
         "answer_agent_model": selected_protocol.answer_agent_model,
         "judge_model": selected_protocol.judge_model,
+        "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
         "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
         "max_agent_calls_per_question": (
             selected_protocol.max_agent_calls_per_question
@@ -1043,7 +1139,7 @@ def _validate_run(
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
-        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+        "surface_manifest_hash": selected_protocol.surface_manifest_hash,
         "answer_prompt_sha256": prompt_sha256(
             template=selected_protocol.answer_prompt_template
         ),
@@ -1241,6 +1337,79 @@ def _require_serving_revision(
     )
 
 
+def _require_current_query_surface(
+    *, context: _RunContext, client: MemoryClient
+) -> tuple[ToolDescriptor, ...]:
+    """Require the exact public query contract pinned by the prepared run."""
+    query_space = client.describe_query_space()
+    if query_space.get("surface_manifest_hash") != (
+        context.configuration.surface_manifest_hash
+    ):
+        raise ExecutionGuardError(
+            "deployment query surface differs from the prepared protocol"
+        )
+    tools = client.recipes()
+    if tools != current_tool_catalog():
+        raise ExecutionGuardError(
+            "deployment recipe catalog is not the canonical three-operation surface"
+        )
+    return tools
+
+
+def _require_exact_live_ingests(
+    *, client: MemoryClient, expected: tuple[IngestRecord, ...]
+) -> None:
+    """Require live lineages and current versions to equal the checkpoints."""
+    result = client.query_sql(
+        sql=(
+            "SELECT deployment_id, source_ref, doc_id, current_version_id "
+            "FROM documents_live ORDER BY source_ref, doc_id"
+        ),
+        max_rows=len(expected) + 1,
+    )
+    rows = result.get("rows")
+    if (
+        result.get("termination_reason") != "completed"
+        or result.get("truncated") is not False
+        or not isinstance(rows, list)
+    ):
+        raise ExecutionGuardError(
+            "deployment could not attest its exact live document set"
+        )
+    actual: list[tuple[UUID, str, UUID, UUID]] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 4 or not isinstance(row[1], str):
+            raise ExecutionGuardError(
+                "deployment returned an invalid live document attestation"
+            )
+        try:
+            actual.append(
+                (UUID(str(row[0])), row[1], UUID(str(row[2])), UUID(str(row[3])))
+            )
+        except (TypeError, ValueError) as error:
+            raise ExecutionGuardError(
+                "deployment returned an invalid live document attestation"
+            ) from error
+    checkpointed = tuple(
+        sorted(
+            (
+                (
+                    record.deployment_id,
+                    record.source_ref,
+                    record.doc_id,
+                    record.version_id,
+                )
+                for record in expected
+            ),
+            key=lambda item: (item[1], item[2]),
+        )
+    )
+    if tuple(actual) != checkpointed:
+        raise ExecutionGuardError(
+            "deployment live documents do not exactly match checkpointed versions"
+        )
+
+
 def _require_sample_ingested(*, context: _RunContext, sample_id: str) -> None:
     """Require one complete sample mapped to exactly one deployment."""
     source_refs = {
@@ -1302,7 +1471,9 @@ def _answer_one(
     max_evaluator_cost_usd: Decimal,
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
     answer_agent_temperature: float = TEMPERATURE,
-    answer_agent_reasoning_effort: ReasoningEffort | None = None,
+    answer_agent_reasoning_effort: ReasoningEffort | None = (
+        ANSWER_AGENT_REASONING_EFFORT
+    ),
     max_tool_calls_per_question: int = MAX_TOOL_CALLS,
     max_agent_calls_per_question: int = MAX_AGENT_CALLS,
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
@@ -1401,6 +1572,9 @@ def _answer_one(
             if error.usage is not None:
                 usages.append(error.usage)
                 state.evaluator_cost_usd += error.usage.cost_usd
+            model_mismatch = (
+                error.usage is not None and error.usage.model_name != answer_agent_model
+            )
             invalid_completion_attempts += 1
             if trace:
                 reader_attempts += 1
@@ -1408,10 +1582,13 @@ def _answer_one(
                 agent_observation.finish(
                     usage=error.usage,
                     latency_ms=call_latency_ms,
-                    outcome="provider_error",
+                    outcome=(
+                        "accounting_error" if model_mismatch else "provider_error"
+                    ),
                 )
             can_retry = (
-                invalid_completion_attempts <= answer_reader_retry_budget
+                not model_mismatch
+                and invalid_completion_attempts <= answer_reader_retry_budget
                 and agent_call_count < max_agent_calls_per_question
                 and prior_calls + agent_call_count < max_agent_calls
                 and state.evaluator_cost_usd < max_evaluator_cost_usd
@@ -1422,8 +1599,13 @@ def _answer_one(
                 continue
             return _failed_answer(
                 question=question,
-                kind="reader",
-                message=str(error),
+                kind="accounting" if model_mismatch else "reader",
+                message=(
+                    f"provider resolved answer model as"
+                    f" {error.usage.model_name!r}, not {answer_agent_model!r}"
+                    if model_mismatch and error.usage is not None
+                    else str(error)
+                ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
@@ -1441,16 +1623,26 @@ def _answer_one(
             if error.usage is not None:
                 usages.append(error.usage)
                 state.evaluator_cost_usd += error.usage.cost_usd
+            model_mismatch = (
+                error.usage is not None and error.usage.model_name != answer_agent_model
+            )
             if agent_observation is not None:
                 agent_observation.finish(
                     usage=error.usage,
                     latency_ms=call_latency_ms,
-                    outcome="provider_error",
+                    outcome=(
+                        "accounting_error" if model_mismatch else "provider_error"
+                    ),
                 )
             return _failed_answer(
                 question=question,
-                kind="reader",
-                message=str(error),
+                kind="accounting" if model_mismatch else "reader",
+                message=(
+                    f"provider resolved answer model as"
+                    f" {error.usage.model_name!r}, not {answer_agent_model!r}"
+                    if model_mismatch and error.usage is not None
+                    else str(error)
+                ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
                 agent_call_count=agent_call_count,
@@ -1468,11 +1660,43 @@ def _answer_one(
         usages.append(response.usage)
         state.evaluator_cost_usd += response.usage.cost_usd
         step = response.output
+        if response.usage.model_name != answer_agent_model:
+            if agent_observation is not None:
+                agent_observation.finish(
+                    usage=response.usage,
+                    latency_ms=call_latency_ms,
+                    outcome="accounting_error",
+                )
+            return _failed_answer(
+                question=question,
+                kind="accounting",
+                message=(
+                    f"provider resolved answer model as"
+                    f" {response.usage.model_name!r}, not {answer_agent_model!r}"
+                ),
+                retrieval_latency_ms=tool_latency_ms,
+                retrieval_succeeded=bool(trace),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
+                reader_latency_ms=agent_latency_ms,
+                claims=_claims_from_trace(
+                    trace=tuple(trace), doc_sessions=doc_sessions
+                ),
+                tool_calls=tuple(trace),
+                usages=tuple(usages),
+            )
         if agent_observation is not None and step.action == "tool":
             agent_observation.finish(
                 usage=response.usage, latency_ms=call_latency_ms, outcome="tool"
             )
-        if state.evaluator_cost_usd > max_evaluator_cost_usd:
+        threshold_exhausted_before_tool = (
+            state.evaluator_cost_usd == max_evaluator_cost_usd and step.action == "tool"
+        )
+        if (
+            state.evaluator_cost_usd > max_evaluator_cost_usd
+            or threshold_exhausted_before_tool
+        ):
             if agent_observation is not None and step.action == "answer":
                 agent_observation.finish(
                     usage=response.usage,
@@ -1483,8 +1707,8 @@ def _answer_one(
                 question=question,
                 kind="accounting",
                 message=(
-                    f"reported evaluator spend {state.evaluator_cost_usd} crossed"
-                    f" stop threshold {max_evaluator_cost_usd}"
+                    f"reported evaluator spend {state.evaluator_cost_usd} reached"
+                    f" or crossed stop threshold {max_evaluator_cost_usd}"
                 ),
                 retrieval_latency_ms=tool_latency_ms,
                 retrieval_succeeded=bool(trace),
@@ -1686,6 +1910,7 @@ def _judge_answer(
     max_evaluator_cost_usd: Decimal,
     judge_model: str = JUDGE_MODEL,
     judge_temperature: float = TEMPERATURE,
+    judge_reasoning_effort: ReasoningEffort | None = JUDGE_REASONING_EFFORT,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Return a local wrong for answer failures or invoke the configured judge."""
@@ -1700,6 +1925,7 @@ def _judge_answer(
         max_evaluator_cost_usd=max_evaluator_cost_usd,
         judge_model=judge_model,
         judge_temperature=judge_temperature,
+        judge_reasoning_effort=judge_reasoning_effort,
         question_trace=question_trace,
     )
 
@@ -1714,6 +1940,7 @@ def _judge_one(
     max_evaluator_cost_usd: Decimal,
     judge_model: str = JUDGE_MODEL,
     judge_temperature: float = TEMPERATURE,
+    judge_reasoning_effort: ReasoningEffort | None = JUDGE_REASONING_EFFORT,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Invoke the judge once; every call failure becomes a visible wrong."""
@@ -1739,6 +1966,7 @@ def _judge_one(
                     generated_answer=answer.generated_answer or "",
                 ),
                 temperature=judge_temperature,
+                reasoning_effort=judge_reasoning_effort,
             ),
             response_type=JudgeOutput,
         )
@@ -1759,11 +1987,14 @@ def _judge_one(
         latency_ms = _elapsed_ms(started)
         if error.usage is not None:
             state.evaluator_cost_usd += error.usage.cost_usd
+        model_mismatch = (
+            error.usage is not None and error.usage.model_name != judge_model
+        )
         if judge_observation is not None:
             judge_observation.finish(
                 usage=error.usage,
                 latency_ms=latency_ms,
-                outcome="provider_error",
+                outcome=("accounting_error" if model_mismatch else "provider_error"),
                 verdict="WRONG",
             )
         return JudgeRecord(
@@ -1772,7 +2003,15 @@ def _judge_one(
             model_called=True,
             usage=error.usage,
             latency_ms=latency_ms,
-            failure=_failure(kind="judge", message=str(error)),
+            failure=_failure(
+                kind="accounting" if model_mismatch else "judge",
+                message=(
+                    f"provider resolved judge model as"
+                    f" {error.usage.model_name!r}, not {judge_model!r}"
+                    if model_mismatch and error.usage is not None
+                    else str(error)
+                ),
+            ),
         )
     except ValidationError as error:
         latency_ms = _elapsed_ms(started)
@@ -1792,6 +2031,28 @@ def _judge_one(
         )
     state.evaluator_cost_usd += response.usage.cost_usd
     latency_ms = _elapsed_ms(started)
+    if response.usage.model_name != judge_model:
+        if judge_observation is not None:
+            judge_observation.finish(
+                usage=response.usage,
+                latency_ms=latency_ms,
+                outcome="accounting_error",
+                verdict="WRONG",
+            )
+        return JudgeRecord(
+            item_id=question.item_id,
+            label="WRONG",
+            model_called=True,
+            usage=response.usage,
+            latency_ms=latency_ms,
+            failure=_failure(
+                kind="accounting",
+                message=(
+                    f"provider resolved judge model as"
+                    f" {response.usage.model_name!r}, not {judge_model!r}"
+                ),
+            ),
+        )
     if state.evaluator_cost_usd > max_evaluator_cost_usd:
         if judge_observation is not None:
             judge_observation.finish(
@@ -1924,14 +2185,15 @@ def _retrieved_sessions(
 
 
 def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUsage:
-    """Collapse one question's same-model agent calls for durable accounting."""
+    """Collapse calls while preserving every distinct provider model identity."""
     if not usages:
         raise ValueError("cannot aggregate an empty usage tuple")
-    model_names = {usage.model_name for usage in usages}
-    if len(model_names) != 1:
-        raise BenchmarkRunError("one answer-agent trace used multiple models")
+    model_names = sorted({usage.model_name for usage in usages})
+    model_name = (
+        model_names[0] if len(model_names) == 1 else f"mixed:{'|'.join(model_names)}"
+    )
     return ProviderCallUsage(
-        model_name=usages[0].model_name,
+        model_name=model_name,
         tokens_in=sum(usage.tokens_in for usage in usages),
         tokens_out=sum(usage.tokens_out for usage in usages),
         cost_usd=sum((usage.cost_usd for usage in usages), start=Decimal(0)),
@@ -1959,8 +2221,8 @@ def _sample_questions(
 
 def _require_cost_ceiling(*, spent: Decimal, ceiling: Decimal) -> None:
     """Require a positive reported-spend threshold no lower than persisted spend."""
-    if ceiling <= 0:
-        raise ExecutionGuardError("max-evaluator-cost-usd must be positive")
+    if not ceiling.is_finite() or ceiling <= 0:
+        raise ExecutionGuardError("max-evaluator-cost-usd must be positive and finite")
     if ceiling < spent:
         raise ExecutionGuardError(
             f"cost threshold {ceiling} is below already recorded spend {spent}"
@@ -1977,10 +2239,11 @@ def _require_cost_before_call(*, spent: Decimal, ceiling: Decimal) -> None:
 
 
 def _all_usages(*, state: RunState) -> tuple[ProviderCallUsage, ...]:
-    """Collect successful reader and judge usage records exactly once."""
+    """Collect successful preflight, reader, and judge usage records exactly once."""
     return tuple(
         usage
         for usage in (
+            *state.preflight_usages,
             *(record.reader_usage for record in state.answers.values()),
             *(record.usage for record in state.judges.values()),
         )

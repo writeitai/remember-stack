@@ -102,19 +102,16 @@ nohup benchmarks/locomo/sharding/run_shard.sh \
 Repeat with the generated list on `bench-b` and `bench-c`. The first invocation prepares the full
 publication manifest locally. For every assigned sample the driver:
 
-1. preserves the previous sample with `pg_dumpall` (the first dump is skipped when the stack is
-   declared fresh);
-2. runs `docker compose down --volumes`, then starts every service with extract-claims ×3,
+1. runs `docker compose down --volumes`, then starts every service with extract-claims ×3,
    normalize-relations ×6, and embed-claim ×2;
-3. ingests only that sample with the isolated-deployment confirmation;
-4. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
+2. ingests only that sample with the isolated-deployment confirmation;
+3. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
    six-hour default budget, and stops immediately on a dead letter;
-5. builds projections through the Compose `operations` profile; and
-6. runs answer and judge with run-absolute caps.
+4. builds projections through the Compose `operations` profile; and
+5. runs answer and judge with run-absolute caps.
 
-The final sample also receives a forensic database dump. Dumps land under
-`RUN_DIR/forensics/` with a private process umask; they can still contain sensitive database
-content and must be handled as secrets. Progress is emitted as UTC timestamped log lines.
+Progress is emitted as UTC timestamped log lines. Sample databases are disposable benchmark
+state and are not backed up before the next isolated sample starts.
 
 The following environment variables tune the driver without changing its arguments:
 
@@ -122,7 +119,7 @@ The following environment variables tune the driver without changing its argumen
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v9` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v10` | prepare-time protocol key |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
 | `LOCOMO_MAX_QUESTIONS` | `1540` | run-absolute answer item authorization |
 | `LOCOMO_MAX_AGENT_CALLS` | `13860` | run-absolute answer-agent call ceiling |
@@ -130,13 +127,20 @@ The following environment variables tune the driver without changing its argumen
 | `LOCOMO_MAX_EVALUATOR_COST_USD` | `1000` | shared reported-spend stop threshold |
 | `LOCOMO_DRAIN_TIMEOUT_SECONDS` | `21600` | true-drain budget (six hours) |
 | `LOCOMO_DRAIN_POLL_SECONDS` | `30` | ledger poll interval |
-| `LOCOMO_FRESH_STACK` | `1` | set to `0` to dump an existing stack before the first wipe |
 
 The call ceilings cover the whole prepared publication manifest, not merely one sample. Lower
 values must still satisfy the harness's run-absolute guards. If a command fails, leave the stack
-and run directory in place for diagnosis; do not wipe the only forensic state. A restarted driver
+and run directory in place for diagnosis. A restarted driver
 refuses to wipe an incomplete sample with persisted records, because its live isolated deployment
 may be the only safe way to resume that checkpoint.
+Run the incomplete stage directly. A partial `ingest` resumes only after the
+runner proves that every live lineage and current version exactly matches its
+durable checkpoint. If that proof fails, leave the old run state untouched,
+and inspect whether the sample has any answer or judge records. With none, a
+new run directory may rerun only that sample and merge with the old run. With
+any such record, restart every sample assigned to the old run directory: the
+merger deliberately rejects a replacement for an already-recorded sample.
+Never edit or force a checkpoint forward.
 
 ## 4. Collect run directories
 

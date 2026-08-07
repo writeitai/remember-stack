@@ -278,9 +278,7 @@ class OpenRouterModelProvider:
         """
         body = self._post(path="/chat/completions", payload=payload)
         usage = _usage(
-            body=body,
-            requested_model=str(payload["model"]),
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
         content = _completion_content(body=body)
         if content is None:
@@ -321,9 +319,7 @@ class OpenRouterModelProvider:
             payload["provider"] = provider
         body = self._post(path="/embeddings", payload=payload)
         usage = _usage(
-            body=body,
-            requested_model=request.model,
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
         try:
             ordered = sorted(body["data"], key=lambda item: item["index"])
@@ -459,14 +455,16 @@ def _content_fingerprint(*, content: str) -> str:
     return f"len={len(content)}, sha256_12={digest}"
 
 
-def _usage(
-    *, body: dict[str, Any], requested_model: str, latency_ms: int
-) -> ProviderCallUsage:
+def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
     """Validate OpenRouter accounting; missing usage must not silently disable budgets."""
     raw = body.get("usage")
     if not isinstance(raw, dict):
         raise ProviderAccountingError("OpenRouter response carries no usage accounting")
-    model_name = body.get("model", requested_model)
+    model_name = body.get("model")
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ProviderAccountingError(
+            "OpenRouter response carries no resolved model identity"
+        )
     try:
         return ProviderCallUsage(
             model_name=model_name,

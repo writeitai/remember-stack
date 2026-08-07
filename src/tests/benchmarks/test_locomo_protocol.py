@@ -1,9 +1,8 @@
 """Pure full-system LoCoMo rendering, prompt, diagnostic, and scorer proofs."""
 
+import argparse
 from datetime import datetime
 from datetime import timezone
-import hashlib
-import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,9 +14,9 @@ from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
+from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
-from benchmarks.locomo.protocol import EXPECTED_TOOL_CATALOG_SHA256
-from benchmarks.locomo.protocol import frozen_v9_tool_catalog
+from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -34,6 +33,7 @@ from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
+from rememberstack.spine.query_space.manifest import load_manifest
 
 
 def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> None:
@@ -162,28 +162,29 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert call.response.ranking  # durable raw record is unchanged
 
 
-def test_frozen_tool_catalog_hash_matches_stock_full_system_recipes() -> None:
-    descriptors = frozen_v9_tool_catalog()
-    canonical = json.dumps(
-        [
-            descriptor.model_dump(mode="json", exclude_none=False)
-            for descriptor in descriptors
-        ],
-        default=str,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
+def test_current_protocol_pins_manifest_and_three_assured_operations() -> None:
+    manifest = load_manifest()
+    assert EXPECTED_SURFACE_MANIFEST_HASH == manifest["surface_manifest_hash"]
+    tools = current_tool_catalog()
+    assert tuple(tool.name for tool in tools) == (
+        "current_context",
+        "question_context",
+        "resolve_entity",
     )
+    operations = manifest["hash_members"]["core_operation_descriptors"]["operations"]
+    expected_chain_hashes = {
+        operation["name"]: operation["implementation_chain_hash"]
+        for operation in operations
+    }
+    assert {
+        tool.name: tool.implementation_chain_hash for tool in tools
+    } == expected_chain_hashes
 
-    assert hashlib.sha256(canonical.encode()).hexdigest() == (
-        EXPECTED_TOOL_CATALOG_SHA256
-    )
 
-
-def test_protocol_is_v9_and_answer_prompt_has_loop_guards() -> None:
-    """The default v9 identity and answer-loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v9"
-    assert DEFAULT_PROTOCOL_KEY == "full-v9"
+def test_protocol_is_v10_and_answer_prompt_has_loop_guards() -> None:
+    """The current v10 identity and answer-loop discipline are locked."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v10"
+    assert DEFAULT_PROTOCOL_KEY == "full-v10"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -204,45 +205,20 @@ def test_protocol_is_v9_and_answer_prompt_has_loop_guards() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v9", "full-v9-strong")
-    default = PROTOCOL_REGISTRY["full-v9"]
-    strong = PROTOCOL_REGISTRY["full-v9-strong"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v10",)
+    protocol = PROTOCOL_REGISTRY["full-v10"]
 
-    assert default.name == "RS-LoCoMo-Full-v9"
-    assert default.answer_agent_model == "openai/gpt-4o-mini"
-    assert default.answer_agent_reasoning_effort is None
-    assert strong.name == "RS-LoCoMo-Full-v9-strong"
-    assert strong.answer_agent_model == "openai/gpt-5.6-luna"
-    assert strong.answer_agent_reasoning_effort == "none"
-    assert default.answer_reader_retry_budget == 2
-    assert strong.answer_reader_retry_budget == 2
-    assert default.answer_word_cap is None
-    assert strong.answer_word_cap is None
-    identical_fields = (
-        "judge_model",
-        "answer_prompt_template",
-        "judge_prompt_template",
-        "answer_schema",
-        "judge_schema",
-        "tool_catalog_sha256",
-        "max_tool_calls_per_question",
-        "max_agent_calls_per_question",
-        "answer_reader_retry_budget",
-        "answer_agent_temperature",
-        "judge_temperature",
-        "judge_repetitions",
-    )
-    assert all(
-        getattr(default, field) == getattr(strong, field) for field in identical_fields
-    )
+    assert protocol.name == "RS-LoCoMo-Full-v10"
+    assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
+    assert protocol.answer_agent_reasoning_effort == "none"
+    assert protocol.judge_reasoning_effort == "none"
+    assert protocol.answer_reader_retry_budget == 2
+    assert protocol.answer_word_cap is None
+    assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
 
 
-@pytest.mark.parametrize(
-    ("extra_args", "expected"),
-    (((), "full-v9"), (("--protocol", "full-v9-strong"), "full-v9-strong")),
-)
 def test_prepare_cli_selects_protocol_only_at_prepare(
-    extra_args: tuple[str, ...], expected: str, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     selected: list[object] = []
 
@@ -265,12 +241,11 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
             "smoke",
             "--output",
             str(Path("run")),
-            *extra_args,
         ]
     )
 
     assert exit_code == 0
-    assert selected == [expected]
+    assert selected == ["full-v10"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -293,6 +268,13 @@ def test_summarize_cli_accepts_multiple_run_flags(
     assert exit_code == 0
     assert selected == [(Path("run-a"), Path("run-b"))]
     assert capsys.readouterr().out == '{"merged_run_count":2}\n'
+
+
+@pytest.mark.parametrize("value", ("Infinity", "-Infinity", "NaN"))
+def test_cli_rejects_non_finite_cost_thresholds(value: str) -> None:
+    """A syntactically valid Decimal must not disable the paid-call stop."""
+    with pytest.raises(argparse.ArgumentTypeError, match="finite"):
+        cli._positive_decimal(value)  # noqa: SLF001
 
 
 def test_judge_never_receives_tool_trace() -> None:

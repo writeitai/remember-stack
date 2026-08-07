@@ -1,11 +1,12 @@
 # LoCoMo full-system benchmark design
 
-> **Status:** binding setup for WP-8.2. Implementation and synthetic tests are allowed; no real
-> LoCoMo/API/provider run is authorized by this document.
+> **Status:** binding current-system protocol. Real provider execution remains
+> operator-invoked; the owner authorized the full v10 run on 2026-08-07.
 
 ## 1. Acceptance boundary
 
-The adapter is repository tooling around the public `MemoryClient`. Before the owner walkthrough:
+The adapter is repository tooling around the public `MemoryClient`. Every real
+run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
 - the stock self-host profile composes all ten continuous handlers;
@@ -14,35 +15,50 @@ The adapter is repository tooling around the public `MemoryClient`. Before the o
 - the answer agent uses only registry-rendered public recipes;
 - all tool calls, envelopes, model usage, costs, and failures checkpoint;
 - pure and synthetic tests pass; and
-- no real benchmark or provider call occurs.
+- the operator supplies explicit execution, isolated-deployment, call-budget,
+  and spend acknowledgements.
 
-WP-8.2 remains in progress until an owner-authorized eight-question smoke finishes.
+The 2026-08-07 authorization covers one fresh full v10 publication run. It does
+not authorize an unbounded cost or a run against a different revision/surface.
 
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v9
+protocol                RS-LoCoMo-Full-v10
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
-answer-agent model       openai/gpt-4o-mini
+answer-agent model       openai/gpt-5.6-luna
 answer temperature       0
 max tool calls/question  8
 max agent calls/question 9
 invalid-completion retry 2 additional attempts within the 9-call cap
-answer reasoning effort  adapter default (no field sent)
-answer word cap          off (`None`) for both registered protocols
+answer reasoning effort  none
+answer word cap          off (`None`)
 judge model              openai/gpt-5.6-luna
 judge temperature        0
+judge reasoning effort   none
 judge repetitions        1
 primary metric           judge accuracy
 secondary metric         official LoCoMo F1
 diagnostic               coarse evidence-session recall
 ```
 
-The tool catalog hash, prompt and schema hashes, adapter and repository revisions, manifests,
-rendered documents, model identities, and component generations are stored. A change creates a
-new protocol version.
+The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
+adapter and repository revisions, manifests, rendered documents, model
+identities, and component generations are stored. A change creates a new
+protocol version.
+
+**v9 → v10 (2026-08-07 — current-system clean cut):** D83 removed the retired
+17 adapters and left exactly `resolve_entity`, `question_context`, and
+`current_context` as the shipping intent surface. V10 replaces both executable
+v9 variants; it does not preserve an old-catalog mode. Luna occupies both the
+answer and judge seats. The ingest and answer stages check the deployment's
+public `surface_manifest_hash` and exact canonical recipe descriptors. Ingest
+does so before provider preflight or upload; answer does so before any question
+call. Historical v9 artifacts remain self-describing, but v9 and v10
+scores are not comparable. Analysis:
+`plan/analysis/locomo_current_surface_cutover.md`.
 
 **v2 → v3 (2026-07-26, before any scored run):** `AnswerAgentStep.arguments`
 became `arguments_json`, a JSON-object-encoded string, because compliant strict
@@ -65,14 +81,11 @@ scores (glm-4.7-flash arm) were taken against the pre-truncation catalog and
 are not directly comparable.
 
 **v5-strong variant (2026-07-29):** `RS-LoCoMo-Full-v5-strong` initially
-changed only the answer agent to `openai/gpt-5.6-luna`. It exists because three smoke
+changed only the answer agent to `openai/gpt-5.6-luna`. It existed because three smoke
 passes on a healthy store (coarse evidence-session recall 0.5, with the gold
 evidence at rank 1) scored only 1–2/8 with `openai/gpt-4o-mini`, which looped
-past the tool-call limit or returned invalid responses. The v9 protocols retain
-that seat distinction. Scores from `RS-LoCoMo-Full-v9` and
-`RS-LoCoMo-Full-v9-strong` are never comparable. The weak-agent
-`RS-LoCoMo-Full-v9` protocol remains the default measurement of what a harness
-consumer experiences.
+past the tool-call limit or returned invalid responses. V9 retained that seat
+distinction. V10 supersedes both executable variants and uses Luna.
 
 **Reader retry and answer-effort pin (2026-07-29):** strong-agent smoke runs
 showed a separate harness failure. After tool use, `openai/gpt-5.6-luna`
@@ -93,10 +106,9 @@ The same smoke work found that setting Luna's reasoning effort to `none` in the
 benchmark process environment reduced malformed answers from 3/8 to 1/8 and
 raised the score from 1/8 to 3/8. Environment-only configuration was not
 reproducible because two runs with identical `run.json` files could behave
-differently. The strong protocol therefore pins `answer_agent_reasoning_effort`
-to `none` and sends it explicitly on every answer-agent call, including tool
-selection and final reading. The default `full-v9` protocol pins `None`, which
-means no effort field is sent for its non-reasoning `gpt-4o-mini` answer agent.
+differently. The strong variants therefore pinned `answer_agent_reasoning_effort`
+to `none` and sent it explicitly on every answer-agent call, including tool
+selection and final reading. V10 keeps the Luna `none` pin.
 Engine worker seats still use the existing environment map; this override is
 only on benchmark answer requests.
 
@@ -169,7 +181,7 @@ runner has no word-count guard. The shortest-complete-phrase/no-explanation
 instruction remains unconditional. V9 scores are not comparable to v8 or
 earlier.
 
-### 2.1 Why v2+ uses a stronger judge
+### 2.1 Model seats
 
 `RS-LoCoMo-Full-v1` used `openai/gpt-4o-mini` for both the answer agent and the judge. The
 judge is replaced with `openai/gpt-5.6-luna` in v2 and the protocol version is bumped
@@ -185,10 +197,11 @@ either judge model has been run here. If the judge's strictness is ever asserted
 rather than a design choice, it needs its own experiment — for example, scoring a set of
 deliberately incorrect answers with both models and reporting the acceptance rates.
 
-The answer agent deliberately stays on `openai/gpt-4o-mini`. It is the component under
-measurement alongside retrieval, and keeping it at the commodity tier keeps the comparison
-against baselines honest and cheap. Judge and answer models must never be the same family tier
-by accident: a stronger judge grading a weaker agent is the intended asymmetry.
+V2 through the weak v9 variant deliberately kept the answer agent on
+`openai/gpt-4o-mini` while Luna judged it. V10 instead measures the
+owner-selected Luna agent against the clean-cutover surface. Answer and judge
+remain distinct typed roles because their prompts, schemas, budgets, and
+accounting differ even though they use the same model.
 
 ### 2.2 Provenance: the serving image, not the checkout
 
@@ -239,7 +252,11 @@ embedding call on the **deployment's** `chunk_embedding` binding, read from
 `GET /deployment` rather than from the CLI host's environment, so the check
 covers the model the pipeline will actually use. A probe that returns `ok=false`
 fails as loudly as a transport error — reachable is not the same as usable. A
-failure raises `ProviderPreflightError` and no document is sent. The preflight is
+provider-resolved chat model other than the pinned Luna identity also fails.
+Each successfully parsed usage record checkpoints immediately and contributes
+to the same positive finite run-absolute cost threshold used by answer and
+judge; reaching it stops before another probe or an upload. A failure raises
+`ProviderPreflightError` and no document is sent. The preflight is
 skipped when every session is already ingested, since a full resume has no
 upload left to protect. The cost is two trivial calls;
 the alternative is discovering the same fact after a full ingest and a retry
@@ -385,10 +402,11 @@ navigation. A future mount-enabled LoCoMo harness is a separately named protocol
 
 ### Plane K
 
-The benchmark records that the stock profile has no K planner/writer runtime. `pages_about`
-remains available and honest, but an empty result is not reported as K coverage. A later K-enabled
-LoCoMo run needs explicit routing rules, repository/runtime fingerprints, K settlement in
-readiness, and a new protocol name.
+The benchmark records that the stock profile has no K planner/writer runtime,
+and the current three-operation agent surface has no K query operation. A later
+K-enabled LoCoMo run needs an explicit public operation, routing rules,
+repository/runtime fingerprints, K settlement in readiness, and a new protocol
+name.
 
 ## 5. Lifecycle ordering and readiness
 
@@ -421,12 +439,16 @@ The answer command refuses a false report and checkpoints a true one. The old
 
 ## 6. Public tool surface
 
-The self-host setup seeds the normal canonical recipes plus P2 recipes. `resolve_entity` is
-canonical because UUID-addressed fact tools otherwise cannot be used by a remote recipe-only
-agent. P2 recipes are seeded only by profiles that compose `GraphQueries`.
+The self-host setup seeds exactly the three canonical assured operations:
+`resolve_entity`, `question_context`, and `current_context`.
 
-The protocol hashes the exact descriptor list returned by `GET /recipes` and refuses a mismatch.
-This prevents an added, removed, or changed tool from silently changing the benchmark.
+The protocol pins the checked-in `surface_manifest_hash`, verifies it against
+`GET /query/space` before ingestion and again before answering, and requires
+`GET /recipes` to equal the canonical three descriptors at both boundaries.
+Each descriptor carries an `implementation_chain_hash` computed from the live
+registry row, so equality covers the chain the executor will actually run, not
+only its name and schema. This catches both implementation-contract drift and
+registry bootstrap drift before remote processing or answer-model spend.
 
 No benchmark tool reads Postgres, Lance, MinIO, or internal handlers directly.
 
@@ -444,8 +466,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; both stock v9 protocols leave
-   it unset.
+   prepared protocol's `answer_word_cap` is set; v10 leaves it unset.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
@@ -459,7 +480,7 @@ The agent is instructed to orient, verify current facts, and audit evidence whil
 grain, validity, freshness, truncation, typed negatives, and hydration drops. It receives no gold
 answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v9): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v10): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; use `question_context` first for ordinary recall and
 try it before answering "Unknown". These are prompt discipline, not harness
@@ -483,13 +504,13 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v9 \
+  --protocol full-v10 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Use `full-v9-strong` there to select the
-strong answer agent; ingest, answer, judge, and summarize read the pinned choice
-from the prepared run and expose no protocol override.
+`--protocol` exists only on `prepare`. The sole choice is `full-v10`; ingest,
+answer, judge, and summarize read it from the prepared run and expose no
+protocol override.
 
 Per isolated sample:
 
@@ -498,6 +519,7 @@ uv run --extra benchmark python -m benchmarks.locomo ingest \
   --run .benchmark-runs/locomo-smoke \
   --sample conv-26 \
   --max-documents 19 \
+  --max-evaluator-cost-usd 1.00 \
   --execute \
   --confirm-isolated-deployment conv-26
 
@@ -540,13 +562,18 @@ billing but before checkpointing.
 - Clean git revision equals `run.json`.
 - Local dataset hash and manifest validate.
 - One fresh deployment is dedicated to exactly one conversation.
+- Before each upload, `documents_live` contains exactly the lineages and current
+  versions already recorded in the run checkpoint (therefore none on a fresh
+  deployment); every ingest response says a new version was created; before
+  answering, those exact checkpointed lineages and versions equal the complete
+  prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All ten workers are running.
 - Every prepared session has an ingest record.
 - P2/P3 one-shot build completed.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
-- Public recipe catalog hash matches.
+- Public surface hash, recipe descriptors, and live implementation-chain hashes match.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
 - Raw artifacts and failures will be retained for publication review.

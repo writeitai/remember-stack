@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
                     run_dir=args.run,
                     sample_id=args.sample,
                     max_documents=args.max_documents,
+                    max_evaluator_cost_usd=args.max_evaluator_cost_usd,
                     execute=args.execute,
                     isolated_deployment_confirmation=(args.confirm_isolated_deployment),
                     client=client,
@@ -105,8 +106,8 @@ def _positive_decimal(value: str) -> Decimal:
         parsed = Decimal(value)
     except InvalidOperation as error:
         raise argparse.ArgumentTypeError("must be a decimal number") from error
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be positive")
+    if not parsed.is_finite() or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive and finite")
     return parsed
 
 
@@ -115,7 +116,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v9: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v10: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )
@@ -138,6 +139,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     _run_and_sample(ingest)
     ingest.add_argument("--max-documents", type=int, required=True)
+    ingest.add_argument(
+        "--max-evaluator-cost-usd",
+        type=_positive_decimal,
+        required=True,
+        help="run-absolute shared reported-spend stop threshold for preflight,"
+        " answer, and judge calls",
+    )
     ingest.add_argument("--execute", action="store_true")
     ingest.add_argument("--confirm-isolated-deployment")
 
