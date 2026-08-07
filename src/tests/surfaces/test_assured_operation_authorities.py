@@ -35,6 +35,7 @@ def test_current_context_uses_fact_and_contradiction_authorities() -> None:
     confirmation_sql = str(_CONFIRM_CURRENT_FACTS)
     assert "memory_v1.facts_current" in confirmation_sql
     assert "identity_matches = 1" in confirmation_sql
+    assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
     assert "JOIN relations" not in confirmation_sql
     assert "JOIN observations" not in confirmation_sql
     for statement in _CONTRADICTION_MEMBERS.values():
