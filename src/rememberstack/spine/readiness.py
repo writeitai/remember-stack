@@ -64,14 +64,13 @@ class PipelineReadinessCatalog:
             ),
             None,
         )
-        chunk_version = next(
-            (
-                version
-                for stage, version in self._expected
-                if stage is PipelineStage.CHUNK
-            ),
-            None,
-        )
+        # Packing generation on chunk rows includes params (D58); the CHUNK
+        # processing_state component_version is the bare algorithm pin. Use the
+        # default pack params for the active grid filter (compose/selfhost default).
+        from rememberstack.core import ChunkerParams
+        from rememberstack.core import chunker_version as packing_generation
+
+        chunk_version = packing_generation(params=ChunkerParams())
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
