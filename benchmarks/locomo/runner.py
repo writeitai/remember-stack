@@ -356,6 +356,14 @@ def ingest_sample(
             continue
         path = _document_path(run_dir=run_dir, document=document)
         _require_file_hash(path=path, expected=document.content_sha256)
+        _require_exact_live_ingests(
+            client=client,
+            expected=tuple(
+                record
+                for record in context.state.ingests.values()
+                if record.sample_id == sample_id
+            ),
+        )
         ingested = client.ingest(
             path,
             mime="text/markdown",

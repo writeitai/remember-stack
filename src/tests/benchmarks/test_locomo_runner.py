@@ -1130,7 +1130,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
             document_checks += 1
             rows = (
                 []
-                if document_checks == 1
+                if document_checks <= 2
                 else [
                     [
                         "57000000-0000-0000-0000-000000000001",
@@ -1187,6 +1187,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
         raw_client.close()
 
     assert provider.generated_prompts == []
+    assert document_checks == 3
 
 
 def test_missing_records_remain_in_full_manifest_denominator(
@@ -1961,10 +1962,13 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
     deployment_id = UUID("57000000-0000-0000-0000-000000000001")
     live: list[list[str]] = []
     ingest_attempts = 0
+    document_checks = 0
 
     def interrupted_transport(request: httpx.Request) -> httpx.Response:
         nonlocal ingest_attempts
+        nonlocal document_checks
         if request.method == "POST" and request.url.path == "/query/sql":
+            document_checks += 1
             return httpx.Response(
                 200,
                 json={
@@ -2024,6 +2028,7 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
 
     assert len(ingests) == 2
     assert ingest_attempts == 3
+    assert document_checks == 5
     assert len(live) == 2
 
 
