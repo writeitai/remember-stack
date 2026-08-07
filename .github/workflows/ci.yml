@@ -272,6 +272,12 @@ jobs:
           served_revision="$(curl --fail --silent http://localhost:8000/deployment \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
           test "$served_revision" = "${REMEMBERSTACK_BUILD_REVISION}"
+          query_result="$(curl --fail --silent \
+            --header 'Content-Type: application/json' \
+            --data '{"sql":"SELECT count(*) AS document_count FROM documents_live","parameters":[],"max_rows":1}' \
+            http://localhost:8000/query/sql)"
+          printf '%s' "$query_result" | python3 -c \
+            'import json,sys; result=json.load(sys.stdin); assert result["termination_reason"] == "completed", result'
           elapsed_seconds="$(($(date +%s) - started_at))"
           echo "Quickstart cold start to first query: ${elapsed_seconds}s / ${QUICKSTART_TARGET_SECONDS}s target" \
             | tee -a "$GITHUB_STEP_SUMMARY"

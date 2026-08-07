@@ -403,7 +403,9 @@ class SelfHostProfile:
             # Deploy-time only: provision the query-role password so setup-time
             # composition can open as that role later. Never run from api().
             _provision_query_role_password(connection=raw, engine=self._engine)
-            sa_connection.commit()
+            # The bootstrap work above uses the raw psycopg connection, so its
+            # transaction must be committed through that same connection.
+            raw.commit()
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
