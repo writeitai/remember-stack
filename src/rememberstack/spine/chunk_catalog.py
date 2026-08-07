@@ -98,6 +98,46 @@ class ChunkCatalog:
             for row in rows
         )
 
+    def chunks_for_extract(
+        self, *, representation_id: UUID, chunker_version: str, chunk_id: UUID
+    ) -> tuple[ChunkForEmbedding, ...]:
+        """D84: load only the target chunk and same-section prev/next neighbours.
+
+        Claimify's bundle uses at most ±1 same-section neighbour. Loading the
+        full grid per chunk job is O(N²) work on large documents.
+        """
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_FOR_EXTRACT_WINDOW,
+                    {
+                        "representation_id": representation_id,
+                        "chunker_version": chunker_version,
+                        "chunk_id": chunk_id,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            ChunkForEmbedding.model_validate(_normalize_chunk_embed_row(dict(row)))
+            for row in rows
+        )
+
+    def list_chunk_ids(
+        self, *, representation_id: UUID, chunker_version: str
+    ) -> tuple[UUID, ...]:
+        """Ordered chunk ids for one packing generation (fan-out without full rows)."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _SELECT_EXISTING_CHUNKS,
+                {
+                    "representation_id": representation_id,
+                    "chunker_version": chunker_version,
+                },
+            ).all()
+        return tuple(UUID(str(row[0])) for row in rows)
+
     def carry_forward_sources(
         self,
         *,
@@ -227,6 +267,54 @@ _SELECT_FOR_EMBEDDING = text(
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
     ORDER BY c.ordinal
+    """
+)
+
+_SELECT_FOR_EXTRACT_WINDOW = text(
+    """
+    WITH target AS (
+        SELECT c.*, s.role AS section_role, s.node_path AS section_path,
+               s.title AS section_title
+        FROM chunks c
+        JOIN document_sections s ON s.section_id = c.section_id
+        WHERE c.chunk_id = :chunk_id
+          AND c.representation_id = :representation_id
+          AND c.chunker_version = :chunker_version
+    ),
+    windowed AS (
+        SELECT c.chunk_id, c.doc_id, c.version_id, c.ordinal,
+               c.char_start, c.char_end, c.context_prefix, c.prefixer_version,
+               c.location_header, c.embedding_text_hash,
+               c.embedding_input_policy_version, c.policy_generation,
+               c.embedding_ref, c.embedding_version, c.location_facts_json,
+               c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+               s.role AS section_role, s.node_path AS section_path,
+               s.title AS section_title
+        FROM chunks c
+        JOIN document_sections s ON s.section_id = c.section_id
+        JOIN target t ON c.representation_id = t.representation_id
+         AND c.chunker_version = t.chunker_version
+         AND s.node_path = t.section_path
+        WHERE c.ordinal = t.ordinal
+           OR c.ordinal = (
+                SELECT max(c2.ordinal) FROM chunks c2
+                JOIN document_sections s2 ON s2.section_id = c2.section_id
+                WHERE c2.representation_id = t.representation_id
+                  AND c2.chunker_version = t.chunker_version
+                  AND s2.node_path = t.section_path
+                  AND c2.ordinal < t.ordinal
+              )
+           OR c.ordinal = (
+                SELECT min(c2.ordinal) FROM chunks c2
+                JOIN document_sections s2 ON s2.section_id = c2.section_id
+                WHERE c2.representation_id = t.representation_id
+                  AND c2.chunker_version = t.chunker_version
+                  AND s2.node_path = t.section_path
+                  AND c2.ordinal > t.ordinal
+              )
+    )
+    SELECT * FROM windowed
+    ORDER BY ordinal
     """
 )
 

@@ -3245,3 +3245,33 @@ migration-parity and adapter-usage gates.
 fixing authorization; a second operation registry; an in-PostgreSQL Lance
 runtime; claiming a body hash can be verified from bytes that do not reproduce
 its input.
+
+## D84. Extract work is leased per chunk so Claimify can run in parallel
+
+**Decision (2026-08-07).** Stage `extract_claims` is addressed primarily at
+**chunk** grain: `target_kind = chunk`, `target_id = chunk_id`, same
+`E2_EXTRACTOR_VERSION` Claimify generation as before. After E1 embedding
+completes for a representation, the engine enqueues one extract job per chunk
+(idempotent). Each worker runs Claimify for a single chunk (with the usual
+read-only neighbour bundle). `normalize_relations` is enqueued for the document
+version only when every chunk of that representation has terminal extract for
+the extractor version (barrier). In-flight **version-level** extract rows left
+by older images act as **coordinators** only: they fan out chunk jobs and/or
+fire the barrier; they do not re-run serial whole-document Claimify.
+
+**Context.** Version-serial extract made `worker-extract-claims` replicas
+ineffective on a single large document (BEAM 1M/10M). E1 already partitions
+text into section-bounded chunks; D56 already keys reuse on chunks;
+`ProcessingTarget.CHUNK` already exists on the ledger. Analysis:
+`plan/analysis/chunk_level_extract_analysis.md`. Binding design:
+`plan/designs/chunk_level_extract_design.md`.
+
+**Consequences.** Queue depth for `extract_claims` approximates unfinished
+chunks — the correct signal for self-host and UMC worker scale-up. Total model
+tokens are unchanged; concurrency rises. Normalize remains version-scoped
+(entity-sharded normalize is a separate track). UMC auto-deploy keeps the same
+worker image and service names; no control-plane work manufacture.
+
+**Rejected.** Scaling version-level extract only; external per-chunk queues
+that bypass `processing_state` (D67); making normalize chunk-scoped in the
+same change; automatic skip of dead-lettered chunks for the barrier in v1.

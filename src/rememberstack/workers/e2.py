@@ -42,6 +42,7 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingTarget
 from rememberstack.model import SelectionCandidate
 from rememberstack.model import SelectionDropReason
 from rememberstack.model import SelectionOutcome
@@ -52,6 +53,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
+from rememberstack.workers.base import ExtractChunkBarrier
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
@@ -242,34 +244,84 @@ class ExtractClaimsHandler:
         self._chunker_version = chunker_version
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Extract claims for one document version, chunk by chunk (D12 replay)."""
+        """Extract claims: D84 chunk grain, or legacy version coordinator."""
         source = self._chunk_catalog.chunk_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
-        chunks = self._chunk_catalog.chunks_for_embedding(
+        if work.target_kind is ProcessingTarget.CHUNK:
+            return self._handle_chunk(work=work, source=source, meter=meter)
+        # Legacy document/version extract row: fan out only (ids, not full rows).
+        chunk_ids = self._chunk_catalog.list_chunk_ids(
             representation_id=source.representation_id,
             chunker_version=self._chunker_version,
         )
-        if not chunks:
+        if not chunk_ids:
             return _normalize_follow_up(work=work, source=source)
-        document_md = self._artifact_store.read_bytes(
-            key=ObjectKey(source.markdown_uri)
-        ).decode("utf-8")
-        for index, chunk in enumerate(chunks):
-            if self._catalog.chunk_already_extracted(
-                chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
-            ):
-                continue  # replay: stored claims + decisions are the output (D7)
-            if self._reuse_prior_extraction(source=source, chunk=chunk):
-                continue  # D56: the prior version's claims are re-attached
-            self._extract_chunk(
-                source=source,
-                chunks=chunks,
-                index=index,
-                document_md=document_md,
-                meter=meter,
+        return HandlerOutcome(
+            follow_up=tuple(
+                EnqueueWork(
+                    deployment_id=work.deployment_id,
+                    target_kind=ProcessingTarget.CHUNK,
+                    target_id=chunk_id,
+                    stage=PipelineStage.EXTRACT_CLAIMS,
+                    component_version=E2_EXTRACTOR_VERSION,
+                    content_hash=work.content_hash,
+                    lane=work.lane,
+                    payload={
+                        "version_id": str(source.version_id),
+                        "representation_id": str(source.representation_id),
+                        "chunk_id": str(chunk_id),
+                    },
+                )
+                for chunk_id in chunk_ids
             )
-        return _normalize_follow_up(work=work, source=source)
+        )
+
+    def _handle_chunk(
+        self, *, work: ClaimedWork, source: ChunkSource, meter: CostMeterPort
+    ) -> HandlerOutcome:
+        """Run Claimify for one chunk and schedule the atomic barrier on complete."""
+        chunk_id = work.target_id
+        chunks = self._chunk_catalog.chunks_for_extract(
+            representation_id=source.representation_id,
+            chunker_version=self._chunker_version,
+            chunk_id=chunk_id,
+        )
+        index = next(
+            (i for i, chunk in enumerate(chunks) if chunk.chunk_id == chunk_id), None
+        )
+        if index is None:
+            raise NonRetryableHandlerError(
+                f"chunk {chunk_id} is not part of representation"
+                f" {source.representation_id}"
+            )
+        chunk = chunks[index]
+        if not self._catalog.chunk_already_extracted(
+            chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
+        ):
+            if not self._reuse_prior_extraction(source=source, chunk=chunk):
+                document_md = self._artifact_store.read_bytes(
+                    key=ObjectKey(source.markdown_uri)
+                ).decode("utf-8")
+                self._extract_chunk(
+                    source=source,
+                    chunks=chunks,
+                    index=index,
+                    document_md=document_md,
+                    meter=meter,
+                )
+        return HandlerOutcome(
+            extract_chunk_barrier=ExtractChunkBarrier(
+                deployment_id=work.deployment_id,
+                version_id=source.version_id,
+                representation_id=source.representation_id,
+                chunker_version=self._chunker_version,
+                extractor_version=E2_EXTRACTOR_VERSION,
+                content_hash=work.content_hash,
+                lane=work.lane,
+                normalize_component_version=E3_NORMALIZER_VERSION,
+            )
+        )
 
     def _reuse_prior_extraction(
         self, *, source: ChunkSource, chunk: ChunkForEmbedding
@@ -1014,8 +1066,8 @@ def _normalize_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOu
         follow_up=(
             EnqueueWork(
                 deployment_id=work.deployment_id,
-                target_kind=work.target_kind,
-                target_id=work.target_id,
+                target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                target_id=source.version_id,
                 stage=PipelineStage.NORMALIZE_RELATIONS,
                 component_version=E3_NORMALIZER_VERSION,
                 content_hash=work.content_hash,

@@ -40,6 +40,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import PackedChunk
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.ports.cost_meter import CostMeterPort
@@ -178,7 +179,7 @@ class EmbedChunksHandler:
             chunker_version=self._chunker_version,
         )
         if not chunks:
-            return _extract_follow_up(work=work, source=source)
+            return _extract_follow_up(work=work, source=source, chunks=())
         document_md = self._artifact_store.read_bytes(
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
@@ -338,7 +339,7 @@ class EmbedChunksHandler:
                 "embed_chunk readiness incomplete; missing vectors for "
                 f"{len(missing)} chunk(s)"
             )
-        return _extract_follow_up(work=work, source=source)
+        return _extract_follow_up(work=work, source=source, chunks=chunks)
 
     def _embed_batch_with_poison_split(
         self,
@@ -618,14 +619,36 @@ def _embed_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcom
     )
 
 
-def _extract_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcome:
-    """Chain extraction even when a representation produced zero chunks."""
+def _extract_follow_up(
+    *, work: ClaimedWork, source: ChunkSource, chunks: tuple[ChunkForEmbedding, ...]
+) -> HandlerOutcome:
+    """D84: fan out one extract_claims job per chunk (or normalize if none)."""
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    if not chunks:
+        return HandlerOutcome(
+            follow_up=(
+                EnqueueWork(
+                    deployment_id=work.deployment_id,
+                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                    target_id=source.version_id,
+                    stage=PipelineStage.NORMALIZE_RELATIONS,
+                    component_version=E3_NORMALIZER_VERSION,
+                    content_hash=work.content_hash,
+                    lane=work.lane,
+                    payload={
+                        "version_id": str(source.version_id),
+                        "representation_id": str(source.representation_id),
+                    },
+                ),
+            )
+        )
     return HandlerOutcome(
-        follow_up=(
+        follow_up=tuple(
             EnqueueWork(
                 deployment_id=work.deployment_id,
-                target_kind=work.target_kind,
-                target_id=work.target_id,
+                target_kind=ProcessingTarget.CHUNK,
+                target_id=chunk.chunk_id,
                 stage=PipelineStage.EXTRACT_CLAIMS,
                 component_version=E2_EXTRACTOR_VERSION,
                 content_hash=work.content_hash,
@@ -633,8 +656,10 @@ def _extract_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutc
                 payload={
                     "version_id": str(source.version_id),
                     "representation_id": str(source.representation_id),
+                    "chunk_id": str(chunk.chunk_id),
                 },
-            ),
+            )
+            for chunk in chunks
         )
     )
 
