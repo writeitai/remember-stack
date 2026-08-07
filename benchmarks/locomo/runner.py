@@ -1522,6 +1522,9 @@ def _answer_one(
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
+                reader_usage_model_name=(
+                    answer_agent_model if model_mismatch else None
+                ),
             )
         except OpenRouterProviderError as error:
             call_latency_ms = _elapsed_ms(started)
@@ -1559,6 +1562,9 @@ def _answer_one(
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
+                reader_usage_model_name=(
+                    answer_agent_model if model_mismatch else None
+                ),
             )
         call_latency_ms = _elapsed_ms(started)
         agent_latency_ms += call_latency_ms
@@ -1590,6 +1596,7 @@ def _answer_one(
                 ),
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
+                reader_usage_model_name=answer_agent_model,
             )
         if agent_observation is not None and step.action == "tool":
             agent_observation.finish(
@@ -2010,6 +2017,7 @@ def _failed_answer(
     claims: tuple[RetrievedClaim, ...] = (),
     tool_calls: tuple[ToolCallRecord, ...] = (),
     usages: tuple[ProviderCallUsage, ...] = (),
+    reader_usage_model_name: str | None = None,
 ) -> AnswerRecord:
     """Build a bounded terminal failure without erasing retrieval evidence."""
     return AnswerRecord(
@@ -2031,7 +2039,11 @@ def _failed_answer(
         reader_attempts=reader_attempts,
         first_step_retries=first_step_retries,
         reader_latency_ms=reader_latency_ms,
-        reader_usage=_aggregate_usage(usages=usages) if usages else None,
+        reader_usage=(
+            _aggregate_usage(usages=usages, model_name=reader_usage_model_name)
+            if usages
+            else None
+        ),
         failure=_failure(kind=kind, message=message),
     )
 
@@ -2089,15 +2101,17 @@ def _retrieved_sessions(
     return sessions
 
 
-def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUsage:
-    """Collapse one question's same-model agent calls for durable accounting."""
+def _aggregate_usage(
+    *, usages: tuple[ProviderCallUsage, ...], model_name: str | None = None
+) -> ProviderCallUsage:
+    """Collapse one question's calls, allowing a terminal drift failure to persist."""
     if not usages:
         raise ValueError("cannot aggregate an empty usage tuple")
     model_names = {usage.model_name for usage in usages}
-    if len(model_names) != 1:
+    if len(model_names) != 1 and model_name is None:
         raise BenchmarkRunError("one answer-agent trace used multiple models")
     return ProviderCallUsage(
-        model_name=usages[0].model_name,
+        model_name=model_name or usages[0].model_name,
         tokens_in=sum(usage.tokens_in for usage in usages),
         tokens_out=sum(usage.tokens_out for usage in usages),
         cost_usd=sum((usage.cost_usd for usage in usages), start=Decimal(0)),

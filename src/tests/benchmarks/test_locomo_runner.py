@@ -463,6 +463,35 @@ def test_answer_and_judge_refuse_provider_resolved_model_drift() -> None:
     assert "not-luna" in judge.failure.message
 
 
+def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
+    """A later model drift remains a costed terminal result, not a lost run."""
+    client, raw_client = _memory_client()
+    provider = _CostProvider(cost=Decimal("0.01"), drift_answer_call=2)
+    state = _run_state()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.kind == "accounting"
+    assert "not-luna" in answer.failure.message
+    assert answer.agent_call_count == 2
+    assert answer.reader_usage is not None
+    assert answer.reader_usage.model_name == ANSWER_AGENT_MODEL
+    assert answer.reader_usage.cost_usd == Decimal("0.02")
+    assert state.evaluator_cost_usd == Decimal("0.02")
+
+
 @pytest.mark.parametrize(
     (
         "protocol",
@@ -1483,12 +1512,14 @@ class _CostProvider:
         invalid_first_step_completions: int = 0,
         first_step_provider_outage: bool = False,
         resolved_model: str | None = None,
+        drift_answer_call: int | None = None,
     ) -> None:
         self.cost = cost
         self.invalid_reader_completions = invalid_reader_completions
         self.invalid_first_step_completions = invalid_first_step_completions
         self.first_step_provider_outage = first_step_provider_outage
         self.resolved_model = resolved_model
+        self.drift_answer_call = drift_answer_call
         self.models: list[str] = []
         self.requests: list[ModelRequest] = []
         self.answer_calls = 0
@@ -1552,7 +1583,12 @@ class _CostProvider:
         return GeneratedResponse(
             output=response_type.model_validate(payload),
             usage=ProviderCallUsage(
-                model_name=self.resolved_model or request.model,
+                model_name=(
+                    "openai/not-luna"
+                    if response_type is AnswerAgentStep
+                    and self.answer_calls == self.drift_answer_call
+                    else self.resolved_model or request.model
+                ),
                 tokens_in=10,
                 tokens_out=1,
                 cost_usd=self.cost,
