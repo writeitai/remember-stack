@@ -6,6 +6,12 @@ export const metadata = {
 
 # API Reference
 
+> **Current pre-release query contract.** RememberStack exposes exactly three
+> top-level assured operations: `resolve_entity`, `question_context`, and
+> `current_context`. The 17 former stock query patterns are discoverable
+> `examples.*` saved queries only. There is no legacy compatibility layer or
+> deprecation window.
+
 RememberStack has two deliberately separate truth layers. Claims are
 immutable source testimony (“what was asserted, by whom, when”);
 facts—relations and observations—are the adjudicated current
@@ -27,7 +33,7 @@ Cypher return **`QueryResult/v1`**. The three assured operations return the D49
 reads never trigger writes. An explicitly composed ingest capability is the
 sole client write path and always enters E0.
 
-Three things are true of every deployment's API:
+Four things are true of every deployment's API:
 
 - **The shipping query surface is deliberate.** Nine open-query entry points
   mount under `/query/…`; `/recipes` and `/recipe/{name}` expose exactly
