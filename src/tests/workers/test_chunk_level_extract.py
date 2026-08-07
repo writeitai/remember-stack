@@ -104,15 +104,18 @@ def test_extract_follow_up_fans_out_one_job_per_chunk() -> None:
     assert outcome.extract_chunk_barrier is None
 
 
-def test_advisory_lock_keys_are_signed_int64_safe() -> None:
-    """pg_advisory_xact_lock keys must fit signed int64 (non-negative half-space)."""
-    from uuid import UUID
+def test_advisory_lock_uses_one_postgres_bigint_signature() -> None:
+    """The D84 lock hashes one UUID to PostgreSQL's supported bigint overload."""
+    from rememberstack.spine.work_ledger import _ADVISORY_LOCK_REPRESENTATION
 
-    rid = UUID("ffffffff-ffff-ffff-ffff-ffffffffffff").int
-    k1 = (rid >> 64) & 0x7FFFFFFFFFFFFFFF
-    k2 = rid & 0x7FFFFFFFFFFFFFFF
-    assert 0 <= k1 <= 0x7FFFFFFFFFFFFFFF
-    assert 0 <= k2 <= 0x7FFFFFFFFFFFFFFF
+    statement = " ".join(str(_ADVISORY_LOCK_REPRESENTATION).split())
+    assert "pg_advisory_xact_lock(" in statement
+    assert (
+        "hashtextextended('d84-representation:' || CAST(:representation_id AS text), 0)"
+        in statement
+    )
+    assert ":k1" not in statement
+    assert ":k2" not in statement
 
 
 def test_extract_follow_up_zero_chunks_enqueues_normalize() -> None:

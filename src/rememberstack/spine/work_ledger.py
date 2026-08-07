@@ -269,14 +269,12 @@ class WorkLedger:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
             # Serialize barrier evaluation for one representation (P1.1 dual-review).
-            # pg advisory locks take signed int64 keys — keep both halves non-negative.
-            rid = barrier.representation_id.int
+            # PostgreSQL supports one bigint key or two integer keys, never two
+            # bigint keys. Hash a namespaced UUID to one stable bigint, matching
+            # the repository's other entity-scoped advisory locks.
             connection.execute(
                 _ADVISORY_LOCK_REPRESENTATION,
-                {
-                    "k1": (rid >> 64) & 0x7FFFFFFFFFFFFFFF,
-                    "k2": rid & 0x7FFFFFFFFFFFFFFF,
-                },
+                {"representation_id": barrier.representation_id},
             )
             updated = connection.execute(
                 _COMPLETE, {"processing_id": processing_id}
@@ -915,7 +913,9 @@ _WAKE = text(
 
 _ADVISORY_LOCK_REPRESENTATION = text(
     """
-    SELECT pg_advisory_xact_lock(CAST(:k1 AS bigint), CAST(:k2 AS bigint))
+    SELECT pg_advisory_xact_lock(
+        hashtextextended('d84-representation:' || CAST(:representation_id AS text), 0)
+    )
     """
 )
 
