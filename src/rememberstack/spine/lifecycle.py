@@ -1034,7 +1034,7 @@ _SELECT_READY_CYCLES = text(
            AND w.target_id = c.chunk_id
            AND w.stage = 'extract_claims'
           WHERE v.sync_cycle_id = y.cycle_id
-            AND w.status IN ('pending', 'running', 'failed')
+            AND w.status IN ('pending', 'running', 'failed', 'dead_letter')
       )
     ORDER BY y.started_at
     """

@@ -317,6 +317,7 @@ class ExtractClaimsHandler:
                 deployment_id=work.deployment_id,
                 version_id=source.version_id,
                 representation_id=source.representation_id,
+                chunker_version=self._chunker_version,
                 extractor_version=E2_EXTRACTOR_VERSION,
                 content_hash=work.content_hash,
                 lane=work.lane,

@@ -268,6 +268,16 @@ class WorkLedger:
         for work in follow_up:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
+            # Serialize barrier evaluation for one representation (P1.1 dual-review).
+            # pg advisory locks take signed int64 keys — keep both halves non-negative.
+            rid = barrier.representation_id.int
+            connection.execute(
+                _ADVISORY_LOCK_REPRESENTATION,
+                {
+                    "k1": (rid >> 64) & 0x7FFFFFFFFFFFFFFF,
+                    "k2": rid & 0x7FFFFFFFFFFFFFFF,
+                },
+            )
             updated = connection.execute(
                 _COMPLETE, {"processing_id": processing_id}
             ).rowcount
@@ -282,6 +292,7 @@ class WorkLedger:
                 connection=connection,
                 deployment_id=barrier.deployment_id,
                 representation_id=barrier.representation_id,
+                chunker_version=barrier.chunker_version,
                 extractor_version=barrier.extractor_version,
             ):
                 outcomes.append(
@@ -518,17 +529,18 @@ class WorkLedger:
         )
 
 
-
 def _extract_barrier_ready(
     *,
     connection: Connection,
     deployment_id: UUID,
     representation_id: UUID,
+    chunker_version: str,
     extractor_version: str,
 ) -> bool:
-    """True when every chunk of the representation has succeeded extract work + output."""
+    """True when every chunk of this grid has succeeded extract work + output."""
     expected = connection.execute(
-        _BARRIER_EXPECTED_CHUNKS, {"representation_id": representation_id}
+        _BARRIER_EXPECTED_CHUNKS,
+        {"representation_id": representation_id, "chunker_version": chunker_version},
     ).scalar_one()
     if int(expected) == 0:
         return True
@@ -537,11 +549,13 @@ def _extract_barrier_ready(
         {
             "deployment_id": deployment_id,
             "representation_id": representation_id,
+            "chunker_version": chunker_version,
             "extractor_version": extractor_version,
             "stage": PipelineStage.EXTRACT_CLAIMS.value,
         },
     ).scalar_one()
     return int(ready) == int(expected)
+
 
 def _budget_window_spend(
     *, connection: Connection, budget: CostBudget
@@ -899,11 +913,18 @@ _WAKE = text(
     """
 )
 
+_ADVISORY_LOCK_REPRESENTATION = text(
+    """
+    SELECT pg_advisory_xact_lock(CAST(:k1 AS bigint), CAST(:k2 AS bigint))
+    """
+)
+
 _BARRIER_EXPECTED_CHUNKS = text(
     """
     SELECT count(*)::bigint
     FROM chunks
     WHERE representation_id = :representation_id
+      AND chunker_version = :chunker_version
     """
 )
 
@@ -919,6 +940,7 @@ _BARRIER_READY_CHUNKS = text(
      AND p.component_version = :extractor_version
      AND p.status = 'succeeded'
     WHERE c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version
       AND (
             EXISTS (
                 SELECT 1 FROM claims cl

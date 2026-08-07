@@ -64,6 +64,14 @@ class PipelineReadinessCatalog:
             ),
             None,
         )
+        chunk_version = next(
+            (
+                version
+                for stage, version in self._expected
+                if stage is PipelineStage.CHUNK
+            ),
+            None,
+        )
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -74,7 +82,7 @@ class PipelineReadinessCatalog:
                 .all()
             )
             extract_rows = ()
-            if extract_version is not None:
+            if extract_version is not None and chunk_version is not None:
                 extract_rows = (
                     connection.execute(
                         _EXTRACT_CHUNK_STATUS,
@@ -82,6 +90,7 @@ class PipelineReadinessCatalog:
                             "deployment_id": deployment_id,
                             "version_ids": version_ids,
                             "extractor_version": extract_version,
+                            "chunker_version": chunk_version,
                         },
                     )
                     .mappings()
@@ -191,7 +200,8 @@ _VERSION_WORK = text(
     """
 ).bindparams(bindparam("version_ids", expanding=True))
 
-# D84: extract_claims primary rows target chunks; derive a version-level status.
+# D84: extract_claims primary rows target chunks; derive a version-level status
+# for the version's current representation only.
 _EXTRACT_CHUNK_STATUS = text(
     """
     SELECT v.version_id AS target_id,
@@ -209,15 +219,29 @@ _EXTRACT_CHUNK_STATUS = text(
              WHEN bool_or(p.status = 'pending') THEN 'pending'
              ELSE 'missing'
            END AS status,
-           max(p.finished_at) AS finished_at
+           COALESCE(
+             max(p.finished_at),
+             max(embed.finished_at),
+             now()
+           ) AS finished_at
     FROM document_versions v
-    LEFT JOIN chunks c ON c.version_id = v.version_id
+    LEFT JOIN document_representations r
+      ON r.representation_id = v.current_representation_id
+    LEFT JOIN chunks c
+      ON c.representation_id = r.representation_id
+     AND c.chunker_version = :chunker_version
     LEFT JOIN processing_state p
       ON p.deployment_id = :deployment_id
      AND p.target_kind = 'chunk'
      AND p.target_id = c.chunk_id
      AND p.stage = 'extract_claims'
      AND p.component_version = :extractor_version
+    LEFT JOIN processing_state embed
+      ON embed.deployment_id = :deployment_id
+     AND embed.target_kind = 'document_version'
+     AND embed.target_id = v.version_id
+     AND embed.stage = 'embed_chunk'
+     AND embed.status = 'succeeded'
     WHERE v.version_id IN :version_ids
     GROUP BY v.version_id
     """

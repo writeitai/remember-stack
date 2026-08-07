@@ -49,6 +49,7 @@ class ExtractChunkBarrier(BaseModel):
     deployment_id: UUID
     version_id: UUID
     representation_id: UUID
+    chunker_version: str
     extractor_version: str
     content_hash: str
     lane: ProcessingLane | None
