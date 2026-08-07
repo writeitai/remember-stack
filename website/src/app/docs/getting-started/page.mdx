@@ -1,0 +1,210 @@
+export const metadata = {
+  title: "Getting started",
+  description:
+    "Install RememberStack, stand up a single-deployment Compose stack, ingest a Markdown document, and run the three assured queries.",
+};
+
+# Getting started
+
+Goal: a running deployment, one ingested document, and a first honest query — in one sitting.
+
+## Choose a path
+
+| Path | When |
+| --- | --- |
+| **Docker Compose** (recommended first) | You want the full stack: Postgres, MinIO, API, workers |
+| **Python client wheel** | You already have a remote deployment API URL |
+| **Library / server extras** | You are embedding or operating the engine in process |
+
+This page uses Compose. Full operator detail: [Self-host deployment](/docs/deployment).
+
+## Prerequisites
+
+- Docker Engine with Compose v2
+- An OpenRouter API key (or equivalent model seats) for extraction and embeddings
+- ~10 minutes for first boot + smoke ingest
+
+## 1. Start the stack
+
+```bash
+git clone https://github.com/writeitai/remember-stack.git
+cd remember-stack
+cp .env.example .env
+# Set OpenRouter (or configured provider) credentials in .env
+docker compose up --build --detach --wait
+```
+
+The Compose file can also pull the public `ghcr.io/writeitai/remember-stack:0.2.0` image. Use `--build` when you want to run local source; use `--no-build --pull always` when you want the released image.
+
+Health:
+
+```bash
+curl --fail http://localhost:8000/healthz
+curl --fail http://localhost:8000/recipes
+```
+
+You should see the three assured operations: `resolve_entity`, `question_context`, `current_context`.
+
+## 2. Ingest a document
+
+The fresh self-host profile ships a **Markdown conversion route**. Other MIME types need additional conversion routes registered on the deployment (the engine design supports them; the smoke profile does not auto-route PDF/audio/video).
+
+```bash
+printf '# Hello\n\nAlice is the CFO of Acme as of 2024.\n' > /tmp/remember-smoke.md
+curl --fail \
+  -H 'content-type: application/octet-stream' \
+  --data-binary @/tmp/remember-smoke.md \
+  'http://localhost:8000/ingest?filename=remember-smoke.md&mime=text%2Fmarkdown'
+```
+
+The response names `deployment_id`, `doc_id`, and `version_id`. Save the version id for readiness.
+
+What just happened (short form):
+
+1. Bytes stored immutably (E0)
+2. Markdown + structure derived
+3. Chunks packed deterministically (E1)
+4. Claims extracted and grounded (E2)
+5. Entities resolved; facts adjudicated (E3)
+6. Search indexes updated (P1)
+
+Detail: [Ingestion](/docs/ingestion).
+
+## 3. Wait until the version is ready
+
+Prefer the machine-verifiable readiness endpoint over shelling into Postgres:
+
+```bash
+# replace VERSION_ID with the ingest response version_id
+curl --fail -X POST http://localhost:8000/readiness \
+  -H 'content-type: application/json' \
+  -d '{"version_ids":["VERSION_ID"],"require_projections":false}'
+```
+
+`require_projections=false` is appropriate for a smoke path before you publish P2/P3. After projections matter, publish them and re-check with `require_projections=true` (the default).
+
+Human fallback if you need stage detail:
+
+```bash
+docker compose exec postgres psql -U rememberstack -d rememberstack -c \
+  "SELECT stage, status FROM processing_state ORDER BY enqueued_at"
+```
+
+## 4. Publish aggregate projections (when you need graph / corpus FS)
+
+P2 (graph) and P3 (corpus filesystem) rebuild whole-corpus, not per document:
+
+```bash
+docker compose --profile operations run --rm projections
+```
+
+## 5. First retrieval — three assured ops
+
+Argument names match the recipe registry and [API reference](/docs/reference/api).
+
+### Resolve an entity
+
+```bash
+curl --fail -X POST http://localhost:8000/recipe/resolve_entity \
+  -H 'content-type: application/json' \
+  -d '{"name":"Alice","entity_type":"person"}'
+```
+
+Query-time resolve is **exact-name (T0)** in the current surface: ambiguity among exact aliases is returned as ranked candidates, never guessed away. Fuzzy/phonetic/embedding tiers run on the **write-time** resolution cascade, not this hot path.
+
+### Evidence context for a question
+
+```bash
+curl --fail -X POST http://localhost:8000/recipe/question_context \
+  -H 'content-type: application/json' \
+  -d '{"query":"Who is the CFO of Acme?"}'
+```
+
+Returns **evidence grain** (claims + chunks) — testimony, not the adjudicated verdict alone.
+
+### Current-fact context
+
+```bash
+curl --fail -X POST http://localhost:8000/recipe/current_context \
+  -H 'content-type: application/json' \
+  -d '{"query":"Who is the CFO of Acme?"}'
+```
+
+Returns **fact grain** with live testimony under a hard evidence budget.
+
+### What to read on the envelope first
+
+Single-grain answers are **flat** (not nested under `parts[].results`):
+
+```json
+{
+  "grain": "fact",
+  "facts": [{ "fact_id": "…", "kind": "relation", "label": "…", "evidence_count": 1, "support": "current" }],
+  "fact_evidence": [{ "fact_id": "…", "claim_id": "…", "stance": "supports" }],
+  "evidence": [{ "claim_id": "…", "claim_text": "…", "is_current_testimony": true }],
+  "freshness": { "pg_live_ts": "…", "p1_written_inline": true },
+  "dropped_by_hydration": 0,
+  "negative": null
+}
+```
+
+Agent checklist:
+
+1. Read `grain`
+2. If `negative` is set — branch on `kind` (`unknown_entity` | `known_empty` | `boundary`)
+3. Prefer `facts` + `fact_evidence` for present-tense belief
+4. Drill `evidence` / sources before irreversible action
+
+Full contract: [Response envelope](/docs/retrieval/envelope).
+
+## 6. Open query (optional, powerful)
+
+```bash
+curl --fail http://localhost:8000/query/space
+```
+
+Example — current facts only:
+
+```bash
+curl --fail -X POST http://localhost:8000/query/sql \
+  -H 'content-type: application/json' \
+  -d '{"sql":"SELECT fact_kind, fact_id, predicate FROM facts_current LIMIT 20"}'
+```
+
+**Wrong pattern:** filtering `claims_live` validity windows to answer “what is true now.” Claim windows are **asserted testimony**, not system belief. Start from `facts_current`. See [Open query space](/docs/retrieval/open-query).
+
+## 7. Agent path
+
+Surfaces available immediately without mounts: **API / CLI / MCP** (same three assured ops + open query).
+
+Mounts (P3 corpus tree, artifacts, raw, Plane K checkout) are published through the **library mount APIs** for a deployment — not a separate Compose service in the smoke profile. When your harness can mount:
+
+1. Obtain `PublishedMounts` from the self-host mount publisher for this deployment.
+2. Render/publish the consumption `SKILL.md` via `ConsumptionSkillSurface`.
+3. Prefer filesystem for navigate/read/grep; use MCP/API for search/graph/time-travel.
+
+Details: [Mounts and skill](/docs/mounts).
+
+## Install without Compose
+
+**Client (remote deployment):**
+
+```bash
+pip install rememberstack
+# or: uv add rememberstack
+```
+
+**Named install surfaces** (see package extras):
+
+```bash
+pip install 'rememberstack[server]'
+pip install 'rememberstack[connectors-watched-directory]'
+pip install 'rememberstack[k]'
+```
+
+## Next
+
+- [Concepts](/docs/concepts) — claim vs fact vs grain
+- [Ingestion](/docs/ingestion) — full write path
+- [Retrieval](/docs/retrieval) — full read path
+- [Deployment](/docs/deployment) — operators, budgets, projections

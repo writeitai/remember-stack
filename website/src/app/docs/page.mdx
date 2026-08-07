@@ -1,43 +1,91 @@
 export const metadata = {
-  title: "Introduction",
+  title: "Why RememberStack",
   description:
-    "RememberStack is a memory system for AI agents: millions of heterogeneous documents distilled into auditable evidence, adjudicated facts, and compiled knowledge.",
+    "Agent memory that separates testimony from truth, keeps every conclusion auditable, and scales to millions of documents — with zero LLM on the query path.",
 };
 
-# Introduction
+# Why RememberStack
 
-**RememberStack** is a memory system for AI agents. It ingests heterogeneous inputs — documents, email, web pages, audio recordings, video, images — and distills them into progressively more abstract, navigable knowledge, while keeping every step auditable by humans. Scale is a requirement, not an aspiration: the system is designed to still be useful at a **million documents**.
+**RememberStack** is a memory system for AI agents. Ingest documents into a structured spine and get back **navigable, auditable knowledge**: not just passages that *look* relevant, but an account of what sources said, what the system currently holds true, and how those two can differ.
 
-> **Status: pre-release.** Phases 0–7 are implemented, and [`v0.2.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.2.0) is installable from [PyPI](https://pypi.org/project/rememberstack/0.2.0/) or as a public [GHCR container](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack). Interfaces and the data model may still change before a stable release. The [public roadmap](https://github.com/writeitai/remember-stack/blob/main/plan/plans/roadmap.md) and [Project Status](/docs/project-status) page track what exists and what comes next.
+Scale is a design requirement, not a slide: the system is built to stay useful at **a million documents**.
 
-## The problem it solves
+> **Pre-release (`v0.2.0`).** Phases 0–7 are implemented. The smoke self-host profile routes **Markdown** conversion out of the box; additional MIME routes (HTML/PDF/media) are engine-supported but must be registered on the deployment. Interfaces may still change before a stable release. See [Project status](/docs/project-status).
 
-Pour a million documents into a system and you want to ask more than *"where did I read this?"* You want to ask *"what do we actually know — and what changed our mind?"*
+## Why you should care
 
-Most retrieval systems answer the first question: they find passages. RememberStack is built for the second. It separates **what sources said** from **what the system currently holds true**, keeps both queryable, and records how every conclusion was reached — so an agent (or a human) can always drill from a summary down to the exact sentence, page, or second of audio that supports it.
+Most “memory” stacks answer: *where did I read something like this?*
 
-## The three planes
+Agents that act need a harder question: **what do we actually know — and what changed our mind?**
 
-The whole system is organized as three planes. This is the one mental model to keep:
+| Failure mode in typical RAG / memory | RememberStack response |
+| --- | --- |
+| Source text is treated as truth | **Claims** (testimony) are separate from **facts** (adjudicated current belief) |
+| Edits overwrite history | Supersession **closes a validity window**; history stays queryable |
+| Contradictions are averaged or hidden | Contradictions are **grouped and returned together** |
+| Re-ingestion inflates confidence | Support counts **distinct document lineages**, not re-extracts |
+| Vector index is the authority | Indexes **nominate**; Postgres **confirms** live validity |
+| LLM completion on every query | **No LLM completion on the query path** (semantic search still embeds the query string) — planning stays in the agent |
+| “No results” is a vague empty list | Typed negatives: `unknown_entity`, `known_empty`, `boundary` |
 
-| Plane | Plain-English meaning | What it holds | Rebuildable? |
+If your agent must **act** on memory — not just chat about a corpus — those distinctions are load-bearing.
+
+## The one mental model: three planes
+
+![Three planes: Evidence, Knowledge, Projections](/docs/diagrams/three-planes.jpg)
+
+| Plane | Meaning | Authority | Rebuildable? |
 | --- | --- | --- | --- |
-| **E — Evidence** | *what we ingested* | Raw inputs broken down step by step: files → chunks → atomic claims → facts | No — it is the ground truth |
-| **K — Knowledge** | *what we concluded* | Distilled, citation-bearing knowledge pages, version-controlled like code | No — compiled/authored |
-| **P — Projections** | *how we reach it* | Search indexes, a knowledge graph, and a browsable filesystem, all derived from the evidence | Yes — regenerate any time |
+| **E — Evidence** | What we ingested and adjudicated | Postgres (+ object storage for bytes) | No — it *is* the ground truth |
+| **K — Knowledge** | What we concluded in prose | Git (compiled + authored pages) | Compiled pages recompile; authored pages are commitments |
+| **P — Projections** | How we reach it fast | None — derived only | **Yes** — drop and rebuild anytime |
 
-The one-line version: **E** is what we ingested, **K** is what we concluded, **P** is how we reach it — and **P can always be rebuilt from E**.
+One line: **E is what we ingested, K is what we concluded, P is how we reach it — and P always rebuilds from E.**
 
-## Built for agent consumers
+## Built for agents (primary), readable by humans
 
-The primary consumers are agentic coding harnesses (Claude Code, Codex, OpenCode and friends). That shapes the whole consumption story:
+Primary consumers are agent harnesses (Claude Code, Codex, OpenCode, and peers). That is not marketing color; it drives the surface design:
 
-- **Filesystem-first.** The memory mounts read-only as navigable directories — browse the corpus, `grep` it, follow links down to sources — with API/CLI/MCP surfaces carrying everything a filesystem can't (semantic search, graph traversal, time-travel queries).
-- **Honest answers.** Every response is labeled with its epistemic grain (source testimony vs. current fact vs. compiled synthesis), carries freshness stamps, surfaces contradictions instead of hiding them, and types its "no"s — *unknown*, *known-empty*, or *stated capability boundary*.
-- **Raw always reachable.** Derived text (transcripts, descriptions, OCR) feeds the pipeline, but the original file — the recording, the photo — is always one explicit pointer away, down to the exact time interval or image region.
+1. **Filesystem-first.** Four read-only mounts: corpus tree, converted artifacts, raw originals (off the nav path), Plane K checkout. Prefer `ls` / read / `grep` when mounts exist.
+2. **Query when files cannot.** Semantic search, graph traversal, time-travel, hydration, open SQL/Cypher — via API, CLI, and MCP with the **same** operations.
+3. **Honest envelopes.** Every assured answer declares grain, freshness, contradictions, truncation, and typed “no”s so the agent can *reason about* the answer. Wire shape is flat single-grain by default — see [Envelope](/docs/retrieval/envelope).
+4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the three assured operations. Cold-agent eval **S58** guards that curriculum.
 
-## Where to go next
+Humans get the same audit trail: every conclusion drills to claims, then to the exact span, page, image region, or second of audio.
 
-- [Concepts](/docs/concepts) — claims, facts, and compiled knowledge: the vocabulary everything else uses.
-- [Architecture](/docs/architecture) — how the planes fit together, end to end.
-- [Project Status](/docs/project-status) — what is designed, what is built, and where the plan lives.
+## Reading motion (do this every time)
+
+![Orient, verify, audit](/docs/diagrams/orient-verify-audit.jpg)
+
+1. **Orient** — K pages and P3 indexes for the map.
+2. **Verify** — fact grain (relations + observations) for anything load-bearing.
+3. **Audit** — claims and raw sources when stakes demand provenance.
+
+Never stop at orientation for decisions that cost money, trust, or irreversible action.
+
+## Ship surface (what agents call today)
+
+Exactly **three** top-level assured operations:
+
+| Operation | Use for |
+| --- | --- |
+| `resolve_entity` | Turn a name/string into ranked entity candidates |
+| `question_context` | High-recall **evidence** context (claims + chunks) for a question |
+| `current_context` | **Current-fact** context with live testimony under budget |
+
+Plus open query: sandboxed SQL, read-only Cypher over the graph snapshot, saved `examples.*` queries, and schema discovery. Full contracts: [Retrieval](/docs/retrieval), [API](/docs/reference/api).
+
+## Open source = full engine
+
+Apache-2.0. Correctness-determining behavior — extraction, entity resolution, supersession, provenance, budgets, DLQ, hard-forget — is **never paywalled**. The hosted cloud runs this same engine; it adds operations and product chrome, not a secret core.
+
+## Next
+
+| You want… | Go to |
+| --- | --- |
+| Run it in minutes | [Getting started](/docs/getting-started) |
+| Competitive brief vs passage RAG | [vs passage RAG](/docs/why) |
+| Vocabulary (claim / fact / grain / clocks) | [Concepts](/docs/concepts) |
+| End-to-end map | [Architecture](/docs/architecture) |
+| How writes work | [Ingestion](/docs/ingestion) |
+| How reads work | [Retrieval](/docs/retrieval) |

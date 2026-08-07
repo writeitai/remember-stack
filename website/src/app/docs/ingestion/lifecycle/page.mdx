@@ -1,0 +1,162 @@
+export const metadata = {
+  title: "Lifecycle and versions",
+  description:
+    "Document lineages, snapshot vs living versioning, testimony currency, evidence counting, reconciliation, deletion, and hard-forget.",
+};
+
+# Lifecycle and versions
+
+Documents change. Extractors improve. If the system treats every re-run as new independent proof, confidence becomes meaningless. This page is the complete honesty contract for those events.
+
+Parent: [Ingestion](/docs/ingestion).
+
+## The two problems
+
+### A — Re-extraction
+
+Same bytes, better extractor → new claim ids (claims are immutable). Naïve counting would **double support** for one sentence every generation.
+
+### B — Source edits
+
+A watched Drive file changes → new `content_hash`. Naïve systems either invent a new document (double-count the unchanged 95%) or overwrite history.
+
+**Shared root:** keep **source snapshot**, **representation**, and **extraction basis** as separate coordinates.
+
+## Three identities
+
+| Identity | Key | Changes when |
+| --- | --- | --- |
+| **Content object** | `content_hash` | Bytes differ |
+| **Lineage** | `doc_id` from `(source_kind, source_ref)` | New connector object |
+| **Version** | `version_id` | New observed snapshot of a lineage |
+| **Representation** | `representation_id` | New conversion run (e.g. better ASR on same bytes) |
+| **Extraction basis** | representation + blockizer + structurer + extractor versions | Any toolchain coordinate that re-derives claims |
+
+Identical-byte re-observation must not mint a new version that rewrites `source_modified_at` casually — that timestamp already dated testimony.
+
+## Versioning modes
+
+Per lineage (connector default + override):
+
+| Mode | Meaning | Old-only claims | Sole support removed |
+| --- | --- | --- | --- |
+| **`snapshot`** (default fail-safe) | Each version is independent dated testimony (quarterly PDFs, amendments) | Stay current testimony forever | Cannot happen via “removal” of old archival text |
+| **`living`** | Current version is the standing statement (wiki, roster) | Lose **currency** when content leaves current version | Fact **closed** (`retracted_source_removal`) — loud, audited, reversible |
+
+**Guidance:**
+
+- Edit-in-place (Google Docs) → `living`
+- Replace-whole-file PDFs/exports → usually `snapshot`
+- Rolling logs that scroll off → `snapshot` (old entries were not withdrawn; they aged out of a window)
+
+Misclassification is fixed by choosing the right mode — not by a silent soft “maybe retract.”
+
+## Testimony currency
+
+A claim is **current testimony** when it belongs to the lineage’s current extraction basis under the lineage mode.
+
+| Event | Currency effect | Adjudication? |
+| --- | --- | --- |
+| Re-derivation (converter/blockizer/structurer/extractor bump) | Old basis → non-current (`reextracted` / basis reason) | No — same testimony re-transcribed |
+| `living` version supersession | Claims absent from new current version → non-current (`version_superseded`) | Removal may close sole-supported facts |
+| `snapshot` succession | No currency flip | New content is ordinary new testimony through E3 |
+
+**Currency is not supersession.** It does not edit claim text, asserted intervals, or history. It is processing bookkeeping with an **append-only transitions ledger** + hot-path filter. Transaction-time reconstruction still sees old generations.
+
+Default evidence search excludes non-current testimony unless the caller opts in.
+
+## The counting rule
+
+> `evidence_count` / `contradict_count` = number of **distinct document lineages** whose **current-testimony** claims support (resp. contradict) the fact.
+
+| Inflation source | Why it dies |
+| --- | --- |
+| Re-extraction | Same lineage |
+| Version churn | Same lineage |
+| Within-doc repetition | Same lineage |
+
+Evidence **rows** remain claim-grained and append-only for provenance. Only the aggregate definition is lineage-aware.
+
+### Zero current support — two treatments
+
+| Cause | Treatment |
+| --- | --- |
+| **Source/curator acted** (living removal, explicit retraction claim) | Close or invalidate per shape rules; record reason |
+| **Toolchain only** (new extractor missed a sentence) | Do **not** pretend the world changed; flag `support: withdrawn` / review — belief caution without silent deletion of history |
+
+## Content-addressed reuse (edit-proportional cost)
+
+When a new version arrives:
+
+1. Convert/structure the new representation.
+2. Blockize; match stable anchors to prior chunks.
+3. **Reuse** claims, prefixes, and vectors for unchanged extraction inputs.
+4. Extract only new/changed chunks.
+5. Reconcile currency and counts at a **sync-cycle barrier** so a moved section is a support swap — not a retract flicker.
+
+Measured spike hit rates on reuse are high; treat numbers as measurements, not SLAs.
+
+## Watched sources
+
+- Poll cycles are recorded.
+- Unchanged revision/etag → no-op before bytes move.
+- Unchanged bytes → content-hash no-op.
+- Active editors debounce to one version per stability window.
+- Source deletion is detected and handled as contribution removal (below).
+
+Local directory watcher ships as a connector extra; other connectors follow the same lineage contracts.
+
+## Deletion vs hard-forget
+
+### Deletion (contribution removal)
+
+Removes the document’s **current contribution** uniformly:
+
+- Currency / support recounts fire
+- Sole-supported living facts close under the rules above
+- Historical claims remain as history where the model requires auditability
+
+### Hard-forget
+
+Stronger operational purge: every active library-controlled surface is scrubbed; a durable content-free **forget manifest** is replayed before serve-after-restore so forgotten content cannot resurrect from backups of derived stores. Portability still uses native Postgres/object/git tools; the library defines fail-closed restore order and rebuilds P1/P2/P3.
+
+Forgotten content is **indistinguishable from never-existed** on read (`unknown_entity` / `known_empty`) — there is no special “denied” grain for forgotten rows.
+
+## Reconciliation algorithm (conceptual)
+
+```
+on new version or new extraction basis:
+  mark new basis current for affected chunks
+  append currency transitions for displaced claims
+  recompute lineage-level support for touched facts
+  if living and sole support removed:
+    adjudicate close/invalidate with retracted_source_removal
+  if toolchain-only zero support:
+    mark withdrawn support + review flag
+  enqueue projection / K invalidation signals
+```
+
+## Retrieval interactions
+
+| Read mode | Currency default |
+| --- | --- |
+| Fact grain (`current_context`, `facts_current`) | Current facts + current-testimony support markers |
+| Evidence grain default | Current testimony only |
+| Historical assertion recipes (`claims_as_of`, etc.) | Full testimony history by design |
+| `believed_at` time-travel | Ledgered transitions + bi-temporal fact columns |
+
+Envelope fields `support: current | withdrawn` and freshness horizons communicate residual risk. See [Envelope](/docs/retrieval/envelope).
+
+## Agent rules of thumb
+
+1. Prefer **facts** for present-tense belief.
+2. Treat **withdrawn support** as “still standing but caveated — audit.”
+3. Never interpret claim validity windows as system belief.
+4. When a living source edits, expect reconciliation — not silent vector overwrite.
+5. When you reprocess with a new model, expect **new claims**, stable **counts**, and better text — not magically higher corroboration.
+
+## Next
+
+- [Pipeline stages](/docs/ingestion/pipeline)  
+- [Retrieval](/docs/retrieval)  
+- [Concepts](/docs/concepts)  

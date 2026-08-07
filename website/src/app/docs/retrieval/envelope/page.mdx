@@ -1,0 +1,178 @@
+export const metadata = {
+  title: "Response envelope",
+  description:
+    "Shipped D49 envelope wire contract: flat single-grain fields, freshness, contradictions, fact_evidence, typed negatives.",
+};
+
+# Response envelope
+
+Most systems return rows. RememberStack returns rows **plus a machine-readable account of the answer itself** — because the caller is an agent that must decide whether to act, re-query, or escalate to a human.
+
+This page documents the **shipped wire shape** for assured operations (and primitive compositions that emit the D49 envelope). Open SQL/Cypher use `QueryResult/v1` instead; see [Open query](/docs/retrieval/open-query).
+
+Source of truth in code: `src/rememberstack/model/envelope.py`.
+
+## Default shape: flat single-grain
+
+The common case is **not** nested under `parts[]`. Top-level `grain` selects which result tuples are populated:
+
+```
+{
+  grain: fact | evidence | compiled | composite,
+
+  // temporal echo (flat)
+  as_of_valid_at: instant | null,
+  as_of_believed_at: instant | null,
+  identity_regime: current | as_of,
+
+  // result tuples (populated by grain / operation)
+  entities: [ EntityCandidate… ],
+  facts: [ FactResult… ],
+  evidence: [ EvidenceResult… ],
+  fact_evidence: [ { fact_id, claim_id, stance: supports|contradicts }… ],
+  evidence_totals: [ { fact_id, stance, returned, total }… ],
+  chunks: [ ChunkEvidenceResult… ],
+  sources: [ SourceRecord… ],
+  transcript: [ … ],
+  nodes / paths / edges / ranking / changes / aggregate / pages: …,
+
+  freshness: {
+    pg_live_ts,
+    p1_written_inline,
+    p1_believed_at_horizon,
+    p2_snapshot_version,
+    p2_snapshot_ts,
+    p2_believed_at_horizon,
+    k: { compiled_at, stale, open_flags } | null
+  },
+  truncation: { truncated, returned, estimated_total, total_is_exact, continuation } | null,
+  dropped_by_hydration: n,
+  excluded_unstamped: n,
+  negative: null | { kind, explanation, workaround },
+
+  // composite only
+  parts: [ EnvelopePart… ]
+}
+```
+
+### `FactResult` (fact grain)
+
+| Field | Meaning |
+| --- | --- |
+| `fact_id`, `kind`, `label` | Relation or observation identity |
+| `evidence_count` | Distinct current-testimony lineages |
+| `validity` | `{valid_from, valid_until, ingested_at, invalidated_at}` |
+| `contradiction` / `contradiction_group` | Live co-members package (S23) |
+| `support` | `current` \| `withdrawn` |
+
+There is **no** `confidence` field on the shipped fact record.
+
+### `EvidenceResult` (evidence grain)
+
+| Field | Meaning |
+| --- | --- |
+| `claim_id`, `doc_id`, `chunk_id` | Anchors |
+| `claim_text`, `source_span`, `char_start`, `char_end` | Text + grounding |
+| `is_current_testimony` | Currency filter result |
+| `asserted_at`, `claim_valid_*` | Source-asserted testimony times (not system belief) |
+| `corroboration_count`, `grouped_claim_ids` | Duplicate collapse metadata when present |
+
+Provenance is **flat on the claim** (and via top-level `sources[]`), not a nested `provenance: { hydrate_handle, derivation }` object.
+
+### `fact_evidence` + `evidence_totals`
+
+How `current_context` binds facts to testimony without blending grains:
+
+- `fact_evidence[]` — explicit fact↔claim stance edges returned with the answer
+- `evidence_totals[]` — exact per-fact stance counts (`returned` / `total`) so caps stay honest
+
+## Composite answers use `parts[]`
+
+Only when `grain = composite`. Each `EnvelopePart` is strictly single-grain and carries its own `facts` / `evidence` / `chunks` / `pages` / … — never a blended unlabeled list. Single-grain answers leave `parts` empty and read the top-level tuples.
+
+## Grain discipline
+
+| Grain | May answer | Must not pretend to answer |
+| --- | --- | --- |
+| **fact** | What we currently hold true (validity-filtered) | Source gossip as verdict |
+| **evidence** | What sources asserted (claims) / current source text (chunks) | “Is it true now?” without adjudication |
+| **compiled** | Pre-paid synthesis with citations | Live confirmed fact |
+| **composite** | Labeled multi-section answers | Blended unlabeled mash |
+
+Evidence envelopes may carry both `evidence[]` (claims) and `chunks[]` (confirmed source-text). Different semantics — never fuse as one unlabeled UUID soup.
+
+Default evidence mode: **current testimony only**. Opt in for superseded testimony; historical recipes declare history explicitly.
+
+## Three non-negotiable rules
+
+### 1. Contradiction co-members are never silently absent
+
+Returning one side of a live contradiction group without indication of the others is a **contract violation**.
+
+- Co-members return inline up to a guaranteed cap.
+- Beyond cap: still always `group_id`, `returned`, `total`, `continuation`.
+
+### 2. No silent caps
+
+Hub neighborhoods and large sets return ranked pages with **truncation markers and continuations**. `total_is_exact` tells you whether the estimated total itself hit a cap.
+
+### 3. Hydration drops are counted
+
+Projections may nominate candidates the spine rejects. `dropped_by_hydration` keeps ranking honest. Compound structures (paths) drop **as units**.
+
+## Freshness block (shipped field names)
+
+| Field | What it tells the agent |
+| --- | --- |
+| `pg_live_ts` | Live spine clock for confirmed rows |
+| `p1_written_inline` | Whether P1 was written on the inline path (lag measurement evolves) |
+| `p1_believed_at_horizon` | Oldest system-time P1 can answer (`null` = unbounded) |
+| `p2_snapshot_version` / `p2_snapshot_ts` | Which graph snapshot answered |
+| `p2_believed_at_horizon` | Graph belief horizon |
+| `k` | Compile time, stale flag, open evidence-change flags when K was consumed |
+
+Finite `believed_at` horizons → query before horizon yields typed **`boundary`**, not partial silent history.
+
+## Typed negatives
+
+| kind | Meaning | Correct agent move |
+| --- | --- | --- |
+| `unknown_entity` | Nothing resolves | Widen resolve / spelling / search |
+| `known_empty` | Entity exists; no matching facts | Trust absence within freshness |
+| `boundary` | Stated capability limit | Read workaround; re-plan |
+
+Hard-forgotten content is **not** a separate kind — it is indistinguishable from never-existed. There is no content-level `denied` in the library.
+
+## Media derivation fields (open query, not envelope)
+
+`derivation_kind` / `evidence_mode` / rich source locators for media are available on the **SQL query-space occurrence views**, not as nested envelope `provenance` objects on `EvidenceResult`. Use [Open query](/docs/retrieval/open-query) for those columns; use claim `source_span` / char offsets on the envelope for grounded text.
+
+## Support marker
+
+| support | Meaning |
+| --- | --- |
+| `current` | At least one current-testimony lineage supports |
+| `withdrawn` | Fact still present but current testimony support hit zero via toolchain path — caveat + audit |
+
+## Temporal echo
+
+`as_of_valid_at` / `as_of_believed_at` echo the filters actually applied. Multi-step questions compose: take a timestamp from result A, pass as `valid_at` to call B.
+
+`identity_regime` prevents silently mixing today’s merge map with yesterday’s beliefs when you did not ask for identity-as-of.
+
+## Agent consumption checklist
+
+1. Read `grain` first — refuse load-bearing action on wrong grain.  
+2. If `negative` non-null — branch on kind.  
+3. If `contradiction` — report all sides (or fetch continuation).  
+4. If `truncated` — decide whether to continue.  
+5. If `dropped_by_hydration` high — consider re-query / freshness.  
+6. Prefer `fact_evidence` + `evidence_totals` when using `current_context`.  
+7. If using K — check `freshness.k`.  
+
+## Related
+
+- [Retrieval overview](/docs/retrieval)  
+- [Primitives](/docs/retrieval/primitives)  
+- [Open query](/docs/retrieval/open-query)  
+- [API reference](/docs/reference/api)  

@@ -1,0 +1,132 @@
+export const metadata = {
+  title: "Retrieval",
+  description:
+    "How agents get answers: no LLM completion on the query path, nominate→confirm→account, assured operations, open query, and progressive deep links.",
+};
+
+# Retrieval
+
+Retrieval is the **read path**. RememberStack does not try to be a clever NL planner. It tries to be **composable, self-describing, and honest** — because the caller is an agent that must reason about the answer before acting.
+
+## Why this read path wins
+
+| Design choice | Why agents care |
+| --- | --- |
+| **No LLM completion on query path** | No black-box rewrite of intent; plans stay inspectable (semantic paths may still embed the query) |
+| **Projections nominate; Postgres confirms** | Stale indexes cannot serve dead facts as live |
+| **Grain-typed answers** | Never confuse testimony with belief |
+| **Envelope self-accounts** | Truncation, contradictions, freshness, typed “no”s |
+| **Filesystem-first + query parity** | Use harness strengths; full power when unmounted |
+
+![Retrieval: nominate → confirm → account](/docs/diagrams/retrieval-flow.jpg)
+
+## Mental model in three steps
+
+1. **Nominate** — P1 search, P2 graph, open SQL/Cypher, or an assured op’s internal chain proposes candidates (may lag).
+2. **Confirm** — by-ID hydration against live Postgres re-reads validity, invalidation, contradiction membership, currency.
+3. **Account** — response envelope (or `QueryResult/v1` for open query) states grain, freshness, drops, truncation, negatives.
+
+**Mounts skip step 2 by construction** (snapshot files). Rule: orient on mounts; **verify load-bearing facts on the spine**.
+
+## Choose a surface
+
+| Need | Use |
+| --- | --- |
+| Navigate / read / grep | **Mounts** (P3, artifacts, K) when published for the deployment |
+| “What is true now?” with typed envelope | **`current_context`** |
+| High-recall source context for a question | **`question_context`** |
+| Exact name → entity | **`resolve_entity`** (T0 exact) |
+| Ad-hoc analytics / joins / graph patterns | **Open SQL / Cypher / saved queries** |
+| Why do we believe X? | Evidence hydration / audit SQL / transcript endpoints where exposed |
+| Change feed | Open query / delta-oriented saved patterns |
+
+Wire contracts: [API](/docs/reference/api) · [CLI](/docs/reference/cli) · [MCP](/docs/reference/mcp).
+
+## Assured operations (exactly three)
+
+These are the top-level intent tools on API/CLI/MCP. Seventeen older stock patterns ship only as discoverable `examples.*` saved queries — **not** as compatibility aliases.
+
+| Operation | Args (required) | Grain | Intent |
+| --- | --- | --- | --- |
+| `resolve_entity` | `name` (optional `entity_type`) | entity candidates (envelope packaging) | Exact-name disambiguation |
+| `question_context` | `query` (optional `k`, `candidate_k`, flags) | **evidence** | Hybrid claims + chunks |
+| `current_context` | `query` (optional `k`, `evidence_per_fact`) | **fact** | Current facts + live testimony under budget |
+
+### Anti-patterns
+
+| Don’t | Do |
+| --- | --- |
+| Answer present-tense from `question_context` alone | Verify with `current_context` / facts |
+| Filter claim validity windows as “true at T” | Use fact `valid_at` / `facts_current` |
+| Hide one side of a contradiction | Report co-members |
+| Trust a compiled K page as live | Check `freshness.k`; verify facts |
+| Assume empty = unknown entity | Read negative kind |
+| Assume fuzzy resolve on misspellings | Use evidence search or fix the name |
+
+## Open query space
+
+Three neutral powers:
+
+1. **Cypher** — native graph over **published P2 snapshot** (`built_at` / age disclosed).
+2. **SQL** — sandboxed live/evidence-composable reads over versioned views + allowlisted SRFs (semantic/lexical nomination bridges, graph helpers).
+3. **Assured ops** — typed envelopes for the common intents.
+
+Discovery: `GET /query/space` opens with the two-layer headline, honesty warnings, and worked examples. Full page: [Open query space](/docs/retrieval/open-query).
+
+## Envelope (assured path)
+
+Single-grain answers are **flat** (`facts`, `evidence`, `fact_evidence`, `freshness.pg_live_ts`, …). Full wire contract: [Response envelope](/docs/retrieval/envelope).
+
+## Engine primitives vs public call surface
+
+Assured ops and recipes compose **typed zero-LLM engine primitives** internally (`resolve`, `lookup`, `search`, `hydrate`, …).
+
+**Agents should not invent HTTP paths for every primitive.** Callable public surfaces are:
+
+- assured ops (`/recipe/…`)
+- open query (`/query/sql`, `/query/cypher`, saved queries)
+- a smaller set of direct primitive endpoints (see [API reference](/docs/reference/api) and [Primitives](/docs/retrieval/primitives) surface column)
+
+## Temporal parameters
+
+| Param | Meaning |
+| --- | --- |
+| `valid_at` | World-time filter — what held at T |
+| `believed_at` | System-time filter — what we believed at T |
+
+Every envelope echoes the params applied (`as_of_valid_at` / `as_of_believed_at`) and the **identity regime**. Default identity follows today’s merge redirects.
+
+## Correctness invariant (D48)
+
+> Stale projections may nominate; only Postgres confirms truth for query-engine results.
+
+| Cost of lag | Never allowed |
+| --- | --- |
+| Miss a too-new fact (recall) | Serve a superseded fact as current |
+| Drop a path unit after edge invalidation | Return a path with a hole |
+
+## Reading motion
+
+![Orient → verify → audit](/docs/diagrams/orient-verify-audit.jpg)
+
+1. **Orient** — K + P3  
+2. **Verify** — fact grain  
+3. **Audit** — claims + raw locators  
+
+The consumption skill encodes this; S58 cold-agent eval fails plans that treat claim search as current truth.
+
+## Progressive disclosure
+
+| Depth | Page |
+| --- | --- |
+| Map (this page) | Surfaces, assured ops, invariant |
+| Envelope contract | [Response envelope](/docs/retrieval/envelope) |
+| SQL/Cypher/saved | [Open query space](/docs/retrieval/open-query) |
+| Primitive catalog | [Primitives](/docs/retrieval/primitives) |
+| Mounts + skill | [Mounts](/docs/mounts) |
+
+## Next
+
+- [Response envelope](/docs/retrieval/envelope)  
+- [Open query space](/docs/retrieval/open-query)  
+- [Primitives catalog](/docs/retrieval/primitives)  

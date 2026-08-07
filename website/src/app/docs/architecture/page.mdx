@@ -1,57 +1,135 @@
 export const metadata = {
   title: "Architecture",
   description:
-    "How RememberStack's three planes fit together: the evidence pipeline (E0–E3), the knowledge plane (K), and the projections (P1–P3) agents actually consume.",
+    "Three planes end to end: evidence spine E0–E3, knowledge plane K, projections P1–P3, and the agent consumption surfaces.",
 };
 
 # Architecture
 
-RememberStack is organized as **three planes** — Evidence, Knowledge, and Projections. The plane a component lives in determines its rules: what triggers it, whether it is a source of truth, and whether it can be thrown away and rebuilt. This page walks the system end to end.
+RememberStack is a **DAG across three planes**, not a single ladder. The plane a component lives in fixes its rules: triggers, authority, mutability, rebuild semantics.
+
+## At a glance
+
+![Three planes](/docs/diagrams/three-planes.jpg)
 
 ```
   inputs (files, mail, web, audio, video, images)
       │
       ▼
-  E0 files ─→ E1 chunks ─→ E2 claims ─→ E3 facts        Plane E — evidence spine
-      │                                    │              (Postgres + object storage;
-      │                                    │               source of truth)
+  E0 files ─→ E1 chunks ─→ E2 claims ─→ E3 facts     Plane E — evidence spine
+      │                                    │           (Postgres + object storage)
       │              ┌─────────────────────┤
       ▼              ▼                     ▼
-  P3 corpus fs    P1 search indexes    P2 knowledge graph  Plane P — projections
-                                                           (derived; rebuildable)
-                     K knowledge pages (git)               Plane K — compiled +
-                     compiled from E, cited, versioned      authored knowledge
+  P3 corpus fs    P1 search             P2 graph     Plane P — projections
+                  indexes                             (derived; rebuildable)
+
+                  K knowledge pages (git)             Plane K — compiled + authored
 ```
 
-## Plane E — the evidence spine
+| Plane | Trigger | Source of truth | Mutability | Rebuild |
+| --- | --- | --- | --- | --- |
+| **E** | Per-document chain | Postgres (+ object bytes) | Append-only; windows close | n/a — *is* truth |
+| **K** | Debounced evidence change | Git | Compiled rewrite / authored edit | Recompile (semantic) |
+| **P** | Inline or scheduled cycle | None | Immutable snapshots | From Postgres every cycle |
 
-Every input flows one pipeline, and each stage's output is durable and inspectable:
+**Hard rule:** validity and invalidation live **only** in Postgres. Lance and the graph carry filtered copies; they never become independent truth.
 
-- **E0 — Files.** Raw bytes are preserved immutably; a configurable, versioned conversion module normalizes everything to clean Markdown — OCR for scans, diarized speech-to-text for audio/video, model-written descriptions for images. Each document also gets a per-document structure tree (sections, roles, summaries). Edited documents from watched sources (a Drive folder, a mailbox) become new *versions* of the same logical document, with prior versions kept as dated testimony.
-- **E1 — Chunks.** A deterministic layer derives paragraph-grain blocks from the Markdown; retrieval-sized chunks are packed from whole blocks, so re-ingesting an edited document costs proportional to the *edit*, not the document.
-- **E2 — Claims.** An extraction model decomposes chunks into atomic, verifiable assertions — each grounded to the exact character span it derives from, and through it to the exact page, image region, or time interval of the original file. Claims are immutable forever.
-- **E3 — Facts.** Claims about the same thing are resolved onto canonical entities and adjudicated into **relations** and **observations** with bi-temporal validity (see [Concepts](/docs/concepts)). Contradictions are recorded, supersession closes validity windows, and every adjudication is a replayable, logged decision.
+## Plane E — evidence spine
 
-Postgres is the source of truth for the spine; original bytes and converted artifacts live in object storage.
+Every input walks one durable, inspectable pipeline. Stages are idempotent workers on a work ledger (retries, dead-letter, budgets).
+
+| Stage | Name | Job |
+| --- | --- | --- |
+| **E0** | Files | Store raw bytes; convert to Markdown via registered routes (smoke profile: Markdown passthrough; OCR/ASR/VLM when those routes are composed); structure sections; preserve locators |
+| **E1** | Chunks | Deterministic blocks → retrieval-sized chunks with context prefixes |
+| **E2** | Claims | Atomic grounded assertions (immutable) |
+| **E3** | Facts | Entity resolution + relation/observation adjudication, supersession, contradictions |
+
+Postgres holds metadata, claims, entities, facts, evidence links, processing state. Object storage holds raw originals and converted representations.
+
+Exhaustive write path: [Ingestion](/docs/ingestion) · [Pipeline stages](/docs/ingestion/pipeline) · [Lifecycle](/docs/ingestion/lifecycle).
 
 ## Plane K — compiled and authored knowledge
 
-Above the fact layer sits a git repository of **knowledge pages**: prose syntheses compiled by LLM workers from the fact layer, with every statement citing its evidence, plus pages authored or curated by agents for purposes the compiler can't derive (plans, target states). Mechanical routing rules decide which facts belong to which pages; when the underlying evidence changes, affected pages are flagged and recompiled. K is where "what do we know about X?" gets a pre-written, citation-bearing answer — with a freshness stamp, never pretending to be live.
+Git repository of knowledge pages:
 
-## Plane P — the projections agents consume
+- **Compiled** — LLM writers produce citation-bearing prose; a deterministic driver owns staleness, routing, and commits.
+- **Authored** — human/agent commitments (principles, plans). Evidence changes **flag** them; nothing rewrites them silently.
 
-Projections are derived read structures. All of them can be dropped and rebuilt from the spine — which is what makes aggressive indexing safe:
+K is never a structural input to P1/P2 rebuilds. K pages and P3 cross-link as consumers of each other.
 
-- **P1 — Search indexes.** Vector + full-text indexes over chunks, claims, fact labels — and media segments (cross-modal embeddings over images, video keyframes, and audio, so a photo is findable by what it *shows*, not just what its description mentioned).
-- **P2 — Knowledge graph.** The entity–relation graph, snapshot-published for traversal ("everything within two hops of Acme") with as-of query support.
-- **P3 — Corpus filesystem.** The whole corpus materialized as a navigable directory tree — topic and entity folders, per-document stubs, generated index files — mounted read-only so agents can browse and `grep` the memory like a codebase.
+## Plane P — projections agents use for speed
 
-## Consumption: filesystem-first, honest by contract
+| Projection | Store | Serves |
+| --- | --- | --- |
+| **P1** | LanceDB | Vector + FTS/BM25 over chunks, claims, fact labels, media segments |
+| **P2** | LadybugDB snapshot | Neighborhood / path / as-of graph over entities + relations |
+| **P3** | Object tree / mount | Browsable corpus filesystem (`ls` / `cat` / `grep`) |
 
-Agent harnesses mount four read-only surfaces (the corpus tree, document artifacts, raw originals off the navigation path, and the K repo) and are taught — by a consumption skill that ships with the system — to prefer the filesystem for what filesystems do well, and the API/CLI/MCP surfaces for the rest: semantic search, graph traversal, time-travel, and provenance drilling. Every query response is a structured envelope that declares its grain, freshness, contradictions, truncation, and typed negatives — the contract that lets an agent *reason about* an answer instead of just receiving it.
+All three can be dropped and rebuilt from the spine. That is what makes aggressive indexing safe.
 
-There is deliberately **no LLM on the query path**: retrieval is fast, deterministic, and inspectable; the intelligence lives in the calling agent (and, at write time, in the recorded extraction and adjudication steps).
+## Stores and authority
 
-## Where the full detail lives
+| Store | Role | Authority |
+| --- | --- | --- |
+| PostgreSQL | Spine: documents, chunks, claims, entities, facts, ledgers | **E source of truth** |
+| Object storage — raw | Original bytes | Byte authority |
+| Object storage — artifacts | Converted Markdown, structure, media sidecars | Representation authority (replay, not regenerate-in-place) |
+| LanceDB | P1 indexes | Derived |
+| LadybugDB | P2 graph snapshot | Derived |
+| Git | Plane K | **K source of truth** (authored + compile history) |
 
-This page is the map. The binding design — every mechanism, schema, and decision with its rationale — lives in the repository under [`plan/`](https://github.com/writeitai/remember-stack/tree/main/plan), anchored by the [architecture decision log](https://github.com/writeitai/remember-stack/blob/main/decisions.md). As implementation lands, each subsystem gets its own page here.
+## Write path vs read path
+
+![Ingestion pipeline](/docs/diagrams/ingestion-pipeline.jpg)
+
+**Writes** may call models (conversion helpers, claim extraction, adjudication, K compilation). Work is ledgered, versioned, and replayable.
+
+![Retrieval flow](/docs/diagrams/retrieval-flow.jpg)
+
+**Reads** use **no LLM completion** (semantic paths may still embed the query). Projections nominate; Postgres confirms; the envelope accounts for grain, freshness, contradictions, truncation, and typed negatives.
+
+Exhaustive read path: [Retrieval](/docs/retrieval).
+
+## Consumption architecture
+
+Four surfaces, one precedence rule:
+
+1. **Mounts** (when available) — prefer for navigate/read/grep  
+2. **API** — enforcement point for query-engine reads; open SQL/Cypher + assured ops  
+3. **CLI** — same operations for shell agents  
+4. **MCP** — same operations for tool-using harnesses  
+
+Deployment-rendered **consumption skill** teaches the two-layer model and S58-tested curriculum. See [Mounts and skill](/docs/mounts).
+
+## Registries (shared control data)
+
+| Registry | Why it exists |
+| --- | --- |
+| **Entities** | Canonical IDs + aliases; merge transcripts |
+| **Predicates** | Governed vocabulary with escape values |
+| **Recipes / saved queries** | Versioned query compositions; MCP renders from registry |
+| **Ontology packs** | Domain extensions without forking the core |
+
+Adding a recipe is inserting a row — surfaces stay in lockstep.
+
+## Scale posture
+
+- Content-addressed reuse: identical bytes paid once.
+- Edit-proportional reprocessing: unchanged chunks reuse claims/vectors.
+- Projection rebuilds are whole-corpus for P2/P3; P1 updates incrementally with measured maintenance.
+- Spike-tested search and hub pagination at large row/edge counts (see project status / design spikes) — not a hosted SLA.
+
+## Where binding detail lives
+
+This site documents **what ships**. Full-scope design, decisions, and evals live in the repository:
+
+- [`plan/designs/overall_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/overall_design.md)
+- [`decisions.md`](https://github.com/writeitai/remember-stack/blob/main/decisions.md)
+- Per-plane designs under [`plan/designs/`](https://github.com/writeitai/remember-stack/tree/main/plan/designs)
+
+## Next
+
+- [Concepts](/docs/concepts) if vocabulary is still fuzzy  
+- [Ingestion](/docs/ingestion) to follow a document through the spine  
+- [Retrieval](/docs/retrieval) to follow a query through nominate → confirm → account  
