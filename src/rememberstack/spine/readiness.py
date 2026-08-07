@@ -16,8 +16,8 @@ from sqlalchemy import bindparam
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.core import ChunkerParams
 from rememberstack.core import chunker_version as packing_generation
+from rememberstack.core import ChunkerParams
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import PipelineStage
 from rememberstack.model import PipelineStageReadiness
