@@ -1024,6 +1024,18 @@ _SELECT_READY_CYCLES = text(
           WHERE v.sync_cycle_id = y.cycle_id
             AND w.status IN ('pending', 'running', 'failed')
       )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM document_versions v
+          JOIN chunks c ON c.version_id = v.version_id
+          JOIN processing_state w
+            ON w.deployment_id = y.deployment_id
+           AND w.target_kind = 'chunk'
+           AND w.target_id = c.chunk_id
+           AND w.stage = 'extract_claims'
+          WHERE v.sync_cycle_id = y.cycle_id
+            AND w.status IN ('pending', 'running', 'failed')
+      )
     ORDER BY y.started_at
     """
 )

@@ -100,23 +100,48 @@ handle(work):
 5. If `chunk_already_extracted` → no LLM; still run barrier.
 6. Else D56 reuse or `_extract_chunk` (unchanged body).
 
-### 5.3 Barrier
+### 5.3 Barrier (atomic with work completion)
 
-`maybe_enqueue_normalize(representation_id)`:
+The barrier **must not** run only inside the handler before the work row is
+marked succeeded (two last chunks can each see the other still `running` and
+both skip normalize; or an output-only check can fire while a sibling later
+dead-letters). Dual-review (Codex P1.1): complete and barrier share one ledger
+transaction.
 
-1. List chunk ids for the representation (current chunker generation used by E1).
-2. If any chunk lacks extract terminal state for `E2_EXTRACTOR_VERSION` → return.
-3. Else enqueue `normalize_relations` with the **same version-level target_kind /
-   target_id / content_hash / lane** pattern normalize uses today (not chunk
-   target), payload `{version_id, representation_id}`.
+**API:** `WorkLedger.complete_chunk_extract(...)` (or equivalent) in one
+transaction:
 
-Terminal extract state **is** whatever `chunk_already_extracted` already means
-(claims and/or decision transcript for that chunk + extractor version). Do not
-invent a second flag.
+1. Mark the current `extract_claims` / chunk row `succeeded` (same as
+   `complete`).
+2. Load the expected chunk id set for `representation_id` (+ chunker generation
+   used when those chunks were written).
+3. Require **for every expected chunk id** a `processing_state` row with
+   `stage=extract_claims`, `target_kind=chunk`, `target_id=chunk_id`,
+   `component_version=E2_EXTRACTOR_VERSION`, and `status=succeeded`.
+4. Also require extract **output** evidence per chunk
+   (`chunk_already_extracted`) so a crashed-after-write / before-complete
+   replay still converges.
+5. If any expected chunk has a row in `pending` / `running` / `failed` /
+   `dead_letter`, or is missing, **do not** enqueue normalize.
+6. If all succeeded: enqueue `normalize_relations` targeting
+   **`document_version` / `version_id`** (not chunk), payload
+   `{version_id, representation_id}`, with `ON CONFLICT DO NOTHING`.
 
-**Dead letter:** a chunk extract in `dead_letter` is **not** terminal success;
-barrier stays closed until replay succeeds or ops deliberately skips (no automatic
-skip in v1).
+Handler returns no normalize follow-up itself; the worker calls
+`complete_chunk_extract` when `target_kind=chunk`.
+
+**Dead letter:** blocks the barrier until `replay` succeeds. No automatic skip
+in v1.
+
+### 5.3.1 Readiness and connector-cycle finalization
+
+Version-scoped readiness (`target_kind=document_version` only) **must** be
+updated: after this change, primary `extract_claims` rows target chunks.
+Pipeline readiness treats `extract_claims` for a version as ready when every
+chunk of that version’s current representation has a succeeded extract row
+(component version match), or the legacy version-level extract row succeeded.
+Connector-cycle finalization SQL must likewise wait on pending/running/failed
+**chunk** extract children, not only version-level rows (Codex P1.2).
 
 ### 5.4 Idempotency
 
@@ -164,8 +189,14 @@ Chunk ids are internal UUIDs; no new mount surface.
 
 - Same container image, same worker entrypoints (`worker --stage extract_claims`).
 - No new Coolify service names, secrets, or migrations of the `processing_target`
-  enum (CHUNK already exists).
-- Rolling upgrade: legacy coordinator path keeps mid-flight version jobs safe.
+  enum (CHUNK already exists). Alembic may still be needed only if readiness SQL
+  lives purely in app code (preferred).
+- Rolling upgrade: **UMC and compose must roll extract workers with the same
+  image generation as embed** (monorepo single image). Mixed-image windows where
+  an old E2 binary can claim `target_kind=chunk` rows are unsafe (old handler
+  serial-loops the whole doc). Mitigation: deploy all engine workers from one
+  image revision; keep the window short. New code treats non-chunk extract rows
+  as coordinators only. (Codex P1.3 residual risk documented, not ignored.)
 
 ### 9.2 Auto-worker-scaling (desired UMC story)
 

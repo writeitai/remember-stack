@@ -57,3 +57,4 @@ src/tests/workers/test_extraction_temperature.py
 src/tests/workers/test_hard_forget_handler.py
 src/tests/workers/test_hard_forget_service.py
 src/tests/workers/test_ingest_admission.py
+src/tests/workers/test_chunk_level_extract.py

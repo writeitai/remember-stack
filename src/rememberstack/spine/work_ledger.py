@@ -245,6 +245,65 @@ class WorkLedger:
                 enqueue_on(connection=connection, work=work) for work in follow_up
             )
 
+    def complete_chunk_extract(
+        self,
+        *,
+        processing_id: UUID,
+        barrier: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """D84: mark one chunk extract succeeded and maybe enqueue normalize.
+
+        After this row is succeeded in the same transaction, require every chunk
+        of the representation to have a succeeded extract_claims row at the
+        extractor version **and** claim/decision/occurrence extract evidence.
+        Only then enqueue version-level ``normalize_relations`` (idempotent).
+        """
+        from rememberstack.model import PipelineStage
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.workers.base import ExtractChunkBarrier
+
+        if not isinstance(barrier, ExtractChunkBarrier):
+            raise TypeError("barrier must be ExtractChunkBarrier")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            updated = connection.execute(
+                _COMPLETE, {"processing_id": processing_id}
+            ).rowcount
+            if updated == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            if _extract_barrier_ready(
+                connection=connection,
+                deployment_id=barrier.deployment_id,
+                representation_id=barrier.representation_id,
+                extractor_version=barrier.extractor_version,
+            ):
+                outcomes.append(
+                    enqueue_on(
+                        connection=connection,
+                        work=EnqueueWork(
+                            deployment_id=barrier.deployment_id,
+                            target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                            target_id=barrier.version_id,
+                            stage=PipelineStage.NORMALIZE_RELATIONS,
+                            component_version=barrier.normalize_component_version,
+                            content_hash=barrier.content_hash,
+                            lane=barrier.lane,
+                            payload={
+                                "version_id": str(barrier.version_id),
+                                "representation_id": str(barrier.representation_id),
+                            },
+                        ),
+                    )
+                )
+            return tuple(outcomes)
+
     def fail(
         self, *, processing_id: UUID, error: str, retryable: bool
     ) -> datetime | None:
@@ -458,6 +517,31 @@ class WorkLedger:
             None,
         )
 
+
+
+def _extract_barrier_ready(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    representation_id: UUID,
+    extractor_version: str,
+) -> bool:
+    """True when every chunk of the representation has succeeded extract work + output."""
+    expected = connection.execute(
+        _BARRIER_EXPECTED_CHUNKS, {"representation_id": representation_id}
+    ).scalar_one()
+    if int(expected) == 0:
+        return True
+    ready = connection.execute(
+        _BARRIER_READY_CHUNKS,
+        {
+            "deployment_id": deployment_id,
+            "representation_id": representation_id,
+            "extractor_version": extractor_version,
+            "stage": PipelineStage.EXTRACT_CLAIMS.value,
+        },
+    ).scalar_one()
+    return int(ready) == int(expected)
 
 def _budget_window_spend(
     *, connection: Connection, budget: CostBudget
@@ -812,5 +896,46 @@ _INSERT_COST = text(
 _WAKE = text(
     """
     SELECT pg_notify('queue_wake', :processing_id)
+    """
+)
+
+_BARRIER_EXPECTED_CHUNKS = text(
+    """
+    SELECT count(*)::bigint
+    FROM chunks
+    WHERE representation_id = :representation_id
+    """
+)
+
+_BARRIER_READY_CHUNKS = text(
+    """
+    SELECT count(*)::bigint
+    FROM chunks c
+    JOIN processing_state p
+      ON p.deployment_id = :deployment_id
+     AND p.target_kind = 'chunk'
+     AND p.target_id = c.chunk_id
+     AND p.stage = CAST(:stage AS pipeline_stage)
+     AND p.component_version = :extractor_version
+     AND p.status = 'succeeded'
+    WHERE c.representation_id = :representation_id
+      AND (
+            EXISTS (
+                SELECT 1 FROM claims cl
+                WHERE cl.chunk_id = c.chunk_id
+                  AND cl.extractor_version = :extractor_version
+            )
+            OR EXISTS (
+                SELECT 1 FROM claim_extraction_decisions d
+                WHERE d.chunk_id = c.chunk_id
+                  AND d.extractor_version = :extractor_version
+            )
+            OR EXISTS (
+                SELECT 1 FROM chunk_claims cc
+                JOIN claims cl ON cl.claim_id = cc.claim_id
+                WHERE cc.chunk_id = c.chunk_id
+                  AND cl.extractor_version = :extractor_version
+            )
+          )
     """
 )

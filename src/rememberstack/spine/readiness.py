@@ -56,6 +56,14 @@ class PipelineReadinessCatalog:
         version_ids = tuple(dict.fromkeys(version_ids))
         if not version_ids:
             raise ValueError("pipeline readiness requires at least one version_id")
+        extract_version = next(
+            (
+                version
+                for stage, version in self._expected
+                if stage is PipelineStage.EXTRACT_CLAIMS
+            ),
+            None,
+        )
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -65,6 +73,20 @@ class PipelineReadinessCatalog:
                 .mappings()
                 .all()
             )
+            extract_rows = ()
+            if extract_version is not None:
+                extract_rows = (
+                    connection.execute(
+                        _EXTRACT_CHUNK_STATUS,
+                        {
+                            "deployment_id": deployment_id,
+                            "version_ids": version_ids,
+                            "extractor_version": extract_version,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
         by_key = {
             (
                 UUID(str(row["target_id"])),
@@ -73,6 +95,20 @@ class PipelineReadinessCatalog:
             ): row
             for row in rows
         }
+        # Chunk-grain extract (D84) wins over a missing version-level extract row.
+        for row in extract_rows:
+            key = (
+                UUID(str(row["target_id"])),
+                PipelineStage.EXTRACT_CLAIMS,
+                str(row["component_version"]),
+            )
+            existing = by_key.get(key)
+            if existing is None or str(existing["status"]) == "missing":
+                by_key[key] = row
+            elif str(existing["status"]) != "succeeded" and str(row["status"]) == (
+                "succeeded"
+            ):
+                by_key[key] = row
         versions: list[VersionPipelineReadiness] = []
         terminal_at = None
         for version_id in version_ids:
@@ -152,5 +188,37 @@ _VERSION_WORK = text(
     WHERE deployment_id = :deployment_id
       AND target_kind = 'document_version'
       AND target_id IN :version_ids
+    """
+).bindparams(bindparam("version_ids", expanding=True))
+
+# D84: extract_claims primary rows target chunks; derive a version-level status.
+_EXTRACT_CHUNK_STATUS = text(
+    """
+    SELECT v.version_id AS target_id,
+           'extract_claims'::text AS stage,
+           :extractor_version AS component_version,
+           CASE
+             WHEN count(c.chunk_id) = 0 THEN 'succeeded'
+             WHEN count(c.chunk_id) FILTER (
+                    WHERE p.status = 'succeeded'
+                  ) = count(c.chunk_id)
+               THEN 'succeeded'
+             WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
+             WHEN bool_or(p.status = 'running') THEN 'running'
+             WHEN bool_or(p.status = 'failed') THEN 'failed'
+             WHEN bool_or(p.status = 'pending') THEN 'pending'
+             ELSE 'missing'
+           END AS status,
+           max(p.finished_at) AS finished_at
+    FROM document_versions v
+    LEFT JOIN chunks c ON c.version_id = v.version_id
+    LEFT JOIN processing_state p
+      ON p.deployment_id = :deployment_id
+     AND p.target_kind = 'chunk'
+     AND p.target_id = c.chunk_id
+     AND p.stage = 'extract_claims'
+     AND p.component_version = :extractor_version
+    WHERE v.version_id IN :version_ids
+    GROUP BY v.version_id
     """
 ).bindparams(bindparam("version_ids", expanding=True))

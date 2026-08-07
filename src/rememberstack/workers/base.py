@@ -41,12 +41,27 @@ from rememberstack.spine.work_ledger import WorkLedger
 _logger = logging.getLogger(__name__)
 
 
+class ExtractChunkBarrier(BaseModel):
+    """D84: after a chunk extract succeeds, complete+barrier in one ledger txn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deployment_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    extractor_version: str
+    content_hash: str
+    lane: ProcessingLane | None
+    normalize_component_version: str
+
+
 class HandlerOutcome(BaseModel):
     """What a successful handler produced: the chain follow-ups to enqueue."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     follow_up: tuple[EnqueueWork, ...] = ()
+    extract_chunk_barrier: ExtractChunkBarrier | None = None
 
 
 @runtime_checkable
@@ -255,9 +270,16 @@ class Worker:
             return RunResult(
                 processing_id=claimed.processing_id, outcome=result_outcome
             )
-        self._ledger.complete(
-            processing_id=claimed.processing_id, follow_up=outcome.follow_up
-        )
+        if outcome.extract_chunk_barrier is not None:
+            self._ledger.complete_chunk_extract(
+                processing_id=claimed.processing_id,
+                barrier=outcome.extract_chunk_barrier,
+                follow_up=outcome.follow_up,
+            )
+        else:
+            self._ledger.complete(
+                processing_id=claimed.processing_id, follow_up=outcome.follow_up
+            )
         self._export_event(
             event=_worker_event(
                 deployment_id=claimed.deployment_id,
