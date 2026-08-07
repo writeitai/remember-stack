@@ -59,7 +59,7 @@ Unmounted environments get the same operations over the network; the skill state
 
 ## Generated consumption skill
 
-`ConsumptionSkillSurface` reads live deployment metadata (name, language, scopes, K page count, active recipe versions) plus published mounts and renders a versioned standard `SKILL.md` (skill revision **2.1.0**).
+`ConsumptionSkillSurface` reads live deployment metadata (name, language, scopes, K page count, active recipe versions) plus published mounts and renders a versioned standard `SKILL.md`.
 
 Skill contents (high level):
 
@@ -83,9 +83,9 @@ Atomic publish so harnesses never read a partial skill file.
 | Compiled as live | Check freshness; verify facts |
 | Mixing media locator with clocks | Three different coordinates |
 
-## S58 cold-agent check
+## Cold-agent skill check
 
-Eval **S58** gives a model only the rendered skill + a task. It must:
+Automated checks give a model **only** the rendered skill plus a task (no design docs, no repo context). The plan must:
 
 - Orient on K (or fall back honestly when empty)  
 - Route current truth to facts  
@@ -95,7 +95,7 @@ Eval **S58** gives a model only the rendered skill + a task. It must:
 - Prefer mounts for readable work  
 - Hydrate to sources for audit  
 
-Wrong plans (including claim search as current-truth answers) fail. Runs record against skill revision in `eval_runs`.
+Wrong plans (including claim search as current-truth answers) fail.
 
 ## Related
 

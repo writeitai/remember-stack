@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Evaluation",
   description:
-    "How RememberStack is evaluated: design-conformance gates, S58 cold-agent skill check, golden sets, and the public LoCoMo protocol posture.",
+    "How RememberStack is evaluated: design-conformance gates, cold-agent skill checks, golden sets, and the public LoCoMo protocol posture.",
 };
 
 # Evaluation
@@ -10,13 +10,13 @@ RememberStack is **design-first and gate-heavy**. Evaluation is not a marketing 
 
 ## TL;DR for agents and operators
 
-| Layer | What it guards | Where |
-| --- | --- | --- |
-| **Unit / contract / CI** | Code correctness, surface contracts | Repo CI |
-| **Design-conformance evals** | Implementation vs binding design | `plan/implementation_evals/` |
-| **S58 cold-agent** | Consumption skill teaches correct grain routing | Skill + `eval_runs` |
-| **Golden sets** | Resolution precision/recall, blockizer, contradiction gates | Test fixtures + ledgers |
-| **LoCoMo adapter** | Full-system competitive/diagnostic protocol | `benchmarks/locomo/` (operator-run) |
+| Layer | What it guards |
+| --- | --- |
+| **Unit / contract / CI** | Code correctness and surface contracts |
+| **Design-conformance evals** | Implementation stays aligned with the architecture the product claims |
+| **Cold-agent skill check** | Consumption skill teaches correct grain routing |
+| **Golden sets** | Resolution, blockizer, contradiction, lifecycle canaries |
+| **LoCoMo adapter** | Full-system competitive/diagnostic protocol (operator-run) |
 
 Public docs state **methodology posture**, not a live SLA score. Published numbers require pinned dataset, protocol version, and revision.
 
@@ -24,19 +24,17 @@ Public docs state **methodology posture**, not a live SLA score. Published numbe
 
 1. **Correctness over recall theater** — projections may lag; they must not serve dead facts as current.  
 2. **Grain honesty** — claims never answer “is it true now?”  
-3. **Agent curriculum** — a cold harness with only `SKILL.md` plans correctly (S58).  
-4. **Replayability** — decisions, costs, and traces are ledgered where design requires.  
+3. **Agent curriculum** — a cold harness with only `SKILL.md` plans correctly.  
+4. **Replayability** — decisions, costs, and traces are ledgered where the product requires.  
 5. **Comparable benchmarks** — only under a fixed protocol fingerprint.
 
 ## Design-conformance evals
 
-As phases land, acceptance checks under
-[`plan/implementation_evals/`](https://github.com/writeitai/remember-stack/tree/main/plan/implementation_evals)
-judge the code against binding design (not against ad-hoc prompts).
+Acceptance checks in the repository judge the code against the architecture the product documents — not against ad-hoc prompts.
 
 Use these when changing spine, retrieval, or lifecycle behavior: failing a design eval is a product regression even if a demo still “looks fine.”
 
-## S58 — cold-agent consumption check
+## Cold-agent skill check
 
 **Input:** rendered deployment `SKILL.md` + a task.  
 **No:** design corpus, repository context, or hidden cheats.
@@ -53,7 +51,7 @@ Use these when changing spine, retrieval, or lifecycle behavior: failing a desig
 | Mounts preferred when available | Ignores filesystem for readable work |
 | Audit hydrates to sources | Stops at summary only |
 
-Runs record against **skill revision** in `eval_runs`. Skill revision today: **2.1.0** (see [Mounts](/docs/mounts)).
+See [Mounts](/docs/mounts) for the skill surface.
 
 ## Golden sets and regression canaries
 
@@ -62,25 +60,24 @@ Examples that ship with the system (not exhaustive):
 | Area | Guard |
 | --- | --- |
 | Blockizer | Golden regression corpus |
-| Entity resolution | Versioned per-type thresholds + precision/recall curves |
+| Entity resolution | Versioned thresholds + precision/recall curves |
 | Observations | Contradiction eval gate |
 | Lifecycle | Cache/ledger/count canaries (edit-proportional reuse, no retract flicker) |
-| Retrieval spikes | Large P1/P2 size batteries (measurements, not hosted SLAs) |
+| Retrieval spikes | Large index/graph size batteries (measurements, not hosted SLAs) |
 
 Treat measured spike numbers as **capacity evidence**, not promises.
 
 ## LoCoMo (full-system protocol)
 
-Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember-stack/tree/main/benchmarks/locomo).  
-Binding design: `plan/designs/locomo_benchmark_design.md`.
+Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember-stack/tree/main/benchmarks/locomo).
 
 ### Posture
 
 - **Unshipped as a vendored dataset** — you supply pinned `locomo10.json` after confirming **CC BY-NC 4.0** terms.  
 - **Operator-invoked** real provider runs; not silent CI spend.  
-- **Current protocol family:** `RS-LoCoMo-Full-v10` (see design + README for frozen fields).  
-- Answer agent uses **public recipes** (e.g. `question_context` path), not private hard-coded search.  
-- Readiness is **machine-verified** before answer; P2/P3 must be published when required.  
+- Current protocol is versioned and fingerprinted in the adapter README and design notes.  
+- Answer agent uses **public recipes** (for example `question_context`), not private hard-coded search.  
+- Readiness is **machine-verified** before answer; graph/corpus projections must be published when required.  
 - Costs, tool calls, envelopes, and failures are **checkpointed**.  
 - Primary metric: judge accuracy; secondary: official LoCoMo F1; diagnostic: coarse evidence-session recall.
 
@@ -95,11 +92,11 @@ uv run --extra benchmark python -m benchmarks.locomo prepare \
   --output .benchmark-runs/locomo-smoke
 ```
 
-Do not run remote stages until you have read the design and accepted cost/isolation gates.
+Do not run remote stages until you have read the adapter README and accepted cost/isolation gates.
 
 ### Honesty about scores
 
-- Protocol version, model IDs, surface manifest hashes, and dataset pin **must** match to compare runs.  
+- Protocol version, model IDs, surface hashes, and dataset pin **must** match to compare runs.  
 - A weak reader/harness can tank accuracy with a healthy store — diagnose retrieval vs reader separately.  
 - Optional Langfuse tracing for answer/judge requires the observability extra **and** all three Langfuse env vars ([Configuration](/docs/configuration)).  
 - Sharding across hosts is supported for large publication runs; merge via documented summarize flags.
@@ -108,27 +105,26 @@ Do not run remote stages until you have read the design and accepted cost/isolat
 
 | Goal | Action |
 | --- | --- |
-| Change retrieval/skill | Run S58-relevant tests; do not “fix by vibes” |
+| Change retrieval/skill | Run cold-agent skill checks; do not “fix by vibes” |
 | Change lifecycle/counting | Hit lifecycle canaries / design evals |
 | Publish a competitive number | Freeze protocol + revision + dataset; retain artifacts |
-| Debug a bad demo | [Troubleshooting](/docs/troubleshooting) first; then eval layer that failed |
+| Debug a bad demo | [Troubleshooting](/docs/troubleshooting) first; then the eval layer that failed |
 
 ## What evaluation is not
 
-- Not a substitute for D5/product honesty on the cloud site  
+- Not a substitute for honest product claims on the managed cloud site  
 - Not automatic continuous LoCoMo spend on every PR  
 - Not permission to game judges with protocol-specific hacks  
-- Not complete until Phase 8 public methodology packaging finishes (roadmap)  
+- Not a finished public scoreboard until methodology and results are published together  
 
 ## Progressive disclosure
 
 | Depth | Where |
 | --- | --- |
 | This page | Layers and posture |
-| [Mounts](/docs/mounts) | Skill + S58 narrative |
-| [Project status](/docs/project-status) | Phase completeness |
+| [Mounts](/docs/mounts) | Skill + cold-agent narrative |
+| [Project status](/docs/project-status) | What ships |
 | `benchmarks/locomo/README.md` | Operator commands |
-| `plan/designs/locomo_benchmark_design.md` | Binding protocol fields |
 
 ## Next
 
