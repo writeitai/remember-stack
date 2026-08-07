@@ -3275,3 +3275,39 @@ worker image and service names; no control-plane work manufacture.
 **Rejected.** Scaling version-level extract only; external per-chunk queues
 that bypass `processing_state` (D67); making normalize chunk-scoped in the
 same change; automatic skip of dead-lettered chunks for the barrier in v1.
+
+## D85. The full-system LoCoMo answer seat gets the complete shipped read plane
+
+**Decision (2026-08-07).** `RS-LoCoMo-Full-v11` replaces v10 as the sole
+executable current-system protocol. Its Luna answer agent can choose among all
+shipped read-only retrieval paths: the three assured operations, seven direct
+HTTP/SDK primitives, nine open-query infrastructure operations, and bounded
+list/search/read over an ordinary published P3 mount. P1 is reachable through
+assured, primitive, and SQL paths; P2 through Cypher; P3 through its filesystem
+contract. The protocol fingerprints all 22 descriptors and verifies that the
+P3 mount marker equals the readiness report's P3 projection version.
+
+Writes, connector/control operations, raw originals, artifacts, internal-only
+primitives, and Plane K are not answer tools. K is not composed by this
+benchmark; raw has a separate attributed audit contract. Product reads continue
+through the public SDK, and P3 uses `LocalMountPublisher`: there is no
+benchmark-only database, object-store, graph, or HTTP retrieval path.
+
+**Context.** V10 built and checked P2/P3 but gave its answer agent only the
+three assured operations. That measured an assured-operation subset, not the
+current system the owner directed the publication run to score. Analysis:
+`plan/analysis/locomo_full_retrieval_agent.md`. Binding design:
+`plan/designs/locomo_benchmark_design.md` §§2, 4, 6, and 7.
+
+**Consequences.** V10 artifacts remain self-describing but no v10 compatibility
+runner remains. A v11 result is not comparable to v10 because the prompt, tool
+catalog, traces, and reachable retrieval planes differ. The same eight-tool,
+nine-agent-call, revision, isolation, readiness, and spend guards remain. SQL,
+Cypher, or P3 argument mistakes may be returned to the bounded agent for one
+corrective plan. Classification uses the typed public error code, including for
+HTTP-200 `QueryResult/v1` failures; quota, concurrency, schema drift,
+projection/store, transport, and server failures remain terminal.
+
+**Rejected.** Calling the three-operation seat “full”; adding only SQL/Cypher
+while omitting primitives/P3; private benchmark reads from Postgres, Lance,
+MinIO, or graph files; inventing a P3 HTTP endpoint; pretending absent K ran.

@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v10 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v11 protocol."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import JsonValue
 from pydantic import model_serializer
 from pydantic import model_validator
 from pydantic import SerializerFunctionWrapHandler
@@ -26,8 +27,8 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v10"]
-ProtocolName = Literal["RS-LoCoMo-Full-v10"]
+ProtocolKey = Literal["full-v11"]
+ProtocolName = Literal["RS-LoCoMo-Full-v11"]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
@@ -118,7 +119,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v10"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v11"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -144,6 +145,7 @@ class RunConfiguration(FrozenModel):
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1
     surface_manifest_hash: NonEmpty
+    tool_catalog_sha256: NonEmpty
     answer_prompt_sha256: NonEmpty
     judge_prompt_sha256: NonEmpty
     answer_schema_sha256: NonEmpty
@@ -259,13 +261,14 @@ class AnswerAgentStep(FrozenModel):
 
 
 class ToolCallRecord(FrozenModel):
-    """One ordinary public recipe call and its complete response envelope."""
+    """One public read call and its complete envelope or JSON response."""
 
     name: NonEmpty
     arguments: dict[str, object]
     arguments_trailing: str = ""
     latency_ms: int = Field(ge=0)
-    response: Envelope
+    succeeded: bool = True
+    response: Annotated[Envelope | JsonValue, Field(union_mode="left_to_right")]
 
 
 class JudgeOutput(FrozenModel):
@@ -371,15 +374,15 @@ class SessionDiagnosticSummary(FrozenModel):
     malformed_evidence_fields: int = Field(ge=0)
     mean_session_recall: float = Field(ge=0, le=1)
     complete_session_success: float = Field(ge=0, le=1)
-    warning: Literal["session-grain diagnostic; not turn Recall@k"] = (
-        "session-grain diagnostic; not turn Recall@k"
-    )
+    warning: Literal[
+        "session-grain diagnostic; envelope evidence only; not turn Recall@k"
+    ] = "session-grain diagnostic; envelope evidence only; not turn Recall@k"
 
 
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v10"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v11"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

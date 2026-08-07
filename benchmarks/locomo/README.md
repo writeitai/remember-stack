@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v10 setup
+# RS-LoCoMo-Full-v11 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,12 +16,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v10 \
+  --protocol full-v11 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v10` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v11` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -40,7 +40,7 @@ containers so retrieved evidence does not get crowded out by audit metadata.
 Freshness, hydration-drop counts, and meaningful default-valued fields remain
 visible.
 
-V10 requires the shortest phrase that fully names the requested entities or
+V11 requires the shortest phrase that fully names the requested entities or
 values and forbids explanations or reasoning. Its `answer_word_cap` is a
 persisted, fingerprinted protocol field, but the protocol leaves it unset: the
 prompt renders no word-count sentence and the runner applies no
@@ -71,8 +71,8 @@ docker compose --profile operations run --rm projections
 The `answer` command then calls the public readiness endpoint. It refuses to run unless every
 requested version completed the exact composed stage generations and both P2/P3 builds began
 after that work completed. It also requires the deployment's exact prepared
-`surface_manifest_hash` and the canonical three public recipe descriptors,
-including hashes computed from the live implementation chains. Before each
+`surface_manifest_hash`, the canonical three public recipe descriptors, and the
+fingerprinted complete answer catalog. Before each
 upload, the exact public `documents_live` to `document_versions_visible` join
 must equal the run's durable lineage/version checkpoints (empty on a new
 deployment), and every ingest must create a new version. The version relation
@@ -85,8 +85,11 @@ Readiness also records the API process's current non-secret model configuration 
 review. Those values are not processing-time provenance; freeze one Compose environment for the
 run and retain the provider/cost artifacts.
 
-The primary protocol uses a bounded answer agent over normal public recipes, not hard-coded claim
-search. Limits are run-absolute: allow up to nine agent calls per selected question and one judge
+The primary protocol uses a bounded answer agent over the complete public read
+plane: three assured operations, seven direct primitives, nine open-query
+operations, and list/search/read over the ordinary P3 mount. It does not read
+Postgres, Lance, MinIO, graph files, or internal handlers directly. Limits are
+run-absolute: allow up to nine agent calls per selected question and one judge
 call per answer. The shared evaluator-cost value is a reported-spend stop threshold: a completed
 call can cross it, is recorded, and stops the run. Use the provider account cap as the hard
 monetary boundary. If that leaves later questions unanswered, they remain visible as zero-scored
@@ -106,9 +109,21 @@ calls and verifies the provider-reported model identity for both seats. Ambient
 OpenRouter settings or model aliases therefore cannot silently change the
 prepared protocol.
 
-P3 is built and freshness-checked as part of the ordinary deployment, but the remote recipe
-agent has no filesystem mount. This protocol therefore does not attribute answer quality to P3
-navigation. A future mount-enabled protocol needs a new fingerprint and name.
+P3 is built, freshness-checked, and published through the ordinary self-host
+mount adapter before answering:
+
+```bash
+mkdir -p "$PWD/.benchmark-mounts"
+docker compose --profile operations run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/.benchmark-mounts:$PWD/.benchmark-mounts" \
+  projections mounts --root "$PWD/.benchmark-mounts"
+```
+
+Pass the resulting
+`.benchmark-mounts/$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID/p3` path to `answer`
+with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
+from readiness.
 
 ## Sharded runs
 
@@ -119,4 +134,4 @@ recomputes one full-manifest score from disjoint item records. See the
 collection, and merge validation.
 
 Historical runs used earlier protocol identities. They are not executable
-compatibility modes and are not comparable to v10.
+compatibility modes and are not comparable to v11.

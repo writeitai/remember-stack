@@ -20,7 +20,9 @@ Every host needs:
 - the exact pinned `locomo10.json`;
 - the ordinary Compose settings from `.env.example`, with real local values; and
 - `REMEMBERSTACK_OPENROUTER_API_KEY` exported into the environment of both Compose and the
-  benchmark CLI.
+  benchmark CLI; and
+- `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` exported so the driver can address the
+  published P3 path (the value must match Compose).
 
 Treat the OpenRouter key as a secret. Inject it from the host's secret manager or export it in the
 interactive session that starts `nohup`. Never put it in this repository, a shard plan, a command
@@ -108,7 +110,8 @@ publication manifest locally. For every assigned sample the driver:
 3. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
    six-hour default budget, and stops immediately on a dead letter;
 4. builds projections through the Compose `operations` profile; and
-5. runs answer and judge with run-absolute caps.
+5. publishes the ordinary P3 mount, then runs the complete-plane answer agent
+   and judge with run-absolute caps.
 
 Progress is emitted as UTC timestamped log lines. Sample databases are disposable benchmark
 state and are not backed up before the next isolated sample starts.
@@ -119,7 +122,8 @@ The following environment variables tune the driver without changing its argumen
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v10` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v11` | prepare-time protocol key |
+| `LOCOMO_MOUNT_ROOT` | `$RUN_DIR/.mounts` | host/container-identical P3 mount root |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
 | `LOCOMO_MAX_QUESTIONS` | `1540` | run-absolute answer item authorization |
 | `LOCOMO_MAX_AGENT_CALLS` | `13860` | run-absolute answer-agent call ceiling |

@@ -10,12 +10,15 @@ from datetime import datetime
 from datetime import timedelta
 import mimetypes
 from pathlib import Path
+from typing import Final
 from typing import Literal
 from typing import TypeVar
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
 from pydantic import ValidationError
@@ -29,8 +32,41 @@ from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.envelope import Envelope
+from rememberstack.surfaces.query_sandbox.result import QueryResult
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+_QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
+    "saved_query_not_found": 404,
+    "p2_unavailable": 404,
+    "saved_query_disabled": 409,
+    "saved_query_revalidation_pending": 409,
+    "saved_query_incompatible": 409,
+    "quota_exceeded": 409,
+    "concurrency_exceeded": 409,
+    "schema_version_mismatch": 409,
+    "pg_unavailable": 503,
+    "lance_unavailable": 503,
+    "corpus_body_unavailable": 503,
+    "generation_unavailable": 503,
+    "statement_timeout": 500,
+    "lock_timeout": 500,
+    "cancelled": 500,
+    "resource_limit": 500,
+    "execution_error": 500,
+    "confirmation_failed": 500,
+    "parse_error": 422,
+    "multiple_statements": 422,
+    "statement_not_allowed": 422,
+    "relation_not_allowed": 422,
+    "function_not_allowed": 422,
+    "function_placement_not_allowed": 422,
+    "operator_not_allowed": 422,
+    "invalid_parameter": 422,
+    "unbounded_recursion": 422,
+    "cypher_parse_error": 422,
+    "cypher_not_allowed": 422,
+}
 
 
 class ClientSettings(BaseSettings):
@@ -46,10 +82,42 @@ class ClientSettings(BaseSettings):
 class MemoryApiError(Exception):
     """The deployment API was unreachable or returned an unusable response."""
 
-    def __init__(self, *, status_code: int, detail: str) -> None:
+    def __init__(
+        self, *, status_code: int, detail: str, code: str | None = None
+    ) -> None:
         super().__init__(f"API {status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+        self.code = code
+
+
+class _DiscoveryHit(BaseModel):
+    """Exact wire contract for one query-space search result."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["view", "function", "core_operation", "example"]
+    name: str = Field(min_length=1)
+    score: float
+    purpose: str
+    tags: tuple[str, ...]
+
+
+class _SavedQuerySummary(BaseModel):
+    """Exact wire contract for one saved-query discovery row."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    query_id: UUID
+    namespace: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    version: int = Field(ge=1)
+    status: str = Field(min_length=1)
+    description: str | None
+    origin: str = Field(min_length=1)
+    assurance: str | None
+    query_hash: str = Field(min_length=1)
+    validated_surface_manifest_hash: str = Field(min_length=1)
 
 
 class MemoryClient:
@@ -140,28 +208,25 @@ class MemoryClient:
         body: dict[str, object] = {"sql": sql, "parameters": list(parameters)}
         if max_rows is not None:
             body["max_rows"] = max_rows
-        payload = self._json("POST", "/query/sql", json_body=body)
-        if not isinstance(payload, dict):
-            raise MemoryApiError(
-                status_code=200, detail="POST /query/sql did not return an object"
-            )
-        return payload
+        return _validated_dict(
+            QueryResult,
+            self._json("POST", "/query/sql", json_body=body),
+            endpoint="POST /query/sql",
+        )
 
     def explain_sql(
         self, *, sql: str, parameters: list[object] | tuple[object, ...] = ()
     ) -> dict[str, object]:
         """EXPLAIN one SQL statement without executing it."""
-        payload = self._json(
-            "POST",
-            "/query/sql/explain",
-            json_body={"sql": sql, "parameters": list(parameters)},
+        return _validated_dict(
+            QueryResult,
+            self._json(
+                "POST",
+                "/query/sql/explain",
+                json_body={"sql": sql, "parameters": list(parameters)},
+            ),
+            endpoint="POST /query/sql/explain",
         )
-        if not isinstance(payload, dict):
-            raise MemoryApiError(
-                status_code=200,
-                detail="POST /query/sql/explain did not return an object",
-            )
-        return payload
 
     def query_cypher(
         self,
@@ -179,28 +244,25 @@ class MemoryClient:
         }
         if max_rows is not None:
             body["max_rows"] = max_rows
-        payload = self._json("POST", "/query/cypher", json_body=body)
-        if not isinstance(payload, dict):
-            raise MemoryApiError(
-                status_code=200, detail="POST /query/cypher did not return an object"
-            )
-        return payload
+        return _validated_dict(
+            QueryResult,
+            self._json("POST", "/query/cypher", json_body=body),
+            endpoint="POST /query/cypher",
+        )
 
     def explain_cypher(
         self, *, cypher: str, parameters: Mapping[str, object] | None = None
     ) -> dict[str, object]:
         """Engine plan for one Cypher statement without executing it."""
-        payload = self._json(
-            "POST",
-            "/query/cypher/explain",
-            json_body={"cypher": cypher, "parameters": dict(parameters or {})},
+        return _validated_dict(
+            QueryResult,
+            self._json(
+                "POST",
+                "/query/cypher/explain",
+                json_body={"cypher": cypher, "parameters": dict(parameters or {})},
+            ),
+            endpoint="POST /query/cypher/explain",
         )
-        if not isinstance(payload, dict):
-            raise MemoryApiError(
-                status_code=200,
-                detail="POST /query/cypher/explain did not return an object",
-            )
-        return payload
 
     def describe_query_space(
         self, *, pattern: str | None = None, include_examples: bool = False
@@ -220,14 +282,13 @@ class MemoryClient:
 
     def search_query_space(self, *, query: str, k: int = 10) -> list[dict[str, object]]:
         """Search checked-in manifest text only."""
-        payload = self._json(
-            "GET", "/query/space/search", params={"query": query, "k": k}
+        return _validated_list(
+            _DiscoveryHit,
+            self._json(
+                "GET", "/query/space/search", params={"query": query, "k": k}
+            ),
+            endpoint="GET /query/space/search",
         )
-        if not isinstance(payload, list):
-            raise MemoryApiError(
-                status_code=200, detail="GET /query/space/search did not return a list"
-            )
-        return [item for item in payload if isinstance(item, dict)]
 
     def list_saved_queries(
         self, *, namespace: str | None = None, status: str | None = None
@@ -238,22 +299,25 @@ class MemoryClient:
             params["namespace"] = namespace
         if status is not None:
             params["status"] = status
-        payload = self._json("GET", "/query/saved", params=params if params else None)
-        if not isinstance(payload, list):
-            raise MemoryApiError(
-                status_code=200, detail="GET /query/saved did not return a list"
-            )
-        return [item for item in payload if isinstance(item, dict)]
+        return _validated_list(
+            _SavedQuerySummary,
+            self._json("GET", "/query/saved", params=params if params else None),
+            endpoint="GET /query/saved",
+        )
 
     def describe_saved_query(
         self, *, namespace: str, name: str, version: int | None = None
     ) -> dict[str, object]:
         """Describe one saved-query version."""
+        namespace_path = _saved_query_path_segment(value=namespace, field="namespace")
+        name_path = _saved_query_path_segment(value=name, field="name")
         params: dict[str, str | int] = {}
         if version is not None:
             params["version"] = version
         payload = self._json(
-            "GET", f"/query/saved/{namespace}/{name}", params=params if params else None
+            "GET",
+            f"/query/saved/{namespace_path}/{name_path}",
+            params=params if params else None,
         )
         if not isinstance(payload, dict):
             raise MemoryApiError(
@@ -272,22 +336,20 @@ class MemoryClient:
         max_rows: int | None = None,
     ) -> dict[str, object]:
         """Execute one active saved query; returns QueryResult/v1 as a dict."""
+        namespace_path = _saved_query_path_segment(value=namespace, field="namespace")
+        name_path = _saved_query_path_segment(value=name, field="name")
         body: dict[str, object] = {"parameters": list(parameters)}
         if version is not None:
             body["version"] = version
         if max_rows is not None:
             body["max_rows"] = max_rows
-        payload = self._json(
-            "POST", f"/query/saved/{namespace}/{name}/run", json_body=body
+        path = f"/query/saved/{namespace_path}/{name_path}/run"
+        endpoint = f"POST {path}"
+        return _validated_dict(
+            QueryResult,
+            self._json("POST", path, json_body=body),
+            endpoint=endpoint,
         )
-        if not isinstance(payload, dict):
-            raise MemoryApiError(
-                status_code=200,
-                detail=(
-                    f"POST /query/saved/{namespace}/{name}/run did not return an object"
-                ),
-            )
-        return payload
 
     def call_open_query(self, *, name: str, arguments: Mapping[str, object]) -> object:
         """Dispatch one open-query infrastructure tool name through the HTTP API.
@@ -383,6 +445,51 @@ class MemoryClient:
             Envelope,
             self._json("GET", "/resolve", params=tuple(params)),
             endpoint="GET /resolve",
+        )
+
+    def lookup_relations(
+        self,
+        *,
+        subject_entity_id: UUID | None = None,
+        predicate: str | None = None,
+        object_entity_id: UUID | None = None,
+        valid_at: datetime | None = None,
+    ) -> Envelope:
+        """Read current or valid-time relations matching an optional pattern."""
+        params: dict[str, str] = {}
+        if subject_entity_id is not None:
+            params["subject_entity_id"] = str(subject_entity_id)
+        if predicate is not None:
+            params["predicate"] = predicate
+        if object_entity_id is not None:
+            params["object_entity_id"] = str(object_entity_id)
+        if valid_at is not None:
+            params["valid_at"] = valid_at.isoformat()
+        return _validated(
+            Envelope,
+            self._json("GET", "/lookup/relations", params=params if params else None),
+            endpoint="GET /lookup/relations",
+        )
+
+    def transcript_relation(self, *, relation_id: UUID) -> Envelope:
+        """Read the bounded decision transcript for one relation."""
+        return _validated(
+            Envelope,
+            self._json("GET", f"/transcript/relation/{relation_id}"),
+            endpoint=f"GET /transcript/relation/{relation_id}",
+        )
+
+    def lookup_observations(
+        self, *, entity_id: UUID, property_query: str | None = None, k: int = 10
+    ) -> Envelope:
+        """Read live observations for one entity, optionally by property text."""
+        params: dict[str, str | int] = {"entity_id": str(entity_id), "k": k}
+        if property_query is not None:
+            params["property_query"] = property_query
+        return _validated(
+            Envelope,
+            self._json("GET", "/lookup/observations", params=params),
+            endpoint="GET /lookup/observations",
         )
 
     def search_claims(
@@ -589,13 +696,34 @@ class MemoryClient:
             raise MemoryApiError(status_code=0, detail=str(error)) from error
         if not response.is_success:
             detail = response.text
+            code: str | None = None
             try:
                 body = response.json()
             except ValueError:
                 body = None
-            if isinstance(body, dict) and "detail" in body:
-                detail = str(body["detail"])
-            raise MemoryApiError(status_code=response.status_code, detail=detail)
+            if isinstance(body, dict) and set(body) == {"detail"}:
+                public_detail = body["detail"]
+                if isinstance(public_detail, dict):
+                    structured = (
+                        _structured_query_error(
+                            detail=public_detail, status_code=response.status_code
+                        )
+                        if path.startswith("/query/")
+                        else None
+                    )
+                    if structured is not None:
+                        code, detail = structured
+                    elif path.startswith("/query/"):
+                        detail = "deployment API returned a malformed structured error"
+                    else:
+                        detail = str(public_detail)
+                else:
+                    detail = str(public_detail)
+            elif isinstance(body, dict) and "detail" in body:
+                detail = "deployment API returned a malformed error envelope"
+            raise MemoryApiError(
+                status_code=response.status_code, detail=detail, code=code
+            )
         try:
             return response.json()
         except ValueError as error:
@@ -623,6 +751,58 @@ def _sdk_param_list(value: object) -> list[object]:
     if isinstance(value, tuple):
         return list(value)
     raise ValueError("parameters must be a JSON array")
+
+
+def _saved_query_path_segment(*, value: str, field: str) -> str:
+    """Validate a registry identifier before encoding it as one URL segment."""
+    from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+    from rememberstack.surfaces.query_sandbox.mcp_tools import (
+        validate_saved_query_identifier,
+    )
+
+    try:
+        validated = validate_saved_query_identifier(value=value, field=field)
+    except SandboxRejection as error:
+        raise ValueError(error.message) from error
+    return quote(validated, safe="")
+
+
+def _structured_query_error(
+    *, detail: dict[object, object], status_code: int
+) -> tuple[str, str] | None:
+    """Accept only the complete public query-error shape at its bound HTTP status."""
+    if set(detail) != {"code", "message"}:
+        return None
+    code = detail.get("code")
+    message = detail.get("message")
+    if not isinstance(code, str) or not isinstance(message, str) or not message:
+        return None
+    if _QUERY_ERROR_HTTP_STATUS.get(code) != status_code:
+        return None
+    return code, message
+
+
+def _validated_list(
+    model: type[_ModelT], payload: object, *, endpoint: str
+) -> list[dict[str, object]]:
+    """Validate every member of one list atomically against its wire contract."""
+    if not isinstance(payload, list):
+        raise MemoryApiError(
+            status_code=200, detail=f"{endpoint} returned an invalid response body"
+        )
+    try:
+        return [item.model_dump(mode="json") for item in map(model.model_validate, payload)]
+    except (ValidationError, TypeError) as error:
+        raise MemoryApiError(
+            status_code=200, detail=f"{endpoint} returned an invalid response body"
+        ) from error
+
+
+def _validated_dict(
+    model: type[_ModelT], payload: object, *, endpoint: str
+) -> dict[str, object]:
+    """Validate and JSON-render one object-shaped public wire response."""
+    return _validated(model, payload, endpoint=endpoint).model_dump(mode="json")
 
 
 def _validated(model: type[_ModelT], payload: object, *, endpoint: str) -> _ModelT:

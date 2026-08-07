@@ -26,6 +26,7 @@ from rememberstack.model import IngestedVersion
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.remote_mcp import RemoteRecipeMcpServer
 from rememberstack.surfaces.remote_mcp import serve_mcp_stdio
 
@@ -253,12 +254,214 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
     with pytest.raises(MemoryApiError, match="not composed"):
         MemoryClient(client=response_client).recipes()
 
+    typed_error_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                409,
+                json={
+                    "detail": {
+                        "code": "quota_exceeded",
+                        "message": "query budget exhausted",
+                    }
+                },
+            )
+        ),
+    )
+    with pytest.raises(MemoryApiError, match="query budget exhausted") as captured:
+        MemoryClient(client=typed_error_client).query_sql(sql="SELECT 1")
+    assert captured.value.code == "quota_exceeded"
+
+    extra_outer_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                422,
+                json={
+                    "detail": {"code": "parse_error", "message": "bad SQL"},
+                    "unexpected": True,
+                },
+            )
+        ),
+    )
+    with pytest.raises(MemoryApiError) as extra_outer:
+        MemoryClient(client=extra_outer_client).query_sql(sql="SELECT 1")
+    assert extra_outer.value.code is None
+
+    non_query_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                422,
+                json={"detail": {"code": "parse_error", "message": "not a query"}},
+            )
+        ),
+    )
+    with pytest.raises(MemoryApiError) as non_query:
+        MemoryClient(client=non_query_client).resolve(name="Luna")
+    assert non_query.value.code is None
+
+    mismatched_error_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                500,
+                json={"detail": {"code": "parse_error", "message": "bad SQL"}},
+            )
+        ),
+    )
+    with pytest.raises(MemoryApiError) as mismatched:
+        MemoryClient(client=mismatched_error_client).query_sql(sql="SELECT 1")
+    assert mismatched.value.code is None
+    assert "malformed structured error" in mismatched.value.detail
+
+    incomplete_error_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                422, json={"detail": {"code": "parse_error"}}
+            )
+        ),
+    )
+    with pytest.raises(MemoryApiError) as incomplete:
+        MemoryClient(client=incomplete_error_client).query_sql(sql="SELECT 1")
+    assert incomplete.value.code is None
+
     invalid_client = httpx.Client(
         base_url="http://memory.test",
         transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={})),
     )
     with pytest.raises(MemoryApiError, match="invalid response body"):
         MemoryClient(client=invalid_client).run_recipe(name="broken")
+
+
+def test_sdk_saved_query_paths_cannot_escape_into_control_routes() -> None:
+    """Registry identifiers remain one URL segment even under hostile input."""
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    raw = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    client = MemoryClient(client=raw)
+    try:
+        with pytest.raises(ValueError, match="namespace must match"):
+            client.describe_saved_query(namespace="../../connectors", name="status")
+        with pytest.raises(ValueError, match="name must match"):
+            client.run_saved_query(
+                namespace="team",
+                name="57000000-0000-0000-0000-000000000020/pause?",
+            )
+        with pytest.raises(SandboxRejection, match="namespace must match"):
+            client.call_open_query(
+                name="run_saved_query",
+                arguments={
+                    "namespace": "../../connectors",
+                    "name": "57000000_0000_0000_0000_000000000020_pause",
+                },
+            )
+    finally:
+        raw.close()
+
+    assert requests == []
+
+
+def test_sdk_runs_saved_query_on_the_public_query_route() -> None:
+    """The human-readable endpoint label never becomes part of the HTTP path."""
+    requests: list[httpx.Request] = []
+    payload = {
+        "contract": "QueryResult/v1",
+        "request_id": "57000000-0000-0000-0000-000000000030",
+        "deployment_id": "57000000-0000-0000-0000-000000000001",
+        "surface_manifest_hash": "a" * 64,
+        "query_hash": "b" * 64,
+        "limits": {
+            "row_cap": 100,
+            "byte_cap": 1_000_000,
+            "statement_timeout_ms": 5_000,
+            "analytical_tier": False,
+        },
+        "execution_started_at": "2026-08-07T00:00:00Z",
+        "elapsed_ms": 1.0,
+        "termination_reason": "completed",
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        """Capture one request and return a complete QueryResult/v1."""
+        requests.append(request)
+        return httpx.Response(200, json=payload)
+
+    raw = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    try:
+        result = MemoryClient(client=raw).run_saved_query(
+            namespace="examples", name="recent_claims"
+        )
+    finally:
+        raw.close()
+
+    assert result["contract"] == "QueryResult/v1"
+    assert requests[0].method == "POST"
+    assert requests[0].url.path == "/query/saved/examples/recent_claims/run"
+
+
+@pytest.mark.parametrize("endpoint", ("search", "saved"))
+def test_sdk_rejects_a_partially_malformed_discovery_list(endpoint: str) -> None:
+    """Semantically incomplete entries fail the whole discovery response."""
+    raw = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=[{"name": "only"}])
+        ),
+    )
+    client = MemoryClient(client=raw)
+    try:
+        with pytest.raises(MemoryApiError, match="invalid response body"):
+            if endpoint == "search":
+                client.search_query_space(query="claims")
+            else:
+                client.list_saved_queries()
+    finally:
+        raw.close()
+
+
+@pytest.mark.parametrize(
+    ("method", "arguments"),
+    (
+        ("query_sql", {"sql": "SELECT 1"}),
+        ("explain_sql", {"sql": "SELECT 1"}),
+        ("query_cypher", {"cypher": "MATCH (n) RETURN n"}),
+        ("explain_cypher", {"cypher": "MATCH (n) RETURN n"}),
+        ("run_saved_query", {"namespace": "team", "name": "recent_claims"}),
+    ),
+)
+def test_sdk_rejects_partial_query_result_contracts(
+    method: str, arguments: dict[str, object]
+) -> None:
+    """Every execution-bearing query method validates complete provenance."""
+    raw = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "termination_reason": "completed",
+                    "truncated": False,
+                    "rows": [],
+                },
+            )
+        ),
+    )
+    client = MemoryClient(client=raw)
+    try:
+        with pytest.raises(MemoryApiError, match="invalid response body"):
+            getattr(client, method)(**arguments)
+    finally:
+        raw.close()
 
 
 def test_remote_mcp_proxies_the_deployment_registry() -> None:

@@ -1,7 +1,7 @@
 # LoCoMo full-system benchmark design
 
 > **Status:** binding current-system protocol. Real provider execution remains
-> operator-invoked; the owner authorized the full v10 run on 2026-08-07.
+> operator-invoked; the owner authorized the full v11 run on 2026-08-07.
 
 ## 1. Acceptance boundary
 
@@ -12,19 +12,20 @@ run must satisfy these gates:
 - the stock self-host profile composes all ten continuous handlers;
 - P2/P3 can be built explicitly over the same stores the API reads;
 - readiness is machine-verifiable through the public API;
-- the answer agent uses only registry-rendered public recipes;
-- all tool calls, envelopes, model usage, costs, and failures checkpoint;
+- the answer agent can use the complete shipped read plane: assured operations,
+  direct primitives, open query, P1/P2, and the published P3 mount;
+- all tool calls, responses, model usage, costs, and failures checkpoint;
 - pure and synthetic tests pass; and
 - the operator supplies explicit execution, isolated-deployment, call-budget,
   and spend acknowledgements.
 
-The 2026-08-07 authorization covers one fresh full v10 publication run. It does
+The 2026-08-07 authorization covers one fresh full v11 publication run. It does
 not authorize an unbounded cost or a run against a different revision/surface.
 
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v10
+protocol                RS-LoCoMo-Full-v11
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -41,13 +42,26 @@ judge reasoning effort   none
 judge repetitions        1
 primary metric           judge accuracy
 secondary metric         official LoCoMo F1
-diagnostic               coarse evidence-session recall
+diagnostic               coarse envelope-evidence session recall
 ```
 
 The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
-identities, and component generations are stored. A change creates a new
-protocol version.
+identities, complete answer-tool catalog hash, and component generations are
+stored. A change creates a new protocol version.
+
+**v10 → v11 (2026-08-07 — complete retrieval plane):** V10 exposed only the
+three assured operations to the answer agent even though it built P2/P3 and the
+shipping system also exposed seven direct read primitives and nine open-query
+operations. V11 replaces that subset with the complete read plane: the three
+assured operations, seven direct primitives, nine open-query operations, and
+bounded list/grep/read over the ordinary published P3 filesystem. P1 is
+reachable through assured, primitive, and SQL search paths; P2 through full
+Cypher; live PostgreSQL testimony/facts through primitives and SQL; and P3
+through its mount. Writes, controls, raw originals, artifacts, internal-only
+primitives, and absent Plane K are not answer tools. The exact 22 descriptors
+and P3 limits are fingerprinted. Analysis:
+`plan/analysis/locomo_full_retrieval_agent.md`; decision: D85.
 
 **v9 → v10 (2026-08-07 — current-system clean cut):** D83 removed the retired
 17 adapters and left exactly `resolve_entity`, `question_context`, and
@@ -198,8 +212,8 @@ rather than a design choice, it needs its own experiment — for example, scorin
 deliberately incorrect answers with both models and reporting the acceptance rates.
 
 V2 through the weak v9 variant deliberately kept the answer agent on
-`openai/gpt-4o-mini` while Luna judged it. V10 instead measures the
-owner-selected Luna agent against the clean-cutover surface. Answer and judge
+`openai/gpt-4o-mini` while Luna judged it. V10 and v11 instead measure the
+owner-selected Luna agent against the current surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
 
@@ -395,15 +409,16 @@ docker compose --profile operations run --rm projections
 The one-shot service builds P2 into the snapshot bucket and P3 into the corpusfs bucket. It does
 not run on every document and does not remain resident.
 
-P3 publication is a deployment-integrity requirement in this protocol, not an answer channel.
-The remote `MemoryClient` answer agent cannot browse a local P3 mount, and the ordinary recipe
-registry has no filesystem operation. Results must not attribute answer quality to P3
-navigation. A future mount-enabled LoCoMo harness is a separately named protocol.
+After the build, the ordinary self-host `mounts` command materializes the latest
+registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
+P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
+version in the readiness report before any question call. P3 is therefore both
+an integrity requirement and an answer channel in v11; no benchmark-specific
+object-store reader or HTTP endpoint exists.
 
 ### Plane K
 
-The benchmark records that the stock profile has no K planner/writer runtime,
-and the current three-operation agent surface has no K query operation. A later
+The benchmark records that the stock profile has no K planner/writer runtime. A later
 K-enabled LoCoMo run needs an explicit public operation, routing rules,
 repository/runtime fingerprints, K settlement in readiness, and a new protocol
 name.
@@ -437,10 +452,22 @@ response contains:
 The answer command refuses a false report and checkpoints a true one. The old
 `--confirm-index-ready` flag is removed.
 
-## 6. Public tool surface
+## 6. Complete retrieval surface
 
-The self-host setup seeds exactly the three canonical assured operations:
-`resolve_entity`, `question_context`, and `current_context`.
+The answer catalog is the exact union of:
+
+- assured operations: `resolve_entity`, `question_context`, `current_context`;
+- direct primitives: `resolve`, `lookup_relations`, `transcript_relation`,
+  `lookup_observations`, `search_claims`, `search_chunks`, `hydrate_relation`;
+- open query: `query_sql`, `explain_sql`, `query_cypher`, `explain_cypher`,
+  `describe_query_space`, `search_query_space`, `list_saved_queries`,
+  `describe_saved_query`, `run_saved_query`; and
+- mounted P3: `p3_list`, `p3_search`, `p3_read`.
+
+These are all read paths. Ingest, connector administration, projection builds,
+readiness, raw originals, artifacts, internal-only primitive names, and Plane K
+are absent. “Complete” means the agent may choose any shipped retrieval
+channel; it does not mean every question must call every channel.
 
 The protocol pins the checked-in `surface_manifest_hash`, verifies it against
 `GET /query/space` before ingestion and again before answering, and requires
@@ -450,23 +477,38 @@ registry row, so equality covers the chain the executor will actually run, not
 only its name and schema. This catches both implementation-contract drift and
 registry bootstrap drift before remote processing or answer-model spend.
 
-No benchmark tool reads Postgres, Lance, MinIO, or internal handlers directly.
+The nine open-query descriptors come from the same static authority used by the
+MCP surface; the seven primitive descriptors adapt the exact public SDK
+methods; and the three P3 schemas and their output limits are pinned by the
+benchmark adapter. The canonical descriptor hash is part of `run.json`.
+P3 listing visits at most 2,000 entries and returns at most 200. P3 search
+visits at most 10,000 entries, reads at most 2,000 files / 8 MiB, and returns at
+most 50 matches. P3 read accepts a start line no larger than 10,000,000 and
+returns at most 400 lines from a file no larger than 256 KiB. These operative
+limits are present in the hashed descriptors, not only in implementation
+constants.
+
+No benchmark tool reads Postgres, Lance, MinIO, graph files, or internal
+handlers directly. Product reads go through `MemoryClient`; filesystem reads
+stay inside the normal P3 mount.
 
 ## 7. Answer loop
 
 For each question:
 
-1. Render the frozen answer-agent prompt with question, public tool descriptors, and prior trace.
+1. Render the frozen answer-agent prompt with the question, all 22 tool
+   descriptors, and prior trace.
 2. Ask for strict `AnswerAgentStep`.
 3. For `action="tool"`, validate the name against the catalog, decode
    `arguments_json` by taking its first complete JSON object (trailing text is
-   recorded on the trace row, not discarded silently — see §2.4), and call
-   `MemoryClient.run_recipe()`.
-4. Append arguments, latency, and the complete envelope.
+   recorded on the trace row, not discarded silently — see §2.4), and dispatch
+   it through `MemoryClient` or the bounded P3 adapter.
+4. Append arguments, latency, and the complete JSON response. Assured and
+   primitive responses retain their complete envelopes.
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v10 leaves it unset.
+   prepared protocol's `answer_word_cap` is set; v11 leaves it unset.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
@@ -476,25 +518,34 @@ For each question:
    reader-position attempts after tool results; `first_step_retries` counts
    additional calls made before any tool result.
 
-The agent is instructed to orient, verify current facts, and audit evidence while respecting
-grain, validity, freshness, truncation, typed negatives, and hydration drops. It receives no gold
-answer, evidence IDs, summaries, or outside retrieval.
+The agent is instructed to choose the cheapest suitable channel: assured
+operations for ordinary typed recall/current truth, direct primitives for
+targeted evidence and audit, discovery before unfamiliar SQL/Cypher, SQL for
+live composition and P1 search functions, Cypher for P2 graph questions, saved
+queries for shipped patterns, and P3 for filesystem orientation/grep/read. It
+must verify load-bearing snapshot findings against live fact/evidence paths and
+respect grain, validity, freshness, truncation, typed negatives, and hydration
+drops. It receives no gold answer, evidence IDs, summaries, or outside
+retrieval.
 
-Loop guards in the frozen answer prompt (v10): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v11): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
-rather than retrying it; use `question_context` first for ordinary recall and
-try it before answering "Unknown". These are prompt discipline, not harness
-enforcement — the harness still only bounds call counts.
+rather than retrying it; and try at least one content-bearing retrieval path
+before answering "Unknown". These are prompt discipline, not harness enforcement
+— the harness still only bounds call counts.
 
 The answer agent sees a compact projection of each trace response: all facts,
 claims, chunks, sources, timestamps, freshness, negatives, truncation, and
 hydration-drop counts remain, while rank-score bookkeeping and empty containers
-are omitted. Default-valued temporal and validity fields are retained rather
-than being silently classified as noise. The complete unmodified envelope
-remains in the durable `ToolCallRecord`.
+are omitted from envelopes. SQL/Cypher/discovery/P3 response content is not
+silently reduced. Default-valued temporal and validity fields are retained
+rather than being silently classified as noise. The complete response remains
+in the durable `ToolCallRecord`.
 
-Evidence claims found anywhere in the trace are de-duplicated in first-seen order for the coarse
-session diagnostic. This diagnostic remains separate from the primary score.
+Evidence claims found anywhere in the trace are de-duplicated in first-seen
+order for the coarse session diagnostic. Because SQL, Cypher, and P3 do not
+necessarily return typed envelope claims/chunks, the diagnostic is explicitly
+envelope-evidence only. It remains separate from the primary score.
 
 ## 8. Commands
 
@@ -504,11 +555,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v10 \
+  --protocol full-v11 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v10`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v11`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
@@ -525,9 +576,16 @@ uv run --extra benchmark python -m benchmarks.locomo ingest \
 
 docker compose --profile operations run --rm projections
 
+mkdir -p "$PWD/.benchmark-mounts"
+docker compose --profile operations run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/.benchmark-mounts:$PWD/.benchmark-mounts" \
+  projections mounts --root "$PWD/.benchmark-mounts"
+
 uv run --extra benchmark python -m benchmarks.locomo answer \
   --run .benchmark-runs/locomo-smoke \
   --sample conv-26 \
+  --p3-root "$PWD/.benchmark-mounts/$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID/p3" \
   --max-questions 8 \
   --max-agent-calls 72 \
   --max-evaluator-cost-usd 1.00 \
@@ -549,13 +607,24 @@ the deployment.
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically
 replaced after each ingestion, readiness checkpoint, answer, and judge.
 
-Transport errors, invalid tool decisions, schema failures, provider accounting failures, step
-exhaustion, and missing records remain explicit and score zero. Successfully parsed provider
+Transport/server errors, invalid tool decisions, schema failures, provider accounting failures,
+step exhaustion, and missing records remain explicit and score zero. Typed
+caller-correctable parse, argument, allowlist, and saved-query-state failures,
+plus rejected P3 arguments, are retained as failed tool results so the bounded
+agent can correct its plan. Classification uses the public query error code for
+both HTTP errors and HTTP-200 `QueryResult/v1` failures; auth, quota,
+concurrency, schema drift, projection/store unavailability, transport, timeout,
+resource, and execution failures remain terminal. Successfully parsed provider
 usage is added to the shared answer/judge ledger. A call that crosses the CLI reported-spend
 threshold is recorded as a failure and stops the run. Later unanswered items remain explicit
 zero-scored missing records unless the operator resumes with an explicitly higher threshold.
 Provider-side account limits remain the hard monetary boundary because a process can die after
 billing but before checkpointing.
+
+A missing, unreadable, or readiness-version-mismatched P3 mount is a terminal
+pre-answer failure for every remaining item. The command checkpoints those
+zeroes to preserve the denominator; a repaired mount therefore requires a
+fresh prepared run and fresh ingestion rather than resuming over those records.
 
 ## 10. Pre-run checklist
 
@@ -574,9 +643,12 @@ billing but before checkpointing.
 - All ten workers are running.
 - Every prepared session has an ingest record.
 - P2/P3 one-shot build completed.
+- The ordinary mount publisher completed and its P3 `.snapshot-version` equals
+  readiness.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
-- Public surface hash, recipe descriptors, and live implementation-chain hashes match.
+- Public surface hash, recipe descriptors, live implementation-chain hashes,
+  nine open-query names, and the fingerprinted complete answer catalog match.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
 - Raw artifacts and failures will be retained for publication review.
