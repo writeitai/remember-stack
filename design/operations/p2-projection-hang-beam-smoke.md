@@ -49,18 +49,45 @@ before any graph load work begins.
 
 ## Workarounds (operator)
 
-1. Cancel stuck backends:
-   `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query ILIKE '%graph_edges_visible_history%' AND state='active';`
-2. Mark orphan snapshots failed:
-   `UPDATE projection_snapshots SET status='failed', validation=... WHERE status='building';`
+Scope every cleanup to the **target deployment** and avoid killing the current
+backend or unrelated sessions:
+
+```sql
+-- 1) Cancel only stuck export queries for this database (not this session)
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+  AND state = 'active'
+  AND query ILIKE '%graph_edges_visible_history%';
+
+-- 2) Fail only orphan building snapshots for the lab deployment
+UPDATE projection_snapshots
+SET status = 'failed',
+    validation = jsonb_build_object(
+      'gate', 'exception',
+      'error', 'orphaned building after operator terminate'
+    )
+WHERE status = 'building'
+  AND deployment_id = '11111111-1111-4111-8111-111111111111';
+```
+
 3. Answer/score paths that only need **P1** (claim search) can proceed without
    P2/P3.
 
-## Follow-up engineering (not done here)
+## Follow-up engineering
 
-- Watermark from base tables / export temp survivor map, not
-  `graph_edges_visible_history` max over entity-provenanced history.
-- Materialize or simplify `entities_current` provenance for export-only
-  consumers.
-- Statement timeout + progress logging around each export table so hangs
-  fail loudly instead of silent `building`.
+Done (follow-up PR after dual review):
+
+- `SET LOCAL statement_timeout = '120s'` inside `graph_export` so hangs become
+  exceptions that `mark_failed` can record.
+- Watermark + Entity/RELATES/IS_DOCUMENT export rewritten to use base tables +
+  TEMP `graph_survivor` instead of `memory_v1.entities_current` /
+  `graph_edges_visible_history`.
+
+Still open:
+
+- Materialize or simplify `entities_current` for interactive query-space use
+  (export path no longer depends on it).
+- Progress logging per export table.
+- Startup sweep for stale `building` rows older than N minutes.

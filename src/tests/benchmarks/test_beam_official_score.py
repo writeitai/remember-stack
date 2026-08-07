@@ -60,6 +60,14 @@ def test_kendall_tau_b_identical_is_one() -> None:
     assert _kendall_tau_b([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(1.0)
 
 
+def test_kendall_tau_b_handles_ties() -> None:
+    """Identical rankings with ties must still yield τ-b = 1 (SciPy τ-b)."""
+    assert _kendall_tau_b([1.0, 1.0, 2.0], [1.0, 1.0, 2.0]) == pytest.approx(1.0)
+    assert _kendall_tau_b([1.0, 1.0, 2.0, 2.0], [1.0, 1.0, 2.0, 2.0]) == pytest.approx(
+        1.0
+    )
+
+
 def test_fixture_file_is_valid_json() -> None:
     """Committed probing_questions fixture stays parseable."""
     path = (

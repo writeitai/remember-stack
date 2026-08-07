@@ -138,19 +138,21 @@ def parse_judge_json(text: str) -> dict[str, Any]:
     match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
     if match:
         return json.loads(match.group(0))
-    raise OfficialScoreError(f"judge returned non-JSON: {text[:200]!r}")
+    raise OfficialScoreError(
+        f"judge returned non-JSON (len={len(text)}, empty={not text.strip()})"
+    )
 
 
 def _clamp_score(value: object) -> float:
-    """Normalize judge scores to {0.0, 0.5, 1.0} when close; else clamp [0,1]."""
+    """Normalize judge scores to {0.0, 0.5, 1.0} only; reject other values."""
     try:
         score = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError) as error:
-        raise OfficialScoreError(f"invalid judge score {value!r}") from error
+        raise OfficialScoreError("invalid judge score type") from error
     for candidate in (0.0, 0.5, 1.0):
         if abs(score - candidate) < 1e-6:
             return candidate
-    return max(0.0, min(1.0, score))
+    raise OfficialScoreError(f"judge score off-scale (not in {{0, 0.5, 1}}): {score}")
 
 
 class OpenRouterJudge:
@@ -182,7 +184,9 @@ class OpenRouterJudge:
             "model": self._model,
             "messages": messages,
             "temperature": 0,
-            "max_tokens": 800,
+            # Reasoning models share this budget with content; house default is 32k.
+            "max_tokens": 32_000,
+            "provider": {"allow_fallbacks": True},
         }
         request = urllib.request.Request(
             _OPENROUTER_URL,
@@ -195,18 +199,43 @@ class OpenRouterJudge:
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")[:500]
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(
+                    request, timeout=self._timeout_s
+                ) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as error:
+                last_error = error
+                # Metadata only — never echo provider bodies (may restate prompts).
+                if error.code in {429, 500, 502, 503, 504} and attempt < 2:
+                    continue
+                raise OfficialScoreError(
+                    f"OpenRouter judge HTTP {error.code}"
+                ) from error
+            except (TimeoutError, urllib.error.URLError) as error:
+                last_error = error
+                if attempt < 2:
+                    continue
+                raise OfficialScoreError(
+                    f"OpenRouter judge network failure: {type(error).__name__}"
+                ) from error
+        else:
             raise OfficialScoreError(
-                f"OpenRouter judge HTTP {error.code}: {detail}"
-            ) from error
+                f"OpenRouter judge failed after retries: {type(last_error).__name__}"
+            ) from last_error
         try:
-            return str(body["choices"][0]["message"]["content"])
+            content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as error:
-            raise OfficialScoreError(f"unexpected OpenRouter body: {body!r}") from error
+            raise OfficialScoreError(
+                "unexpected OpenRouter response shape (missing choices/content)"
+            ) from error
+        text = str(content or "")
+        if not text.strip():
+            raise OfficialScoreError("judge returned empty content")
+        return text
 
 
 def judge_nugget(
@@ -287,8 +316,10 @@ def _kendall_tau_b(x: Sequence[float], y: Sequence[float]) -> float:
             dx = x[i] - x[j]
             dy = y[i] - y[j]
             if dx == 0 and dy == 0:
-                continue
-            if dx == 0:
+                # Pair tied in both rankings counts toward both tie corrections.
+                ties_x += 1
+                ties_y += 1
+            elif dx == 0:
                 ties_x += 1
             elif dy == 0:
                 ties_y += 1
@@ -398,6 +429,53 @@ def score_run_dir_official(
     judge = OpenRouterJudge(api_key=api_key, model=judge_model)
 
     items: list[dict[str, Any]] = []
+    out = run_dir / f"score_report_official_{arm}.json"
+
+    def _persist(*, complete: bool) -> dict[str, Any]:
+        """Write report so paid judge work is not lost on later failures."""
+        by_ability_local: dict[str, list[float]] = {}
+        for item in items:
+            by_ability_local.setdefault(str(item["ability"]), []).append(
+                float(item["primary_score"])
+            )
+        ability_means_local = {
+            ability: (sum(scores) / len(scores) if scores else 0.0)
+            for ability, scores in sorted(by_ability_local.items())
+        }
+        ability_ns_local = {
+            ability: len(scores) for ability, scores in sorted(by_ability_local.items())
+        }
+        overall_macro_local = (
+            sum(ability_means_local.values()) / len(ability_means_local)
+            if ability_means_local
+            else 0.0
+        )
+        overall_micro_local = (
+            sum(float(item["primary_score"]) for item in items) / len(items)
+            if items
+            else 0.0
+        )
+        payload = {
+            "protocol": "RS-Harness-BEAM-v1",
+            "scorer": "beam_official_nugget_llm_judge",
+            "source": (
+                "mohammadtavakoli78/BEAM src/evaluation/compute_metrics.py "
+                "+ paper §2.4 (nugget LLM-judge; Kendall τ-b for event_ordering)"
+            ),
+            "judge_model": judge_model,
+            "arm": arm,
+            "n": len(items),
+            "complete": complete,
+            "overall_mean": overall_macro_local,
+            "overall_macro_mean": overall_macro_local,
+            "overall_micro_mean": overall_micro_local,
+            "by_ability": ability_means_local,
+            "by_ability_n": ability_ns_local,
+            "items": items,
+        }
+        out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        return payload
+
     for question in questions:
         qid = str(question.get("question_id") or question.get("item_id"))
         ability = str(question.get("ability") or "")
@@ -441,37 +519,9 @@ def score_run_dir_official(
                 else None,
             }
         )
+        _persist(complete=False)
 
-    by_ability: dict[str, list[float]] = {}
-    for item in items:
-        by_ability.setdefault(str(item["ability"]), []).append(
-            float(item["primary_score"])
-        )
-    ability_means = {
-        ability: (sum(scores) / len(scores) if scores else 0.0)
-        for ability, scores in sorted(by_ability.items())
-    }
-    overall = (
-        sum(float(item["primary_score"]) for item in items) / len(items)
-        if items
-        else 0.0
-    )
-    report = {
-        "protocol": "RS-Harness-BEAM-v1",
-        "scorer": "beam_official_nugget_llm_judge",
-        "source": (
-            "mohammadtavakoli78/BEAM src/evaluation/compute_metrics.py "
-            "+ paper §2.4 (nugget LLM-judge; Kendall τ-b for event_ordering)"
-        ),
-        "judge_model": judge_model,
-        "arm": arm,
-        "n": len(items),
-        "overall_mean": overall,
-        "by_ability": ability_means,
-        "items": items,
-    }
-    out = run_dir / f"score_report_official_{arm}.json"
-    out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report = _persist(complete=True)
     report["report_path"] = str(out)
     return report
 
