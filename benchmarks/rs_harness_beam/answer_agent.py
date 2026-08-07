@@ -319,7 +319,8 @@ def _ingest_envelope(
     for rank in envelope.get("ranking") or []:
         if not isinstance(rank, dict):
             continue
-        payload = rank.get("payload") if isinstance(rank.get("payload"), dict) else rank
+        raw_payload = rank.get("payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else rank
         eid = payload.get("entity_id")
         if eid and not any(e.get("entity_id") == eid for e in bundle.entities):
             bundle.entities.append(
