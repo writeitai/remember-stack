@@ -134,13 +134,13 @@ and run directory in place for diagnosis. A restarted driver
 refuses to wipe an incomplete sample with persisted records, because its live isolated deployment
 may be the only safe way to resume that checkpoint.
 Run the incomplete stage directly. A partial `ingest` resumes only after the
-runner proves that every live lineage and current version exactly matches its
-durable checkpoint. If that proof fails, leave the old run state untouched,
-and inspect whether the sample has any answer or judge records. With none, a
-new run directory may rerun only that sample and merge with the old run. With
-any such record, restart every sample assigned to the old run directory: the
-merger deliberately rejects a replacement for an already-recorded sample.
-Never edit or force a checkpoint forward.
+runner proves that the exact public live-lineage/visible-version join matches
+its durable checkpoint. If that proof fails, leave the old run state
+untouched, and inspect whether the sample has any answer or judge records. With
+none, a new run directory may rerun only that sample and merge with the old
+run. With any such record, restart every sample assigned to the old run
+directory: the merger deliberately rejects a replacement for an
+already-recorded sample. Never edit or force a checkpoint forward.
 
 ## 4. Collect run directories
 
