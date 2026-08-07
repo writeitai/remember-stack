@@ -284,9 +284,7 @@ class MemoryClient:
         """Search checked-in manifest text only."""
         return _validated_list(
             _DiscoveryHit,
-            self._json(
-                "GET", "/query/space/search", params={"query": query, "k": k}
-            ),
+            self._json("GET", "/query/space/search", params={"query": query, "k": k}),
             endpoint="GET /query/space/search",
         )
 
@@ -346,9 +344,7 @@ class MemoryClient:
         path = f"/query/saved/{namespace_path}/{name_path}/run"
         endpoint = f"POST {path}"
         return _validated_dict(
-            QueryResult,
-            self._json("POST", path, json_body=body),
-            endpoint=endpoint,
+            QueryResult, self._json("POST", path, json_body=body), endpoint=endpoint
         )
 
     def call_open_query(self, *, name: str, arguments: Mapping[str, object]) -> object:
@@ -791,7 +787,9 @@ def _validated_list(
             status_code=200, detail=f"{endpoint} returned an invalid response body"
         )
     try:
-        return [item.model_dump(mode="json") for item in map(model.model_validate, payload)]
+        return [
+            item.model_dump(mode="json") for item in map(model.model_validate, payload)
+        ]
     except (ValidationError, TypeError) as error:
         raise MemoryApiError(
             status_code=200, detail=f"{endpoint} returned an invalid response body"

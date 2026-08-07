@@ -292,8 +292,7 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
         base_url="http://memory.test",
         transport=httpx.MockTransport(
             lambda _request: httpx.Response(
-                422,
-                json={"detail": {"code": "parse_error", "message": "not a query"}},
+                422, json={"detail": {"code": "parse_error", "message": "not a query"}}
             )
         ),
     )
@@ -305,8 +304,7 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
         base_url="http://memory.test",
         transport=httpx.MockTransport(
             lambda _request: httpx.Response(
-                500,
-                json={"detail": {"code": "parse_error", "message": "bad SQL"}},
+                500, json={"detail": {"code": "parse_error", "message": "bad SQL"}}
             )
         ),
     )
@@ -352,8 +350,7 @@ def test_sdk_saved_query_paths_cannot_escape_into_control_routes() -> None:
             client.describe_saved_query(namespace="../../connectors", name="status")
         with pytest.raises(ValueError, match="name must match"):
             client.run_saved_query(
-                namespace="team",
-                name="57000000-0000-0000-0000-000000000020/pause?",
+                namespace="team", name="57000000-0000-0000-0000-000000000020/pause?"
             )
         with pytest.raises(SandboxRejection, match="namespace must match"):
             client.call_open_query(

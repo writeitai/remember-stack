@@ -2008,9 +2008,7 @@ def _answer_one(
             continue
         except (RetrievalInfrastructureError, SandboxRejection) as error:
             failed_latency = _elapsed_ms(tool_started)
-            code = (
-                error.code.value if isinstance(error, SandboxRejection) else None
-            )
+            code = error.code.value if isinstance(error, SandboxRejection) else None
             correctable = is_correctable_query_error(code=code)
             if tool_observation is not None:
                 tool_observation.finish(

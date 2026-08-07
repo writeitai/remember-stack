@@ -224,12 +224,7 @@ def test_agent_can_recover_from_rejected_sql_and_answer_from_open_query() -> Non
         ),
         (
             409,
-            {
-                "detail": {
-                    "code": "quota_exceeded",
-                    "message": "query budget exhausted",
-                }
-            },
+            {"detail": {"code": "quota_exceeded", "message": "query budget exhausted"}},
         ),
         (404, {"detail": "query endpoint unavailable"}),
     ),
@@ -1450,10 +1445,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
                     ],
                 ]
             )
-            return httpx.Response(
-                200,
-                json=_query_result_payload(rows=rows),
-            )
+            return httpx.Response(200, json=_query_result_payload(rows=rows))
         return _run_transport(request)
 
     raw_client = httpx.Client(
@@ -2270,10 +2262,7 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
                 ]
             ]
         )
-        return httpx.Response(
-            200,
-            json=_query_result_payload(rows=rows),
-        )
+        return httpx.Response(200, json=_query_result_payload(rows=rows))
     if request.method == "POST" and request.url.path.startswith("/recipe/"):
         return httpx.Response(200, json=_empty_envelope().model_dump(mode="json"))
     return httpx.Response(404, text="unexpected synthetic request")

@@ -352,9 +352,7 @@ def test_p3_file_replacement_cannot_escape_pinned_snapshot(
 
     monkeypatch.setattr(retrieval.os, "open", replace_before_open)
     arguments = (
-        {"query": "outside"}
-        if tool_name == "p3_search"
-        else {"path": "session.md"}
+        {"query": "outside"} if tool_name == "p3_search" else {"path": "session.md"}
     )
 
     with pytest.raises(RetrievalInfrastructureError, match="unreadable"):
@@ -419,9 +417,7 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
             return httpx.Response(
                 200,
                 json=_query_result_payload(
-                    columns=[
-                        {"name": "answer", "type": "text", "nullable": False}
-                    ],
+                    columns=[{"name": "answer", "type": "text", "nullable": False}],
                     rows=[["Prague"]],
                     truncated=False,
                 ),
@@ -495,10 +491,7 @@ def test_query_execution_rejects_partial_query_result_contract() -> None:
         transport=httpx.MockTransport(
             lambda _request: httpx.Response(
                 200,
-                json={
-                    "contract": "QueryResult/v1",
-                    "termination_reason": "completed",
-                },
+                json={"contract": "QueryResult/v1", "termination_reason": "completed"},
             )
         ),
     )

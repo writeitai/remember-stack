@@ -198,8 +198,7 @@ class P3Mount:
             ) from error
         try:
             self._root_fd = os.open(
-                self._root,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                self._root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
             )
         except OSError as error:
             raise RetrievalInfrastructureError(
@@ -454,7 +453,9 @@ class P3Mount:
         try:
             root_metadata = os.fstat(root_fd)
         except OSError as error:
-            raise RetrievalInfrastructureError("P3 snapshot root is unreadable") from error
+            raise RetrievalInfrastructureError(
+                "P3 snapshot root is unreadable"
+            ) from error
         parent = self._root
         parent_identity = (root_metadata.st_dev, root_metadata.st_ino)
         for index, part in enumerate(parts):
@@ -496,7 +497,9 @@ class P3Mount:
                 "P3 snapshot path changed during inspection"
             ) from error
         if not resolved.is_relative_to(self._root):
-            raise RetrievalInfrastructureError("P3 snapshot path escaped the mount root")
+            raise RetrievalInfrastructureError(
+                "P3 snapshot path escaped the mount root"
+            )
         try:
             resolved_kind = self._snapshot_kind(path=resolved)
         except RetrievalInfrastructureError as error:
