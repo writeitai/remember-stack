@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v9 protocols."""
+"""Typed values for the full-system RS-LoCoMo-Full-v10 protocol."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v9", "full-v9-strong"]
-ProtocolName = Literal["RS-LoCoMo-Full-v9", "RS-LoCoMo-Full-v9-strong"]
+ProtocolKey = Literal["full-v10"]
+ProtocolName = Literal["RS-LoCoMo-Full-v10"]
 SourceTimezoneBasis = Literal["assumed_utc"]
-AnswerAgentModel = Literal["openai/gpt-4o-mini", "openai/gpt-5.6-luna"]
+AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
@@ -118,7 +118,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v9"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v10"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -135,14 +135,14 @@ class RunConfiguration(FrozenModel):
     max_agent_calls_per_question: Literal[9] = 9
     answer_reader_retry_budget: Literal[2] = 2
     knowledge_mode: Literal["not_composed"] = "not_composed"
-    answer_agent_model: AnswerAgentModel = "openai/gpt-4o-mini"
+    answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
     answer_agent_reasoning_effort: Literal["none"] | None = None
     answer_word_cap: int | None = Field(default=None, ge=1)
     judge_model: JudgeModel = "openai/gpt-5.6-luna"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1
-    tool_catalog_sha256: NonEmpty
+    surface_manifest_hash: NonEmpty
     answer_prompt_sha256: NonEmpty
     judge_prompt_sha256: NonEmpty
     answer_schema_sha256: NonEmpty
@@ -377,7 +377,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v9"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v10"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

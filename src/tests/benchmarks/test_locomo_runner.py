@@ -31,8 +31,9 @@ from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
+from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
-from benchmarks.locomo.protocol import frozen_v9_tool_catalog
+from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.runner import _answer_one
@@ -88,7 +89,7 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert answer.generated_answer == "Prague"
     assert answer.agent_call_count == 2
     assert answer.first_step_retries == 0
-    assert [call.name for call in answer.tool_calls] == ["claims_verbatim"]
+    assert [call.name for call in answer.tool_calls] == ["question_context"]
     assert len(provider.generated_prompts) == 2
 
 
@@ -390,10 +391,7 @@ def test_a_call_that_crosses_the_cost_threshold_is_recorded_then_stops() -> None
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (
-        ("full-v9", "openai/gpt-4o-mini", None, 1, 0),
-        ("full-v9-strong", "openai/gpt-5.6-luna", "none", 0, 2),
-    ),
+    (("full-v10", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -858,6 +856,57 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
     assert provider.generated_prompts == []
 
 
+@pytest.mark.parametrize(
+    ("drift_kind", "message"),
+    (("manifest", "query surface"), ("recipes", "canonical three-operation surface")),
+)
+def test_answer_refuses_non_current_query_surface_before_model_calls(
+    drift_kind: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A healthy deployment still cannot be scored under the wrong surface."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def drifted_surface(request: httpx.Request) -> httpx.Response:
+        if drift_kind == "manifest" and request.url.path == "/query/space":
+            return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
+        if drift_kind == "recipes" and request.url.path == "/recipes":
+            return httpx.Response(200, json=[])
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(drifted_surface)
+    )
+    client = MemoryClient(client=raw_client)
+    provider = FakeModelProvider(generate_router=_tool_answer_and_judge)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        with pytest.raises(ExecutionGuardError, match=message):
+            answer_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_questions=1,
+                max_agent_calls=9,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                client=client,
+                provider=provider,
+            )
+    finally:
+        raw_client.close()
+
+    assert provider.generated_prompts == []
+
+
 def test_missing_records_remain_in_full_manifest_denominator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -883,8 +932,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v9","protocol_fingerprint":'
-        '"ce970f2e1852551d06349bdcc2a0a28d1060935450295a4b087354e8ee11b93b",'
+        '{"protocol_name":"RS-LoCoMo-Full-v10","protocol_fingerprint":'
+        '"3f91c64a57f77840517781c710fb30d7a1471018546c0af3ccbf381c5a2c2d75",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -980,72 +1029,41 @@ def test_merge_lists_manifest_samples_without_any_records(
     assert serialized["missing_sample_ids"] == ["conv-b"]
 
 
-def test_prepared_protocol_pins_and_fingerprints_are_distinct(
+def test_prepared_protocol_pins_current_surface_and_luna(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_prepared_inputs(monkeypatch=monkeypatch)
-    weak_dir = tmp_path / "weak"
-    strong_dir = tmp_path / "strong"
+    run_dir = tmp_path / "run"
 
-    weak = prepare_run(
-        dataset_path=tmp_path / "synthetic.json", tier="smoke", output=weak_dir
-    )
-    strong = prepare_run(
-        dataset_path=tmp_path / "synthetic.json",
-        tier="smoke",
-        output=strong_dir,
-        protocol="full-v9-strong",
+    prepared = prepare_run(
+        dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert weak.protocol_name == "RS-LoCoMo-Full-v9"
-    assert weak.answer_agent_model == "openai/gpt-4o-mini"
-    assert weak.answer_agent_reasoning_effort is None
-    assert weak.answer_reader_retry_budget == 2
-    assert weak.protocol_fingerprint == (
-        "ce970f2e1852551d06349bdcc2a0a28d1060935450295a4b087354e8ee11b93b"
-    )
-    assert weak.protocol_fingerprint != (
-        "dfcae6bbea8b0a0c65b10f6ed88f58071932ea2d06371bd6003ce5e448c618ac"
-    )
-    assert strong.protocol_name == "RS-LoCoMo-Full-v9-strong"
-    assert strong.answer_agent_model == "openai/gpt-5.6-luna"
-    assert strong.answer_agent_reasoning_effort == "none"
-    assert strong.answer_reader_retry_budget == 2
-    assert strong.protocol_fingerprint == (
-        "6dbb96e270c71e2041e7ebc60cb68f4cb3af90819309dfe09135cd3fd968357d"
-    )
-    assert strong.protocol_fingerprint != (
-        "ccf6b7b28397f4311a08403aa1c4639f209e90532d9430f54f12003fd017fe8b"
-    )
-    assert strong.protocol_fingerprint != weak.protocol_fingerprint
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v10"
+    assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
+    assert prepared.answer_agent_reasoning_effort == "none"
+    assert prepared.answer_reader_retry_budget == 2
+    assert prepared.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
 
-    weak_state = RunState.model_validate_json(
-        (weak_dir / "state.json").read_text(encoding="utf-8")
+    state = RunState.model_validate_json(
+        (run_dir / "state.json").read_text(encoding="utf-8")
     )
-    strong_state = RunState.model_validate_json(
-        (strong_dir / "state.json").read_text(encoding="utf-8")
+    assert (state.protocol_name, state.protocol_fingerprint) == (
+        prepared.protocol_name,
+        prepared.protocol_fingerprint,
     )
-    assert (weak_state.protocol_name, weak_state.protocol_fingerprint) == (
-        weak.protocol_name,
-        weak.protocol_fingerprint,
-    )
-    assert (strong_state.protocol_name, strong_state.protocol_fingerprint) == (
-        strong.protocol_name,
-        strong.protocol_fingerprint,
-    )
-    assert summarize_run(run_dir=weak_dir).protocol_name == weak.protocol_name
-    assert summarize_run(run_dir=strong_dir).protocol_name == strong.protocol_name
+    assert summarize_run(run_dir=run_dir).protocol_name == prepared.protocol_name
 
-    identity = weak.model_dump(
+    identity = prepared.model_dump(
         mode="json", exclude={"prepared_at", "dataset_path", "protocol_fingerprint"}
     )
     for field, changed_value in (
         ("answer_reader_retry_budget", 1),
-        ("answer_agent_reasoning_effort", "none"),
+        ("surface_manifest_hash", "0" * 64),
         ("answer_word_cap", 20),
     ):
         changed = {**identity, field: changed_value}
-        assert runner._canonical_hash(changed) != weak.protocol_fingerprint
+        assert runner._canonical_hash(changed) != prepared.protocol_fingerprint
 
 
 def test_protocol_mutation_is_rejected(
@@ -1108,7 +1126,7 @@ def _empty_envelope() -> Envelope:
 
 def _tool() -> ToolDescriptor:
     return ToolDescriptor(
-        name="claims_verbatim",
+        name="question_context",
         description="What sources asserted",
         input_schema={"type": "object"},
         output_grain="evidence",
@@ -1121,7 +1139,7 @@ def _tool_then_answer(prompt: str, type_name: str) -> dict[str, object]:
     if "TOOL TRACE SO FAR:\n[]" in prompt:
         return {
             "action": "tool",
-            "tool_name": "claims_verbatim",
+            "tool_name": "question_context",
             "arguments_json": '{"query": "Where?"}',
             "answer": None,
         }
@@ -1146,7 +1164,7 @@ def _private_tool_answer_and_judge(prompt: str, type_name: str) -> dict[str, obj
     if "TOOL TRACE SO FAR:\n[]" in prompt:
         return {
             "action": "tool",
-            "tool_name": "claims_verbatim",
+            "tool_name": "question_context",
             "arguments_json": '{"query": "PRIVATE_TOOL_ARGUMENT_BODY"}',
             "answer": None,
         }
@@ -1272,7 +1290,7 @@ class _CostProvider:
             payload = (
                 {
                     "action": "tool",
-                    "tool_name": "claims_verbatim",
+                    "tool_name": "question_context",
                     "arguments_json": '{"query": "Where?"}',
                     "answer": None,
                 }
@@ -1498,6 +1516,10 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, json=[tool.model_dump(mode="json") for tool in _stock_tools()]
         )
+    if request.method == "GET" and request.url.path == "/query/space":
+        return httpx.Response(
+            200, json={"surface_manifest_hash": EXPECTED_SURFACE_MANIFEST_HASH}
+        )
     if request.method == "POST" and request.url.path.startswith("/recipe/"):
         return httpx.Response(200, json=_empty_envelope().model_dump(mode="json"))
     return httpx.Response(404, text="unexpected synthetic request")
@@ -1539,7 +1561,7 @@ def _complete_readiness_payload() -> dict[str, object]:
 
 
 def _stock_tools() -> tuple[ToolDescriptor, ...]:
-    return frozen_v9_tool_catalog()
+    return current_tool_catalog()
 
 
 def test_ingest_forwards_and_records_assumed_utc_session_time(

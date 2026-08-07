@@ -59,6 +59,7 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
+from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
@@ -188,7 +189,7 @@ def prepare_run(
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
-        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+        "surface_manifest_hash": selected_protocol.surface_manifest_hash,
         "answer_prompt_sha256": prompt_sha256(
             template=selected_protocol.answer_prompt_template
         ),
@@ -432,7 +433,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v9 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v10 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -442,10 +443,17 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
-    tools = client.recipes()
-    if _models_hash(values=tools) != context.configuration.tool_catalog_sha256:
+    query_space = client.describe_query_space()
+    if query_space.get("surface_manifest_hash") != (
+        context.configuration.surface_manifest_hash
+    ):
         raise ExecutionGuardError(
-            "deployment recipe catalog differs from the prepared protocol"
+            "deployment query surface differs from the prepared protocol"
+        )
+    tools = client.recipes()
+    if tools != current_tool_catalog():
+        raise ExecutionGuardError(
+            "deployment recipe catalog is not the canonical three-operation surface"
         )
     remaining = tuple(
         question
@@ -973,7 +981,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v9")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v10")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -983,7 +991,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v9")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v10")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1020,7 +1028,7 @@ def _validate_run(
         "answer_agent_temperature": configuration.answer_agent_temperature,
         "judge_temperature": configuration.judge_temperature,
         "judge_repetitions": configuration.judge_repetitions,
-        "tool_catalog_sha256": configuration.tool_catalog_sha256,
+        "surface_manifest_hash": configuration.surface_manifest_hash,
         "answer_prompt_sha256": configuration.answer_prompt_sha256,
         "judge_prompt_sha256": configuration.judge_prompt_sha256,
         "answer_schema_sha256": configuration.answer_schema_sha256,
@@ -1043,7 +1051,7 @@ def _validate_run(
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
-        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+        "surface_manifest_hash": selected_protocol.surface_manifest_hash,
         "answer_prompt_sha256": prompt_sha256(
             template=selected_protocol.answer_prompt_template
         ),

@@ -26,47 +26,14 @@ from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v9"
-STRONG_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v9-strong"
-DEFAULT_PROTOCOL_KEY: Final = "full-v9"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-retrieval-surface-v9"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v10"
+DEFAULT_PROTOCOL_KEY: Final = "full-v10"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-current-surface-v10"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
-EXPECTED_TOOL_CATALOG_SHA256: Final = (
-    "55b76e36bfc65b18740822d60831e0ef103866007093a8ba64253e00952bb29e"
-)
-# `question_context` is v4 in the live catalog, but a full-v9 run is an
-# immutable benchmark protocol. Keep its v3 descriptor here rather than
-# silently changing the meaning of an existing prepared-run identity.
-_FROZEN_V9_QUESTION_CONTEXT = ToolDescriptor(
-    name="question_context",
-    description=(
-        "High-recall question context: hybrid claim retrieval plus hybrid"
-        " live-source retrieval. Returns atomic claims and source chunks as"
-        " separately typed evidence, refilling confirmation drops from each"
-        " already-fetched ranked tail. Exact-text claim groups report"
-        " distinct-lineage corroboration and confirmed member ids; neither"
-        " payload is current-fact truth."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "k": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
-            "candidate_k": {
-                "type": "integer",
-                "default": 200,
-                "minimum": 1,
-                "maximum": 400,
-            },
-        },
-        "additionalProperties": False,
-        "required": ["query"],
-    },
-    output_grain="evidence",
-    answer_intent="assertion_history",
-    version=3,
+EXPECTED_SURFACE_MANIFEST_HASH: Final = (
+    "54912e5f1fc16060712d95c7b25304d7debc53c331d212c1dbb20054f66fab91"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -81,38 +48,19 @@ EXPECTED_PIPELINE_STAGES: Final = (
     "label_relation",
 )
 EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
-ANSWER_AGENT_MODEL: Final = "openai/gpt-4o-mini"
-STRONG_ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
-STRONG_ANSWER_AGENT_REASONING_EFFORT: Final = "none"
+ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
+ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 TEMPERATURE: Final = 0.0
 
 
-def frozen_v9_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact tool descriptors pinned by the full-v9 protocol.
-
-    The live pre-release catalog has moved to three assured operations.
-    Full-v9 remains historical and comparable only to deployments serving its
-    frozen descriptors; a benchmark of the shipping surface needs a distinct
-    protocol identity.
-    """
-    from rememberstack.spine.recipes import (  # noqa: PLC2701
-        _DEMOTED_GRAPH_RECIPE_DEFINITIONS,
-    )
-    from rememberstack.spine.recipes import _STOCK_RECIPE_DEFINITIONS  # noqa: PLC2701
+def current_tool_catalog() -> tuple[ToolDescriptor, ...]:
+    """Return the exact three public descriptors shipping in this revision."""
+    from rememberstack.spine.recipes import CANONICAL_RECIPES
     from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
-    recipes = tuple(
-        sorted(
-            (*_STOCK_RECIPE_DEFINITIONS, *_DEMOTED_GRAPH_RECIPE_DEFINITIONS),
-            key=lambda recipe: recipe.name,
-        )
-    )
-    return tuple(
-        _FROZEN_V9_QUESTION_CONTEXT
-        if descriptor.name == "question_context"
-        else descriptor
-        for descriptor in recipe_descriptors(recipes=recipes)
+    return recipe_descriptors(
+        recipes=tuple(sorted(CANONICAL_RECIPES, key=lambda recipe: recipe.name))
     )
 
 
@@ -122,11 +70,8 @@ below. Work as a normal memory agent:
 
 1. Recall: use question_context first for ordinary questions; it combines
    semantic and exact-text retrieval over claims and live source passages.
-2. Orient: resolve names and inspect compiled/corpus or graph orientation when
-   useful.
-3. Verify: query current fact tools for what holds now.
-4. Audit: use evidence/hydration tools when wording, time, attribution, or
-   conflicts matter.
+2. Verify: use current_context when the question asks what holds now.
+3. Orient: use resolve_entity when an exact name needs disambiguation.
 
 Respect every response envelope's grain, negative, freshness, truncation, and
 dropped_by_hydration fields. Evidence says what a source asserted; it is not
@@ -179,7 +124,7 @@ class LoCoMoProtocol:
     judge_prompt_template: str
     answer_schema: type[AnswerAgentStep]
     judge_schema: type[JudgeOutput]
-    tool_catalog_sha256: str
+    surface_manifest_hash: str
     max_tool_calls_per_question: int
     max_agent_calls_per_question: int
     answer_agent_temperature: float
@@ -190,8 +135,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V9 = LoCoMoProtocol(
-    key="full-v9",
+_FULL_V10 = LoCoMoProtocol(
+    key="full-v10",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -199,38 +144,19 @@ _FULL_V9 = LoCoMoProtocol(
     judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
     answer_schema=AnswerAgentStep,
     judge_schema=JudgeOutput,
-    tool_catalog_sha256=EXPECTED_TOOL_CATALOG_SHA256,
+    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
     max_tool_calls_per_question=MAX_TOOL_CALLS,
     max_agent_calls_per_question=MAX_AGENT_CALLS,
     answer_agent_temperature=TEMPERATURE,
     judge_temperature=TEMPERATURE,
     judge_repetitions=1,
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
-    answer_agent_reasoning_effort=None,
-    answer_word_cap=None,
-)
-_FULL_V9_STRONG = LoCoMoProtocol(
-    key="full-v9-strong",
-    name=STRONG_PROTOCOL_NAME,
-    answer_agent_model=STRONG_ANSWER_AGENT_MODEL,
-    judge_model=JUDGE_MODEL,
-    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
-    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
-    answer_schema=AnswerAgentStep,
-    judge_schema=JudgeOutput,
-    tool_catalog_sha256=EXPECTED_TOOL_CATALOG_SHA256,
-    max_tool_calls_per_question=MAX_TOOL_CALLS,
-    max_agent_calls_per_question=MAX_AGENT_CALLS,
-    answer_agent_temperature=TEMPERATURE,
-    judge_temperature=TEMPERATURE,
-    judge_repetitions=1,
-    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
-    answer_agent_reasoning_effort=STRONG_ANSWER_AGENT_REASONING_EFFORT,
+    answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
     answer_word_cap=None,
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V9.key: _FULL_V9, _FULL_V9_STRONG.key: _FULL_V9_STRONG}
+    {_FULL_V10.key: _FULL_V10}
 )
 
 

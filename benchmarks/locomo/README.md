@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v9 setup
+# RS-LoCoMo-Full-v10 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,14 +16,14 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v9 \
+  --protocol full-v10 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only: choose `full-v9` (the
-default) or `full-v9-strong` there, and every later stage reads that immutable
-choice from `run.json`. Do not run remote stages until reviewing
+eight-question smoke plan. `--protocol` is prepare-only; `full-v10` is the one
+current-system protocol, and every later stage reads that immutable choice from
+`run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
 LoCoMo supplies session wall times without a timezone. V6 treats those values
@@ -40,10 +40,10 @@ containers so retrieved evidence does not get crowded out by audit metadata.
 Freshness, hydration-drop counts, and meaningful default-valued fields remain
 visible.
 
-V9 requires the shortest phrase that fully names the requested entities or
+V10 requires the shortest phrase that fully names the requested entities or
 values and forbids explanations or reasoning. Its `answer_word_cap` is a
-persisted, fingerprinted protocol field, but both stock registry entries leave
-it unset: the prompt renders no word-count sentence and the runner applies no
+persisted, fingerprinted protocol field, but the protocol leaves it unset: the
+prompt renders no word-count sentence and the runner applies no
 word-count guard. The two-retry malformed-completion allowance remains shared
 across the answer loop, including a completion returned before the first tool
 call.
@@ -70,8 +70,9 @@ docker compose --profile operations run --rm projections
 
 The `answer` command then calls the public readiness endpoint. It refuses to run unless every
 requested version completed the exact composed stage generations and both P2/P3 builds began
-after that work completed. It also refuses a changed public recipe catalog. There is no manual “index ready”
-acknowledgement.
+after that work completed. It also requires the deployment's exact prepared
+`surface_manifest_hash` and the canonical three public recipe descriptors.
+There is no manual “index ready” acknowledgement.
 
 Readiness also records the API process's current non-secret model configuration for operator
 review. Those values are not processing-time provenance; freeze one Compose environment for the
@@ -93,10 +94,9 @@ attempts in `reader_attempts` and pre-tool additional calls in
 `first_step_retries`; the summary sums both signals separately. Plain provider
 outages and judge failures are not retried.
 
-The strong protocol pins answer-agent reasoning effort to `none` on every answer
-call. The default `full-v9` protocol sends no per-call effort field for its
-non-reasoning `gpt-4o-mini` answer agent. Ambient OpenRouter effort-map settings
-therefore cannot change either prepared protocol's answer behavior.
+The protocol pins Luna's answer-agent reasoning effort to `none` on every
+answer call. Ambient OpenRouter effort-map settings therefore cannot change the
+prepared protocol's answer behavior.
 
 P3 is built and freshness-checked as part of the ordinary deployment, but the remote recipe
 agent has no filesystem mount. This protocol therefore does not attribute answer quality to P3
@@ -110,4 +110,5 @@ recomputes one full-manifest score from disjoint item records. See the
 [`sharding/` operator guide](sharding/README.md) for balanced planning, the per-host driver,
 forensic dumps, collection, and merge validation.
 
-No real benchmark has been run as part of the setup implementation.
+Historical runs used earlier protocol identities. They are not executable
+compatibility modes and are not comparable to v10.
