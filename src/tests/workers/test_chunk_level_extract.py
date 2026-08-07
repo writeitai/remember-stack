@@ -121,9 +121,7 @@ def test_extract_follow_up_zero_chunks_enqueues_normalize() -> None:
         payload={},
     )
     source = _source(
-        deployment_id=deployment_id,
-        version_id=version_id,
-        representation_id=uuid4(),
+        deployment_id=deployment_id, version_id=version_id, representation_id=uuid4()
     )
     outcome = _extract_follow_up(work=work, source=source, chunks=())
     assert len(outcome.follow_up) == 1
