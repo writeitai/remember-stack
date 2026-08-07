@@ -152,6 +152,9 @@ class ProjectionCatalog:
             connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
             connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
             connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+            # Pathological memory_v1 view plans can hang for tens of minutes; fail
+            # the rebuild as a Python exception so mark_failed can clear `building`.
+            connection.exec_driver_sql("SET LOCAL statement_timeout = '120s'")
             connection.execute(_CREATE_SURVIVOR_MAP, {"deployment_id": deployment_id})
             connection.execute(_INDEX_SURVIVOR_MAP)
             try:
@@ -428,14 +431,23 @@ _CREATE_SURVIVOR_MAP = text(
 _INDEX_SURVIVOR_MAP = text("CREATE INDEX ON graph_survivor (entity_id)")
 
 _EXPORT_SQL: Final[dict[str, TextClause]] = {
+    # Prefer base tables + the export TEMP graph_survivor map over
+    # memory_v1.entities_current / graph_edges_visible_history: those views expand
+    # into multi-million-cost nested loops (recursive survivor CTEs × provenance
+    # EXISTS per entity) and hang P2 rebuilds on modest corpora. See
+    # design/operations/p2-projection-hang-beam-smoke.md.
     "Entity": text(
         """
-        SELECT entity_id AS id, entity_type AS type,
-               canonical_name AS name, normalized_name,
-               profile_summary AS summary,
-               (created_at AT TIME ZONE 'UTC') AS created_at
-        FROM memory_v1.entities_current
-        WHERE deployment_id = :deployment_id
+        SELECT e.entity_id AS id, e.type AS type,
+               e.canonical_name AS name, e.normalized_name,
+               e.profile_summary AS summary,
+               (e.created_at AT TIME ZONE 'UTC') AS created_at
+        FROM entities AS e
+        JOIN graph_survivor AS survivor
+          ON survivor.entity_id = e.entity_id
+        WHERE e.deployment_id = :deployment_id
+          AND e.status = 'active'
+          AND e.merged_into IS NULL
         """
     ),
     "Document": text(
@@ -452,15 +464,20 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
                r.relation_id, r.subject_entity_id AS subject_id,
                r.object_entity_id AS object_id,
                r.predicate, r.fact_label AS fact,
-               r.evidence_count_current AS evidence_count,
-               r.contradict_count_current AS contradict_count,
+               r.evidence_count AS evidence_count,
+               r.contradict_count AS contradict_count,
                r.confidence::float8 AS confidence, r.contradiction_group,
                (r.valid_from AT TIME ZONE 'UTC') AS valid_from,
                (r.valid_until AT TIME ZONE 'UTC') AS valid_until,
                (r.ingested_at AT TIME ZONE 'UTC') AS ingested_at,
                (r.invalidated_at AT TIME ZONE 'UTC') AS invalidated_at
-        FROM memory_v1.graph_edges_visible_history AS r
+        FROM relations AS r
+        JOIN graph_survivor AS subject
+          ON subject.entity_id = r.subject_entity_id
+        JOIN graph_survivor AS object
+          ON object.entity_id = r.object_entity_id
         WHERE r.deployment_id = :deployment_id
+          AND r.invalidated_at IS NULL
         """
     ),
     "MENTIONED_IN": text(
@@ -489,9 +506,11 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
         JOIN v_memory_entity_survivor AS survivor
           ON survivor.deployment_id = raw.deployment_id
          AND survivor.entity_id = raw.document_entity_id
-        JOIN memory_v1.entities_current AS entity
+        JOIN entities AS entity
           ON entity.deployment_id = survivor.deployment_id
          AND entity.entity_id = survivor.survivor_entity_id
+         AND entity.status = 'active'
+         AND entity.merged_into IS NULL
         WHERE document.deployment_id = :deployment_id
         """
     ),
@@ -672,9 +691,14 @@ _SELECT_LATEST = text(
 
 _SELECT_WATERMARK = text(
     """
-    SELECT max(ingested_at)
-    FROM memory_v1.graph_edges_visible_history
-    WHERE deployment_id = :deployment_id
+    SELECT max(r.ingested_at)
+    FROM relations AS r
+    JOIN graph_survivor AS subject
+      ON subject.entity_id = r.subject_entity_id
+    JOIN graph_survivor AS object
+      ON object.entity_id = r.object_entity_id
+    WHERE r.deployment_id = :deployment_id
+      AND r.invalidated_at IS NULL
     """
 )
 
