@@ -360,11 +360,11 @@ def ingest_sample(
                 "the deployment did not report an embedding model binding, so the"
                 " preflight cannot check the model the pipeline will actually use"
             )
+
         def before_preflight_call() -> None:
             """Stop before another paid probe once the shared cap is reached."""
             _require_cost_before_call(
-                spent=context.state.evaluator_cost_usd,
-                ceiling=max_evaluator_cost_usd,
+                spent=context.state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
             )
 
         def record_preflight_usage(usage: ProviderCallUsage) -> None:
@@ -382,8 +382,7 @@ def ingest_sample(
         ):
             print(f"preflight: {line}", file=sys.stderr)
         _require_cost_before_call(
-            spent=context.state.evaluator_cost_usd,
-            ceiling=max_evaluator_cost_usd,
+            spent=context.state.evaluator_cost_usd, ceiling=max_evaluator_cost_usd
         )
     for document in documents:
         existing = context.state.ingests.get(document.source_ref)
@@ -2191,9 +2190,7 @@ def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUs
         raise ValueError("cannot aggregate an empty usage tuple")
     model_names = sorted({usage.model_name for usage in usages})
     model_name = (
-        model_names[0]
-        if len(model_names) == 1
-        else f"mixed:{'|'.join(model_names)}"
+        model_names[0] if len(model_names) == 1 else f"mixed:{'|'.join(model_names)}"
     )
     return ProviderCallUsage(
         model_name=model_name,

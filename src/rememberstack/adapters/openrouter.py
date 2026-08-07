@@ -278,8 +278,7 @@ class OpenRouterModelProvider:
         """
         body = self._post(path="/chat/completions", payload=payload)
         usage = _usage(
-            body=body,
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
         content = _completion_content(body=body)
         if content is None:
@@ -320,8 +319,7 @@ class OpenRouterModelProvider:
             payload["provider"] = provider
         body = self._post(path="/embeddings", payload=payload)
         usage = _usage(
-            body=body,
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
         try:
             ordered = sorted(body["data"], key=lambda item: item["index"])

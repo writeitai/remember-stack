@@ -1353,9 +1353,7 @@ def test_merge_preserves_ingests_for_chunk_session_diagnostics(
                         grain=Grain.EVIDENCE,
                         chunks=(
                             ChunkEvidenceResult(
-                                chunk_id=UUID(
-                                    "57000000-0000-0000-0000-000000000012"
-                                ),
+                                chunk_id=UUID("57000000-0000-0000-0000-000000000012"),
                                 doc_id=doc_id,
                                 version_id=version_id,
                                 representation_id=UUID(
@@ -2216,8 +2214,7 @@ def test_preflight_cost_cap_stops_before_the_next_probe_or_upload(
         return _run_transport(request)
 
     raw_client = httpx.Client(
-        base_url="http://memory.test",
-        transport=httpx.MockTransport(count_uploads),
+        base_url="http://memory.test", transport=httpx.MockTransport(count_uploads)
     )
     client = MemoryClient(client=raw_client)
     provider = _PreflightProvider(cost=Decimal("0.10"))
