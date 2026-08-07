@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import BaseModel
+from pydantic import JsonValue
 from pydantic import SecretStr
 from pydantic import TypeAdapter
 from pydantic import ValidationError
@@ -61,7 +62,6 @@ from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
-from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
@@ -79,8 +79,18 @@ from benchmarks.locomo.protocol import render_session
 from benchmarks.locomo.protocol import schema_sha256
 from benchmarks.locomo.protocol import session_diagnostic
 from benchmarks.locomo.protocol import TEMPERATURE
+from benchmarks.locomo.retrieval import answer_tool_catalog
+from benchmarks.locomo.retrieval import assured_tool_catalog
+from benchmarks.locomo.retrieval import dispatch_answer_tool
+from benchmarks.locomo.retrieval import is_correctable_query_error
+from benchmarks.locomo.retrieval import P3Mount
+from benchmarks.locomo.retrieval import query_result_failure
+from benchmarks.locomo.retrieval import RetrievalInfrastructureError
+from benchmarks.locomo.retrieval import RetrievalToolError
+from benchmarks.locomo.retrieval import tool_catalog_sha256
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.model import EmbeddingRequest
+from rememberstack.model import Envelope
 from rememberstack.model import ModelRequest
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
@@ -89,6 +99,8 @@ from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
+from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
@@ -194,6 +206,7 @@ def prepare_run(
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
         "surface_manifest_hash": selected_protocol.surface_manifest_hash,
+        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
         "answer_prompt_sha256": prompt_sha256(
             template=selected_protocol.answer_prompt_template
         ),
@@ -345,6 +358,7 @@ def ingest_sample(
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
             client=client,
+            expected_surface_manifest_hash=context.configuration.surface_manifest_hash,
             expected=tuple(
                 record
                 for record in context.state.ingests.values()
@@ -394,8 +408,9 @@ def ingest_sample(
             continue
         path = _document_path(run_dir=run_dir, document=document)
         _require_file_hash(path=path, expected=document.content_sha256)
-        _require_exact_live_ingests(
+        attested_deployment_id = _require_exact_live_ingests(
             client=client,
+            expected_surface_manifest_hash=context.configuration.surface_manifest_hash,
             expected=tuple(
                 record
                 for record in context.state.ingests.values()
@@ -412,6 +427,10 @@ def ingest_sample(
             versioning_mode="snapshot",
             source_version_ref=document.source_version_ref,
         )
+        if ingested.deployment_id != attested_deployment_id:
+            raise ExecutionGuardError(
+                "ingest response deployment differs from the attested query surface"
+            )
         if not ingested.created:
             raise ExecutionGuardError(
                 "fresh LoCoMo ingestion deduplicated against existing deployment"
@@ -455,6 +474,7 @@ def answer_sample(
     max_agent_calls: int,
     max_evaluator_cost_usd: Decimal,
     execute: bool,
+    p3_root: Path,
     client: MemoryClient,
     provider: ModelProviderPort,
 ) -> tuple[AnswerRecord, ...]:
@@ -501,7 +521,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v10 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v11 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -511,9 +531,15 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
+    p3_projection = next(
+        projection
+        for projection in readiness.projections
+        if projection.plane == "P3_corpusfs"
+    )
     tools = _require_current_query_surface(context=context, client=client)
     _require_exact_live_ingests(
         client=client,
+        expected_surface_manifest_hash=context.configuration.surface_manifest_hash,
         expected=tuple(
             record
             for record in context.state.ingests.values()
@@ -543,6 +569,15 @@ def answer_sample(
         if record.sample_id == sample_id
     }
     tracer = _configured_langfuse_tracer(context=context)
+    p3: P3Mount | None = None
+    p3_error: str | None = None
+    if p3_projection.version is None:
+        p3_error = "P3 readiness did not identify a snapshot version"
+    else:
+        try:
+            p3 = P3Mount(root=p3_root, expected_version=p3_projection.version)
+        except (RetrievalToolError, RetrievalInfrastructureError) as error:
+            p3_error = str(error)
     try:
         for question in remaining:
             if tracer is None:
@@ -551,6 +586,8 @@ def answer_sample(
                     client=client,
                     provider=provider,
                     tools=tools,
+                    p3=p3,
+                    p3_error=p3_error,
                     doc_sessions=doc_sessions,
                     state=context.state,
                     max_agent_calls=max_agent_calls,
@@ -582,6 +619,8 @@ def answer_sample(
                         client=client,
                         provider=provider,
                         tools=tools,
+                        p3=p3,
+                        p3_error=p3_error,
                         doc_sessions=doc_sessions,
                         state=context.state,
                         max_agent_calls=max_agent_calls,
@@ -615,6 +654,8 @@ def answer_sample(
             context.state.answers[question.item_id] = record
             _save_state(run_dir=run_dir, state=context.state)
     finally:
+        if p3 is not None:
+            p3.close()
         if tracer is not None:
             tracer.flush()
     return tuple(context.state.answers[question.item_id] for question in questions)
@@ -1067,7 +1108,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v10")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v11")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1077,7 +1118,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v10")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v11")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1116,6 +1157,7 @@ def _validate_run(
         "judge_temperature": configuration.judge_temperature,
         "judge_repetitions": configuration.judge_repetitions,
         "surface_manifest_hash": configuration.surface_manifest_hash,
+        "tool_catalog_sha256": configuration.tool_catalog_sha256,
         "answer_prompt_sha256": configuration.answer_prompt_sha256,
         "judge_prompt_sha256": configuration.judge_prompt_sha256,
         "answer_schema_sha256": configuration.answer_schema_sha256,
@@ -1140,6 +1182,7 @@ def _validate_run(
         "judge_temperature": selected_protocol.judge_temperature,
         "judge_repetitions": selected_protocol.judge_repetitions,
         "surface_manifest_hash": selected_protocol.surface_manifest_hash,
+        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
         "answer_prompt_sha256": prompt_sha256(
             template=selected_protocol.answer_prompt_template
         ),
@@ -1340,7 +1383,7 @@ def _require_serving_revision(
 def _require_current_query_surface(
     *, context: _RunContext, client: MemoryClient
 ) -> tuple[ToolDescriptor, ...]:
-    """Require the exact public query contract pinned by the prepared run."""
+    """Require the exact complete read contract pinned by the prepared run."""
     query_space = client.describe_query_space()
     if query_space.get("surface_manifest_hash") != (
         context.configuration.surface_manifest_hash
@@ -1348,40 +1391,63 @@ def _require_current_query_surface(
         raise ExecutionGuardError(
             "deployment query surface differs from the prepared protocol"
         )
-    tools = client.recipes()
-    if tools != current_tool_catalog():
+    recipes = client.recipes()
+    if recipes != assured_tool_catalog():
         raise ExecutionGuardError(
             "deployment recipe catalog is not the canonical three-operation surface"
+        )
+    tools = answer_tool_catalog()
+    if tool_catalog_sha256() != context.configuration.tool_catalog_sha256:
+        raise ExecutionGuardError(
+            "complete answer-tool catalog differs from the prepared protocol"
         )
     return tools
 
 
 def _require_exact_live_ingests(
-    *, client: MemoryClient, expected: tuple[IngestRecord, ...]
-) -> None:
+    *,
+    client: MemoryClient,
+    expected_surface_manifest_hash: str,
+    expected: tuple[IngestRecord, ...],
+) -> UUID:
     """Require live lineages and their visible versions to equal checkpoints."""
-    result = client.query_sql(
-        sql=(
-            "SELECT d.deployment_id, d.source_ref, d.doc_id, v.version_id "
-            "FROM documents_live AS d "
-            "JOIN document_versions_visible AS v "
-            "ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id "
-            "ORDER BY d.source_ref, d.doc_id, v.version_id"
-        ),
-        max_rows=len(expected) + 1,
-    )
-    rows = result.get("rows")
+    try:
+        result = QueryResult.model_validate(
+            client.query_sql(
+                sql=(
+                    "SELECT d.deployment_id, d.source_ref, d.doc_id, v.version_id "
+                    "FROM documents_live AS d "
+                    "JOIN document_versions_visible AS v "
+                    "ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id "
+                    "ORDER BY d.source_ref, d.doc_id, v.version_id"
+                ),
+                max_rows=len(expected) + 1,
+            ),
+            strict=False,
+        )
+    except (ValidationError, TypeError) as error:
+        raise ExecutionGuardError(
+            "deployment returned an invalid live document attestation"
+        ) from error
+    rows = result.rows
     if (
-        result.get("termination_reason") != "completed"
-        or result.get("truncated") is not False
-        or not isinstance(rows, list)
+        result.termination_reason != "completed"
+        or result.truncated is not False
+        or result.surface_manifest_hash != expected_surface_manifest_hash
     ):
         raise ExecutionGuardError(
             "deployment could not attest its exact live document set"
         )
+    expected_deployment_ids = {record.deployment_id for record in expected}
+    if len(expected_deployment_ids) > 1 or (
+        expected_deployment_ids and expected_deployment_ids != {result.deployment_id}
+    ):
+        raise ExecutionGuardError(
+            "deployment identity differs from checkpointed ingestion responses"
+        )
     actual: list[tuple[UUID, str, UUID, UUID]] = []
     for row in rows:
-        if not isinstance(row, list) or len(row) != 4 or not isinstance(row[1], str):
+        if len(row) != 4 or not isinstance(row[1], str):
             raise ExecutionGuardError(
                 "deployment returned an invalid live document attestation"
             )
@@ -1411,6 +1477,7 @@ def _require_exact_live_ingests(
         raise ExecutionGuardError(
             "deployment live documents do not exactly match checkpointed versions"
         )
+    return result.deployment_id
 
 
 def _require_sample_ingested(*, context: _RunContext, sample_id: str) -> None:
@@ -1481,9 +1548,20 @@ def _answer_one(
     max_agent_calls_per_question: int = MAX_AGENT_CALLS,
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
     answer_word_cap: int | None = None,
+    p3: P3Mount | None = None,
+    p3_error: str | None = None,
     question_trace: QuestionTrace | None = None,
 ) -> AnswerRecord:
-    """Let a bounded agent choose ordinary public recipes, then answer."""
+    """Let a bounded agent choose any complete-plane read, then answer."""
+    if p3_error is not None:
+        return _failed_answer(
+            question=question,
+            kind="tool",
+            message=p3_error,
+            retrieval_latency_ms=0,
+            retrieval_succeeded=False,
+            agent_call_count=0,
+        )
     tool_names = {tool.name for tool in tools}
     trace: list[ToolCallRecord] = []
     usages: list[ProviderCallUsage] = []
@@ -1536,7 +1614,7 @@ def _answer_one(
                 kind="accounting",
                 message=str(error),
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + int(bool(trace)),
                 first_step_retries=first_step_retries,
@@ -1558,7 +1636,7 @@ def _answer_one(
                 kind="invalid_response",
                 message=str(error),
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
@@ -1610,7 +1688,7 @@ def _answer_one(
                     else str(error)
                 ),
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
@@ -1647,7 +1725,7 @@ def _answer_one(
                     else str(error)
                 ),
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + int(bool(trace)),
                 first_step_retries=first_step_retries,
@@ -1678,7 +1756,7 @@ def _answer_one(
                     f" {response.usage.model_name!r}, not {answer_agent_model!r}"
                 ),
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
@@ -1714,7 +1792,7 @@ def _answer_one(
                     f" or crossed stop threshold {max_evaluator_cost_usd}"
                 ),
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=(
                     reader_attempts + int(step.action == "answer" and bool(trace))
@@ -1763,7 +1841,7 @@ def _answer_one(
                         f"answer agent exceeded the {answer_word_cap}-word answer limit"
                     ),
                     retrieval_latency_ms=tool_latency_ms,
-                    retrieval_succeeded=True,
+                    retrieval_succeeded=_trace_succeeded(trace=trace),
                     agent_call_count=agent_call_count,
                     reader_attempts=reader_attempts + 1,
                     first_step_retries=first_step_retries,
@@ -1792,9 +1870,9 @@ def _answer_one(
                 claims=claims,
                 tool_calls=tuple(trace),
                 dropped_by_hydration=sum(
-                    call.response.dropped_by_hydration for call in trace
+                    _dropped_by_hydration(call=call) for call in trace
                 ),
-                retrieval_succeeded=True,
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 retrieval_latency_ms=tool_latency_ms,
                 reader_called=True,
                 agent_call_count=agent_call_count,
@@ -1810,7 +1888,7 @@ def _answer_one(
                 kind="invalid_response",
                 message=f"answer agent requested unknown tool {step.tool_name!r}",
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=bool(trace),
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
@@ -1827,7 +1905,7 @@ def _answer_one(
                 kind="invalid_response",
                 message="answer agent exceeded the per-question tool-call limit",
                 retrieval_latency_ms=tool_latency_ms,
-                retrieval_succeeded=True,
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
@@ -1851,19 +1929,117 @@ def _answer_one(
         )
         tool_started = time.monotonic_ns()
         try:
-            envelope = client.run_recipe(
-                name=step.tool_name or "", arguments=step_arguments
+            tool_response = dispatch_answer_tool(
+                client=client,
+                p3=p3,
+                name=step.tool_name or "",
+                arguments=step_arguments,
             )
         except MemoryApiError as error:
             failed_latency = _elapsed_ms(tool_started)
+            public_error: dict[str, JsonValue] = {
+                "status_code": error.status_code,
+                "detail": error.detail,
+            }
+            if error.code is not None:
+                public_error["code"] = error.code
+            correctable = is_correctable_query_error(code=error.code)
+            if correctable:
+                if tool_observation is not None:
+                    tool_observation.finish(
+                        latency_ms=failed_latency, outcome="rejected"
+                    )
+                tool_latency_ms += failed_latency
+                trace.append(
+                    ToolCallRecord(
+                        name=step.tool_name or "",
+                        arguments=step_arguments,
+                        arguments_trailing=step_trailing,
+                        latency_ms=failed_latency,
+                        succeeded=False,
+                        response={"error": public_error},
+                    )
+                )
+                continue
             if tool_observation is not None:
                 tool_observation.finish(latency_ms=failed_latency, outcome="api_error")
+            tool_latency_ms += failed_latency
+            trace.append(
+                ToolCallRecord(
+                    name=step.tool_name or "",
+                    arguments=step_arguments,
+                    arguments_trailing=step_trailing,
+                    latency_ms=failed_latency,
+                    succeeded=False,
+                    response={"error": public_error},
+                )
+            )
             return _failed_answer(
                 question=question,
                 kind="tool",
                 message=str(error),
-                retrieval_latency_ms=tool_latency_ms + failed_latency,
-                retrieval_succeeded=False,
+                retrieval_latency_ms=tool_latency_ms,
+                retrieval_succeeded=_trace_succeeded(trace=trace),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
+                reader_latency_ms=agent_latency_ms,
+                claims=_claims_from_trace(
+                    trace=tuple(trace), doc_sessions=doc_sessions
+                ),
+                tool_calls=tuple(trace),
+                usages=tuple(usages),
+            )
+        except RetrievalToolError as error:
+            failed_latency = _elapsed_ms(tool_started)
+            if tool_observation is not None:
+                tool_observation.finish(latency_ms=failed_latency, outcome="rejected")
+            tool_latency_ms += failed_latency
+            trace.append(
+                ToolCallRecord(
+                    name=step.tool_name or "",
+                    arguments=step_arguments,
+                    arguments_trailing=step_trailing,
+                    latency_ms=failed_latency,
+                    succeeded=False,
+                    response={"error": {"status_code": None, "detail": str(error)}},
+                )
+            )
+            continue
+        except (RetrievalInfrastructureError, SandboxRejection) as error:
+            failed_latency = _elapsed_ms(tool_started)
+            code = error.code.value if isinstance(error, SandboxRejection) else None
+            correctable = is_correctable_query_error(code=code)
+            if tool_observation is not None:
+                tool_observation.finish(
+                    latency_ms=failed_latency,
+                    outcome="rejected" if correctable else "api_error",
+                )
+            tool_latency_ms += failed_latency
+            public_error: dict[str, JsonValue] = {
+                "status_code": None,
+                "detail": str(error),
+            }
+            if code is not None:
+                public_error["code"] = code
+            trace.append(
+                ToolCallRecord(
+                    name=step.tool_name or "",
+                    arguments=step_arguments,
+                    arguments_trailing=step_trailing,
+                    latency_ms=failed_latency,
+                    succeeded=False,
+                    response={"error": public_error},
+                )
+            )
+            if correctable:
+                continue
+            return _failed_answer(
+                question=question,
+                kind="tool",
+                message=str(error),
+                retrieval_latency_ms=tool_latency_ms,
+                retrieval_succeeded=_trace_succeeded(trace=trace),
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
@@ -1875,6 +2051,44 @@ def _answer_one(
                 usages=tuple(usages),
             )
         latency = _elapsed_ms(tool_started)
+        query_failure = query_result_failure(tool_response)
+        if query_failure is not None:
+            code, message = query_failure
+            correctable = is_correctable_query_error(code=code)
+            if tool_observation is not None:
+                tool_observation.finish(
+                    latency_ms=latency,
+                    outcome="rejected" if correctable else "api_error",
+                )
+            tool_latency_ms += latency
+            trace.append(
+                ToolCallRecord(
+                    name=step.tool_name or "",
+                    arguments=step_arguments,
+                    arguments_trailing=step_trailing,
+                    latency_ms=latency,
+                    succeeded=False,
+                    response=tool_response,
+                )
+            )
+            if correctable:
+                continue
+            return _failed_answer(
+                question=question,
+                kind="tool",
+                message=f"{code}: {message}",
+                retrieval_latency_ms=tool_latency_ms,
+                retrieval_succeeded=_trace_succeeded(trace=trace),
+                agent_call_count=agent_call_count,
+                reader_attempts=reader_attempts,
+                first_step_retries=first_step_retries,
+                reader_latency_ms=agent_latency_ms,
+                claims=_claims_from_trace(
+                    trace=tuple(trace), doc_sessions=doc_sessions
+                ),
+                tool_calls=tuple(trace),
+                usages=tuple(usages),
+            )
         if tool_observation is not None:
             tool_observation.finish(latency_ms=latency, outcome="succeeded")
         tool_latency_ms += latency
@@ -1884,7 +2098,7 @@ def _answer_one(
                 arguments=step_arguments,
                 arguments_trailing=step_trailing,
                 latency_ms=latency,
-                response=envelope,
+                response=tool_response,
             )
         )
     return _failed_answer(
@@ -1892,7 +2106,7 @@ def _answer_one(
         kind="invalid_response",
         message="answer agent exhausted its step budget without a final answer",
         retrieval_latency_ms=tool_latency_ms,
-        retrieval_succeeded=bool(trace),
+        retrieval_succeeded=_trace_succeeded(trace=trace),
         agent_call_count=agent_call_count,
         reader_attempts=reader_attempts,
         first_step_retries=first_step_retries,
@@ -2120,7 +2334,7 @@ def _failed_answer(
         claims=claims,
         tool_calls=tool_calls,
         dropped_by_hydration=sum(
-            call.response.dropped_by_hydration for call in tool_calls
+            _dropped_by_hydration(call=call) for call in tool_calls
         ),
         retrieval_succeeded=retrieval_succeeded,
         retrieval_latency_ms=retrieval_latency_ms,
@@ -2141,6 +2355,8 @@ def _claims_from_trace(
     seen: set[UUID] = set()
     claims: list[RetrievedClaim] = []
     for call in trace:
+        if not isinstance(call.response, Envelope):
+            continue
         evidence = [
             *call.response.evidence,
             *(item for part in call.response.parts for item in part.evidence),
@@ -2175,6 +2391,8 @@ def _retrieved_sessions(
         claim.session_id for claim in answer.claims if claim.session_id is not None
     }
     for call in answer.tool_calls:
+        if not isinstance(call.response, Envelope):
+            continue
         chunks = [
             *call.response.chunks,
             *(item for part in call.response.parts for item in part.chunks),
@@ -2185,6 +2403,18 @@ def _retrieved_sessions(
             if (session := doc_sessions.get(chunk.doc_id)) is not None
         )
     return sessions
+
+
+def _trace_succeeded(*, trace: list[ToolCallRecord]) -> bool:
+    """Return whether at least one retrieval tool completed successfully."""
+    return any(call.succeeded for call in trace)
+
+
+def _dropped_by_hydration(*, call: ToolCallRecord) -> int:
+    """Read hydration drops from envelope tools and zero from other responses."""
+    return (
+        call.response.dropped_by_hydration if isinstance(call.response, Envelope) else 0
+    )
 
 
 def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUsage:

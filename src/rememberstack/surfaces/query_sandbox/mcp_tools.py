@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from collections.abc import Sequence
+import re
 from typing import Any
 from typing import Final
 from typing import TYPE_CHECKING
@@ -44,6 +45,8 @@ OPEN_QUERY_TOOL_NAMES: tuple[str, ...] = (
     "describe_saved_query",
     "run_saved_query",
 )
+
+_SAVED_QUERY_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 
 #: Per-tool allowed keys and required keys for strict argument validation.
 _TOOL_ARGUMENT_SPECS: Final[dict[str, tuple[frozenset[str], frozenset[str]]]] = {
@@ -322,7 +325,9 @@ def validate_open_query_arguments(
             validated["k"] = 10
     elif name == "list_saved_queries":
         if "namespace" in args:
-            validated["namespace"] = _require_str(args["namespace"], field="namespace")
+            validated["namespace"] = validate_saved_query_identifier(
+                value=args["namespace"], field="namespace"
+            )
         else:
             validated["namespace"] = None
         if "status" in args:
@@ -330,8 +335,12 @@ def validate_open_query_arguments(
         else:
             validated["status"] = None
     elif name == "describe_saved_query":
-        validated["namespace"] = _require_str(args["namespace"], field="namespace")
-        validated["name"] = _require_str(args["name"], field="name")
+        validated["namespace"] = validate_saved_query_identifier(
+            value=args["namespace"], field="namespace"
+        )
+        validated["name"] = validate_saved_query_identifier(
+            value=args["name"], field="name"
+        )
         if "version" in args:
             validated["version"] = _require_int(
                 args["version"], field="version", minimum=1
@@ -339,8 +348,12 @@ def validate_open_query_arguments(
         else:
             validated["version"] = None
     elif name == "run_saved_query":
-        validated["namespace"] = _require_str(args["namespace"], field="namespace")
-        validated["name"] = _require_str(args["name"], field="name")
+        validated["namespace"] = validate_saved_query_identifier(
+            value=args["namespace"], field="namespace"
+        )
+        validated["name"] = validate_saved_query_identifier(
+            value=args["name"], field="name"
+        )
         if "version" in args:
             validated["version"] = _require_int(
                 args["version"], field="version", minimum=1
@@ -545,6 +558,17 @@ def _require_str(value: object, *, field: str) -> str:
             code=QueryErrorCode.INVALID_PARAMETER, message=f"{field} must be a string"
         )
     return value
+
+
+def validate_saved_query_identifier(*, value: object, field: str) -> str:
+    """Require the same safe identifier shape enforced by the registry schema."""
+    text = _require_str(value, field=field)
+    if _SAVED_QUERY_IDENTIFIER.fullmatch(text) is None:
+        raise SandboxRejection(
+            code=QueryErrorCode.INVALID_PARAMETER,
+            message=f"{field} must match ^[a-z][a-z0-9_]*$",
+        )
+    return text
 
 
 def _require_bool(value: object, *, field: str) -> bool:

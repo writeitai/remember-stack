@@ -274,10 +274,11 @@ with MemoryClient.from_settings() as memory:
     ready = memory.pipeline_readiness(version_ids=(landed.version_id,))
 ```
 
-The SDK also exposes typed `resolve`, `search_claims`, `search_chunks`,
+The SDK also exposes typed `resolve`, `lookup_relations`,
+`transcript_relation`, `lookup_observations`, `search_claims`, `search_chunks`,
 `hydrate_relation`, and connector-management methods. Network and non-success
-HTTP responses raise `MemoryApiError` with the status and deployment-provided
-detail.
+HTTP responses raise `MemoryApiError` with the status, optional public error
+code, and deployment-provided detail.
 
 ## Primitives
 

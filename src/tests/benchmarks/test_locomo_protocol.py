@@ -14,7 +14,6 @@ from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
-from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
@@ -24,6 +23,9 @@ from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
 from benchmarks.locomo.protocol import session_diagnostic
+from benchmarks.locomo.retrieval import answer_tool_catalog
+from benchmarks.locomo.retrieval import assured_tool_catalog
+from benchmarks.locomo.retrieval import tool_catalog_sha256
 from pydantic import ValidationError
 import pytest
 
@@ -159,14 +161,15 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert '"ranking"' not in prompt
     assert '"freshness"' in prompt
     assert '"dropped_by_hydration":0' in prompt
+    assert isinstance(call.response, Envelope)
     assert call.response.ranking  # durable raw record is unchanged
 
 
-def test_current_protocol_pins_manifest_and_three_assured_operations() -> None:
+def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     manifest = load_manifest()
     assert EXPECTED_SURFACE_MANIFEST_HASH == manifest["surface_manifest_hash"]
-    tools = current_tool_catalog()
-    assert tuple(tool.name for tool in tools) == (
+    assured = assured_tool_catalog()
+    assert tuple(tool.name for tool in assured) == (
         "current_context",
         "question_context",
         "resolve_entity",
@@ -177,14 +180,41 @@ def test_current_protocol_pins_manifest_and_three_assured_operations() -> None:
         for operation in operations
     }
     assert {
-        tool.name: tool.implementation_chain_hash for tool in tools
+        tool.name: tool.implementation_chain_hash for tool in assured
     } == expected_chain_hashes
+    tools = answer_tool_catalog()
+    assert len(tools) == 22
+    assert {tool.name for tool in tools} == {
+        "current_context",
+        "question_context",
+        "resolve_entity",
+        "resolve",
+        "lookup_relations",
+        "transcript_relation",
+        "lookup_observations",
+        "search_claims",
+        "search_chunks",
+        "hydrate_relation",
+        "query_sql",
+        "explain_sql",
+        "query_cypher",
+        "explain_cypher",
+        "describe_query_space",
+        "search_query_space",
+        "list_saved_queries",
+        "describe_saved_query",
+        "run_saved_query",
+        "p3_list",
+        "p3_search",
+        "p3_read",
+    }
+    assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v10_and_answer_prompt_has_loop_guards() -> None:
-    """The current v10 identity and answer-loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v10"
-    assert DEFAULT_PROTOCOL_KEY == "full-v10"
+def test_protocol_is_v11_and_answer_prompt_has_loop_guards() -> None:
+    """The current v11 identity and answer-loop discipline are locked."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v11"
+    assert DEFAULT_PROTOCOL_KEY == "full-v11"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -199,22 +229,24 @@ def test_protocol_is_v10_and_answer_prompt_has_loop_guards() -> None:
     assert "The final answer must contain at most 20 words." in capped
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
-    assert "use question_context first" in prompt
-    assert "tried question_context at least" in prompt
+    assert "Open query" in prompt
+    assert "P3 mount" in prompt
+    assert "content-bearing" in prompt
     assert 'answering "Unknown"' in prompt
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v10",)
-    protocol = PROTOCOL_REGISTRY["full-v10"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v11",)
+    protocol = PROTOCOL_REGISTRY["full-v11"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v10"
+    assert protocol.name == "RS-LoCoMo-Full-v11"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
     assert protocol.answer_reader_retry_budget == 2
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
+    assert protocol.tool_catalog_sha256 == tool_catalog_sha256()
 
 
 def test_prepare_cli_selects_protocol_only_at_prepare(
@@ -245,7 +277,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v10"]
+    assert selected == ["full-v11"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(

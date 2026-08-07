@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_agent_calls=args.max_agent_calls,
                     max_evaluator_cost_usd=args.max_evaluator_cost_usd,
                     execute=args.execute,
+                    p3_root=args.p3_root,
                     client=client,
                     provider=provider,
                 )
@@ -116,7 +117,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v10: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v11: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )
@@ -150,9 +151,15 @@ def _parser() -> argparse.ArgumentParser:
     ingest.add_argument("--confirm-isolated-deployment")
 
     answer = commands.add_parser(
-        "answer", help="run the bounded public-recipe answer agent for one sample"
+        "answer", help="run the bounded complete-retrieval answer agent for one sample"
     )
     _run_and_sample(answer)
+    answer.add_argument(
+        "--p3-root",
+        type=Path,
+        required=True,
+        help="published P3 directory whose snapshot marker must match readiness",
+    )
     answer.add_argument(
         "--max-questions",
         type=int,

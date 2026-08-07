@@ -24,11 +24,13 @@ from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
+from benchmarks.locomo.retrieval import tool_catalog_sha256
+from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v10"
-DEFAULT_PROTOCOL_KEY: Final = "full-v10"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-current-surface-v10"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v11"
+DEFAULT_PROTOCOL_KEY: Final = "full-v11"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-full-retrieval-v11"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -55,24 +57,21 @@ JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
 
 
-def current_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact three public descriptors shipping in this revision."""
-    from rememberstack.spine.recipes import CANONICAL_RECIPES
-    from rememberstack.surfaces.recipe_surface import recipe_descriptors
-
-    return recipe_descriptors(
-        recipes=tuple(sorted(CANONICAL_RECIPES, key=lambda recipe: recipe.name))
-    )
-
-
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
-RememberStack deployment. You may call only the public recipe tools listed
-below. Work as a normal memory agent:
+RememberStack deployment. You may call any read tool listed below. Work as a
+normal memory agent and choose the cheapest suitable path:
 
-1. Recall: use question_context first for ordinary questions; it combines
-   semantic and exact-text retrieval over claims and live source passages.
-2. Verify: use current_context when the question asks what holds now.
-3. Orient: use resolve_entity when an exact name needs disambiguation.
+1. Assured operations: question_context for ordinary high-recall source
+   context, current_context for what holds now, resolve_entity for exact names.
+2. Direct primitives: targeted entity, fact, testimony, source-passage, and
+   audit reads when an assured response needs drilling into.
+3. Open query: discover schema/examples before unfamiliar SQL or Cypher; use
+   SQL for live relational/evidence composition and P1 search functions, Cypher
+   for graph work over the disclosed P2 snapshot, and saved queries for shipped
+   patterns.
+4. P3 mount: list, search, and read the corpus filesystem for orientation and
+   source context. P3 and P2 are snapshots; verify load-bearing current claims
+   through a live fact/evidence path.
 
 Respect every response envelope's grain, negative, freshness, truncation, and
 dropped_by_hydration fields. Evidence says what a source asserted; it is not
@@ -84,8 +83,8 @@ requested entities/values, no explanations or reasoning.{answer_word_cap_instruc
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
-it. Before answering "Unknown", you must have tried question_context at least
-once.
+it. Before answering "Unknown", you must have tried at least one
+content-bearing operation, primitive, query, or P3 read/search.
 
 Return one structured step: either action="tool" with one listed tool_name and
 arguments_json (the tool arguments as one JSON object encoded as a string, with
@@ -126,6 +125,7 @@ class LoCoMoProtocol:
     answer_schema: type[AnswerAgentStep]
     judge_schema: type[JudgeOutput]
     surface_manifest_hash: str
+    tool_catalog_sha256: str
     max_tool_calls_per_question: int
     max_agent_calls_per_question: int
     answer_agent_temperature: float
@@ -137,8 +137,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V10 = LoCoMoProtocol(
-    key="full-v10",
+_FULL_V11 = LoCoMoProtocol(
+    key="full-v11",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -147,6 +147,7 @@ _FULL_V10 = LoCoMoProtocol(
     answer_schema=AnswerAgentStep,
     judge_schema=JudgeOutput,
     surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
+    tool_catalog_sha256=tool_catalog_sha256(),
     max_tool_calls_per_question=MAX_TOOL_CALLS,
     max_agent_calls_per_question=MAX_AGENT_CALLS,
     answer_agent_temperature=TEMPERATURE,
@@ -159,7 +160,7 @@ _FULL_V10 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V10.key: _FULL_V10}
+    {_FULL_V11.key: _FULL_V11}
 )
 
 
@@ -262,8 +263,10 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
     meaningful default values such as a zero hydration-drop count or an
     unknown temporal precision.
     """
-    response = record.response.model_dump(
-        mode="json", exclude_none=True, exclude={"ranking"}
+    response = (
+        record.response.model_dump(mode="json", exclude_none=True, exclude={"ranking"})
+        if isinstance(record.response, Envelope)
+        else record.response
     )
     return {
         "name": record.name,

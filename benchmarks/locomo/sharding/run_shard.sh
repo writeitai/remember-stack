@@ -25,7 +25,8 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v10}
+protocol=${LOCOMO_PROTOCOL:-full-v11}
+mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
 max_agent_calls=${LOCOMO_MAX_AGENT_CALLS:-13860}
@@ -39,6 +40,8 @@ compose=(docker compose)
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"
 [[ -n ${REMEMBERSTACK_OPENROUTER_API_KEY:-} ]] ||
   die "REMEMBERSTACK_OPENROUTER_API_KEY must be exported for the benchmark CLI"
+[[ -n ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:-} ]] ||
+  die "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID must be exported"
 for value in \
   "$max_documents" \
   "$max_questions" \
@@ -185,10 +188,19 @@ for sample_id in "${pending_samples[@]}"; do
   log "sample=$sample_id stage=projections status=starting"
   "${compose[@]}" --profile operations run --rm projections
 
+  log "sample=$sample_id stage=mounts status=starting"
+  mkdir -p "$mount_root"
+  mount_root=$(cd "$mount_root" && pwd -P)
+  "${compose[@]}" --profile operations run --rm \
+    --user "$(id -u):$(id -g)" \
+    -v "$mount_root:$mount_root" \
+    projections mounts --root "$mount_root"
+
   log "sample=$sample_id stage=answer status=starting"
   "$python_bin" -m benchmarks.locomo answer \
     --run "$run_dir" \
     --sample "$sample_id" \
+    --p3-root "$mount_root/$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID/p3" \
     --max-questions "$max_questions" \
     --max-agent-calls "$max_agent_calls" \
     --max-evaluator-cost-usd "$max_evaluator_cost_usd" \

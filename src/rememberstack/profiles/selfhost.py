@@ -33,6 +33,7 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
+from rememberstack.model import PublishedMounts
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
@@ -607,6 +608,19 @@ class SelfHostProfile:
             raise ValueError(f"unknown projection plane {plane!r}")
         return reports
 
+    def publish_mounts(self, *, root: Path) -> PublishedMounts:
+        """Materialize the latest P3 snapshot under one local mount root."""
+        from rememberstack.adapters.selfhost import LocalMountPublisher
+        from rememberstack.spine import ForgetCatalog
+        from rememberstack.spine import ProjectionCatalog
+
+        return LocalMountPublisher(
+            root=root,
+            catalog=ProjectionCatalog(engine=self._engine),
+            corpusfs_store=self._corpusfs_store,
+            admission=ForgetCatalog(engine=self._engine),
+        ).publish(deployment_id=self._settings.deployment_id)
+
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
         """Compose exactly one implemented stage handler for one worker process."""
         from rememberstack.adapters.selfhost.lance import LanceChunkIndex
@@ -766,7 +780,7 @@ def create_api() -> FastAPI:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run setup, API, one continuous worker, or an aggregate projection."""
+    """Run setup, API, a worker, projection, or local mount publication."""
     parser = argparse.ArgumentParser(description="rememberstack self-host profile")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("setup", help="migrate and bootstrap the deployment")
@@ -781,6 +795,10 @@ def main(argv: list[str] | None = None) -> int:
         "project", help="build aggregate projections once"
     )
     projection.add_argument("--plane", choices=("p2", "p3", "all"), required=True)
+    mounts = subparsers.add_parser(
+        "mounts", help="publish the latest P3 snapshot under a local root"
+    )
+    mounts.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     settings = SelfHostSettings.model_validate({})
     if args.command == "api":
@@ -803,6 +821,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "project":
             print(profile.run_projection(plane=args.plane))
+            return 0
+        if args.command == "mounts":
+            print(profile.publish_mounts(root=args.root).model_dump_json())
             return 0
         profile.run_worker(stage=PipelineStage(args.stage))
         return 0

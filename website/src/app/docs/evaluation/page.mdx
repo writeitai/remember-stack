@@ -76,10 +76,13 @@ Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember
 - **Unshipped as a vendored dataset** — you supply pinned `locomo10.json` after confirming **CC BY-NC 4.0** terms.  
 - **Operator-invoked** real provider runs; not silent CI spend.  
 - Current protocol is versioned and fingerprinted in the adapter README and design notes.  
-- Answer agent uses **public recipes** (for example `question_context`), not private hard-coded search.  
+- Answer agent can use the **complete shipped read plane**: assured operations,
+  direct primitives, open SQL/Cypher and saved queries, P1/P2, and the ordinary
+  published P3 mount. It has no private database/object-store shortcut.
 - Readiness is **machine-verified** before answer; graph/corpus projections must be published when required.  
 - Costs, tool calls, envelopes, and failures are **checkpointed**.  
-- Primary metric: judge accuracy; secondary: official LoCoMo F1; diagnostic: coarse evidence-session recall.
+- Primary metric: judge accuracy; secondary: official LoCoMo F1; diagnostic:
+  session-grain recall from envelope evidence only (not turn Recall@k).
 
 ### Safe first command (no API spend)
 
@@ -88,7 +91,7 @@ uv sync --extra benchmark
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v10 \
+  --protocol full-v11 \
   --output .benchmark-runs/locomo-smoke
 ```
 

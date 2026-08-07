@@ -33,11 +33,14 @@ from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
-from benchmarks.locomo.protocol import current_tool_catalog
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import PROTOCOL_NAME
+from benchmarks.locomo.retrieval import answer_tool_catalog
+from benchmarks.locomo.retrieval import assured_tool_catalog
+from benchmarks.locomo.retrieval import P3Mount
+from benchmarks.locomo.retrieval import tool_catalog_sha256
 from benchmarks.locomo.runner import _answer_one
 from benchmarks.locomo.runner import _judge_one
 from benchmarks.locomo.runner import answer_sample
@@ -72,6 +75,28 @@ from rememberstack.surfaces.sdk import MemoryClient
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
 
+def _query_result_payload(**updates: object) -> dict[str, object]:
+    """Return one complete synthetic QueryResult/v1 wire payload."""
+    payload: dict[str, object] = {
+        "contract": "QueryResult/v1",
+        "request_id": "57000000-0000-0000-0000-000000000030",
+        "deployment_id": "57000000-0000-0000-0000-000000000001",
+        "surface_manifest_hash": EXPECTED_SURFACE_MANIFEST_HASH,
+        "query_hash": "a" * 64,
+        "limits": {
+            "row_cap": 100,
+            "byte_cap": 1_000_000,
+            "statement_timeout_ms": 5_000,
+            "analytical_tier": False,
+        },
+        "execution_started_at": "2026-08-07T00:00:00Z",
+        "elapsed_ms": 1.0,
+        "termination_reason": "completed",
+    }
+    payload.update(updates)
+    return payload
+
+
 def test_agent_calls_public_recipe_then_answers() -> None:
     client, raw_client = _memory_client()
     provider = FakeModelProvider(generate_router=_tool_then_answer)
@@ -95,6 +120,262 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert answer.first_step_retries == 0
     assert [call.name for call in answer.tool_calls] == ["question_context"]
     assert len(provider.generated_prompts) == 2
+
+
+def test_agent_can_recover_from_rejected_sql_and_answer_from_open_query() -> None:
+    """A normal exploratory 4xx is visible to the agent, not a forced zero."""
+    calls = 0
+
+    def decide(_prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal calls
+        assert type_name == "AnswerAgentStep"
+        calls += 1
+        if calls == 1:
+            return {
+                "action": "tool",
+                "tool_name": "query_sql",
+                "arguments_json": '{"sql":"SELECT broken"}',
+                "answer": None,
+            }
+        if calls == 2:
+            return {
+                "action": "tool",
+                "tool_name": "query_sql",
+                "arguments_json": '{"sql":"SELECT \'Prague\' AS answer"}',
+                "answer": None,
+            }
+        return {
+            "action": "answer",
+            "tool_name": None,
+            "arguments_json": "{}",
+            "answer": "Prague",
+        }
+
+    def query(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["sql"] == "SELECT broken":
+            return httpx.Response(
+                200,
+                json=_query_result_payload(
+                    termination_reason="rejected",
+                    error_code="parse_error",
+                    error_message="SQL could not be parsed",
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=_query_result_payload(
+                columns=[{"name": "answer", "type": "text", "nullable": False}],
+                rows=[["Prague"]],
+                termination_reason="completed",
+                truncated=False,
+            ),
+        )
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(query)
+    )
+    client = MemoryClient(client=raw_client)
+    tool = ToolDescriptor(
+        name="query_sql",
+        description="Run SQL",
+        input_schema={"type": "object"},
+        output_grain="exploratory_tabular",
+        answer_intent="query_infrastructure",
+    )
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=decide),
+            tools=(tool,),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.generated_answer == "Prague"
+    assert answer.retrieval_succeeded is True
+    assert [call.succeeded for call in answer.tool_calls] == [False, True]
+    rejected_response = answer.tool_calls[0].response
+    assert isinstance(rejected_response, dict)
+    assert rejected_response["contract"] == "QueryResult/v1"
+    assert rejected_response["termination_reason"] == "rejected"
+    assert rejected_response["error_code"] == "parse_error"
+    assert rejected_response["error_message"] == "SQL could not be parsed"
+    query_response = answer.tool_calls[1].response
+    assert isinstance(query_response, dict)
+    assert query_response["rows"] == [["Prague"]]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    (
+        (
+            200,
+            _query_result_payload(
+                termination_reason="rejected",
+                error_code="quota_exceeded",
+                error_message="query budget exhausted",
+            ),
+        ),
+        (
+            409,
+            {"detail": {"code": "quota_exceeded", "message": "query budget exhausted"}},
+        ),
+        (404, {"detail": "query endpoint unavailable"}),
+    ),
+)
+def test_query_transport_and_quota_failures_are_terminal(
+    status_code: int, body: dict[str, object]
+) -> None:
+    """Quota failure never masquerades as retrieval or spends a correction call."""
+
+    def decide(_prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "AnswerAgentStep"
+        return {
+            "action": "tool",
+            "tool_name": "query_sql",
+            "arguments_json": '{"sql":"SELECT 1"}',
+            "answer": None,
+        }
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(status_code, json=body)
+        ),
+    )
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=MemoryClient(client=raw_client),
+            provider=FakeModelProvider(generate_router=decide),
+            tools=(
+                ToolDescriptor(
+                    name="query_sql",
+                    description="Run SQL",
+                    input_schema={"type": "object"},
+                    output_grain="exploratory_tabular",
+                    answer_intent="query_infrastructure",
+                ),
+            ),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.generated_answer is None
+    assert answer.failure is not None
+    assert answer.failure.kind == "tool"
+    assert answer.retrieval_succeeded is False
+    assert answer.agent_call_count == 1
+    assert len(answer.tool_calls) == 1
+    assert answer.tool_calls[0].succeeded is False
+
+
+def test_p3_io_failure_is_a_checkpointed_terminal_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mount failure scores one item zero without aborting the answer command."""
+
+    def decide(_prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "AnswerAgentStep"
+        return {
+            "action": "tool",
+            "tool_name": "p3_list",
+            "arguments_json": "{}",
+            "answer": None,
+        }
+
+    root = _published_p3(root=tmp_path)
+    mount = P3Mount(root=root, expected_version="test-v1")
+    original_iterdir = Path.iterdir
+
+    def unreadable(path: Path):  # noqa: ANN202
+        if path == root:
+            raise OSError(f"private host path: {root}")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", unreadable)
+    client, raw_client = _memory_client()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=decide),
+            tools=tuple(
+                tool for tool in answer_tool_catalog() if tool.name == "p3_list"
+            ),
+            p3=mount,
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.failure is not None
+    assert answer.failure.kind == "tool"
+    assert answer.agent_call_count == 1
+    assert answer.tool_calls[0].succeeded is False
+    assert str(root) not in answer.failure.message
+
+
+def test_missing_p3_mount_is_checkpointed_without_calling_the_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A required mount setup failure becomes one durable zero, not a run abort."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    client = MemoryClient(client=raw_client)
+    provider = FakeModelProvider(generate_router=_tool_answer_and_judge)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        answers = answer_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_questions=1,
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            p3_root=tmp_path / "operator-private" / "missing",
+            client=client,
+            provider=provider,
+        )
+    finally:
+        raw_client.close()
+
+    assert len(answers) == 1
+    assert answers[0].failure is not None
+    assert answers[0].failure.kind == "tool"
+    assert answers[0].agent_call_count == 0
+    assert str(tmp_path) not in answers[0].failure.message
+    assert provider.generated_prompts == []
+    checkpoint = RunState.model_validate_json(
+        (run_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert checkpoint.answers[answers[0].item_id] == answers[0]
 
 
 def test_reader_retries_two_invalid_completions_then_succeeds() -> None:
@@ -507,7 +788,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v10", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v11", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -554,6 +835,7 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
             execute=True,
+            p3_root=_published_p3(root=tmp_path),
             client=client,
             provider=provider,
         )
@@ -564,6 +846,7 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
             execute=True,
+            p3_root=_published_p3(root=tmp_path),
             client=client,
             provider=provider,
         )
@@ -725,6 +1008,7 @@ def test_langfuse_fake_transport_is_observer_only_and_content_bounded(
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
             execute=True,
+            p3_root=_published_p3(root=tmp_path),
             client=client,
             provider=provider,
         )
@@ -890,6 +1174,7 @@ def test_raising_langfuse_lifecycle_cannot_change_outputs_or_state(
             max_agent_calls=9,
             max_evaluator_cost_usd=Decimal("1"),
             execute=True,
+            p3_root=_published_p3(root=tmp_path),
             client=client,
             provider=provider,
         )
@@ -967,6 +1252,7 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
                 max_agent_calls=9,
                 max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
+                p3_root=_published_p3(root=tmp_path),
                 client=client,
                 provider=provider,
             )
@@ -1030,6 +1316,7 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
                 max_agent_calls=9,
                 max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
+                p3_root=_published_p3(root=tmp_path),
                 client=client,
                 provider=provider,
             )
@@ -1158,14 +1445,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
                     ],
                 ]
             )
-            return httpx.Response(
-                200,
-                json={
-                    "termination_reason": "completed",
-                    "truncated": False,
-                    "rows": rows,
-                },
-            )
+            return httpx.Response(200, json=_query_result_payload(rows=rows))
         return _run_transport(request)
 
     raw_client = httpx.Client(
@@ -1193,6 +1473,7 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
                 max_agent_calls=9,
                 max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
+                p3_root=_published_p3(root=tmp_path),
                 client=client,
                 provider=provider,
             )
@@ -1213,18 +1494,16 @@ def test_ingest_attestation_uses_visible_version_before_readiness() -> None:
         captured_sql = body["sql"]
         return httpx.Response(
             200,
-            json={
-                "termination_reason": "completed",
-                "truncated": False,
-                "rows": [
+            json=_query_result_payload(
+                rows=[
                     [
                         "57000000-0000-0000-0000-000000000001",
                         f"{DATASET_COMMIT}/conv-test/D1",
                         "57000000-0000-0000-0000-000000000002",
                         "57000000-0000-0000-0000-000000000003",
                     ]
-                ],
-            },
+                ]
+            ),
         )
 
     raw_client = httpx.Client(
@@ -1234,6 +1513,7 @@ def test_ingest_attestation_uses_visible_version_before_readiness() -> None:
     try:
         runner._require_exact_live_ingests(
             client=client,
+            expected_surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
             expected=(
                 IngestRecord(
                     sample_id="conv-test",
@@ -1283,8 +1563,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v10","protocol_fingerprint":'
-        '"a5887e15c9682ab0a1347784b4aabb1986f3945f8576e22f9b168f81a46c41f4",'
+        '{"protocol_name":"RS-LoCoMo-Full-v11","protocol_fingerprint":'
+        '"db4daf31003ac5e0252cd7dd6e8100817960098c6dce18cc122a0597ab33f4a3",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1294,7 +1574,8 @@ def test_single_run_summary_json_is_unchanged(
         '"judge_percent":0.0,"official_f1":0.0}],"session_diagnostic":'
         '{"scorable_questions":1,"malformed_evidence_fields":0,'
         '"mean_session_recall":0.0,"complete_session_success":0.0,'
-        '"warning":"session-grain diagnostic; not turn Recall@k"},'
+        '"warning":"session-grain diagnostic; envelope evidence only; not turn '
+        'Recall@k"},'
         '"failures":{"missing_answer":1,"missing_judge":1},'
         '"answer_agent_calls":0,"total_reader_retries":0,'
         '"total_first_step_retries":0,"judge_calls":0,'
@@ -1466,11 +1747,12 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v10"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v11"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
     assert prepared.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
+    assert prepared.tool_catalog_sha256 == tool_catalog_sha256()
 
     state = RunState.model_validate_json(
         (run_dir / "state.json").read_text(encoding="utf-8")
@@ -1487,6 +1769,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
     for field, changed_value in (
         ("answer_reader_retry_budget", 1),
         ("surface_manifest_hash", "0" * 64),
+        ("tool_catalog_sha256", "1" * 64),
         ("answer_word_cap", 20),
     ):
         changed = {**identity, field: changed_value}
@@ -1979,10 +2262,7 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
                 ]
             ]
         )
-        return httpx.Response(
-            200,
-            json={"termination_reason": "completed", "truncated": False, "rows": rows},
-        )
+        return httpx.Response(200, json=_query_result_payload(rows=rows))
     if request.method == "POST" and request.url.path.startswith("/recipe/"):
         return httpx.Response(200, json=_empty_envelope().model_dump(mode="json"))
     return httpx.Response(404, text="unexpected synthetic request")
@@ -2024,7 +2304,16 @@ def _complete_readiness_payload() -> dict[str, object]:
 
 
 def _stock_tools() -> tuple[ToolDescriptor, ...]:
-    return current_tool_catalog()
+    return assured_tool_catalog()
+
+
+def _published_p3(*, root: Path) -> Path:
+    """Create the smallest mount matching the synthetic readiness payload."""
+    p3 = root / "p3"
+    p3.mkdir(exist_ok=True)
+    (p3 / ".snapshot-version").write_text("test-v1", encoding="utf-8")
+    (p3 / "llms.txt").write_text("# Synthetic P3\n", encoding="utf-8")
+    return p3
 
 
 def test_ingest_forwards_and_records_assumed_utc_session_time(
@@ -2123,11 +2412,9 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
             document_checks += 1
             return httpx.Response(
                 200,
-                json={
-                    "termination_reason": "completed",
-                    "truncated": False,
-                    "rows": sorted(live, key=lambda row: (row[1], row[2])),
-                },
+                json=_query_result_payload(
+                    rows=sorted(live, key=lambda row: (row[1], row[2]))
+                ),
             )
         if request.method == "POST" and request.url.path == "/ingest":
             ingest_attempts += 1
@@ -2438,6 +2725,7 @@ def test_answer_rechecks_revision_after_a_clean_ingest(
                 max_agent_calls=9,
                 max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
+                p3_root=_published_p3(root=tmp_path),
                 client=client,
                 provider=_CostProvider(cost=Decimal("0.001")),
             )
@@ -2459,18 +2747,16 @@ def test_answer_refuses_changed_version_under_the_same_source_ref(
             if body["max_rows"] != 1:
                 return httpx.Response(
                     200,
-                    json={
-                        "termination_reason": "completed",
-                        "truncated": False,
-                        "rows": [
+                    json=_query_result_payload(
+                        rows=[
                             [
                                 "57000000-0000-0000-0000-000000000001",
                                 f"{DATASET_COMMIT}/conv-test/D1",
                                 "57000000-0000-0000-0000-000000000002",
                                 "57000000-0000-0000-0000-000000000099",
                             ]
-                        ],
-                    },
+                        ]
+                    ),
                 )
         return _run_transport(request)
 
@@ -2497,6 +2783,7 @@ def test_answer_refuses_changed_version_under_the_same_source_ref(
                 max_agent_calls=9,
                 max_evaluator_cost_usd=Decimal("1"),
                 execute=True,
+                p3_root=_published_p3(root=tmp_path),
                 client=client,
                 provider=_CostProvider(cost=Decimal(0)),
             )
