@@ -43,7 +43,17 @@ Implementation follows [`plan/plans/roadmap.md`](https://github.com/writeitai/re
 
 ## How these docs grow
 
-These pages are part of the repository and ship with the code: every change that alters user-facing behavior updates its documentation in the same pull request. As each phase lands, its pages appear here — getting started, ingestion and connectors, retrieval, configuration, deployment, and the API/CLI/MCP references. Until a page exists, the design documents linked above are the truth.
+These pages are part of the repository and ship with the code: every change that alters user-facing behavior updates its documentation in the same pull request. The public site is organized for **progressive disclosure** (why → model → write path → read path → operate → reference), written for agents first and humans second.
+
+Shipped top-level trees:
+
+- [Why RememberStack](/docs) · [Getting started](/docs/getting-started) · [Why this design wins](/docs/why)
+- [Concepts](/docs/concepts) · [Architecture](/docs/architecture)
+- [Ingestion](/docs/ingestion) (+ pipeline, lifecycle)
+- [Retrieval](/docs/retrieval) (+ envelope, open query, primitives)
+- [Mounts](/docs/mounts) · [Deployment](/docs/deployment) · [Reference](/docs/reference/api)
+
+Still planned as dedicated homes (no empty stubs): configuration, Plane K deep-dive, evaluation methodology, troubleshooting runbook. Until those exist, binding design under [`plan/`](https://github.com/writeitai/remember-stack/tree/main/plan) is the authority for unshipped operator detail.
 
 ## Following along
 

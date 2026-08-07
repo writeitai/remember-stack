@@ -1,0 +1,111 @@
+export const metadata = {
+  title: "Ingestion",
+  description:
+    "How RememberStack turns raw inputs into grounded claims and adjudicated facts — pipeline overview, guarantees, and progressive deep links.",
+};
+
+# Ingestion
+
+Ingestion is the **write path**: raw inputs become durable evidence, then adjudicated facts, then projection updates. Everything an agent later retrieves was produced here under ledgered, versioned stages.
+
+## Why the write path is the product
+
+If extraction is sloppy, retrieval only surfaces garbage faster. RememberStack spends design budget on:
+
+1. **Immutable testimony** — claims never rewrite.
+2. **Grounding** — every claim points at a source span / locator.
+3. **Identity** — entities resolve to a canonical registry.
+4. **Adjudication** — facts supersede and contradict out loud.
+5. **Lifecycle honesty** — edits and re-extractions do not inflate confidence.
+6. **Cost control** — reprocess proportional to the *edit*, not the whole corpus.
+
+Read this page top-to-bottom for the map. Stage detail and lifecycle rules live on child pages.
+
+## Pipeline map
+
+![Ingestion pipeline](/docs/diagrams/ingestion-pipeline.jpg)
+
+*Diagram shows the full designed chain. The Compose smoke profile starts with Markdown conversion; other MIME routes are registered per deployment.*
+
+| Stage | Input | Output | LLM? |
+| --- | --- | --- | --- |
+| **E0 ingest** | Bytes + metadata | Stored content object, lineage/version rows | No |
+| **E0 convert** | Raw bytes | Markdown representation + source map (+ media sidecars when those routes are registered) | Route-dependent (smoke profile: Markdown passthrough) |
+| **E0 structure** | Markdown | Section tree, roles, summaries, placement | Mostly deterministic; bounded model helpers |
+| **E1 chunk** | Blocks from Markdown | Retrieval chunks + optional context prefixes | No (deterministic) |
+| **E1 embed** | Chunk text (policy-controlled) | P1 vectors / FTS rows | Embedder only |
+| **E2 claims** | Chunks + structure | Immutable claims + grounding | Yes (extraction) |
+| **E3 normalize** | Claims | Entity mentions → canonical entities; candidate facts | Resolution cascade (mostly non-LLM; T4 gated) |
+| **E3 adjudicate** | Candidate facts + evidence | Relations/observations, supersession, contradictions | Cascade + ledgers |
+| **P1/P2/P3** | Spine | Search indexes, graph snapshot, corpus FS | No on query; rebuild workers |
+
+Deep dive: [Pipeline stages](/docs/ingestion/pipeline).
+
+## Entry points (how data gets in)
+
+| Entry | Surface | Notes |
+| --- | --- | --- |
+| **Push upload** | `POST /ingest` (and client SDK/CLI) | Explicit client write; always enters E0 |
+| **Watched directory** | Connector extra | Polls filesystem; debounce + revision no-ops |
+| **Other connectors** | Provider ports | Connector-native `source_ref` defines lineage identity |
+
+One deployment is one trust domain. Auth (when configured) gates the API perimeter before any write.
+
+## Guarantees you can rely on
+
+### 1. Idempotent by content
+
+Identical bytes share a **content object** (`content_hash`). You do not pay conversion twice for the same file appearing in two folders.
+
+### 2. Lineage ≠ version ≠ bytes
+
+| Concept | Stable when… |
+| --- | --- |
+| **Lineage (`doc_id`)** | Same connector `source_ref` (Drive file id, message id, …) |
+| **Version** | New observed bytes (or explicit new snapshot) on that lineage |
+| **Representation** | One conversion run’s outputs (ASR upgrade = new representation, same version) |
+
+### 3. Claims are append-only
+
+Re-extraction creates **new claim ids**. Old claims remain history. **Testimony currency** decides what counts as current support — it does not rewrite claim text.
+
+### 4. Work is ledgered
+
+Each stage runs as tracked work: retries, dead-letter, poison inspection, optional spend ceilings. Reads never enqueue writes.
+
+### 5. Raw is always reachable
+
+Derived Markdown/transcripts feed the pipeline. Original bytes stay stored; media locators point to page/bbox/time interval for audit.
+
+## Lifecycle in one paragraph
+
+Edited watched sources create new **versions**. Unchanged chunks **reuse** prior claims and vectors (measured spike hit rates are high). Reconciliation updates **current testimony**, recounts evidence by distinct lineages, and closes facts only under explicit rules (especially **living** sources that remove content). Full rules: [Lifecycle & versions](/docs/ingestion/lifecycle).
+
+## After the spine settles
+
+- **P1** updates as claim/chunk/fact-label embeddings land.
+- **P2 / P3** are whole-corpus publications (Compose: operations profile).
+- **K** recompiles on debounced evidence change for routed pages.
+
+## Agent checklist after ingest
+
+1. Wait for stage terminal state (or readiness for target version ids).
+2. Prefer `current_context` / `facts_current` for “what do we know now?”
+3. Use `question_context` / claims for “what sources said.”
+4. Hydrate to sources before high-stakes action.
+5. If mounts exist, open P3 stubs → artifacts → raw only when needed.
+
+## Progressive disclosure
+
+| Depth | Page |
+| --- | --- |
+| Map (this page) | Overview + guarantees |
+| Stage mechanics | [Pipeline stages](/docs/ingestion/pipeline) |
+| Versions, currency, counting, deletion | [Lifecycle & versions](/docs/ingestion/lifecycle) |
+| Run it | [Getting started](/docs/getting-started) · [Deployment](/docs/deployment) |
+
+## Next
+
+- [Pipeline stages](/docs/ingestion/pipeline)  
+- [Lifecycle & versions](/docs/ingestion/lifecycle)  
+- [Retrieval](/docs/retrieval) — how the write products are consumed  

@@ -1,65 +1,129 @@
 export const metadata = {
   title: "Concepts",
   description:
-    "The core vocabulary of RememberStack: claims, relations, observations, facts, and compiled knowledge — and why separating testimony from verdict matters.",
+    "Core vocabulary: claims vs facts, grains, two clocks, supersession, evidence counting, and the orient→verify→audit reading motion.",
 };
 
 # Concepts
 
-RememberStack has two deliberately separate truth layers. Claims are
-immutable source testimony (“what was asserted, by whom, when”);
-facts—relations and observations—are the adjudicated current
-worldview (“what the system currently holds true”):
-supersession-adjudicated, clocked on two time axes (when a fact held in
-the world, and when the system learned it), evidence-counted per
-distinct source—repetition is not corroboration—and
-contradiction-tracked. The `fact_claim_evidence` association is the
-auditable bridge between the layers, recording which claims support or
-contradict each fact. Query claims to inspect testimony; query facts to
-answer current-truth questions, then follow the bridge to see why the
-system believes the fact.
+One distinction carries the whole system: **what a source said is not the same as what is currently true.** Sources go stale, contradict each other, and get corrected. Memory that conflates testimony with truth either serves outdated statements as facts or silently rewrites history.
 
-(Internally these guarantees are decisions D41 and D54.)
+This page is the vocabulary every other page assumes.
 
-Everything in RememberStack rests on that distinction: **what a source said** is not the same thing as **what is currently true**. Sources go stale, contradict each other, and get corrected. A memory that conflates the two either serves outdated statements as facts or silently rewrites history. This page defines the small vocabulary the whole system — and every answer it returns — is built from.
+## TL;DR for agents
 
-**The courtroom analogy** carries most of it: claims are the *transcript* (immutable testimony — who said what, when), facts are the *verdict* (the current adjudicated position, revisable as evidence arrives), and evidence is the recorded link between the two.
+| Term | Use it for | Never use it for |
+| --- | --- | --- |
+| **claim** | Audit: who asserted what | Answering “is it true now?” |
+| **relation / observation (facts)** | Current belief | Pretending sources never disagreed |
+| **compiled page** | Orientation | Load-bearing action without verify |
+| **evidence_count** | Independent corroboration | “How many times extraction ran” |
 
-## The terminology ladder
+Default motion: **orient → verify → audit**.
+
+![Orient, verify, audit](/docs/diagrams/orient-verify-audit.jpg)
+
+## Terminology ladder
+
+![Testimony vs truth](/docs/diagrams/testimony-vs-truth.jpg)
 
 | Term | What it is | Can it change? |
 | --- | --- | --- |
-| **claim** | what one source *said* — the permanent record of a single assertion, traceable to the exact place in the document it came from | never (immutable) |
-| **relation** | a fact linking **two entities** — *(Alice, works_for, Acme)* | its validity window closes when superseded |
-| **observation** | a fact stating a **value about one entity** — *"Acme headcount: 600"* | same rules; lives beside relations |
-| **fact** | the umbrella word for *relation or observation* — what the system currently holds true | revisable, with the full history kept |
-| **core principle** | a chosen personal or organizational stance: authored K2 content, cited and watched but never machine-promoted or rewritten | only its accountable author changes it; evidence changes raise review flags |
+| **claim** | What one source *said* — permanent record of one assertion, grounded to a span | Never (immutable) |
+| **relation** | A fact linking **two entities** — *(Alice, works_for, Acme)* | Validity window closes when superseded |
+| **observation** | A fact stating a **value about one entity** — *“Acme headcount: 600”* | Same rules; lives beside relations (not projected to the graph) |
+| **fact** | Umbrella for relation or observation — what the system currently holds | Revisable; full history kept |
+| **core principle** | Chosen personal/org stance — **authored** K2 content | Only its author changes it; evidence changes raise review flags, never rewrite it |
 
-A sentence like *"the roster says Bob is CFO"* enters as a **claim** ("this file said it"), is adjudicated into a **relation** (*Bob works_for Acme*, the current fact the system holds), and may be synthesized in a compiled K1/K2 page. A personal principle may cite that history as context, but is never inferred from it.
+Example: “the roster says Bob is CFO” enters as a **claim**, adjudicates into a **relation** (*Bob works_for Acme* or a role relation), and may appear in a **compiled** K page. A principle like “we never promote on rumor alone” is authored knowledge that may *cite* that history — it is never inferred from it.
 
-## The grains — how answers are labeled
+## Grains — typed answers
 
-Every answer the system returns is typed with the **grain** of what it contains, so a caller always knows what kind of thing it is holding:
+Every assured response is labeled with the **grain** of what it contains:
 
-- **`fact`** — relations and observations: what the system *currently holds true*, filtered by validity. This is the default place for "is it true now?" questions.
-- **`evidence`** — claims: what sources *asserted*, possibly stale, superseded, or contradictory. This answers "who said what, when" — and is never allowed to pose as a current fact.
-- **`compiled`** — knowledge pages: pre-paid synthesis with a freshness timestamp, useful for orientation before verifying specifics on the fact layer.
+| Grain | Payload | Agent reading |
+| --- | --- | --- |
+| **`fact`** | Relations + observations under validity filters | Default for “is it true now?” |
+| **`evidence`** | Claims (and typed chunks as source-text fallback) | “Who said what”; may be stale or contradictory |
+| **`compiled`** | K pages with `compiled_at` / staleness | Orientation; verify before acting |
+| **`composite`** | Explicit multi-part (e.g. said-vs-believe) | Read each `parts[]` grain separately |
 
-Agents choose among three neutral retrieval surfaces: **native snapshot Cypher** (with mandatory `built_at` and age), **live SQL** for evidence-composable reads, and the three **assured operations** (`resolve_entity`, `question_context`, `current_context`) for one-call typed Envelope answers. Compiled knowledge still helps orientation when mounts expose plane K, but open query is first-class rather than recipe-steered.
+**Contract:** current-fact answers may be assembled only from validity-filtered facts. Claim asserted-validity intervals are **testimony**, never verdict. The registry linter rejects recipes that would smuggle claims into `current_facts` intent.
+
+Evidence-grain defaults to **current testimony**: re-extracted or living-version-superseded claims are excluded unless you opt into historical/superseded modes. See [Lifecycle](/docs/ingestion/lifecycle).
 
 ## Two clocks
 
-Facts carry **two independent time axes**, and keeping them apart is what makes time-travel queries honest:
+![Two clocks](/docs/diagrams/two-clocks.jpg)
 
-- **World time** (validity): when something was true *in the world* — Alice worked at Acme from 2021 to 2024.
-- **System time** (belief): when the *system* learned or stopped believing it — we found out in March.
+Facts carry two independent axes:
 
-"Who worked at Acme in 2022?" and "what did we believe last March?" are different questions with different answers, and both are askable. (Media adds a third, unrelated timestamp — *where in a recording* something was said — which is deliberately named apart so the three are never confused.)
+| Axis | Parameter | Question |
+| --- | --- | --- |
+| **World time** | `valid_at` | When was this true *in the world*? |
+| **System time** | `believed_at` | When did *we* hold this belief? |
 
-## Contradictions are surfaced, never resolved silently
+Compose multi-step temporal questions from ordinary calls: resolve an event time from one result, feed it as `valid_at` to the next. No special “timeline engine” is required.
 
-When sources disagree — two documents state different FY2023 revenues — the system keeps **both** positions, groups them as a live contradiction, and returns the group together. Ranking may order them; nothing hides one side. Resolution is an explicit, recorded act, never a side effect of retrieval.
+**Media locator** is a third coordinate (offset in a recording / region in an image). Do not mix it with validity or belief time.
 
-## Evidence counting — what "well-supported" means
+## Supersession, not overwrite
 
-A fact's support counts **distinct source lineages** — independent documents that currently attest to it. Re-processing a document, repeated statements within one document, or ten versions of the same edited file never inflate support. When a source is deleted or its current version withdraws a statement, the facts it alone supported are closed — recorded and reversible, never silently vanished.
+New information closes a validity window on the old fact. Nothing is silently erased. You can still ask what was believed before the close.
+
+## Contradictions are loud
+
+When sources disagree, both positions stay. They form a **contradiction group**. Retrieval **must** return co-members (bounded inline + continuation). Returning one side alone is a contract violation, not a ranking preference.
+
+## Evidence counting
+
+> Support count = distinct **document lineages** with **current testimony** supporting the fact.
+
+Does **not** inflate from:
+
+- re-extraction with a new model generation
+- version churn on one lineage
+- repeated sentences inside one document
+
+When sole current support disappears:
+
+- **Living** document removal → fact closed (`retracted_source_removal`) — recorded, reversible
+- **Toolchain re-extraction** that fails to re-derive → support may show `withdrawn` and needs caveat + audit (not silent vanish)
+
+## Identity
+
+Entities live in a **canonical registry** with aliases and typed resolution.
+
+| When | What ships today |
+| --- | --- |
+| **Write-time resolution** | Full cascade (exact → fuzzy → phonetic → embedding → gated LLM) |
+| **Query-time `resolve_entity`** | **T0 exact alias** match; ranked candidates on ambiguity — never a silent single guess |
+
+Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`question_context`) rather than assuming fuzzy resolve.
+
+## Document identity (write path)
+
+Three IDs stay distinct:
+
+| ID | Role |
+| --- | --- |
+| **content_hash** | Immutable bytes (store once) |
+| **doc_id (lineage)** | Logical document over time (connector-native `source_ref`) |
+| **version_id** | One observed snapshot of a lineage |
+
+Versioning mode per lineage: **`snapshot`** (archival successive reports) vs **`living`** (standing statement / wiki). Details: [Lifecycle](/docs/ingestion/lifecycle).
+
+## Progressive disclosure of knowledge (Plane K)
+
+K pages are prose syntheses over the fact layer:
+
+- **Compiled** pages regenerate when routing rules say evidence changed.
+- **Authored** pages (plans, principles) are never machine-rewritten; evidence drift raises flags.
+
+K is orientation. Facts are verification. Claims are audit.
+
+## Next
+
+- [Architecture](/docs/architecture) — planes, stores, end-to-end flow
+- [Ingestion](/docs/ingestion) — how claims and facts are produced
+- [Retrieval](/docs/retrieval) — how agents consume them
