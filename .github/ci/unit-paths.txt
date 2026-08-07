@@ -8,6 +8,7 @@ src/tests/adapters/test_selfhost_purge.py
 src/tests/adapters/test_selfhost_stores.py
 src/tests/adapters/test_sentry.py
 src/tests/adapters/test_telemetry.py
+src/tests/benchmarks/test_beam_official_score.py
 src/tests/benchmarks/test_locomo_dataset.py
 src/tests/benchmarks/test_locomo_protocol.py
 src/tests/benchmarks/test_locomo_runner.py
