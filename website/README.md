@@ -103,14 +103,14 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/ingestion/pipeline` | Exhaustive E0→E3 stage reference |
 | `/docs/ingestion/lifecycle` | Versions, currency, counting, deletion |
 | `/docs/retrieval` | Read-path overview + assured ops |
-| `/docs/retrieval/envelope` | D49 envelope contract |
+| `/docs/retrieval/envelope` | Response envelope contract |
 | `/docs/retrieval/open-query` | SQL / Cypher / saved queries |
 | `/docs/retrieval/primitives` | Zero-LLM primitive catalog |
 | `/docs/mounts` | Four mounts + consumption skill |
 | `/docs/deployment` | Docker Compose self-host |
 | `/docs/configuration` | Env, model seats, budgets, observability |
 | `/docs/troubleshooting` | Stuck work, empty retrieval, DLQ, readiness |
-| `/docs/evaluation` | S58, golden sets, LoCoMo posture |
+| `/docs/evaluation` | Skill checks, golden sets, LoCoMo posture |
 | `/docs/project-status` | What exists vs designed |
 | `/docs/reference/api`, `cli`, `mcp` | Surface wire contracts |
 

@@ -96,7 +96,7 @@ Assured ops and recipes compose **typed zero-LLM engine primitives** internally 
 
 Every envelope echoes the params applied (`as_of_valid_at` / `as_of_believed_at`) and the **identity regime**. Default identity follows today’s merge redirects.
 
-## Correctness invariant (D48)
+## Correctness invariant
 
 > Stale projections may nominate; only Postgres confirms truth for query-engine results.
 
@@ -113,7 +113,7 @@ Every envelope echoes the params applied (`as_of_valid_at` / `as_of_believed_at`
 2. **Verify** — fact grain  
 3. **Audit** — claims + raw locators  
 
-The consumption skill encodes this; S58 cold-agent eval fails plans that treat claim search as current truth.
+The consumption skill encodes this; cold-agent skill checks fail plans that treat claim search as current truth.
 
 ## Progressive disclosure
 
