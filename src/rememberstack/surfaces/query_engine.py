@@ -546,6 +546,12 @@ class QueryEngine:
             connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
             connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
             connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+            # The coordinate-complete facts authority expands into nested
+            # survivor and live-evidence views.  For a bounded P1 nomination,
+            # PostgreSQL's nested-loop plan repeatedly evaluates that tree and
+            # can exceed the API timeout even for a handful of facts.  A hash
+            # plan evaluates the authority once without changing membership.
+            connection.exec_driver_sql("SET LOCAL enable_nestloop = off")
             fact_rows = (
                 connection.execute(
                     _CONFIRM_CURRENT_FACTS,
@@ -3039,6 +3045,11 @@ _CONFIRM_CURRENT_FACTS = text(
         JOIN memory_v1.facts_current AS fact
           ON fact.deployment_id = :deployment_id
          AND fact.fact_id = requested.fact_id
+         -- This is logically implied by the join above, but keeping the
+         -- bounded array predicate explicit lets PostgreSQL push the P1
+         -- nomination through the accepted facts authority before expanding
+         -- its authorization tree.
+         AND fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
     )
     SELECT nomination_rank, kind, fact_id, label, evidence_count,
            valid_from, valid_until, ingested_at, invalidated_at,
