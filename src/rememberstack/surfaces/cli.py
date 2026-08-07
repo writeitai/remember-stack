@@ -54,8 +54,6 @@ def main(argv: list[str] | None = None) -> int:
             return _run_connectors(args)
         if args.command == "mcp":
             return _run_mcp()
-        if args.command == "eval":
-            return _run_eval(args)
     except MemoryApiError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -375,46 +373,6 @@ def _run_mcp() -> int:
         return serve_mcp_stdio(server=RemoteRecipeMcpServer(client=client))
 
 
-def _run_eval(args: argparse.Namespace) -> int:
-    """Offline open-query noninferiority gate and paid-run estimate (no models)."""
-    from rememberstack.eval.open_query_noninferiority import (  # noqa: PLC0415
-        estimate_paid_run,
-    )
-    from rememberstack.eval.open_query_noninferiority import (  # noqa: PLC0415
-        evaluate_noninferiority,
-    )
-    from rememberstack.eval.open_query_noninferiority import (  # noqa: PLC0415
-        load_arm_metrics,
-    )
-
-    if args.eval_command != "open-query-gate":
-        print(f"error: unknown eval command {args.eval_command!r}", file=sys.stderr)
-        return 2
-    if args.estimate or args.metrics is None:
-        plan = estimate_paid_run(
-            cases=args.cases,
-            arms=args.arms,
-            calls_per_case=args.calls_per_case,
-            unit_cost=args.unit_cost,
-        )
-        print(json.dumps(plan, indent=2, default=str))
-        if args.metrics is None and not args.estimate:
-            print(
-                "note: pass --metrics <file.json> to evaluate offline gates;"
-                " this command never starts a paid run.",
-                file=sys.stderr,
-            )
-        return 0
-    try:
-        metrics = load_arm_metrics(path=args.metrics)
-        report = evaluate_noninferiority(metrics=metrics)
-    except (OSError, ValueError, json.JSONDecodeError, TypeError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    print(json.dumps(report, indent=2, default=str))
-    return 0 if report.get("passed") else 1
-
-
 def query_list(*, client: httpx.Client) -> int:
     """Print recipes from an injected client (the parity-testable CLI seam)."""
     try:
@@ -647,36 +605,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--parameters", help="JSON array of positional bound parameters"
     )
     run_saved.add_argument("--max-rows", type=int)
-
-    eval_cmd = commands.add_parser(
-        "eval", help="offline evaluation helpers (never starts a paid benchmark run)"
-    )
-    eval_commands = eval_cmd.add_subparsers(dest="eval_command", required=True)
-    gate = eval_commands.add_parser(
-        "open-query-gate",
-        help="offline §8 noninferiority gate or paid-run cost estimate (no model calls)",
-    )
-    gate.add_argument(
-        "--metrics",
-        type=Path,
-        help="JSON file of already-collected same-condition arm metrics",
-    )
-    gate.add_argument(
-        "--estimate",
-        action="store_true",
-        help="print the paid-run estimate/plan without evaluating metrics",
-    )
-    gate.add_argument("--cases", type=int, default=0, help="estimated case count")
-    gate.add_argument("--arms", type=int, default=2, help="arm count (legacy + open)")
-    gate.add_argument(
-        "--calls-per-case", type=int, default=1, help="mean model calls per case"
-    )
-    gate.add_argument(
-        "--unit-cost",
-        type=float,
-        default=0.0,
-        help="operator-supplied unit cost per model call (currency units)",
-    )
 
     ingest = commands.add_parser("ingest", help="push a file through E0")
     ingest.add_argument("file", type=Path)

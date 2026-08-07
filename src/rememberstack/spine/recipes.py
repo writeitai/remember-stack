@@ -6,9 +6,9 @@ misreport its grain never lands — the linter is the chain-level half of the
 D41 bar, the DB CHECK the enum half. Reads return only `status='active'`
 rows: those are what the MCP tool list, the CLI, and the API render from.
 
-Adding a query pattern is inserting a row here — never new code — which is
-exactly why a recipe can add no capability: the executor (surfaces) replays
-whatever chain the row carries, and nothing else.
+The shipping namespace is closed to the three assured operations. Bootstrap
+atomically replaces its deployment's rows with those canonical descriptors;
+saved query patterns live in the separate saved-query registry.
 """
 
 import json
@@ -46,40 +46,75 @@ class RecipeRegistry:
         with self._engine.begin() as connection:
             connection.execute(
                 _INSERT_RECIPE,
-                {
-                    "recipe_id": uuid4(),
-                    "deployment_id": deployment_id,
-                    "name": recipe.name,
-                    "description": recipe.description,
-                    "parameters": recipe.parameters,
-                    "chain": [step.model_dump(mode="json") for step in recipe.chain],
-                    "output_grain": recipe.output_grain.value,
-                    "answer_intent": recipe.answer_intent.value,
-                    "version": recipe.version,
-                },
+                _registration_values(deployment_id=deployment_id, recipe=recipe),
             )
 
     def active(self, *, deployment_id: UUID) -> tuple[Recipe, ...]:
-        """Every active recipe, name-ordered — the surface's tool list."""
+        """The three active assured operations, name-ordered."""
         with self._engine.connect() as connection:
             rows = (
-                connection.execute(_ACTIVE_RECIPES, {"deployment_id": deployment_id})
+                connection.execute(
+                    _ACTIVE_RECIPES,
+                    {
+                        "deployment_id": deployment_id,
+                        "names": sorted(_ASSURED_OPERATION_NAMES),
+                    },
+                )
                 .mappings()
                 .all()
             )
-        return tuple(_recipe_from_row(row) for row in rows)
+        return tuple(
+            _recipe_from_row(row)
+            for row in rows
+            if int(str(row["version"])) == _ASSURED_OPERATION_VERSIONS[str(row["name"])]
+        )
 
     def by_name(self, *, deployment_id: UUID, name: str) -> Recipe | None:
-        """The latest active version of one recipe, or None if none exists."""
+        """The canonical active assured operation, or None for every other name."""
+        if name not in _ASSURED_OPERATION_NAMES:
+            return None
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
-                    _RECIPE_BY_NAME, {"deployment_id": deployment_id, "name": name}
+                    _RECIPE_BY_NAME,
+                    {
+                        "deployment_id": deployment_id,
+                        "name": name,
+                        "version": _ASSURED_OPERATION_VERSIONS[name],
+                    },
                 )
                 .mappings()
                 .one_or_none()
             )
         return None if row is None else _recipe_from_row(row)
+
+    def replace_all(self, *, deployment_id: UUID, recipes: tuple[Recipe, ...]) -> int:
+        """Atomically replace one deployment's closed operation catalog."""
+        for recipe in recipes:
+            lint_recipe(recipe)
+        with self._engine.begin() as connection:
+            connection.execute(_DELETE_RECIPES, {"deployment_id": deployment_id})
+            for recipe in recipes:
+                connection.execute(
+                    _INSERT_RECIPE,
+                    _registration_values(deployment_id=deployment_id, recipe=recipe),
+                )
+        return len(recipes)
+
+
+def _registration_values(*, deployment_id: UUID, recipe: Recipe) -> dict[str, object]:
+    """Bind one typed recipe to the registry row written for it."""
+    return {
+        "recipe_id": uuid4(),
+        "deployment_id": deployment_id,
+        "name": recipe.name,
+        "description": recipe.description,
+        "parameters": recipe.parameters,
+        "chain": [step.model_dump(mode="json") for step in recipe.chain],
+        "output_grain": recipe.output_grain.value,
+        "answer_intent": recipe.answer_intent.value,
+        "version": recipe.version,
+    }
 
 
 def _recipe_from_row(row: RowMapping) -> Recipe:
@@ -126,6 +161,7 @@ _ACTIVE_RECIPES = text(
     SELECT {_RECIPE_COLUMNS}
     FROM retrieval_recipes
     WHERE deployment_id = :deployment_id AND status = 'active'
+      AND name = ANY(CAST(:names AS text[]))
     ORDER BY name, version DESC
     """  # noqa: S608 — _RECIPE_COLUMNS is a module constant, not user input
 )
@@ -135,19 +171,25 @@ _RECIPE_BY_NAME = text(
     SELECT {_RECIPE_COLUMNS}
     FROM retrieval_recipes
     WHERE deployment_id = :deployment_id AND name = :name AND status = 'active'
-    ORDER BY version DESC
+      AND version = :version
     LIMIT 1
     """  # noqa: S608 — _RECIPE_COLUMNS is a module constant, not user input
 )
 
+_DELETE_RECIPES = text(
+    """
+    DELETE FROM retrieval_recipes
+    WHERE deployment_id = :deployment_id
+    """
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────
-# The canonical recipe set (retrieval §4), each a frozen composition of the
-# zero-LLM primitives. These are seeded into every deployment; the surfaces
-# render their tool list from the rows, and the eval harness proves each is
-# exactly its chain. Adding a query pattern is adding an entry here.
+# Historical stock definitions. The frozen Full-v9 benchmark and primitive
+# regression fixtures still need these descriptors, but only the three entries
+# selected into ``CANONICAL_RECIPES`` below are seeded or exposed as tools.
 # ─────────────────────────────────────────────────────────────────────────
-CANONICAL_RECIPES: tuple[Recipe, ...] = (
+_STOCK_RECIPE_DEFINITIONS: tuple[Recipe, ...] = (
     Recipe(
         name="resolve_entity",
         description="Resolve a name to ranked current entity candidates before"
@@ -567,7 +609,7 @@ CANONICAL_RECIPES: tuple[Recipe, ...] = (
     ),
 )
 
-GRAPH_RECIPES: tuple[Recipe, ...] = (
+_DEMOTED_GRAPH_RECIPE_DEFINITIONS: tuple[Recipe, ...] = (
     Recipe(
         name="multi_hop_context",
         description="How do two named entities connect, or what surrounds one"
@@ -688,20 +730,26 @@ GRAPH_RECIPES: tuple[Recipe, ...] = (
     ),
 )
 
+_ASSURED_OPERATION_NAMES = frozenset(
+    {"resolve_entity", "question_context", "current_context"}
+)
+
+CANONICAL_RECIPES: tuple[Recipe, ...] = tuple(
+    recipe
+    for recipe in _STOCK_RECIPE_DEFINITIONS
+    if recipe.name in _ASSURED_OPERATION_NAMES
+)
+
+_ASSURED_OPERATION_VERSIONS = {
+    recipe.name: recipe.version for recipe in CANONICAL_RECIPES
+}
+
 
 def seed_canonical_recipes(*, registry: RecipeRegistry, deployment_id: UUID) -> int:
-    """Register the canonical recipe set into a deployment (idempotent).
+    """Reconcile and register the three assured operations (idempotent).
 
-    Each recipe is linted then inserted; re-seeding is a no-op per version.
-    Returns how many recipes were seeded (the full canonical count).
+    The deployment's catalog is replaced so neither a pre-cutover stock adapter
+    nor a same-name custom version can replace or add a tool. Customer saved
+    queries are a separate registry and are untouched.
     """
-    for recipe in CANONICAL_RECIPES:
-        registry.register(deployment_id=deployment_id, recipe=recipe)
-    return len(CANONICAL_RECIPES)
-
-
-def seed_graph_recipes(*, registry: RecipeRegistry, deployment_id: UUID) -> int:
-    """Seed P2 recipes only for profiles that actually compose graph queries."""
-    for recipe in GRAPH_RECIPES:
-        registry.register(deployment_id=deployment_id, recipe=recipe)
-    return len(GRAPH_RECIPES)
+    return registry.replace_all(deployment_id=deployment_id, recipes=CANONICAL_RECIPES)

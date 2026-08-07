@@ -20,9 +20,11 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import P1ChunkText
-from rememberstack.spine import CANONICAL_RECIPES
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine.recipes import GRAPH_RECIPES
+from rememberstack.spine.recipes import (
+    _DEMOTED_GRAPH_RECIPE_DEFINITIONS as GRAPH_RECIPES,
+)
+from rememberstack.spine.recipes import _STOCK_RECIPE_DEFINITIONS as CANONICAL_RECIPES
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces import RecipeExecutor
@@ -302,13 +304,9 @@ def test_exact_normalizer_groups_only_equal_confirmed_claims(corpus: _Corpus) ->
         confirmed_ids = set(
             connection.execute(
                 text(
-                    "SELECT c.claim_id FROM claims c"
-                    " LEFT JOIN documents d ON d.deployment_id = c.deployment_id"
-                    " AND d.doc_id = c.doc_id"
-                    " WHERE c.deployment_id = :deployment"
-                    " AND c.claim_id = ANY(:claim_ids)"
-                    " AND c.is_current_testimony"
-                    " AND (d.doc_id IS NULL OR d.deleted_at IS NULL)"
+                    "SELECT claim_id FROM memory_v1.claims_live"
+                    " WHERE deployment_id = :deployment"
+                    " AND claim_id = ANY(:claim_ids)"
                 ),
                 {
                     "deployment": _DEPLOYMENT_ID,

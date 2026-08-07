@@ -3282,7 +3282,8 @@ def test_processing_loss_alone_opens_the_withdrawn_state(corpus: _Corpus) -> Non
                 "INSERT INTO review_queue (review_id, deployment_id, item_kind,"
                 " candidate, blast_radius, confidence, expected_impact, status)"
                 " VALUES (:review, :deployment, 'support_withdrawn',"
-                " jsonb_build_object('fact_id', CAST(:fact AS text)), 1, 0.5, 0.5,"
+                " jsonb_build_object('fact_kind', 'relation', 'fact_id',"
+                " CAST(:fact AS text)), 1, 0.5, 0.5,"
                 " 'pending')"
             ),
             {
@@ -3329,6 +3330,68 @@ def test_processing_loss_alone_opens_the_withdrawn_state(corpus: _Corpus) -> Non
     assert flagged["evidence_count"] == 2, "the flag does not touch the counts"
     assert stored == 0, "the cached column is untouched; the state is read-time"
     assert closed["support_state"] == "current", "closing the row restores it"
+
+
+def test_withdrawal_is_bound_to_fact_kind_when_uuids_collide(corpus: _Corpus) -> None:
+    """A relation review cannot mark a same-UUID observation withdrawn."""
+    fact_id = corpus.fact["current"]
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, valid_from, ingested_at,"
+                " confidence, obs_label, normalizer_version)"
+                " VALUES (:fact, :deployment, :subject, 'Colliding observation',"
+                " :at, :at, 0.7, 'Colliding observation', 'normalizer-1')"
+            ),
+            {
+                "fact": fact_id,
+                "deployment": _DEPLOYMENT_ID,
+                "subject": corpus.entity["alice"],
+                "at": _PAST,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO observation_evidence (deployment_id, observation_id,"
+                " claim_id, doc_id, stance, normalizer_version, created_at)"
+                " VALUES (:deployment, :fact, :claim, :doc, 'supports',"
+                " 'normalizer-1', :at)"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "fact": fact_id,
+                "claim": corpus.claim["a"],
+                "doc": corpus.doc["primary"],
+                "at": _PAST,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO review_queue (review_id, deployment_id, item_kind,"
+                " candidate, blast_radius, confidence, expected_impact, status)"
+                " VALUES (:review, :deployment, 'support_withdrawn',"
+                " jsonb_build_object('fact_kind', 'relation', 'fact_id',"
+                " CAST(:fact AS text)), 1, 0.5, 0.5, 'pending')"
+            ),
+            {"review": uuid4(), "deployment": _DEPLOYMENT_ID, "fact": fact_id},
+        )
+        states = {
+            str(row["fact_kind"]): str(row["support_state_current"])
+            for row in connection.execute(
+                text(
+                    "SELECT fact_kind, support_state_current"
+                    " FROM memory_v1.facts_visible_history"
+                    " WHERE deployment_id = :deployment AND fact_id = :fact"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "fact": fact_id},
+            )
+            .mappings()
+            .all()
+        }
+        connection.rollback()
+
+    assert states == {"relation": "withdrawn", "observation": "current"}
 
 
 def test_source_deletion_and_a_zero_count_never_infer_withdrawal(
@@ -3380,7 +3443,8 @@ def test_history_keeps_a_processing_withdrawn_fact_with_zero_support(
                 "INSERT INTO review_queue (review_id, deployment_id, item_kind,"
                 " candidate, blast_radius, confidence, expected_impact, status)"
                 " VALUES (:review, :deployment, 'support_withdrawn',"
-                " jsonb_build_object('fact_id', CAST(:fact AS text)), 1, 0.5, 0.5,"
+                " jsonb_build_object('fact_kind', 'relation', 'fact_id',"
+                " CAST(:fact AS text)), 1, 0.5, 0.5,"
                 " 'deferred')"
             ),
             {

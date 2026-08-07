@@ -25,6 +25,7 @@ from psycopg import sql as pgsql
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
+from rememberstack.spine.query_space.manifest import live_schema_differences_psycopg
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
 from rememberstack.surfaces.query_sandbox.bridge import explain_placeholders
@@ -431,6 +432,17 @@ class QuerySandboxExecutor:
             with self._transaction(
                 limits_ms=limits, statement_timeout_ms=statement_timeout_ms
             ) as cursor:
+                differences = live_schema_differences_psycopg(
+                    connection=cursor.connection
+                )
+                if differences:
+                    raise SandboxRejection(
+                        code=QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+                        message=(
+                            "the deployed memory_v1 schema does not match "
+                            "this server's checked-in manifest"
+                        ),
+                    )
                 # Confirmation and execution share ONE transaction, so they
                 # share one snapshot. Confirming in a separate transaction
                 # would freeze rows that were live then into a statement that

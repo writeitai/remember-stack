@@ -59,16 +59,16 @@ def _context(
                     answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
                 ),
                 ConsumptionRecipe(
-                    name="relation_current",
-                    description="Current relations for one subject.",
-                    output_grain=Grain.FACT,
-                    answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
+                    name="question_context",
+                    description="High-recall typed question context.",
+                    output_grain=Grain.EVIDENCE,
+                    answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
                 ),
                 ConsumptionRecipe(
-                    name="pages_about",
-                    description="Compiled pages about an entity.",
-                    output_grain=Grain.COMPILED,
-                    answer_intent=RecipeAnswerIntent.ORIENTATION,
+                    name="current_context",
+                    description="Current evidence-backed facts for a question.",
+                    output_grain=Grain.FACT,
+                    answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
                 ),
             )
             if recipes
@@ -84,7 +84,7 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
         context=_context(mounted=True, knowledge_page_count=2)
     )
 
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.0.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.1.0"
     assert skill.filename == "SKILL.md"
     assert TWO_LAYER_HEADLINE_FULL in skill.content
     assert TWO_LAYER_HEADLINE_NOTE in skill.content
@@ -99,7 +99,8 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
     assert "/memory/corpus" in skill.content
     assert "`target-state`" in skill.content
     assert "`resolve_entity`" in skill.content
-    assert "`relation_current`" in skill.content
+    assert "`question_context`" in skill.content
+    assert "`current_context`" in skill.content
     # recipe-first steering is gone
     assert "Default motion: orient, verify, audit" not in skill.content
 
@@ -123,14 +124,14 @@ def test_only_enabled_recipes_are_advertised() -> None:
         context=_context(mounted=False, knowledge_page_count=0, recipes=False)
     )
 
-    assert "`pages_about`" not in skill.content
-    assert "`relation_current`" not in skill.content
-    assert "No extra compatibility recipes are enabled" in skill.content
+    assert "`question_context`" in skill.content
+    assert "`current_context`" in skill.content
+    assert "there is no compatibility recipe catalog" in skill.content
     assert "include_superseded_testimony" not in skill.content
 
 
-def test_claims_as_of_is_described_as_callable_only_when_enabled() -> None:
-    """An active history adapter gets exact, grain-safe callable guidance."""
+def test_noncore_recipe_rows_are_not_advertised_as_assured_operations() -> None:
+    """A stale noncore row cannot revive the removed compatibility catalog."""
     context = _context(mounted=False, knowledge_page_count=0, recipes=False)
     context = context.model_copy(
         update={
@@ -147,8 +148,5 @@ def test_claims_as_of_is_described_as_callable_only_when_enabled() -> None:
 
     skill = render_consumption_skill(context=context)
 
-    assert (
-        "This deployment enables a `claims_as_of` compatibility adapter"
-        in skill.content
-    )
-    assert "use it only for assertion history" in skill.content
+    assert "`claims_as_of` —" not in skill.content
+    assert "`examples.claims_as_of`" in skill.content

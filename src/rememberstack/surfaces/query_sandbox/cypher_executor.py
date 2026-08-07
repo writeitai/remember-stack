@@ -50,6 +50,7 @@ from uuid import uuid4
 
 import psycopg
 
+from rememberstack.spine.query_space.manifest import live_schema_differences_psycopg
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.spine.query_space.manifest import SchemaManifestError
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
@@ -607,29 +608,33 @@ class CypherSandboxExecutor:
         live: dict[str, set[str]] = {"entity": set(), "relation": set()}
         try:
             with self._connect() as connection:
-                # One snapshot for the whole confirmation. Under READ COMMITTED
-                # each statement takes a new one, so a commit between the
-                # entity check and the relation check could keep a row whose
-                # two halves were never simultaneously live at the instant this
-                # result claims to have checked.
-                connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
-                confirmed_at = connection.execute(
-                    "SELECT transaction_timestamp()"
-                ).fetchone()
-                for kind, identifiers in wanted.items():
-                    if not identifiers:
-                        continue
-                    live[kind] = {
-                        str(found[0])
-                        for found in connection.execute(
-                            _CONFIRM_SQL[kind].encode(),
-                            {
-                                "deployment": str(self._deployment_id),
-                                "ids": sorted(identifiers),
-                            },
-                        ).fetchall()
-                    }
-                connection.commit()
+                # The native transaction context emits BEGIN itself. Executing
+                # a SQL BEGIN through psycopg's default non-autocommit connection
+                # would first trigger psycopg's implicit BEGIN, leaving the
+                # requested isolation ineffective.
+                with connection.transaction():
+                    # One read-only snapshot for schema verification, the
+                    # disclosed instant, and every membership check.
+                    connection.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                    self._verify_live_schema(connection=connection)
+                    confirmed_at = connection.execute(
+                        "SELECT transaction_timestamp()"
+                    ).fetchone()
+                    for kind, identifiers in wanted.items():
+                        if not identifiers:
+                            continue
+                        live[kind] = {
+                            str(found[0])
+                            for found in connection.execute(
+                                _CONFIRM_SQL[kind].encode(),
+                                {
+                                    "deployment": str(self._deployment_id),
+                                    "ids": sorted(identifiers),
+                                },
+                            ).fetchall()
+                        }
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
@@ -660,7 +665,14 @@ class CypherSandboxExecutor:
         assert self._connect is not None
         try:
             with self._connect() as connection:
-                row = connection.execute("SELECT statement_timestamp()").fetchone()
+                with connection.transaction():
+                    connection.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                    self._verify_live_schema(connection=connection)
+                    row = connection.execute(
+                        "SELECT transaction_timestamp()"
+                    ).fetchone()
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.PG_UNAVAILABLE,
@@ -668,6 +680,18 @@ class CypherSandboxExecutor:
                 engine_fault_class="postgresql_confirmation",
             ) from error
         return row[0] if row else None
+
+    @staticmethod
+    def _verify_live_schema(*, connection: psycopg.Connection) -> None:
+        """Fail confirmation before reading a drifted ``memory_v1`` surface."""
+        if live_schema_differences_psycopg(connection=connection):
+            raise SandboxRejection(
+                code=QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+                message=(
+                    "the deployed memory_v1 schema does not match "
+                    "this server's checked-in manifest"
+                ),
+            )
 
     @staticmethod
     def _failure(

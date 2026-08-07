@@ -1,7 +1,7 @@
 """Evaluation package: the D22 harness and the golden suites.
 
 Exports are loaded lazily so base-wheel consumers (for example
-``remember eval open-query-gate --estimate``) do not import SQLAlchemy or
+the remote CLI) do not import SQLAlchemy or
 other server-only modules unless they actually touch those symbols.
 """
 
@@ -27,9 +27,6 @@ if TYPE_CHECKING:
     from rememberstack.eval.lifecycle import flag_rate_by_extractor
     from rememberstack.eval.lifecycle import register_lifecycle_evaluator
     from rememberstack.eval.lifecycle import run_lifecycle_suite
-    from rememberstack.eval.open_query_noninferiority import estimate_paid_run
-    from rememberstack.eval.open_query_noninferiority import evaluate_noninferiority
-    from rememberstack.eval.open_query_noninferiority import load_arm_metrics
     from rememberstack.eval.operational_scale import OPERATIONAL_SCALE_VERSION
     from rememberstack.eval.operational_scale import record_operational_scale_report
     from rememberstack.eval.resolution import PRECISION_FLOOR
@@ -67,9 +64,6 @@ __all__ = (
     "SKELETON_CANARIES",
     "make_skeleton_evaluator",
     "seed_skeleton_canaries",
-    "estimate_paid_run",
-    "evaluate_noninferiority",
-    "load_arm_metrics",
 )
 
 #: Public name → (module path, attribute name) for lazy package exports.
@@ -137,18 +131,6 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "make_skeleton_evaluator",
     ),
     "seed_skeleton_canaries": ("rememberstack.eval.skeleton", "seed_skeleton_canaries"),
-    "estimate_paid_run": (
-        "rememberstack.eval.open_query_noninferiority",
-        "estimate_paid_run",
-    ),
-    "evaluate_noninferiority": (
-        "rememberstack.eval.open_query_noninferiority",
-        "evaluate_noninferiority",
-    ),
-    "load_arm_metrics": (
-        "rememberstack.eval.open_query_noninferiority",
-        "load_arm_metrics",
-    ),
 }
 
 

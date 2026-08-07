@@ -1,4 +1,4 @@
-"""Batch F: open-query facade, surfaces, freeze, telemetry, offline gate."""
+"""Batch F: integrated open-query and assured-operation surfaces."""
 
 from __future__ import annotations
 
@@ -27,8 +27,6 @@ from rememberstack.core.open_query_prose import SNAPSHOT_ID_TO_LIVE_SQL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_FULL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_NOTE
 from rememberstack.core.open_query_prose import WRONG_CLAIM_WINDOW_CURRENT_TRUTH_SQL
-from rememberstack.eval.open_query_noninferiority import estimate_paid_run
-from rememberstack.eval.open_query_noninferiority import evaluate_noninferiority
 from rememberstack.model import ConsumptionDeployment
 from rememberstack.model import ConsumptionRecipe
 from rememberstack.model import ConsumptionSkillContext
@@ -41,7 +39,6 @@ from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.mcp import RecipeMcpServer
-from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
 from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -139,14 +136,11 @@ def _registry(database_url: str) -> SavedQueryRegistry:
     )
 
 
-def _facade(
-    database_url: str, *, usage: MigrationUsageCounters | None = None
-) -> OpenQueryFacade:
+def _facade(database_url: str) -> OpenQueryFacade:
     return OpenQueryFacade(
         deployment_id=_DEPLOYMENT,
         sql=_sql_executor(database_url),
         saved_queries=_registry(database_url),
-        usage=usage or MigrationUsageCounters(),
     )
 
 
@@ -407,7 +401,7 @@ class _NullEngine:
         raise AssertionError("not used")
 
 
-def test_http_open_routes_and_legacy_recipes_untouched(migrated: str) -> None:
+def test_http_open_routes_and_three_assured_operations(migrated: str) -> None:
     from rememberstack.adapters.testing import FakeModelProvider
     from rememberstack.spine import RecipeRegistry
     from rememberstack.spine import seed_canonical_recipes
@@ -419,19 +413,17 @@ def test_http_open_routes_and_legacy_recipes_untouched(migrated: str) -> None:
     seed_canonical_recipes(
         registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
-    usage = MigrationUsageCounters()
     query_engine = QueryEngine(
         engine=engine,
         search_index=_NullSearch(),
         model_provider=FakeModelProvider(),
         embedding_model="test/embed",
     )
-    facade = _facade(migrated, usage=usage)
+    facade = _facade(migrated)
     surface = RecipeSurface(
         registry=RecipeRegistry(engine=engine),
         executor=RecipeExecutor(query_engine=query_engine),
         deployment_id=_DEPLOYMENT,
-        usage=usage,
     )
     app = build_api(
         engine=query_engine,
@@ -445,7 +437,7 @@ def test_http_open_routes_and_legacy_recipes_untouched(migrated: str) -> None:
     recipes = client.get("/recipes")
     assert recipes.status_code == 200
     names = {row["name"] for row in recipes.json()}
-    assert "resolve_entity" in names
+    assert names == {"resolve_entity", "question_context", "current_context"}
     # open routes — full first-call discovery, not a shortened subset
     space = client.get("/query/space")
     assert space.status_code == 200
@@ -706,7 +698,7 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
             mounts=None,
         )
     )
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.0.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.1.0"
     assert skill.content.startswith("---\n")
     # first prose after the skill title block is the bound headline
     assert TWO_LAYER_HEADLINE in skill.content
@@ -729,209 +721,6 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
     assert "Default motion: orient, verify, audit" not in skill.content
 
 
-# --- telemetry privacy ------------------------------------------------------
-
-
-def test_migration_usage_is_content_free() -> None:
-    usage = MigrationUsageCounters()
-    usage.record(surface="compatibility_adapter", operation="relation_current")
-    usage.record(surface="open_query", operation="query_sql")
-    usage.record(surface="core_operation", operation="resolve_entity")
-    snap = usage.snapshot()
-    assert snap["compatibility_adapter_calls"] == 1
-    assert snap["open_query_calls"] == 1
-    assert snap["core_operation_calls"] == 1
-    encoded = str(snap)
-    assert "SELECT" not in encoded
-    assert "MATCH" not in encoded
-    assert "parameters" not in encoded
-
-
-def test_facade_records_open_query_usage(migrated: str) -> None:
-    usage = MigrationUsageCounters()
-    facade = _facade(migrated, usage=usage)
-    facade.query_sql(sql="SELECT 1")
-    facade.query_sql(sql="SELECT 2")
-    assert usage.open_query_calls == 2
-    assert usage.compatibility_adapter_calls == 0
-
-
-def test_discovery_and_explain_do_not_count_as_retrieval(migrated: str) -> None:
-    """§8 denominator is retrieval-bearing only: not explain/discovery/list."""
-    usage = MigrationUsageCounters()
-    facade = _facade(migrated, usage=usage)
-    before = usage.snapshot()
-    facade.describe_query_space()
-    facade.search_query_space(query="facts", k=3)
-    facade.list_saved_queries()
-    facade.explain_sql(sql="SELECT 1")
-    after = usage.snapshot()
-    assert after["open_query_calls"] == before["open_query_calls"] == 0
-    assert after["by_operation"] == before["by_operation"] == {}
-    # Retrieval still increments.
-    facade.query_sql(sql="SELECT 1")
-    assert usage.open_query_calls == 1
-
-
-def test_usage_counters_require_explicit_opt_in() -> None:
-    """The disabled factory is a no-op; hosts opt into enabled counters."""
-    from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
-
-    disabled = MigrationUsageCounters.disabled()
-    disabled.record(surface="compatibility_adapter", operation="relation_current")
-    assert disabled.compatibility_adapter_calls == 0
-    enabled = MigrationUsageCounters()
-    enabled.record(surface="compatibility_adapter", operation="relation_current")
-    assert enabled.compatibility_adapter_calls == 1
-
-
-# --- offline noninferiority gate --------------------------------------------
-
-
-def test_offline_noninferiority_gates_and_estimate() -> None:
-    plan = estimate_paid_run(cases=100, arms=2, calls_per_case=3, unit_cost=0.01)
-    assert plan["paid_run"] is False
-    assert plan["operator_gated"] is True
-    assert plan["total_model_calls"] == 600
-    assert plan["estimated_total_cost"] == 6.0
-
-
-def test_estimate_paid_run_rejects_bool_and_non_finite_inputs() -> None:
-    """Estimator stays trustworthy: bools and non-finite unit costs fail closed."""
-    with pytest.raises(ValueError, match="cases"):
-        estimate_paid_run(cases=True)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="arms"):
-        estimate_paid_run(cases=1, arms=True)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="arms"):
-        estimate_paid_run(cases=1, arms=0)
-    with pytest.raises(ValueError, match="calls_per_case"):
-        estimate_paid_run(cases=1, calls_per_case=False)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="unit_cost"):
-        estimate_paid_run(cases=1, unit_cost=True)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="unit_cost"):
-        estimate_paid_run(cases=1, unit_cost=float("nan"))
-    with pytest.raises(ValueError, match="unit_cost"):
-        estimate_paid_run(cases=1, unit_cost=float("inf"))
-    with pytest.raises(ValueError, match="unit_cost"):
-        estimate_paid_run(cases=1, unit_cost=-0.01)
-
-    metrics = {
-        "legacy": {
-            "success_rate": 80.0,
-            "critical_categories": {"A": 90.0, "B": 70.0},
-            "d41_violations": 0,
-            "d48_violations": 0,
-            "d54_violations": 0,
-            "cross_deployment_violations": 0,
-            "p95_latency_ms": 100.0,
-            "metered_cost": 10.0,
-            "invalid_sql_rate": 0.0,
-            "invalid_cypher_rate": 0.0,
-            "caps_and_drops_visible": True,
-        },
-        "open": {
-            "success_rate": 81.0,
-            # Already-collected lower 95% of the open-vs-legacy success delta.
-            "success_delta_lower_95": -1.0,  # >= -2
-            "critical_categories": {"A": 88.0, "B": 66.0},  # -2 and -4 >= -5
-            "d41_violations": 0,
-            "d48_violations": 0,
-            "d54_violations": 0,
-            "cross_deployment_violations": 0,
-            "p95_latency_ms": 120.0,  # 1.2x <= 1.25
-            "metered_cost": 12.0,
-            "invalid_sql_rate": 0.04,
-            "invalid_cypher_rate": 0.03,
-            "caps_and_drops_visible": True,
-        },
-    }
-    report = evaluate_noninferiority(metrics=metrics)
-    assert report["passed"] is True
-    assert report["paid_run"] is False
-
-    failing = {
-        "legacy": metrics["legacy"],
-        "open": {
-            **metrics["open"],
-            "success_delta_lower_95": -3.0,  # < -2
-            "d48_violations": 1,
-            "invalid_sql_rate": 0.1,
-            "caps_and_drops_visible": False,
-        },
-    }
-    failed = evaluate_noninferiority(metrics=failing)
-    assert failed["passed"] is False
-    names = {gate["name"] for gate in failed["gates"] if not gate["passed"]}  # type: ignore[index]
-    assert "overall_success_delta_lower_95" in names
-    assert "d48_violations" in names
-    assert "invalid_sql_rate" in names
-    assert "caps_and_drops_visible" in names
-
-
-def test_offline_gate_rejects_invalid_metric_shapes() -> None:
-    """Input validation: ranges, bool type, non-empty categories, required delta."""
-    base_legacy = {
-        "success_rate": 80.0,
-        "critical_categories": {"A": 90.0},
-        "d41_violations": 0,
-        "d48_violations": 0,
-        "d54_violations": 0,
-        "cross_deployment_violations": 0,
-        "p95_latency_ms": 100.0,
-        "metered_cost": 10.0,
-        "invalid_sql_rate": 0.0,
-        "invalid_cypher_rate": 0.0,
-        "caps_and_drops_visible": True,
-    }
-    base_open = {
-        **base_legacy,
-        "success_delta_lower_95": -1.0,
-        "critical_categories": {"A": 88.0},
-    }
-    with pytest.raises(ValueError, match="success_delta_lower_95"):
-        evaluate_noninferiority(
-            metrics={"legacy": base_legacy, "open": {**base_legacy}}
-        )
-    with pytest.raises(ValueError, match="0..100"):
-        evaluate_noninferiority(
-            metrics={
-                "legacy": base_legacy,
-                "open": {**base_open, "success_rate": 120.0},
-            }
-        )
-    with pytest.raises(ValueError, match="0..1"):
-        evaluate_noninferiority(
-            metrics={
-                "legacy": base_legacy,
-                "open": {**base_open, "invalid_sql_rate": 2.0},
-            }
-        )
-    with pytest.raises(ValueError, match="boolean"):
-        evaluate_noninferiority(
-            metrics={
-                "legacy": base_legacy,
-                "open": {**base_open, "caps_and_drops_visible": 1},
-            }
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        evaluate_noninferiority(
-            metrics={
-                "legacy": {**base_legacy, "critical_categories": {}},
-                "open": base_open,
-            }
-        )
-    # Missing open category fails the critical-categories gate (not ValueError).
-    report = evaluate_noninferiority(
-        metrics={
-            "legacy": {**base_legacy, "critical_categories": {"A": 90.0, "B": 70.0}},
-            "open": base_open,
-        }
-    )
-    assert report["passed"] is False
-    names = {g["name"] for g in report["gates"] if not g["passed"]}  # type: ignore[index]
-    assert "critical_categories" in names
-
-
 def test_bound_sql_examples_match_design_strings() -> None:
     """Exact §6 bodies stay byte-stable as the shared product authority."""
     assert "FROM claims_live" in WRONG_CLAIM_WINDOW_CURRENT_TRUTH_SQL
@@ -942,8 +731,8 @@ def test_bound_sql_examples_match_design_strings() -> None:
     assert "entities_current" in SNAPSHOT_ID_TO_LIVE_SQL
 
 
-def test_compatibility_recipe_descriptors_remain_frozen(migrated: str) -> None:
-    """Existing recipe names, versions, and input schemas stay byte-stable."""
+def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -> None:
+    """The catalog exposes exactly the three versioned assured operations."""
     from rememberstack.adapters.testing import FakeModelProvider
     from rememberstack.spine import RecipeRegistry
     from rememberstack.spine import seed_canonical_recipes
@@ -969,9 +758,12 @@ def test_compatibility_recipe_descriptors_remain_frozen(migrated: str) -> None:
         deployment_id=_DEPLOYMENT,
     )
     descriptors = {item.name: item for item in surface.descriptors()}
-    # Seventeen demoted + three core ops are the stock canonical set (no graph).
     expected_names = {recipe.name for recipe in CANONICAL_RECIPES}
-    assert set(descriptors) == expected_names
+    assert (
+        set(descriptors)
+        == expected_names
+        == {"resolve_entity", "question_context", "current_context"}
+    )
     for recipe in CANONICAL_RECIPES:
         descriptor = descriptors[recipe.name]
         assert descriptor.version == recipe.version
@@ -1255,46 +1047,6 @@ def test_mcp_rejects_mixed_deployment_composition(migrated: str) -> None:
     )
     with pytest.raises(ValueError, match="different deployment"):
         RecipeMcpServer(surface=surface, open_query=_facade(migrated))
-
-
-def test_offline_gate_requires_zero_violations_on_both_arms() -> None:
-    """Legacy-arm D41/D48/D54/cross-deployment violations fail the §8 gate."""
-    metrics = {
-        "legacy": {
-            "success_rate": 80.0,
-            "critical_categories": {"A": 90.0},
-            "d41_violations": 1,
-            "d48_violations": 0,
-            "d54_violations": 0,
-            "cross_deployment_violations": 0,
-            "p95_latency_ms": 100.0,
-            "metered_cost": 10.0,
-            "invalid_sql_rate": 0.0,
-            "invalid_cypher_rate": 0.0,
-            "caps_and_drops_visible": True,
-        },
-        "open": {
-            "success_rate": 81.0,
-            "success_delta_lower_95": -1.0,
-            "critical_categories": {"A": 88.0},
-            "d41_violations": 0,
-            "d48_violations": 0,
-            "d54_violations": 0,
-            "cross_deployment_violations": 0,
-            "p95_latency_ms": 120.0,
-            "metered_cost": 12.0,
-            "invalid_sql_rate": 0.04,
-            "invalid_cypher_rate": 0.03,
-            "caps_and_drops_visible": True,
-        },
-    }
-    report = evaluate_noninferiority(metrics=metrics)
-    assert report["passed"] is False
-    d41 = next(g for g in report["gates"] if g["name"] == "d41_violations")  # type: ignore[index]
-    assert d41["passed"] is False
-    assert d41["detail"]["legacy"] == 1
-    assert d41["detail"]["open"] == 0
-    assert d41["detail"]["required"] == 0
 
 
 def test_mcp_rejects_explicit_null_for_string_and_integer_fields() -> None:

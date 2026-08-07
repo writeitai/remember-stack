@@ -1,5 +1,12 @@
 # Batch F — dual surface: open-query adapters, skill rewrite, freeze telemetry
 
+> **Superseded for the shipping pre-release surface (2026-08-06).** This file
+> records Batch F as built. D83 and
+> `plan/designs/open_query_space_design.md` §8 remove the 17 compatibility
+> adapters, their telemetry, and the noninferiority removal gate because no
+> consumer exists to migrate. The nine open-query entry points, three assured
+> operations, and 17 `examples.*` queries remain.
+
 Batch F integrates the open query space as the dual surface alongside the
 frozen legacy recipe adapters. It does not invent a second query engine,
 parser, registry, RPC layer, or dynamic saved-query MCP tools.

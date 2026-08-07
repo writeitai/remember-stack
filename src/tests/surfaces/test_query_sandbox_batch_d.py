@@ -15,6 +15,7 @@ from datetime import datetime
 from datetime import UTC
 from pathlib import Path
 from threading import Barrier
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -84,6 +85,65 @@ def test_cypher_hash_normalizes_formatting_and_parameter_type_families() -> None
         _statement_hash(formatted.normalized_tokens, {"value": [8, 9]})
     )
     assert integer_hash != _statement_hash(compact.normalized_tokens, {"value": "1"})
+
+
+@pytest.mark.parametrize("confirmable", (False, True))
+def test_confirmation_starts_a_native_read_only_repeatable_read_transaction(
+    monkeypatch: pytest.MonkeyPatch, *, confirmable: bool
+) -> None:
+    """Psycopg must emit BEGIN before SET TRANSACTION on both confirm paths."""
+    events: list[str] = []
+    entity_id = uuid4()
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    transaction = connection.transaction.return_value
+    transaction.__enter__.side_effect = lambda: events.append("transaction_enter")
+    transaction.__exit__.side_effect = lambda *_: events.append("transaction_exit")
+
+    def execute(statement: object, parameters: object | None = None) -> MagicMock:
+        """Record one fake PostgreSQL statement and return its bounded result."""
+        del parameters
+        rendered = (
+            statement.decode() if isinstance(statement, bytes) else str(statement)
+        )
+        events.append(rendered)
+        result = MagicMock()
+        if "transaction_timestamp" in rendered:
+            result.fetchone.return_value = (_PAST,)
+        elif "entities_current" in rendered:
+            result.fetchall.return_value = [(str(entity_id),)]
+        return result
+
+    connection.execute.side_effect = execute
+
+    def verify_schema(*, connection: object) -> None:
+        """Stand in for catalog reads while preserving their call position."""
+        del connection
+        events.append("verify_schema")
+
+    monkeypatch.setattr(
+        CypherSandboxExecutor, "_verify_live_schema", staticmethod(verify_schema)
+    )
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT, reader=object(), connect=lambda: connection
+    )
+
+    if confirmable:
+        _rows, confirmation = executor._confirm(
+            rows=(({"_LABEL": "Entity", "id": entity_id},),),
+            columns=(ResultColumn(name="entity", type="NODE", nullable=False),),
+        )
+        assert confirmation.confirmed == 1
+    else:
+        assert executor._confirmation_instant() == _PAST
+
+    assert events[:3] == [
+        "transaction_enter",
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+        "verify_schema",
+    ]
+    assert events[-1] == "transaction_exit"
+    assert not any(event.startswith("BEGIN") for event in events)
 
 
 @pytest.fixture(scope="module")
@@ -1006,6 +1066,27 @@ def test_confirmation_without_a_connection_is_refused_not_ignored(
         cypher="MATCH (e:Entity) RETURN e", confirm=True
     )
     assert outcome.error_code == QueryErrorCode.PG_UNAVAILABLE
+
+
+def test_confirmation_fails_when_live_memory_schema_drifts(
+    snapshot: _Snapshot,
+    graph: tuple[str, list[tuple[str, str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmed Cypher cannot bypass the live ``memory_v1`` manifest gate."""
+    url, _ = graph
+    monkeypatch.setattr(
+        "rememberstack.surfaces.query_sandbox.cypher_executor.live_schema_differences_psycopg",
+        lambda **_kwargs: ("memory_v1.entities_current: comment differs",),
+    )
+    executor = CypherSandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        reader=snapshot,
+        connect=lambda: psycopg.connect(_psycopg_url(url)),
+    )
+    outcome = executor.query_cypher(cypher="MATCH (e:Entity) RETURN e", confirm=True)
+    assert outcome.error_code == QueryErrorCode.SCHEMA_VERSION_MISMATCH
+    assert outcome.rows == ()
 
 
 def test_confirmation_drops_rows_whose_entities_are_no_longer_live(

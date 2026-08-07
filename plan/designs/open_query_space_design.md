@@ -5,7 +5,8 @@ catalog with a versioned, invariant-compiled PostgreSQL query space, a full
 read-only native P2 graph surface, and three platform-assured one-call
 operations. Rationale:
 `plan/analysis/open_query_space_codex.md` and
-`plan/analysis/open_query_space_grok.md`. This design refines the public
+`plan/analysis/open_query_space_grok.md`, with the pre-release cut analyzed in
+`plan/analysis/open_query_space_clean_cutover.md`. This design refines the public
 surface bound by `agent_retrieval_surface_design.md`; D41, D48, D49, D54,
 and D80 remain controlling.*
 
@@ -78,8 +79,9 @@ and D80 remain controlling.*
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
    `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies` pin one ready
    Lance projection and every applicable embedding-input-policy/embedder
-   generation per invocation, then perform target-specific in-function
-   PostgreSQL confirmation before exposing rows or bytes. `lexical_facts` is
+   generation per invocation, then the executor performs target-specific
+   PostgreSQL confirmation in the request transaction before exposing rows or
+   bytes. `lexical_facts` is
    absent until the §10 P1 indexing trigger is met.
 9. **Customer semantics stay customer-owned.** Saved SQL and agent-authored
    Cypher inherit the platform sandbox, tenancy, applicable time boundary,
@@ -91,7 +93,7 @@ and D80 remain controlling.*
     telemetry have defaults and hard caps in §4. No cap is silent.
 11. **The schema is discoverable before use.** The same checked-in manifest
     owns SQL view/function and P2 graph-type/property comments, grains, keys,
-    examples, compatibility, and `surface_manifest_hash`. Raw `pg_catalog`
+    examples, and `surface_manifest_hash`. Raw `pg_catalog`
     discovery is not exposed.
 12. **No benchmark-specific product behavior exists.** A future v10 protocol
     consumes the customer surface unchanged. Dataset names, question classes,
@@ -120,10 +122,9 @@ and D80 remain controlling.*
 
 ## 2. Naming alignment with the existing corpus
 
-The target default surface contains the three retained names below. Each of
-the other 17 names remains callable through its frozen legacy adapter during
-§8's dual-surface window and is seeded as a discoverable, non-default saved
-query in the `examples` namespace. An `examples.*` query returns
+The shipping surface contains the three retained names below. The other 17
+names are not recipe adapters or top-level tools; each is a discoverable,
+non-default saved query in the `examples` namespace. An `examples.*` query returns
 `QueryResult/v1`, carries customer-space semantics, is editable only by
 copying it to a customer namespace, and is not a platform contract or a
 top-level MCP tool.
@@ -135,8 +136,8 @@ top-level MCP tool.
 | `observation_current` | `examples.observation_current` | Filter `facts_current` to `fact_kind = 'observation'` |
 | `entity_timeline` | `examples.entity_timeline` | Group `facts_visible_history` by disclosed time bucket |
 | `claims_verbatim` | `examples.claims_verbatim` | `semantic_claims` joined to `claims_live` |
-| `claims_hybrid_rrf` | `examples.claims_hybrid_rrf` | `semantic_claims` + `lexical_claims` with documented SQL RRF; no parity claim with the legacy hybrid |
-| `chunks_hybrid_rrf` | `examples.chunks_hybrid_rrf` | `semantic_chunks` + `lexical_chunks` with documented SQL RRF; no parity claim with the legacy hybrid |
+| `claims_hybrid_rrf` | `examples.claims_hybrid_rrf` | `semantic_claims` + `lexical_claims` with documented SQL RRF; no parity claim with the former recipe implementation |
+| `chunks_hybrid_rrf` | `examples.chunks_hybrid_rrf` | `semantic_chunks` + `lexical_chunks` with documented SQL RRF; no parity claim with the former recipe implementation |
 | `question_context` | **Retained platform operation** | Full D49 evidence `Envelope` |
 | `documents_about` | `examples.documents_about` | `entity_document_mentions` joined to `documents_live` |
 | `claims_about` | `examples.claims_about` | `mentions_live` joined through `claim_occurrences_live` to `claims_live` |
@@ -151,9 +152,9 @@ top-level MCP tool.
 | `graph_neighborhood` | `examples.graph_neighborhood` | Direct call to `graph_neighborhood` |
 | `graph_path` | `examples.graph_path` | Direct call to `graph_path` |
 
-The examples preserve familiar discovery names, not exact legacy behavior.
-Only the legacy adapters promise their existing versions and `Envelope`
-shapes during the compatibility window.
+The examples preserve familiar discovery names, not the old recipe behavior or
+`Envelope` shapes. No compatibility promise is made: the pre-release library
+has no consumers to migrate, so the duplicate adapters are removed by §8.
 
 `examples.claims_as_of(:from, :to)` uses the shipped inclusive overlap
 predicate `claim_valid_from <= :to AND (claim_valid_until IS NULL OR
@@ -239,9 +240,10 @@ rolls `surface_manifest_hash`. P2 use inside an assured operation would be an
 internal implementation path distinct from the public Cypher contract, but
 neither `question_context` nor `current_context` has an input that requests
 graph expansion. They therefore continue to use their P1 nominations and
-PostgreSQL confirmation authorities. Explicit confirmed graph expansion
-remains `multi_hop_context`; a later measured descriptor may add an explicit
-graph option without silently changing either retained operation's answers.
+PostgreSQL confirmation authorities. Explicit graph expansion uses native
+Cypher, live SQL helpers, or `examples.multi_hop_context`; a later measured
+descriptor may add an explicit graph option without silently changing either
+retained operation's answers.
 
 ### 3.2 `memory_v1` view catalog
 
@@ -344,10 +346,10 @@ and MUST NOT reintroduce the legacy LEFT JOIN orphan branch.
 | Lance SRFs | Nominate in Lance, confirm target-specific IDs and filters in PG, then expose rows; stale IDs drop |
 | P2 use in core operations | Confirm every node/edge and drop a path as one unit when any member fails |
 | Public P2 Cypher | Apply D48 during the repeatable-read rebuild; disclose the immutable generation and `built_at`; post-build changes wait for rebuild; apply post-hoc PG confirmation only when `confirm=true` |
-| Saved queries and legacy adapters | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
+| Saved queries and assured operations | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
 | Counts | Aggregate from `evidence_lineage` after liveness/current-testimony filtering, never from cached claim counts |
 | K artifacts | Expose links only when each target is visible; K prose stays compiled and cannot be promoted to live fact |
-| Corpusfs/P1 bodies | Confirm current coordinate, source hash, generated-prefix separation, and policy generation before body return |
+| Corpusfs/P1 bodies | Confirm the current coordinate, reproducible embedding-text hash, generated-prefix separation, and policy generation before body return; the source-content hash remains a coordinate until its ordered-block inputs are available |
 | Legacy/orphan data | Record in an operator-only quarantine report; omit from every public path until repaired |
 
 **D41 current time.** `facts_current` and `graph_edges_current` evaluate one
@@ -403,24 +405,25 @@ the flag.
 
 ### 3.4 SQL-callable functions
 
-Only the functions below are public. Each is schema-qualified, bounded inside
-the function independently of an outer `LIMIT`, and defined with an immutable
-internal `search_path`. Projection-backed semantic, lexical, and body bridges
-are `SECURITY DEFINER`, `PARALLEL UNSAFE`, and owned by a no-login bridge owner
-with only the exact PG reads and local projection RPC capability they need.
-The PostgreSQL-only `facts_as_of`, `graph_neighborhood`, and `graph_path`
-helpers are `SECURITY INVOKER` and owned by the no-login view owner; they need
-no privilege bridge and adding one would only widen authority. `facts_as_of`
-is `PARALLEL SAFE`. The graph helpers are `PARALLEL UNSAFE` because their
-single traversal records a content-free, transaction-local cap marker for the
-executor; the query role already disables parallel workers.
-Callers cannot supply URLs, relation names, code, or raw filter expressions.
+Only the functions below are public. Each is schema-qualified and bounded
+independently of an outer `LIMIT`. PostgreSQL-only `facts_as_of`,
+`graph_neighborhood`, and `graph_path` are ordinary allowlisted
+`SECURITY INVOKER` functions owned by the no-login view owner. Projection-backed
+semantic, lexical, and body calls are recognized from the validated statement
+and resolved by the trusted query executor against the shared P1 port before
+the surrounding PostgreSQL statement completes in its read-only,
+repeatable-read transaction. PostgreSQL never loads an untrusted language or
+receives network/filesystem authority merely to reach Lance. The executor
+preserves each invocation's caps, generation pin, confirmation point,
+telemetry, and once-per-syntactic-call behavior. `facts_as_of` is `PARALLEL
+SAFE`; graph helpers and executor-resolved projection calls are parallel-unsafe
+at the sandbox boundary. Callers cannot supply URLs, relation names, code, raw
+filter expressions, or projection locations.
 
 `facts_as_of`, `graph_neighborhood`, and `graph_path` are `STABLE` within the
-PG statement snapshot. The four semantic functions, two lexical functions,
-and body-fetch function are `VOLATILE` because they consult an external
-projection or body store and emit invocation telemetry; the executor evaluates
-each syntactic invocation once and never duplicates it as a planner
+PG statement snapshot. The executor treats each of the four semantic calls,
+two lexical calls, and the body-fetch call as external/volatile work: it
+evaluates each syntactic invocation once and never duplicates it as a planner
 optimization.
 
 | Function | Signature and row contract |
@@ -467,7 +470,7 @@ statement as their semantic siblings immediately before exposing results.
 through the shared P1 search port's entity-nomination method. It searches the
 entity description/profile vector rather than aliases, then confirms survivor
 identity and `entity_type` against `entities_current` in the same function.
-Direct Lance access from SQL or the bridge function is forbidden.
+Direct Lance access from caller SQL or PostgreSQL is forbidden.
 
 Each semantic or lexical nomination invocation selects or validates exactly one
 ready `p1_projection_generation`, `embedding_input_policy_version`, and
@@ -483,9 +486,13 @@ and reports the same projection and applicable D80 generations.
 
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
-document/version/representation/section coordinate, then verifies
-source-content hash, embedding-text hash, and generated-prefix separation. It
-returns source body and D80 deterministic location header in separate columns;
+document/version/representation/section coordinate, then verifies the
+reproducible embedding-text hash and generated-prefix separation. The stored
+source-content hash remains a returned coordinate but is not claimed as
+body-byte verification in v1: it is composed from ordered block hashes whose
+inputs are not present in the P1 body row. A future store contract may add
+those reproducible inputs and then strengthen verification without weakening
+this rule. The path returns source body and D80 deterministic location header in separate columns;
 the header is never asserted evidence. `fetch_chunk_bodies` is this exact path
 minus nomination: `input_ordinal` records first input position, duplicate IDs
 collapse to that first position, and more than 50 IDs fails
@@ -781,11 +788,11 @@ grants — the login role can reference only its deployment's `memory_v1` views
 and public functions, and holds no privilege on any other deployment's
 objects or any base table; (c) pool discipline — checkout resets session
 state and binds one login to one deployment, and check-in discards the
-session on reset failure. Each §3.4 `SECURITY DEFINER` bridge function
-derives the deployment server-side from the connection's deployment binding
-(never from SQL text or parameters) and passes it explicitly to every
-Lance/P2 RPC filter it invokes; a missing binding fails closed with zero rows
-and performs no projection RPC. The §9.5 adversarial suite targets this
+session on reset failure. The §3.4 executor-side projection bridge derives the
+deployment from its authenticated, deployment-bound executor (never from SQL
+text or parameters) and passes it explicitly to every Lance filter it invokes;
+a missing or mismatched binding fails before any projection access. The §9.5
+adversarial suite targets this
 model: routing, grants, pool reuse, and bridge-derivation — not policies.
 
 A client-writable custom GUC is not an authority; `SET` and `set_config` are
@@ -1171,11 +1178,15 @@ Batch F ships the integrated retrieval-docs rewrite with the two-layer
 headline as its opening section and all four examples; earlier batches ship
 their own view/function/operation pages and never defer those pages to Batch F.
 
-`describe_query_space` reads the checked-in manifest and verified runtime
-introspection. `search_query_space` searches only names, comments, tags, and
-examples in that manifest. Neither reads tenant content or exposes arbitrary
-`pg_catalog`. A runtime/manifest mismatch disables open SQL for that deployment
-with `schema_version_mismatch`; a P2 dialect/property-contract mismatch disables
+`describe_query_space` reads the checked-in manifest. `search_query_space`
+searches only names, comments, tags, and examples in that manifest. Neither
+reads tenant content or exposes arbitrary `pg_catalog`. Before each SQL or
+saved-query execution, the executor compares the live PostgreSQL major, view
+set, ordered columns/types, and comments with the manifest; interface drift
+disables that request with `schema_version_mismatch`. Exact view-definition
+parity is a deploy/CI gate using the same-server reference comparator, where
+printer output is comparable without becoming a runtime hash input. A P2
+dialect/property-contract mismatch disables
 both Cypher entry points with the same code before engine execution.
 Discovery publishes every named field of each tier's authoritative limit
 record; it does not maintain a shorter hand-selected presentation that can
@@ -1232,7 +1243,7 @@ the canonical names returned by `pg_catalog.format_type` before comparison and
 serialization. Formatting and comments outside manifest fields cannot change
 the hash. The resulting hash is independent of PostgreSQL minor version (the
 declared PostgreSQL major remains a manifest field). Physical indexes, plans,
-statistics, data, projection contents, saved queries, and legacy adapters are
+statistics, data, projection contents, saved queries, and registry rows are
 excluded. Any semantic view change, even with unchanged columns, changes the
 definition AST and the hash. Any semantic function change requires a contract-
 version/signature change and therefore changes the hash. Any Cypher entry-point
@@ -1305,77 +1316,47 @@ provenance, or returns partial confirmation output.
 | PG and Lance disagree | PG wins; stale candidates drop; mixed generation or authorization uncertainty fails the semantic invocation |
 | PG and P2 differ after `built_at` | Unconfirmed Cypher remains the correct snapshot result; `confirm=true` drops failing projected ID rows and counts them, while paths, aggregates, existence, and absence remain snapshot-scoped; live SQL and assured-operation output follow PG |
 | Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch quarantines the projection generation |
-| Manifest/runtime disagrees | The affected open SQL, saved-query, or Cypher surface fails `schema_version_mismatch`; the three core operations remain available only if their own descriptors/invariants verify |
+| Runtime interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`; confirmed Cypher fails the same code before reading `memory_v1`. Unconfirmed Cypher independently verifies its P2 snapshot contract. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison rather than adding a deparser-dependent per-request hash. The three core operations remain available only if their own descriptors/invariants verify |
 | Forget is pending or incomplete | Live SQL/core lineage paths fail closed under D48/D74; an older P2 generation can reflect the lineage only as of its disclosed pre-forget `built_at`, and the first post-forget rebuild removes it from all later generations |
 
-## 8. Dual-surface migration and terminal criteria
+## 8. Pre-release surface cut and terminal criteria
 
-Migration is a protocol deprecation, not a catalog deletion:
+There is no dual-surface migration. The library has no users or integrations
+that require the 17 demoted adapters, so carrying a deprecation protocol would
+protect nobody while preserving duplicate invariant logic.
 
-`Frozen` means a capability/Envelope-shape freeze. Security fixes, D41/D48/D54
-invariant fixes, and tenancy fixes are REQUIRED throughout the window. New
-parameters, new grains, and new behavior are forbidden.
+1. Ship `memory_v1`, `QueryResult/v1`, both read-only query languages,
+   discovery, allowlisted functions, saved-query governance, all 17
+   `examples.*` queries, and exactly three assured operations.
+2. Seed and expose only `resolve_entity`, `question_context`, and
+   `current_context`. Bootstrap atomically replaces the deployment catalog with
+   those canonical descriptors, and registry reads pin their canonical
+   versions, so neither an old row nor a same-name custom version can replace
+   or add a tool.
+3. Keep the current HTTP, SDK, CLI, and MCP recipe transports for the three
+   assured operations. A transport rename is not an authorization or
+   simplicity requirement and is outside this cut.
+4. Do not ship deprecation headers, adapter warnings, compatibility-call
+   counters, removal-denominator telemetry, or a product gate whose only
+   purpose is preserving/removing the 17 adapters.
+5. The paid benchmark remains operator-invoked. Full-v9 is immutable historical
+   evidence over its old catalog; any measurement of the shipping surface gets
+   a new protocol identity and informs quality, not compatibility permission.
 
-That freeze applies to compatibility versions. `question_context` v4 is the
-target core operation evolution bound in §3.1; its v3 compatibility version
-remains frozen and callable during the window. Both versions share one
-operation name and do not increase the three-operation count.
-
-1. **Introduction.** Ship `memory_v1`, QueryResult, both full read-only Cypher
-   entry points, discovery, semantic/lexical/body/graph functions, registry,
-   and examples alongside all 20 frozen legacy adapters. The discovery/
-   first-call resource and consumption skill lead with the verbatim two-layer
-   retrieval headline,
-   then present Cypher as native graph power with point-in-time semantics, SQL
-   as live/evidence-composable, and assured operations as typed one-call
-   answers. HTTP `/recipes` and `/recipe/{name}`, SDK
-   `recipes()`/`run_recipe()`, CLI `remember query list/run`, MCP recipe tools,
-   and existing Envelope parsing remain unchanged. New entry points are
-   additive.
-2. **Default cutover.** After §9 gates and the same-condition hybrid arm meet
-   the noninferiority gates below, default MCP/prompt discovery contains the
-   three core operations plus SQL, full Cypher, discovery, and registry
-   infrastructure without language-hiding steering. The other 17 adapters
-   remain callable but acquire deprecation metadata; their `examples.*`
-   replacements and migration guides ship in the same release.
-3. **Deprecation window.** Each of the 17 names remains supported for at least
-   two minor releases and 180 days after its published deprecation date.
-   HTTP emits `Deprecation` and dated `Sunset` headers; SDKs emit typed warnings;
-   CLI emits stderr warnings; MCP descriptions name the example replacement;
-   release notes and direct notices cover known active integrations.
-4. **Noncore removal.** A demoted adapter can disappear only in a major API/
-   protocol release, after its minimum window, zero unresolved contracted
-   blockers, replacement documentation across API/SDK/CLI/MCP, and less than
-   1% of eligible retrieval calls using it for 60 consecutive days. Stored
-   legacy Envelopes remain parseable. No adapter fabricates an Envelope from
-   its example saved query.
-
-For the removal gate, `eligible retrieval calls` means all authenticated
-retrieval-bearing requests across all deployments, with no sampling and no
-steering exclusions. Measurement is owned by the operator telemetry pipeline
-and §7 cost ledger. Any traffic steering away from an adapter during its
-measurement window voids that window and restarts the 60-day clock.
-
-The hybrid noninferiority gate for default cutover is: overall end-task success
-lower 95% confidence bound no worse than -2 absolute points versus the legacy
-arm; no critical question category worse than -5 points; zero D41/D48/D54 or
-cross-deployment violations; p95 latency and metered cost no more than 25%
-higher; invalid/repaired SQL and Cypher rate at most 5% in each language; and
-every cap/drop visible in the contract. Failing a gate keeps the dual surface
-active and requires redesign.
-
-Exactly three platform operations remain after noncore removal. Removing the
-final one-call recipe layer is not decided here; it is the explicit deferral in
-§10. Legacy compatibility adapters during migration are frozen compatibility
-surface, not precedent for a fourth operation.
+Exactly three platform operations remain. Removing those intentional one-call
+contracts is not decided here; it remains the explicit product-quality
+deferral in §10.
 
 ## 9. Validation gates
 
 Each implementation batch passes its relevant gates before merge; all gates
-pass before default cutover.
+for the shipping surface pass before release.
 
-1. **DDL/manifest identity.** Runtime introspection equals the checked-in
-   manifest exactly; all 24 view keys are unique on fixtures; all comments and
+1. **DDL/manifest identity.** Per-request runtime introspection equals the
+   manifest's PostgreSQL major and public view interface (all 24 view names,
+   ordered columns/types, and comments). The same-server deploy/CI comparator
+   proves exact view/helper definition parity against a freshly migrated
+   reference; all 24 view keys are unique on fixtures; all comments and
    SQL/Cypher examples validate; Cypher entry-point signatures, dialect lists,
    caps, P2 projection-contract version, graph types, and property schema match
    the adapter and worker exactly; pinned-AST-serializer golden vectors pass;
@@ -1385,7 +1366,7 @@ pass before default cutover.
    representation, claim, fact provenance, K target, P1 candidate, P2 edge, and
    corpus body yields zero leaked rows/bytes across every live view, helper,
    semantic/lexical target, entity nomination, ID-addressed chunk-body fetch,
-   core operation, legacy adapter, saved query, count, and artifact fetch. A
+   core operation, shipped example, saved query, count, and artifact fetch. A
    path with one invalid edge returns no partial live path.
    The snapshot cells assert the different, explicit boundary: a generation
    built after the deletion contains zero affected node/edge/property values,
@@ -1412,9 +1393,9 @@ pass before default cutover.
    zero cross-deployment/operator/base-object disclosures, zero state changes,
    and zero pool contamination under production roles. The suite proves that
    the login role can reference no other deployment's objects and no base
-   table under any grant path, that every `SECURITY DEFINER` bridge function
-   derives the deployment only from the connection's server-side binding (a
-   missing binding returns zero rows and performs no RPC), and that all
+   table under any grant path, that the executor-side projection bridge derives
+   the deployment only from its authenticated deployment binding (a missing or
+   mismatched binding performs no projection access), and that all
    properties survive A→B→A pool reuse. The
    SRF fuzz corpus also proves that post-rewrite invocation count equals exactly
    the count of accepted top-level syntactic forms. Cross-deployment graph
@@ -1514,10 +1495,12 @@ pass before default cutover.
     A barrier test changes the hash during a running validation and proves its
     stale compare-and-swap cannot activate the version; it remains pending until
     validation against the new hash succeeds.
-12. **Migration parity.** Each frozen legacy adapter passes its existing
-    contract suite throughout the window; every surface emits the same
-    deprecation date/replacement; the §8 hybrid noninferiority gate passes
-    before default cutover.
+12. **Clean-cut catalog.** Fresh and previously seeded fixture databases expose
+    exactly the three assured operation descriptors plus the nine open-query
+    tools. The 17 demoted names exist only under `examples.*`; no public tool,
+    deprecation metadata, compatibility counter, or stale active stock row
+    survives. The three operations pass their D49 and `memory_v1` membership
+    equivalence suites.
 13. **Telemetry/retention.** Cost totals reconcile to PG/Lance/graph-engine
     counters within
     1%; kill switches stop new work within five seconds; default logs contain
@@ -1529,8 +1512,8 @@ pass before default cutover.
 
 | Deferred | Bound reason | Adoption trigger and required decision gate |
 |---|---|---|
-| `lexical_facts(query, k, filters)` | The audited P1 contract and store do not provide it: `P1FactRow` stores `label`, but `P1SearchPort` exposes only vector `search_facts`; the Lance facts table builds vector and scalar indexes, no label FTS index or lexical-search adapter method, and the E-wave added lexical reads only for claims and chunks. A public function cannot manufacture a PostgreSQL substitute and call it the P1 facts channel. | Trigger: **fact-label lexical index lands in P1**. Adoption in the same change requires a scored lexical-facts method on the shared P1 port, Lance FTS over `facts.label`, parity with the claims/chunks lexical contract (same P1 port and FTS analyzer, same rank/score semantics, same in-function confirmation) on frozen exact-term fixtures — there is no internal facts hybrid today, so the lexical-facts channel and any internal fusion are introduced in that same change, never cited as pre-existing — `facts_current` confirmation equivalence, the facts-filter allowlist and lexical rank/score contract from §3.4, addition to the §3.2 complete facts-layer enumeration and manifest, a `question_context` descriptor/version roll adding lexical fact fusion, and same-change OSS docs. |
-| Complete removal of the three-operation recipe layer | One-call typed defaults remain measured product value; this design does not decide their deletion | A future v10 open-only arm shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%; the full API/SDK/CLI/MCP deprecation schedule for all three names is also complete. Removal then requires a separate major-version binding decision. |
+| `lexical_facts(query, k, filters)` | The audited P1 contract and store do not provide it: `P1FactRow` stores `label`, but `P1SearchPort` exposes only vector `search_facts`; the Lance facts table builds vector and scalar indexes, no label FTS index or lexical-search adapter method, and the E-wave added lexical reads only for claims and chunks. A public function cannot manufacture a PostgreSQL substitute and call it the P1 facts channel. | Trigger: **fact-label lexical index lands in P1**. Adoption in the same change requires a scored lexical-facts method on the shared P1 port, Lance FTS over `facts.label`, parity with the claims/chunks lexical contract (same P1 port and FTS analyzer, same rank/score semantics, same executor-side per-invocation confirmation) on frozen exact-term fixtures — there is no internal facts hybrid today, so the lexical-facts channel and any internal fusion are introduced in that same change, never cited as pre-existing — `facts_current` confirmation equivalence, the facts-filter allowlist and lexical rank/score contract from §3.4, addition to the §3.2 complete facts-layer enumeration and manifest, a `question_context` descriptor/version roll adding lexical fact fusion, and same-change OSS docs. |
+| Complete removal of the three-operation recipe layer | One-call typed defaults remain product value; this design does not decide their deletion | A future open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
 | Automatic P2 rebuild/refresh on query-time staleness | Query latency and admission are not rebuild-control-plane authority; v1 serves the pinned snapshot with exact age and never starts or waits for a rebuild on a query | Reconsider only after at least 1% of Cypher requests across three deployments observe `p2_snapshot_age_seconds > 5,400` for 30 consecutive days despite the scheduled rebuild service meeting its assigned resources. Adoption requires a separate design for authenticated trigger authority, per-deployment deduplication, backpressure, budget isolation, failure storms, no query waiting, and proof that query-triggered work cannot replace or starve the scheduled rebuild path. |
 | Cypher adversarial hardening suite (large fuzz corpora, overflow-class traversal fuzz against the real engine, automatic generation-quarantine state machine, engine-specific abuse caps) | Operator measure-first directive (2026-08-04): no speculative constraints on graph queries or the engine; benchmarking and production telemetry locate real issues first, and an unusable engine is replaced rather than hardened around | Adopt (or replace the engine instead) when telemetry shows engine faults/timeouts on >0.1% of Cypher requests over any 7-day window, any single fault class recurs across three deployments, or a benchmarking campaign reproduces a fault; the §7 fault telemetry and kill switches ship in v1 either way, so the evidence arrives without the machinery |
 | Migration from Lance to pgvector | SQL ergonomics alone does not justify vector relocation or dual-write risk | Evaluate when bridge-caused semantic p95 exceeds 750 ms or availability falls below 99.9% for three consecutive 30-day windows, or measured total bridge operations cost exceeds a pgvector projection by 2× at representative scale. Adopt only with recall@k loss ≤1 point, p95 ≤80% of the bridge, ingest p95 ≤120% of current, storage ≤150%, full multi-target/generation/D80-filter support, equivalent RPO/RTO and tenancy, and zero D48 failures. The required cutover is per-generation hash-verified backfill → idempotent outbox dual-write → 30-day shadow-read parity → reversible read switch → 30-day rollback window → Lance retirement after audit. |
@@ -1547,7 +1530,7 @@ pass before default cutover.
 3. **Batch C — complete Lance bridge:** `semantic_claims`,
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
    `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies`; shared P1-port
-   paths, D80 generation pinning, in-function PG confirmation, body
+   paths, D80 generation pinning, executor-side PG confirmation, body
    verification, rank/score and drop disclosure, caps, cancellation/telemetry,
    manifest signatures, and per-surface OSS pages. `lexical_facts` remains only
    the §10 deferral.
@@ -1566,10 +1549,11 @@ pass before default cutover.
    fault-containment, and cap proofs.
 5. **Batch E — customer space:** immutable registry, governance, all 17
    `examples.*` mappings, drift and deletion behavior.
-6. **Batch F — dual surface:** API/SDK/CLI/MCP additions, frozen adapters,
-   consumption-skill/docs rewrite led by the verbatim two-layer headline and
-   all four bound facts-layer examples, noninferiority run, deprecation
-   telemetry.
+6. **Batch F — integrated surface:** API/SDK/CLI/MCP additions, exactly three
+   assured operation descriptors, consumption-skill/docs rewrite led by the
+   verbatim two-layer headline and all four bound facts-layer examples. The 17
+   demoted patterns ship only as `examples.*`; no automatic paid run or
+   deprecation telemetry is part of delivery.
 
 A later batch cannot merge around a failed dependency gate. Each behavioral
 change ships with same-change OSS documentation, manifest/version updates, and

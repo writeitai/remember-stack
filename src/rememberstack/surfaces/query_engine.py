@@ -26,6 +26,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy import TextClause
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
@@ -521,7 +522,6 @@ class QueryEngine:
         returned fact unbacked.
         """
         _validate_current_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
-        as_of = datetime.now(tz=UTC)
         nominated = tuple(
             dict.fromkeys(
                 UUID(item)
@@ -534,6 +534,8 @@ class QueryEngine:
             )
         )
         candidate_ids = nominated[:k]
+        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
+        totals: dict[tuple[UUID, str], int] = {}
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -547,11 +549,7 @@ class QueryEngine:
             fact_rows = (
                 connection.execute(
                     _CONFIRM_CURRENT_FACTS,
-                    {
-                        "deployment_id": deployment_id,
-                        "fact_ids": list(candidate_ids),
-                        "as_of": as_of,
-                    },
+                    {"deployment_id": deployment_id, "fact_ids": list(candidate_ids)},
                 )
                 .mappings()
                 .all()
@@ -573,25 +571,21 @@ class QueryEngine:
                 if fact_rows
                 else []
             )
-
-        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
-        totals: dict[tuple[UUID, str], int] = {}
-        for row in evidence_rows:
-            key = (row["fact_id"], str(row["stance"]))
-            evidence_by_fact_stance.setdefault(key, []).append(row)
-            totals[key] = int(row["evidence_total"])
-
-        backed_rows = tuple(
-            row
-            for row in fact_rows
-            if any(
-                evidence_by_fact_stance.get((row["fact_id"], stance))
-                for stance in _EVIDENCE_STANCES
+            for row in evidence_rows:
+                key = (row["fact_id"], str(row["stance"]))
+                evidence_by_fact_stance.setdefault(key, []).append(row)
+                totals[key] = int(row["evidence_total"])
+            backed_rows = tuple(
+                row
+                for row in fact_rows
+                if any(
+                    evidence_by_fact_stance.get((row["fact_id"], stance))
+                    for stance in _EVIDENCE_STANCES
+                )
             )
-        )
-        facts = self._enrich_current_context_facts(
-            deployment_id=deployment_id, rows=backed_rows
-        )
+            facts = self._enrich_current_context_facts(
+                connection=connection, deployment_id=deployment_id, rows=backed_rows
+            )
         selected = _select_fact_evidence(
             fact_ids=tuple(fact.fact_id for fact in facts),
             evidence_by_fact_stance=evidence_by_fact_stance,
@@ -841,7 +835,6 @@ class QueryEngine:
 
         evidence_rows: Sequence[RowMapping] = []
         if candidate_edge_ids:
-            as_of = datetime.now(tz=UTC)
             with self._engine.connect().execution_options(
                 isolation_level="REPEATABLE READ"
             ) as connection:
@@ -856,7 +849,6 @@ class QueryEngine:
                         {
                             "deployment_id": deployment_id,
                             "relation_ids": list(candidate_edge_ids),
-                            "as_of": as_of,
                             "per_stance_limit": evidence_per_fact,
                         },
                     )
@@ -2191,7 +2183,13 @@ class QueryEngine:
         )
 
     def _enrich_facts(
-        self, *, deployment_id: UUID, facts: tuple[FactResult, ...], kind: str
+        self,
+        *,
+        deployment_id: UUID,
+        facts: tuple[FactResult, ...],
+        kind: str,
+        support_by_fact: dict[UUID, str] | None = None,
+        connection: Connection | None = None,
     ) -> tuple[FactResult, ...]:
         """Attach the S23 contradiction block and the D54 support marker.
 
@@ -2204,32 +2202,46 @@ class QueryEngine:
         """
         if not facts:
             return facts
+        if connection is None:
+            with self._engine.connect() as own_connection:
+                return self._enrich_facts(
+                    connection=own_connection,
+                    deployment_id=deployment_id,
+                    facts=facts,
+                    kind=kind,
+                    support_by_fact=support_by_fact,
+                )
         groups = [
             fact.contradiction_group
             for fact in facts
             if fact.contradiction_group is not None
         ]
         members_by_group: dict[UUID, list[dict[str, object]]] = {}
-        withdrawn: set[UUID] = set()
-        with self._engine.connect() as connection:
-            if groups:
-                for row in (
-                    connection.execute(
-                        _CONTRADICTION_MEMBERS[kind],
-                        {"deployment_id": deployment_id, "groups": groups},
-                    )
-                    .mappings()
-                    .all()
-                ):
-                    members_by_group.setdefault(row["contradiction_group"], []).append(
-                        dict(row)
-                    )
+        withdrawn = {
+            fact_id
+            for fact_id, support_state in (support_by_fact or {}).items()
+            if support_state == "withdrawn"
+        }
+        if groups:
+            for row in (
+                connection.execute(
+                    _CONTRADICTION_MEMBERS[kind],
+                    {"deployment_id": deployment_id, "groups": groups},
+                )
+                .mappings()
+                .all()
+            ):
+                members_by_group.setdefault(row["contradiction_group"], []).append(
+                    dict(row)
+                )
+        if support_by_fact is None:
             withdrawn = {
                 row["fact_id"]
                 for row in connection.execute(
                     _OPEN_SUPPORT_FLAGS,
                     {
                         "deployment_id": deployment_id,
+                        "fact_kind": kind,
                         "fact_ids": [str(fact.fact_id) for fact in facts],
                     },
                 )
@@ -2244,7 +2256,11 @@ class QueryEngine:
         )
 
     def _enrich_current_context_facts(
-        self, *, deployment_id: UUID, rows: tuple[RowMapping, ...]
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        rows: tuple[RowMapping, ...],
     ) -> tuple[FactResult, ...]:
         """Build and enrich a mixed relation/observation fact nomination."""
         by_kind: dict[str, tuple[FactResult, ...]] = {
@@ -2254,13 +2270,21 @@ class QueryEngine:
             for kind in ("relation", "observation")
         }
         enriched = {
-            fact.fact_id: fact
+            (kind, fact.fact_id): fact
             for kind, facts in by_kind.items()
             for fact in self._enrich_facts(
-                deployment_id=deployment_id, facts=facts, kind=kind
+                connection=connection,
+                deployment_id=deployment_id,
+                facts=facts,
+                kind=kind,
+                support_by_fact={
+                    row["fact_id"]: str(row["support_state"])
+                    for row in rows
+                    if row["kind"] == kind
+                },
             )
         }
-        return tuple(enriched[row["fact_id"]] for row in rows)
+        return tuple(enriched[(str(row["kind"]), row["fact_id"])] for row in rows)
 
     def _enrich_one(
         self,
@@ -2299,7 +2323,6 @@ class QueryEngine:
         deployment_id: UUID,
         claim_ids: tuple[UUID, ...],
         current_only: bool = True,
-        include_deleted: bool = False,
     ) -> tuple[tuple[EvidenceResult, ...], int]:
         """The D48 confirmation hop for claim nominations, order-preserving."""
         if not claim_ids:
@@ -2313,13 +2336,12 @@ class QueryEngine:
             for batch in batched(claim_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        _CONFIRM_CLAIMS,
-                        {
-                            "deployment_id": deployment_id,
-                            "claim_ids": list(batch),
-                            "current_only": current_only,
-                            "include_deleted": include_deleted,
-                        },
+                        (
+                            _CONFIRM_CLAIMS_CURRENT
+                            if current_only
+                            else _CONFIRM_CLAIMS_HISTORY
+                        ),
+                        {"deployment_id": deployment_id, "claim_ids": list(batch)},
                     )
                     .mappings()
                     .all()
@@ -2761,11 +2783,12 @@ def _fact_result(*, row, kind: str) -> FactResult:  # noqa: ANN001
         label=row["label"],
         evidence_count=row["evidence_count"],
         contradiction_group=mapping.get("contradiction_group"),
+        support=FactSupport(mapping.get("support_state", FactSupport.CURRENT.value)),
         validity=Validity(
             valid_from=row["valid_from"],
             valid_until=row["valid_until"],
             ingested_at=row["ingested_at"],
-            invalidated_at=row["invalidated_at"],
+            invalidated_at=mapping.get("invalidated_at"),
         ),
     )
 
@@ -2910,28 +2933,16 @@ _CHUNK_NEIGHBORS = text(
 )
 
 _RESOLVE_T0_SQL = """
-    WITH RECURSIVE matched AS (
-        SELECT entities.entity_id, entities.canonical_name, entities.type,
-               entities.status, entities.merged_into
-        FROM aliases
-        JOIN entities ON entities.deployment_id = aliases.deployment_id
-                     AND entities.entity_id = aliases.entity_id
-        WHERE aliases.deployment_id = :deployment_id
-          AND aliases.normalized_lemma = :lemma
-        UNION
-        -- follow merge redirects to the survivor (S60: resolve returns
-        -- CURRENT identities; the redirect chain is walked, never dead-ended)
-        SELECT survivor.entity_id, survivor.canonical_name, survivor.type,
-               survivor.status, survivor.merged_into
-        FROM matched
-        JOIN entities survivor ON survivor.deployment_id = :deployment_id
-                              AND survivor.entity_id = matched.merged_into
-        WHERE matched.status = 'merged'
-    )
-    SELECT DISTINCT entity_id, canonical_name, type
-    FROM matched
-    WHERE status = 'active'
-      AND (CAST(:entity_type AS text) IS NULL OR type = :entity_type)
+    SELECT DISTINCT entity.entity_id, entity.canonical_name,
+           entity.entity_type AS type
+    FROM memory_v1.entity_aliases_current AS alias
+    JOIN memory_v1.entities_current AS entity
+      ON entity.deployment_id = alias.deployment_id
+     AND entity.entity_id = alias.entity_id
+    WHERE alias.deployment_id = :deployment_id
+      AND alias.normalized_lemma = :lemma
+      AND (CAST(:entity_type AS text) IS NULL
+           OR entity.entity_type = :entity_type)
     """
 
 _RESOLVE_T0 = text(_RESOLVE_T0_SQL)
@@ -2957,25 +2968,19 @@ _RESOLVE_CONTEXT_HITS = text(
     """
     SELECT candidate_id, count(DISTINCT context_entity_id) AS context_hits
     FROM (
-        SELECT subject_entity_id AS candidate_id,
-               object_entity_id AS context_entity_id
-        FROM relations
+        SELECT edge.subject_entity_id AS candidate_id,
+               edge.object_entity_id AS context_entity_id
+        FROM memory_v1.graph_edges_current AS edge
         WHERE deployment_id = :deployment_id
-          AND subject_entity_id = ANY(:candidate_ids)
-          AND object_entity_id = ANY(:context_entity_ids)
-          AND invalidated_at IS NULL
-          AND (valid_from IS NULL OR valid_from <= now())
-          AND (valid_until IS NULL OR valid_until > now())
+          AND edge.subject_entity_id = ANY(:candidate_ids)
+          AND edge.object_entity_id = ANY(:context_entity_ids)
         UNION ALL
-        SELECT object_entity_id AS candidate_id,
-               subject_entity_id AS context_entity_id
-        FROM relations
+        SELECT edge.object_entity_id AS candidate_id,
+               edge.subject_entity_id AS context_entity_id
+        FROM memory_v1.graph_edges_current AS edge
         WHERE deployment_id = :deployment_id
-          AND object_entity_id = ANY(:candidate_ids)
-          AND subject_entity_id = ANY(:context_entity_ids)
-          AND invalidated_at IS NULL
-          AND (valid_from IS NULL OR valid_from <= now())
-          AND (valid_until IS NULL OR valid_until > now())
+          AND edge.object_entity_id = ANY(:candidate_ids)
+          AND edge.subject_entity_id = ANY(:context_entity_ids)
     ) adjacent
     GROUP BY candidate_id
     """
@@ -3022,34 +3027,27 @@ _CONFIRM_CURRENT_FACTS = text(
         SELECT fact_id, nomination_rank
         FROM unnest(CAST(:fact_ids AS uuid[])) WITH ORDINALITY
              AS nominated(fact_id, nomination_rank)
-    ), confirmed AS (
-        SELECT requested.nomination_rank, 'relation'::text AS kind,
-               r.relation_id AS fact_id,
-               coalesce(r.fact_label, r.predicate) AS label,
-               r.evidence_count, r.valid_from, r.valid_until,
-               r.ingested_at, r.invalidated_at, r.contradiction_group
+    ), matched AS (
+        SELECT requested.nomination_rank, fact.fact_kind AS kind,
+               fact.fact_id,
+               coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
+               fact.evidence_count, fact.valid_from, fact.valid_until,
+               fact.ingested_at, NULL::timestamptz AS invalidated_at,
+               fact.contradiction_group, fact.support_state,
+               count(*) OVER (PARTITION BY requested.fact_id) AS identity_matches
         FROM requested
-        JOIN relations r
-          ON r.deployment_id = :deployment_id
-         AND r.relation_id = requested.fact_id
-        WHERE r.invalidated_at IS NULL
-          AND (r.valid_from IS NULL OR r.valid_from <= :as_of)
-          AND (r.valid_until IS NULL OR r.valid_until > :as_of)
-        UNION ALL
-        SELECT requested.nomination_rank, 'observation'::text AS kind,
-               o.observation_id AS fact_id, o.statement AS label,
-               o.evidence_count, o.valid_from, o.valid_until,
-               o.ingested_at, o.invalidated_at, o.contradiction_group
-        FROM requested
-        JOIN observations o
-          ON o.deployment_id = :deployment_id
-         AND o.observation_id = requested.fact_id
-        WHERE o.invalidated_at IS NULL
-          AND (o.valid_from IS NULL OR o.valid_from <= :as_of)
-          AND (o.valid_until IS NULL OR o.valid_until > :as_of)
+        JOIN memory_v1.facts_current AS fact
+          ON fact.deployment_id = :deployment_id
+         AND fact.fact_id = requested.fact_id
     )
-    SELECT *
-    FROM confirmed
+    SELECT nomination_rank, kind, fact_id, label, evidence_count,
+           valid_from, valid_until, ingested_at, invalidated_at,
+           contradiction_group, support_state
+    FROM matched
+    -- The legacy P1 current-context port nominates only a UUID. A UUID that
+    -- names both a relation and an observation is not a complete fact identity,
+    -- so fail closed instead of guessing which kind the nomination meant.
+    WHERE identity_matches = 1
     ORDER BY nomination_rank, kind, fact_id
     """
 )
@@ -3139,22 +3137,16 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                r.subject_entity_id AS subject_id,
                r.object_entity_id AS object_id, r.predicate,
                r.fact_label AS fact,
-               r.evidence_count_current AS evidence_count,
-               r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
+               r.evidence_count,
+               r.valid_from, r.valid_until, r.ingested_at,
+               NULL::timestamptz AS invalidated_at,
                subject.canonical_name AS subject_name,
                subject.type::text AS subject_type,
                object.canonical_name AS object_name,
                object.type::text AS object_type,
-               EXISTS (
-                   SELECT 1
-                   FROM review_queue q
-                   WHERE q.deployment_id = :deployment_id
-                     AND q.item_kind = 'support_withdrawn'
-                     AND q.status IN ('pending', 'deferred')
-                     AND (q.candidate ->> 'fact_id') = r.relation_id::text
-               ) AS support_withdrawn
+               r.support_state = 'withdrawn' AS support_withdrawn
         FROM requested
-        JOIN memory_v1.graph_edges_visible_history r
+        JOIN memory_v1.graph_edges_current r
           ON r.deployment_id = :deployment_id
          AND r.relation_id = requested.relation_id
         -- The graph view already proved both endpoints current. These base
@@ -3167,9 +3159,6 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
         JOIN entities object
           ON object.deployment_id = r.deployment_id
          AND object.entity_id = r.object_entity_id
-        WHERE r.invalidated_at IS NULL
-          AND (r.valid_from IS NULL OR r.valid_from <= :as_of)
-          AND (r.valid_until IS NULL OR r.valid_until > :as_of)
     ), links AS (
         SELECT confirmed.fact_id, confirmed.graph_rank,
                e.claim_id, e.doc_id, e.stance::text AS stance
@@ -3266,55 +3255,53 @@ _CONFIRM_OBSERVATIONS = text(
     """
 )
 
-_CONFIRM_CLAIMS = text(
+_CONFIRM_CLAIMS_CURRENT = text(
+    """
+    SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
+           c.char_start, c.char_end, c.is_attributed,
+           TRUE AS is_current_testimony,
+           c.asserted_at, c.claim_valid_from, c.claim_valid_until,
+           c.claim_valid_precision, c.claim_valid_kind,
+           d.title AS document_title, d.source_kind
+    FROM memory_v1.claims_live c
+    JOIN memory_v1.documents_live d
+      ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    WHERE c.deployment_id = :deployment_id
+      AND c.claim_id = ANY(:claim_ids)
+    """
+)
+
+_CONFIRM_CLAIMS_HISTORY = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
            c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
-           c.claim_valid_precision::text, c.claim_valid_kind::text,
+           c.claim_valid_precision, c.claim_valid_kind,
            d.title AS document_title, d.source_kind
-    FROM claims c
-    -- Imported/legacy claims may lack a document catalog row. Keep those
-    -- evidence records, but fail closed when an existing lineage is tombstoned.
-    LEFT JOIN documents d
+    FROM memory_v1.claims_visible_history c
+    JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
-      AND (NOT CAST(:current_only AS boolean) OR c.is_current_testimony)
-      AND (
-        CAST(:include_deleted AS boolean)
-        OR d.doc_id IS NULL
-        OR d.deleted_at IS NULL
-      )
     """
 )
 
 _CONFIRM_CHUNKS = text(
     """
     SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
-           ch.char_start, ch.char_end, ch.context_prefix, ch.location_header,
+           ch.char_start, ch.char_end, NULL::text AS context_prefix,
+           ch.location_header,
            ch.policy_generation, ch.embedding_input_policy_version,
            s.role::text AS section_role,
            d.title AS document_title, d.source_kind,
-           v.source_modified_at, v.published_at
-    FROM chunks ch
-    JOIN documents d
+           d.source_modified_at, d.published_at
+    FROM memory_v1.chunks_live ch
+    JOIN memory_v1.documents_live d
       ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    JOIN document_versions v
-      ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
-    JOIN document_representations r
-      ON r.deployment_id = ch.deployment_id
-     AND r.representation_id = ch.representation_id
-    JOIN document_sections s
+    JOIN memory_v1.sections_live s
       ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
-      AND d.deleted_at IS NULL
-      AND d.current_version_id = ch.version_id
-      AND v.current_representation_id = ch.representation_id
-      AND v.status = 'ready'
-      AND v.deleted_at IS NULL
-      AND r.status = 'ready'
     """
 )
 
@@ -3735,27 +3722,39 @@ _SCAN_EXPORTS = {
 
 _CONTRADICTION_MEMBERS_RELATIONS = text(
     """
-    SELECT contradiction_group, relation_id AS fact_id,
-           coalesce(fact_label, predicate) AS label, evidence_count,
-           valid_from, valid_until, ingested_at, invalidated_at
-    FROM relations
-    WHERE deployment_id = :deployment_id
-      AND contradiction_group = ANY(:groups)
-      AND invalidated_at IS NULL
-    ORDER BY contradiction_group, ingested_at, relation_id
+    SELECT member.contradiction_group, member.fact_id,
+           coalesce(member.fact_label, fact.statement, fact.predicate) AS label,
+           member.evidence_count,
+           member.valid_from, member.valid_until, member.ingested_at,
+           NULL::timestamptz AS invalidated_at, member.support_state
+    FROM memory_v1.contradiction_members_current AS member
+    JOIN memory_v1.facts_current AS fact
+      ON fact.deployment_id = member.deployment_id
+     AND fact.fact_kind = member.fact_kind
+     AND fact.fact_id = member.fact_id
+    WHERE member.deployment_id = :deployment_id
+      AND member.fact_kind = 'relation'
+      AND member.contradiction_group = ANY(:groups)
+    ORDER BY member.contradiction_group, member.ingested_at, member.fact_id
     """
 )
 
 _CONTRADICTION_MEMBERS_OBSERVATIONS = text(
     """
-    SELECT contradiction_group, observation_id AS fact_id,
-           statement AS label, evidence_count,
-           valid_from, valid_until, ingested_at, invalidated_at
-    FROM observations
-    WHERE deployment_id = :deployment_id
-      AND contradiction_group = ANY(:groups)
-      AND invalidated_at IS NULL
-    ORDER BY contradiction_group, ingested_at, observation_id
+    SELECT member.contradiction_group, member.fact_id,
+           coalesce(member.fact_label, fact.statement, fact.predicate) AS label,
+           member.evidence_count,
+           member.valid_from, member.valid_until, member.ingested_at,
+           NULL::timestamptz AS invalidated_at, member.support_state
+    FROM memory_v1.contradiction_members_current AS member
+    JOIN memory_v1.facts_current AS fact
+      ON fact.deployment_id = member.deployment_id
+     AND fact.fact_kind = member.fact_kind
+     AND fact.fact_id = member.fact_id
+    WHERE member.deployment_id = :deployment_id
+      AND member.fact_kind = 'observation'
+      AND member.contradiction_group = ANY(:groups)
+    ORDER BY member.contradiction_group, member.ingested_at, member.fact_id
     """
 )
 
@@ -3775,6 +3774,7 @@ _OPEN_SUPPORT_FLAGS = text(
     WHERE deployment_id = :deployment_id
       AND item_kind = 'support_withdrawn'
       AND status IN ('pending', 'deferred')
+      AND candidate ->> 'fact_kind' = :fact_kind
       AND (candidate ->> 'fact_id') = ANY(:fact_ids)
     """
 )

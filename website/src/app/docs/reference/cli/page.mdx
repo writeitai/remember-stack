@@ -36,11 +36,9 @@ remember --version
 ## `remember query`
 
 Choose among native snapshot Cypher, live SQL, and the three assured
-operations. Legacy `list` / `run` remain the recipe adapters; open-query
-subcommands are additive. No deprecation warnings are emitted yet — default
-cutover has not passed the paid noninferiority gate. Recipe `list` / `run`
-render the same recipe surface the API and MCP do, so those three stay in
-lockstep.
+operations. Recipe `list` / `run` expose only those three one-call operations;
+open-query subcommands provide SQL, Cypher, discovery, and saved queries. The
+API and MCP render the same operation rows, so all three stay in lockstep.
 
 ### `remember query list`
 
@@ -55,9 +53,8 @@ This is exactly the API's `GET /recipes`.
 ### `remember query run`
 
 ```bash
-remember query run relation_current \
-  --arg subject_entity_id=<entity-uuid> \
-  --arg predicate=works_for
+remember query run current_context \
+  --arg query='Who does Alice work for now?'
 ```
 
 Runs one recipe by name over `key=value` arguments and prints the envelope as
@@ -65,7 +62,7 @@ JSON. Arguments are coerced by the recipe's declared types. An unknown recipe
 or a missing required argument prints the API's error to stderr and exits
 nonzero.
 
-### Open query space (additive)
+### Open query space
 
 When the deployment API composes the open-query facade:
 
@@ -85,16 +82,6 @@ When the deployment API composes the open-query facade:
 remember query space --include-examples
 remember query sql 'SELECT count(*)::int AS n FROM documents_live'
 remember query run-saved examples relation_current --parameters '["<entity-uuid>"]'
-```
-
-## `remember eval open-query-gate`
-
-Offline arithmetic for the §8 hybrid noninferiority gate. Never starts a paid
-run or calls a model.
-
-```bash
-remember eval open-query-gate --estimate --cases 100 --arms 2 --calls-per-case 3 --unit-cost 0.01
-remember eval open-query-gate --metrics ./arm-metrics.json
 ```
 
 ## `remember ingest`

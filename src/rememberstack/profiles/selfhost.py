@@ -37,7 +37,6 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RecipeRegistry
 from rememberstack.spine import seed_canonical_recipes
-from rememberstack.spine import seed_graph_recipes
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -381,10 +380,6 @@ class SelfHostProfile:
             registry=RecipeRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
-        seed_graph_recipes(
-            registry=RecipeRegistry(engine=self._engine),
-            deployment_id=self._settings.deployment_id,
-        )
         # Install the seventeen examples.* saved-query identities (idempotent).
         # Not an Alembic migration: deployment seed DML lives in setup/bootstrap.
         from rememberstack.spine.query_space.canonical import (  # noqa: PLC0415
@@ -420,13 +415,11 @@ class SelfHostProfile:
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
         from rememberstack.surfaces import build_api
-        from rememberstack.surfaces import GraphQueries
         from rememberstack.surfaces import QueryEngine
         from rememberstack.surfaces import RecipeExecutor
         from rememberstack.surfaces import RecipeSurface
         from rememberstack.surfaces.query_sandbox.audit import AuditTrail
         from rememberstack.surfaces.query_sandbox.audit import KillSwitches
-        from rememberstack.surfaces.query_sandbox.audit import MigrationUsageCounters
         from rememberstack.surfaces.query_sandbox.cypher_executor import (
             CypherSandboxExecutor,
         )
@@ -447,11 +440,8 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             cache_dir=self._settings.graph_cache_root,
         )
-        graph_queries = GraphQueries(reader=graph_reader)
         search_index = LanceChunkIndex(root=self._settings.lance_root)
         embedding_model = e1_settings.embedding_model
-        # Shared enabled recorder for the §8 dual-surface measurement window.
-        migration_usage = MigrationUsageCounters()
         # One admission + audit authority for SQL and Cypher so concurrency and
         # rolling spend are combined and §7 events actually emit.
         kill_switches = KillSwitches()
@@ -494,7 +484,6 @@ class SelfHostProfile:
                 deployment_id=self._settings.deployment_id,
                 manifest_hash=manifest_hash,
             ),
-            usage=migration_usage,
         )
         app = build_api(
             engine=query_engine,
@@ -507,11 +496,8 @@ class SelfHostProfile:
             ),
             surface=RecipeSurface(
                 registry=RecipeRegistry(engine=self._engine),
-                executor=RecipeExecutor(
-                    query_engine=query_engine, graph_queries=graph_queries
-                ),
+                executor=RecipeExecutor(query_engine=query_engine),
                 deployment_id=self._settings.deployment_id,
-                usage=migration_usage,
             ),
             open_query=open_query,
             ingest=UploadIngestor(

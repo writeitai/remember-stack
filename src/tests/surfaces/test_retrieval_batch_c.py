@@ -504,6 +504,44 @@ def test_current_context_returns_both_fact_kinds_with_both_stances(
     assert corpus.claims["support-old-same-lineage"] not in selected_support
 
 
+def test_current_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -> None:
+    """A P1 UUID that names two fact kinds is incomplete and fails closed."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id, "
+                "subject_entity_id, statement, normalizer_version, ingested_at) "
+                "VALUES (:fact, :deployment, :subject, 'Colliding observation', "
+                "'batch-c', :at)"
+            ),
+            {
+                "fact": corpus.relation_id,
+                "deployment": _DEPLOYMENT_ID,
+                "subject": corpus.subject_id,
+                "at": _NOW,
+            },
+        )
+    try:
+        engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+        answer = engine.current_context(
+            deployment_id=_DEPLOYMENT_ID,
+            query="ambiguous fact identity",
+            k=1,
+            evidence_per_fact=1,
+        )
+        assert answer.facts == ()
+        assert answer.dropped_by_hydration == 1
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM observations "
+                    "WHERE deployment_id = :deployment AND observation_id = :fact"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "fact": corpus.relation_id},
+            )
+
+
 @pytest.mark.parametrize(
     ("k", "evidence_per_fact", "message"),
     (

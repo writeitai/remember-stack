@@ -6,15 +6,15 @@ similarity or BM25, PostgreSQL confirms every nominated id against the same
 invariant views the rest of the surface reads, and only confirmed rows are
 exposed. Nomination proposes; PostgreSQL disposes (D48).
 
-**Where this runs, and why.** The design describes these as in-database
-`SECURITY DEFINER` functions. PostgreSQL cannot reach the Lance projection
-without an untrusted procedural language, which this product does not install,
-so the bridge runs in the executor instead: the grammar has already rewritten
-each accepted invocation into its own `MATERIALIZED` CTE, and the executor
+**Where this runs, and why.** The binding design places the bridge in the
+executor because PostgreSQL cannot reach the Lance projection without an
+untrusted procedural language, which this product does not install. The grammar
+has already rewritten each accepted invocation into its own `MATERIALIZED` CTE,
+and the executor
 replaces that CTE with the confirmed rows before the statement is planned. The
 caller-visible contract is unchanged — same call syntax, same columns, same
 per-invocation caps, same confirmation before exposure — and the deviation is
-recorded in `plan/implementation_notes/open_query_space_batch_c.md`.
+recorded historically in `plan/implementation_notes/open_query_space_batch_c.md`.
 """
 
 from collections.abc import Sequence

@@ -21613,6 +21613,66 @@
                                       "isnull": false,
                                       "val": {
                                         "@": "String",
+                                        "sval": "fact_kind"
+                                      }
+                                    }
+                                  },
+                                  "name": [
+                                    {
+                                      "@": "String",
+                                      "sval": "="
+                                    }
+                                  ],
+                                  "rexpr": {
+                                    "@": "ColumnRef",
+                                    "fields": [
+                                      {
+                                        "@": "String",
+                                        "sval": "fact"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "fact_kind"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "@": "A_Expr",
+                                  "kind": {
+                                    "#": "A_Expr_Kind",
+                                    "name": "AEXPR_OP"
+                                  },
+                                  "lexpr": {
+                                    "@": "A_Expr",
+                                    "kind": {
+                                      "#": "A_Expr_Kind",
+                                      "name": "AEXPR_OP"
+                                    },
+                                    "lexpr": {
+                                      "@": "ColumnRef",
+                                      "fields": [
+                                        {
+                                          "@": "String",
+                                          "sval": "q"
+                                        },
+                                        {
+                                          "@": "String",
+                                          "sval": "candidate"
+                                        }
+                                      ]
+                                    },
+                                    "name": [
+                                      {
+                                        "@": "String",
+                                        "sval": "->>"
+                                      }
+                                    ],
+                                    "rexpr": {
+                                      "@": "A_Const",
+                                      "isnull": false,
+                                      "val": {
+                                        "@": "String",
                                         "sval": "fact_id"
                                       }
                                     }
@@ -29629,5 +29689,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "6234117e1cf4897d6c31d634dc587deed1dd00a3b2f1d71de4a768b8078c2d21"
+  "surface_manifest_hash": "54912e5f1fc16060712d95c7b25304d7debc53c331d212c1dbb20054f66fab91"
 }
