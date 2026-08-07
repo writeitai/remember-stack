@@ -6,13 +6,55 @@ export type NavItem = {
 
 // Single source of truth for the docs sidebar order and grouping. It also
 // drives prev/next pagination. Add a page here when you add its page.mdx.
+// Order is progressive disclosure: why → core model → write path → read path
+// → operate → reference.
 export const docsNavigation: NavItem[] = [
-  { title: "Introduction", href: "/docs" },
-  { title: "Concepts", href: "/docs/concepts" },
-  { title: "Architecture", href: "/docs/architecture" },
-  { title: "Self-host Deployment", href: "/docs/deployment" },
-  { title: "Mounts and Skill", href: "/docs/mounts" },
-  { title: "Project Status", href: "/docs/project-status" },
+  {
+    title: "Start here",
+    href: "/docs",
+    children: [
+      { title: "Why RememberStack", href: "/docs" },
+      { title: "Getting started", href: "/docs/getting-started" },
+      { title: "vs passage RAG", href: "/docs/why" },
+    ],
+  },
+  {
+    title: "Core model",
+    href: "/docs/concepts",
+    children: [
+      { title: "Concepts", href: "/docs/concepts" },
+      { title: "Architecture", href: "/docs/architecture" },
+      { title: "Knowledge (Plane K)", href: "/docs/knowledge" },
+    ],
+  },
+  {
+    title: "Ingestion",
+    href: "/docs/ingestion",
+    children: [
+      { title: "Ingestion overview", href: "/docs/ingestion" },
+      { title: "Pipeline stages", href: "/docs/ingestion/pipeline" },
+      { title: "Lifecycle & versions", href: "/docs/ingestion/lifecycle" },
+    ],
+  },
+  {
+    title: "Retrieval",
+    href: "/docs/retrieval",
+    children: [
+      { title: "Retrieval overview", href: "/docs/retrieval" },
+      { title: "Response envelope", href: "/docs/retrieval/envelope" },
+      { title: "Open query space", href: "/docs/retrieval/open-query" },
+      { title: "Primitives catalog", href: "/docs/retrieval/primitives" },
+    ],
+  },
+  {
+    title: "Operate",
+    href: "/docs/mounts",
+    children: [
+      { title: "Mounts and skill", href: "/docs/mounts" },
+      { title: "Self-host deployment", href: "/docs/deployment" },
+      { title: "Project status", href: "/docs/project-status" },
+    ],
+  },
   {
     title: "Reference",
     href: "/docs/reference/api",
@@ -40,7 +82,7 @@ export function findAdjacentPages(pathname: string): {
   next: NavItem | null;
 } {
   // De-duplicate on href so a section header that points at its first child
-  // (e.g. "Reference" -> Session Layout) does not create a self-adjacency.
+  // does not create a self-adjacency.
   const seen = new Set<string>();
   const flat = flattenNavigation(docsNavigation).filter((item) => {
     if (seen.has(item.href)) return false;

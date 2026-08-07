@@ -1,0 +1,156 @@
+export const metadata = {
+  title: "Primitives catalog",
+  description:
+    "Engine retrieval primitives and which ones are public call surfaces vs internal recipe composition.",
+};
+
+# Primitives catalog
+
+Primitives are the **typed, zero-completion building blocks** of the query machine. Assured operations freeze chains over them. This page catalogs engine ops and labels **what an agent can call** vs what is **internal composition**.
+
+Parent: [Retrieval](/docs/retrieval). Binding design: `plan/designs/retrieval_design.md` (design scope). Shipped HTTP: [API reference](/docs/reference/api).
+
+## Rules that apply to every primitive
+
+1. **No LLM completion** on the hot path (semantic channels may embed the query).  
+2. **No write side effects** — reads never enqueue work.  
+3. **Grain is declared** where an envelope is returned.  
+4. **Temporal params** `valid_at` / `believed_at` compose where validity exists.  
+5. **Query-engine results hydrate through Postgres** (D48) except pure mount reads.
+
+## Prefer these public surfaces first
+
+| Surface | Call |
+| --- | --- |
+| Assured ops | `POST /recipe/resolve_entity`, `question_context`, `current_context` |
+| Open SQL | `POST /query/sql` (+ explain, space discovery, saved queries) |
+| Open Cypher | `POST /query/cypher` (+ explain) |
+| Direct primitives (subset) | See API reference: resolve / lookup / search claims & chunks / hydrate / transcript endpoints as composed |
+
+Do **not** invent `/fuse`, `/rerank`, `/scan`, etc. unless the API reference lists them.
+
+---
+
+## Catalog (engine ops)
+
+Legend: **Public** = stable agent call path today · **Internal** = used inside recipes / engine · **Design** = specified, not a public agent surface yet
+
+### `resolve`
+
+| | |
+| --- | --- |
+| **Surface** | **Public** via `resolve_entity` / resolve endpoint |
+| **In** | name / text, optional type |
+| **Out** | ranked entity candidates |
+| **Shipped behavior** | **T0 exact alias** match; ambiguity returns candidates, never a silent single guess. Write-time cascade is richer (T0–T4). |
+
+### `lookup`
+
+| | |
+| --- | --- |
+| **Surface** | **Public** subset (`/lookup/relations`, `/lookup/observations`, … — see API) |
+| **In** | relations / observations / claims / entity / document keys |
+| **Out** | scalar records |
+| **Job** | Direct spine reads |
+
+### `search`
+
+| | |
+| --- | --- |
+| **Surface** | **Public** as `search/claims` and `search/chunks` (and inside assured ops) |
+| **Shipped channels** | `semantic` \| `bm25` (independent; hybrid = one of each) |
+| **Shipped targets** | **claims**, **chunks** |
+| **Design / not public agent targets yet** | `relations`, `observations`, `k_pages`, `media_segments` as general search targets; extra `fts` channel name |
+
+**Shipped P1 notes:**
+
+- Chunk hits are evidence grain with typed chunk payload; body vs location header stay separate.
+- Generation-safe across re-embed cutovers where implemented.
+- Cross-modal media segment search is **design-complete / not the default public target** — do not document it as a callable search target until API lists it.
+
+### `graph`
+
+| | |
+| --- | --- |
+| **Surface** | **Public** primarily via **Cypher** + live SQL helpers; typed `graph` primitive in engine |
+| **Job** | Traverse **P2 snapshot**. Invalidated edges drop **paths as units** after hydration. |
+
+### `fuse` / `rerank` / `combine_evidence`
+
+| | |
+| --- | --- |
+| **Surface** | **Internal** composition (also frozen inside recipes like `question_context`) |
+| **Job** | RRF merge, inspectable re-sort, typed evidence combination without UUID soup |
+
+### `hydrate`
+
+| | |
+| --- | --- |
+| **Surface** | **Public** hydrate endpoints + implicit in assured ops |
+| **In** | ids, depth (`record` \| `evidence` \| `sources` \| `bytes` where exposed) |
+| **Job** | Confirmation hop + progressive deepening |
+
+### `transcript`
+
+| | |
+| --- | --- |
+| **Surface** | **Public** transcript endpoints for supported subjects (see API) |
+| **Out** | decision history (recent-first, bounded; truncation signaled) |
+
+### `delta` / `pages_about` / `aggregate` / `scan`
+
+| | |
+| --- | --- |
+| **Surface** | **Internal / design / open-query equivalents** — prefer saved examples + SQL for analytics; do not assume every name is an HTTP route |
+| **Job** | Change feed, K routing index reverse lookup, enumerated aggregates, batch export |
+
+---
+
+## How assured ops use them
+
+### `question_context` (evidence)
+
+Conceptual chain:
+
+1. Semantic + lexical **claim** nomination → fuse → hydrate once  
+2. Semantic + lexical **chunk** nomination → fuse → hydrate once  
+3. `combine_evidence` under one evidence envelope  
+
+### `current_context` (fact)
+
+Conceptual chain:
+
+1. Nominate current facts for the query  
+2. Hydrate live relations/observations  
+3. Attach live testimony under a **hard evidence budget**  
+4. Package `fact_evidence`, `evidence_totals`, contradictions, support markers  
+
+### `resolve_entity`
+
+Typed veneer over `resolve` with envelope packaging.
+
+---
+
+## Temporal composition pattern
+
+```
+1) search/lookup event → read its world timestamp from the envelope
+2) lookup/graph/search with valid_at = that timestamp
+```
+
+## Belief horizons and boundaries
+
+| Channel | Typical horizon behavior |
+| --- | --- |
+| Postgres | Full belief history |
+| P2 | Snapshot; horizon disclosed on envelope |
+| P1 | May have finite horizon |
+
+Querying past a finite horizon → `boundary` negative with workaround.
+
+## Related
+
+- [Retrieval overview](/docs/retrieval)  
+- [Envelope](/docs/retrieval/envelope)  
+- [Open query](/docs/retrieval/open-query)  
+- [API reference](/docs/reference/api)  

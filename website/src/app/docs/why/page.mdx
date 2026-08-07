@@ -1,0 +1,129 @@
+export const metadata = {
+  title: "vs passage RAG",
+  description:
+    "The load-bearing advantages of RememberStack versus passage RAG and simple memory stores — for agents that must act on what they know.",
+};
+
+# RememberStack vs passage RAG
+
+This page is the competitive brief without fluff. Use it when an agent or human is deciding whether RememberStack is the right memory substrate.
+
+## The problem is not “more retrieval”
+
+Passage RAG finds *similar text*. Simple memory stores append notes and re-embed them. Both fail the same way under real agent workloads:
+
+- **Truth decays.** Rosters change; the PDF still says last quarter’s CFO.
+- **Confidence is fake.** Re-running extraction or re-saving a file should not double “support.”
+- **History vanishes.** Overwrite feels clean until someone asks “what did we believe when we signed?”
+- **Agents cannot trust emptiness.** Empty results, truncated hubs, and capability gaps look identical.
+
+RememberStack is designed so an agent can **plan, verify, and audit** — not merely rank chunks.
+
+## Advantage 1 — Testimony is not truth
+
+![Testimony vs truth](/docs/diagrams/testimony-vs-truth.jpg)
+
+| Layer | Answers | Mutability |
+| --- | --- | --- |
+| **Claim (evidence grain)** | Who said what, when, in which document version | Immutable forever |
+| **Fact (fact grain)** | What the system currently holds true | Validity windows; supersession closes, never erases |
+| **Compiled page (compiled grain)** | Pre-paid synthesis with citations | Recompiles; carries freshness, never pretends to be live |
+
+**Rule for agents:** never answer “is it true *now*?” from claims alone. Claims are the transcript; facts are the verdict.
+
+Why it matters: an agent that confuses these two will act on stale testimony with high confidence.
+
+## Advantage 2 — Two clocks, not one timestamp
+
+![Two clocks: world time and system time](/docs/diagrams/two-clocks.jpg)
+
+Every fact carries:
+
+- **World time (`valid_at`)** — when it held *in the world*.
+- **System time (`believed_at`)** — when *this deployment* learned or stopped holding it.
+
+Both questions are first-class:
+
+- “Who worked at Acme in 2022?”
+- “What did we believe last March?”
+
+Media adds a third coordinate — *where in a recording* something was said — deliberately named apart so agents never conflate the three.
+
+## Advantage 3 — Confidence that cannot be gamed by reprocessing
+
+`evidence_count` = **number of distinct document lineages** whose *current testimony* supports a fact.
+
+Dead inflation paths:
+
+- Re-extract the same PDF with a better model → still one lineage.
+- Edit a living wiki five times asserting the same headcount → still one lineage.
+- Repeat the same sentence three times in one doc → still one lineage.
+
+Corroboration is an **external-source** property. Within-document emphasis is not.
+
+## Advantage 4 — Projections propose; the spine disposes
+
+Search indexes and the graph snapshot are fast and may lag. They **nominate** candidates. **Postgres confirms** validity, invalidation, and contradiction membership on every query-engine result.
+
+Consequence:
+
+- Stale indexes can cost **recall**, never **correctness** of a served current fact.
+- A path with one invalidated edge is dropped **as a unit**, not returned with a hole.
+- The envelope reports `dropped_by_hydration` so ranking denominators stay honest.
+
+Mounted file reads are snapshot-by-construction; the consumption skill teaches: orient on mounts, **verify load-bearing facts on the spine**.
+
+## Advantage 5 — No LLM *completion* on the query path
+
+Write-time intelligence (extraction, adjudication, compilation) is recorded and replayable. **Read path does not call a chat/completion model to invent an answer.** Assured ops, open SQL/Cypher, and primitives are deterministic compositions.
+
+**Footnote (honesty):** semantic channels still **embed the query string** through the configured embedder. That is not “chat with your data,” but it is a provider round-trip on semantic paths. Lexical/BM25 and pure SQL spine reads do not need it.
+
+Why agents care:
+
+- No black-box NL planner rewriting your intent mid-query.
+- Inspectable plans (grain, freshness, drops are machine-readable).
+- The agent *is* the planner — which matches how coding harnesses already work.
+
+## Advantage 6 — Surfaces agents already know
+
+| Surface | Job |
+| --- | --- |
+| **Mounts** | Navigate, read, grep like a codebase |
+| **MCP / CLI / API** | Semantic search, graph, time-travel, open query — one operation set |
+| **SKILL.md** | Deployment-rendered curriculum; S58 cold-agent gate |
+
+Filesystem-first when mounted; full parity when not.
+
+## Advantage 7 — Contradictions are a feature
+
+When two sources disagree on FY2023 revenue, both sides return with the contradiction group. Ranking may order; **hiding one side is a contract violation**.
+
+Agents that must brief a human or act under uncertainty need the disagreement, not a smoothed average.
+
+## Advantage 8 — Full engine open
+
+If it affects correctness, it ships in Apache-2.0 OSS. Cloud is ops and product — not a teaser core. Self-host gets the complete memory for one deployment.
+
+## What this is not
+
+**Scope**
+
+- Not a general NL→SQL planner on the hot path (agents plan).
+- Not a multi-tenant control plane (one deployment is one trust domain).
+- Not a production hosted SLA claim from the OSS docs (see cloud product for managed offers).
+- Not “set and forget magic memory” — you still need connectors, model seats, and operational budgets.
+
+**Not yet the default smoke profile in `v0.2.0` (engine may support; do not assume wired)**
+
+- Non-Markdown conversion routes (PDF/HTML/audio/video) on the Compose self-host profile
+- Fuzzy / phonetic / embedding tiers on **query-time** `resolve_entity` (write-time cascade is richer; query resolve is T0 exact)
+- Cross-modal `media_segments` search as a first-class public search target
+- Deep operator configuration / evaluation / troubleshooting public pages (see project status)
+
+## Next
+
+- [Concepts](/docs/concepts) — vocabulary.
+- [Architecture](/docs/architecture) — planes and stores.
+- [Ingestion](/docs/ingestion) — write path.
+- [Retrieval](/docs/retrieval) — read path.

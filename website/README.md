@@ -85,28 +85,36 @@ never aspirations; the design under `plan/` holds the full-scope intent, and the
 must not be confused. A feature that hasn't landed belongs on the
 [Project Status](src/app/docs/project-status/page.mdx) page, not in a how-to.
 
-### Target information architecture
+### Information architecture (progressive disclosure)
 
-The routes below are the intended shape of the finished docs. Create each page in the
-phase that ships its subject (phases per `plan/plans/roadmap.md`); do not create it
-earlier as an empty stub.
+Most important information lives on top-level pages; exhaustive detail sits one
+level deeper. Primary audience is **agents** (scannable contracts, anti-patterns,
+copy-pasteable surfaces); humans get the same pages with diagrams and plain language.
 
-| Route | Subject | Ships with |
-| --- | --- | --- |
-| `/docs` — Introduction | what the system is | seeded |
-| `/docs/concepts` | claims / facts / grains / two clocks | seeded |
-| `/docs/architecture` | the three planes end to end | seeded |
-| `/docs/project-status` | what exists vs. what's designed | seeded (keep current per phase) |
-| `/docs/getting-started` | install, first deployment, first document | phase 1 |
-| `/docs/ingestion` | inputs, conversion routes (incl. media), watched sources & versions | phases 1, 3 |
-| `/docs/retrieval` | primitives, recipes, the envelope, grains in practice | phases 1, 5 |
-| `/docs/mounts` | the four mounts + filesystem-first consumption, the skill | phases 4, 5 |
-| `/docs/configuration` | deployment config, provider ports, embedders | phase 1 onward |
-| `/docs/knowledge` | plane K: compiled + authored pages, triggers | phase 6 |
-| `/docs/deployment` | Docker Compose self-host, GCP reference profile | phase 7 |
-| `/docs/reference/api`, `/reference/cli`, `/reference/mcp` | generated-from-registry surfaces | phase 5 onward |
-| `/docs/evaluation` | eval harness, golden sets, benchmarks | phases 0, 8 |
-| `/docs/troubleshooting` | operational pitfalls | phase 7 |
+| Route | Subject |
+| --- | --- |
+| `/docs` | Why RememberStack — sell + three planes + ship surface |
+| `/docs/getting-started` | Install, first ingest, first assured queries |
+| `/docs/why` | Competitive advantages without fluff |
+| `/docs/concepts` | Claims / facts / grains / two clocks / counting |
+| `/docs/architecture` | Planes, stores, write vs read path |
+| `/docs/knowledge` | Plane K: compiled vs authored pages, scopes, agent rules |
+| `/docs/ingestion` | Write-path overview + guarantees |
+| `/docs/ingestion/pipeline` | Exhaustive E0→E3 stage reference |
+| `/docs/ingestion/lifecycle` | Versions, currency, counting, deletion |
+| `/docs/retrieval` | Read-path overview + assured ops |
+| `/docs/retrieval/envelope` | D49 envelope contract |
+| `/docs/retrieval/open-query` | SQL / Cypher / saved queries |
+| `/docs/retrieval/primitives` | Zero-LLM primitive catalog |
+| `/docs/mounts` | Four mounts + consumption skill |
+| `/docs/deployment` | Docker Compose self-host |
+| `/docs/project-status` | What exists vs designed |
+| `/docs/reference/api`, `cli`, `mcp` | Surface wire contracts |
+
+Still planned when their operator stories need a dedicated home (not empty stubs):
+`/docs/configuration`, `/docs/evaluation`, `/docs/troubleshooting`.
+
+Diagrams for top pages live under `public/docs/diagrams/`.
 
 ## Deploy
 

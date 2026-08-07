@@ -1,0 +1,226 @@
+export const metadata = {
+  title: "Ingestion pipeline stages",
+  description:
+    "Exhaustive E0→E3 stage reference: conversion, structure, chunking, claim extraction, entity resolution, adjudication, and projection touchpoints.",
+};
+
+# Pipeline stages
+
+Exhaustive stage reference for the per-document evidence chain. Parent overview: [Ingestion](/docs/ingestion).
+
+## Stage graph
+
+```
+ingest → convert → structure → chunk → embed(chunks)
+                                      ↓
+                              extract claims → embed(claims)
+                                      ↓
+                              normalize / resolve entities
+                                      ↓
+                              adjudicate facts (supersession, contradictions)
+                                      ↓
+                              reconcile (currency, evidence counts)
+                                      ↓
+                         P1 updates · (scheduled) P2/P3 · K triggers
+```
+
+All stages are **idempotent** with respect to their versioned inputs. Workers use the deployment work ledger: retry, then dead-letter — never silent skip.
+
+---
+
+## E0 — Files
+
+### Ingest
+
+**Job:** accept bytes, compute `content_hash`, attach connector identity, create or advance **lineage/version**.
+
+**Rules:**
+
+- Content-identical payloads reuse the content object.
+- Lineage identity is **connector-native** `(source_kind, source_ref)` — not title, path, or hash.
+- `source_modified_at` feeds claim assertion time; cursor-only polls must not rewrite it casually.
+
+**Outputs:** raw object URI, document/version rows, enqueue convert.
+
+### Convert
+
+**Job:** produce an immutable **representation**: clean Markdown + source map (+ media sidecars when composed).
+
+**Shipped smoke profile:** registers `text/markdown` → Markdown passthrough. Unregistered MIME types fail as non-retryable unroutable input.
+
+**Designed / composable routes** (register on the deployment; do not assume the Compose smoke stack has them):
+
+| Input class | Typical route |
+| --- | --- |
+| Born-digital text/HTML/PDF | Text extraction / layout-aware conversion |
+| Scans | OCR |
+| Audio | Diarized speech-to-text |
+| Video | ASR + keyframes / shot notes |
+| Images | VLM description (+ optional OCR) |
+
+**Rules:**
+
+- Conversion is **not** regenerated in place when tools improve: a new run = new `representation_id` beside the old.
+- Media claims inherit **derivation kind** and **evidence mode** (`source_expression` | `model_observation` | `model_interpretation`) for honest read-side disclosure when media routes are used.
+- Raw originals remain the byte authority; Markdown is the navigation-promoted form.
+
+### Structure
+
+**Job:** per-document section tree (PageIndex-class): headings, roles, spans, summaries, placement hints.
+
+**Rules:**
+
+- Prefer **deterministic** heading/skeleton construction.
+- Bounded model seats for role/summary/sanity/fallback only — not unbounded freeform rewrite of the whole doc.
+- Structure feeds selection for claim extraction and P3 navigation stubs.
+
+---
+
+## E1 — Chunks
+
+### Blockizer
+
+**Job:** deterministic sequence of paragraph-grain **blocks** from `document.md`.
+
+Why blocks exist: section trees snap to a stable grid; chunk packing becomes editable without reshuffling the world.
+
+### Chunk packer
+
+**Job:** pack whole blocks into non-overlapping, section-bounded, **anchor-stabilized** chunks.
+
+**Properties:**
+
+- Re-ingest after a small edit reuses unchanged chunk work (with lifecycle cache keys).
+- Context **prefixes** (headers, titles) are generated for embedding/readability but stored separately from source body under the embedding-input policy.
+- Chunks are **evidence grain** source text — never atomic claims, never adjudicated facts.
+
+### Chunk embedding (P1)
+
+**Job:** write vector + FTS rows for chunks under the active embedder generation.
+
+**Policy notes (shipped):**
+
+- P1 text column holds normalized **body** (not silent header+body mash that poisons audit).
+- Location headers return separately when present.
+- FTS index bootstrap and write-path optimization are automatic; reads must not full-scan the corpus.
+
+---
+
+## E2 — Claims
+
+### Extraction
+
+**Job:** decompose chunks into **atomic, verifiable natural-language assertions**.
+
+Each claim carries:
+
+- Immutable text identity (assertion-by-a-source)
+- Grounding to character spans (and through them to page/region/time locators)
+- Source-asserted validity interval when the source states one (`asserted` validity — testimony, not system verdict)
+- Extractor / representation / structure generation coordinates (basis)
+
+**Gates:**
+
+- Deterministic grounding checks reject unanchored inventions.
+- Decision ledgers record extraction outcomes for replay and eval.
+
+### Claim embedding (P1)
+
+**Job:** index claim text for semantic + lexical nomination. Default evidence search uses **both** channels (not double semantic).
+
+### Currency (bookkeeping, not validity)
+
+When a new extraction basis completes, prior claims for that basis become **non-current testimony** via an append-only transitions ledger. Claim rows themselves stay immutable. See [Lifecycle](/docs/ingestion/lifecycle).
+
+---
+
+## E3 — Facts
+
+### Entity resolution
+
+**Job:** map surface forms to **canonical entity ids** (write path).
+
+Write-time cascade tiers:
+
+| Tier | Signal |
+| --- | --- |
+| T0 | Canonical alias exact |
+| T1 | Trigram / fuzzy |
+| T2 | Phonetic |
+| T3 | Embedding similarity |
+| T4 | LLM adjudication (gated) |
+
+**Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
+
+### Predicate governance
+
+Relations use a **governed predicate vocabulary** with escape values and promotion — not free-text edge soup.
+
+### Relations vs observations
+
+| Kind | Shape | Graph (P2)? |
+| --- | --- | --- |
+| **Relation** | Entity–predicate–entity | Yes |
+| **Observation** | Untyped value/statement about one entity | No (P1 labels only) |
+
+Both are bi-temporal facts with evidence links and supersession.
+
+### Evidence links
+
+Many-to-many `fact_claim_evidence` with stance **supports** | **contradicts**. Counts aggregate by **distinct current-testimony lineages**.
+
+### Supersession & contradiction
+
+- Supersession closes `valid_until` / invalidates belief per shape rules.
+- Contradictions group live disagreements; both sides remain.
+- Every adjudication is a logged, replayable decision.
+
+### Observation shapes (retract semantics)
+
+| Shape | Example | Retract behavior |
+| --- | --- | --- |
+| Effective state | Headcount, employment | Cap world validity at withdrawal time |
+| Fixed-period measurement | FY2023 revenue | Do not cap world period; mark system invalidation |
+
+---
+
+## Reconciliation
+
+Runs when basis or version changes:
+
+1. Flip testimony currency for affected claims.
+2. Recount evidence / contradict counts.
+3. Close sole-supported facts under **living** removal rules.
+4. Flag support-withdrawn cases from toolchain re-derivation for review.
+5. Emit change signals for K / projections consumers.
+
+---
+
+## Projection touchpoints
+
+| Projection | When | Notes |
+| --- | --- | --- |
+| **P1** | Inline with embeddings / labels | Nominate-only at read time |
+| **P2** | Whole rebuild publish | Snapshot swap after validation |
+| **P3** | Whole rebuild publish | Stable paths; raw off nav tree |
+| **K** | Debounced | Compile driver, not per-claim chat |
+
+---
+
+## Failure modes & operations
+
+| Symptom | What to inspect |
+| --- | --- |
+| Stuck document | `processing_state` / DLQ for stage + poison target |
+| Empty retrieval | Stage not terminal; P1 generation pointer; hydration drops |
+| Inflated confidence | Currency ledger not applied; wrong counting consumer |
+| Wrong entity | Resolution transcript; aliases; merge survivor |
+| Media nonsense | Derivation mode; representation generation; locator |
+
+Operator surfaces: deployment CLI, ledger queries, rebuild drills. See [Deployment](/docs/deployment).
+
+## Next
+
+- [Lifecycle & versions](/docs/ingestion/lifecycle)  
+- [Retrieval](/docs/retrieval)  
+- [Architecture](/docs/architecture)  

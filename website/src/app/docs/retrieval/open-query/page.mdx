@@ -1,0 +1,155 @@
+export const metadata = {
+  title: "Open query space",
+  description:
+    "Sandboxed SQL, read-only Cypher, schema discovery, saved queries, and the two-layer facts/claims rules for ad-hoc agent retrieval.",
+};
+
+# Open query space
+
+Open query is the power surface for agents that can write SQL or Cypher. It sits beside the three assured operations — not under them.
+
+Parent: [Retrieval](/docs/retrieval). Wire paths: [API reference](/docs/reference/api).
+
+## Three neutral choices
+
+| Surface | Best for | Freshness model |
+| --- | --- | --- |
+| **Cypher** | Multi-hop graph patterns, native graph power | **P2 snapshot** (`built_at` / age) |
+| **SQL** | Live joins, evidence composition, filters | **Live spine views** + nomination SRFs |
+| **Assured ops** | One-call typed envelopes for common intents | Envelope freshness block |
+
+Discovery endpoint `GET /query/space` returns the bound two-layer headline, honesty warnings, worked examples, views, function signatures, grammar, Cypher dialect notes, and tier limits.
+
+## HTTP entry points
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| `POST` | `/query/sql` | One sandboxed statement → `QueryResult/v1` |
+| `POST` | `/query/sql/explain` | Plan without execution |
+| `POST` | `/query/cypher` | Read-only Cypher over published P2 |
+| `POST` | `/query/cypher/explain` | Engine plan without execution |
+| `GET` | `/query/space` | Full schema discovery payload |
+| `GET` | `/query/space/search` | Search checked-in manifest text |
+| `GET` | `/query/saved` | Saved-query registry metadata |
+| `GET` | `/query/saved/{namespace}/{name}` | One immutable version |
+| `POST` | `/query/saved/{namespace}/{name}/run` | Execute active saved SQL |
+
+CLI and MCP expose the same operations; they do not invent a second dialect.
+
+## The two-layer rule (read this before writing SQL)
+
+| Layer | Views (examples) | Meaning |
+| --- | --- | --- |
+| **Facts** | `facts_current`, fact validity columns | What the system currently holds true |
+| **Claims / evidence** | `claims_live`, `fact_claim_evidence_live` | Testimony and the bridge |
+
+**WRONG — using claim windows as current truth:**
+
+```sql
+SELECT claim_id, claim_text, claim_valid_from, claim_valid_until
+FROM claims_live
+WHERE claim_valid_from <= $1::timestamptz
+  AND (claim_valid_until IS NULL
+       OR claim_valid_until >= $1::timestamptz);
+```
+
+Claim validity is **source-asserted testimony**, not system belief.
+
+**RIGHT — start from adjudicated current facts, join testimony:**
+
+```sql
+SELECT f.*, e.claim_id, e.stance, e.source_handle
+FROM facts_current AS f
+JOIN fact_claim_evidence_live AS e
+  USING (deployment_id, fact_kind, fact_id)
+ORDER BY f.fact_kind, f.fact_id, e.stance, e.claim_id;
+```
+
+## Bound example patterns
+
+### Predicate vocabulary discovery
+
+```sql
+SELECT predicate, count(*) FROM facts_current GROUP BY 1 ORDER BY 2 DESC;
+```
+
+### Full audit trail
+
+```sql
+SELECT f.fact_kind, f.fact_id, f.predicate,
+       e.stance, e.source_handle,
+       c.claim_id, c.claim_text, c.asserted_at,
+       d.doc_id
+FROM facts_current AS f
+JOIN fact_claim_evidence_live AS e
+  USING (deployment_id, fact_kind, fact_id)
+JOIN claims_live AS c
+  USING (deployment_id, claim_id)
+JOIN documents_live AS d
+  ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+ORDER BY f.fact_id, e.stance;
+```
+
+(Exact view/column names follow the deployment’s `memory_v1` manifest — always re-check `/query/space`.)
+
+### Snapshot graph → live confirmation
+
+1. Run Cypher on P2 to find candidate entity/relation ids.  
+2. Confirm those ids with live SQL / assured ops / hydration.  
+3. Do not treat snapshot-only edges as live without confirmation when correctness matters.
+
+## Semantic and lexical nomination in SQL
+
+Allowlisted set-returning functions bridge Lance P1 into SQL so agents can:
+
+- nominate claim/chunk ids by semantic similarity
+- nominate by BM25/FTS
+- join nominations to live confirmation views
+
+These are **nomination** helpers. Apply the same D48 mindset: confirm against live facts/claims views before acting.
+
+## Saved queries
+
+- Versioned registry rows under namespaces (e.g. `examples.*`).
+- Seventeen former recipe patterns live here as examples — **not** top-level tools.
+- Running a saved query executes its immutable SQL at the active version.
+
+List: `GET /query/saved`. Run: `POST /query/saved/{namespace}/{name}/run`.
+
+## Safety model
+
+| Control | Behavior |
+| --- | --- |
+| Sandbox | Single statement; no arbitrary multi-statement scripts |
+| Allowlist | Only published views/SRFs/helpers |
+| Read-only Cypher | No graph mutation |
+| Limits | Tier caps on rows/time; disclosed as boundaries |
+| Auth | Deployment perimeter on all endpoints when configured |
+
+Writes never go through open query. The sole ordinary client write is **ingest** into E0.
+
+## When to prefer assured ops instead
+
+Use `current_context` / `question_context` / `resolve_entity` when you want:
+
+- grain-typed envelopes
+- automatic contradiction packaging
+- standardized hydration depth
+- less SQL surface area for a common intent
+
+Use open query when you need joins, custom filters, graph patterns, or analytics the assured ops do not freeze.
+
+## Agent checklist
+
+1. Call `/query/space` once per deployment session (or when skill says manifest changed).  
+2. Decide fact vs evidence **before** writing filters.  
+3. Prefer `facts_current` for present tense.  
+4. Join `fact_claim_evidence_live` for why.  
+5. Confirm P2 findings live when load-bearing.  
+6. Respect limit/boundary errors — re-plan, do not loop blindly.
+
+## Related
+
+- [Envelope](/docs/retrieval/envelope) for assured-op honesty  
+- [Primitives](/docs/retrieval/primitives) for engine building blocks  
+- [Mounts](/docs/mounts) for filesystem-first orientation  
