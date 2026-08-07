@@ -53,6 +53,10 @@ _DOC_ID = UUID("72000000-0000-0000-0000-000000000002")
 _HUB_ENTITY_ID = UUID("72000000-0000-0000-0000-000000000003")
 _FACT_SUBJECT_ID = UUID("72000000-0000-0000-0000-000000000004")
 _BATCH_ENTITY_ID = UUID("72000000-0000-0000-0000-000000000005")
+_VERSION_ID = UUID("72000000-0000-0000-0000-000000000006")
+_REPRESENTATION_ID = UUID("72000000-0000-0000-0000-000000000007")
+_CHUNK_ID = UUID("72000000-0000-0000-0000-000000000008")
+_CONTENT_HASH = "operational-scale-profile"
 
 ResultT = TypeVar("ResultT")
 
@@ -184,6 +188,80 @@ def seeded_profile(
             ),
             {"doc_id": _DOC_ID, "deployment_id": _DEPLOYMENT_ID},
         )
+        connection.execute(
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                " raw_uri) VALUES (:deployment_id, :content_hash, 'text/plain',"
+                " 'mem://operational-scale-profile')"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "content_hash": _CONTENT_HASH},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                " content_hash, version_no, status) VALUES (:version_id,"
+                " :deployment_id, :doc_id, :content_hash, 1, 'ready')"
+            ),
+            {
+                "version_id": _VERSION_ID,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": _DOC_ID,
+                "content_hash": _CONTENT_HASH,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id,"
+                " deployment_id, version_id, route, status) VALUES"
+                " (:representation_id, :deployment_id, :version_id,"
+                " 'passthrough', 'ready')"
+            ),
+            {
+                "representation_id": _REPRESENTATION_ID,
+                "deployment_id": _DEPLOYMENT_ID,
+                "version_id": _VERSION_ID,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                " representation_id, ordinal, block_start, block_end,"
+                " chunk_content_hash, extraction_input_hash, char_start, char_end)"
+                " VALUES (:chunk_id, :deployment_id, :doc_id, :version_id,"
+                " :representation_id, 0, 0, 0, :content_hash, :content_hash, 0, 8)"
+            ),
+            {
+                "chunk_id": _CHUNK_ID,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": _DOC_ID,
+                "version_id": _VERSION_ID,
+                "representation_id": _REPRESENTATION_ID,
+                "content_hash": _CONTENT_HASH,
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id ="
+                " :representation_id WHERE deployment_id = :deployment_id"
+                " AND version_id = :version_id"
+            ),
+            {
+                "representation_id": _REPRESENTATION_ID,
+                "deployment_id": _DEPLOYMENT_ID,
+                "version_id": _VERSION_ID,
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE documents SET current_version_id = :version_id"
+                " WHERE deployment_id = :deployment_id AND doc_id = :doc_id"
+            ),
+            {
+                "version_id": _VERSION_ID,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": _DOC_ID,
+            },
+        )
         claim_ids = tuple(
             connection.execute(
                 text(
@@ -191,13 +269,14 @@ def seeded_profile(
                     " claim_text, source_span, char_start, char_end, anchor_ok,"
                     " window_membership_ok, extractor_version)"
                     " SELECT gen_random_uuid(), :deployment_id, :doc_id,"
-                    " gen_random_uuid(), 'ungated claim ' || n, 'source ' || n,"
+                    " :chunk_id, 'ungated claim ' || n, 'source ' || n,"
                     " 0, 8, true, true, 'scale-extractor'"
                     " FROM generate_series(1, :rows) n RETURNING claim_id"
                 ),
                 {
                     "deployment_id": _DEPLOYMENT_ID,
                     "doc_id": _DOC_ID,
+                    "chunk_id": _CHUNK_ID,
                     "rows": _SETTINGS.hydration_ids,
                 },
             ).scalars()
