@@ -12,6 +12,7 @@ src/tests/benchmarks/test_beam_answer_agent.py
 src/tests/benchmarks/test_beam_official_score.py
 src/tests/benchmarks/test_locomo_dataset.py
 src/tests/benchmarks/test_locomo_protocol.py
+src/tests/benchmarks/test_locomo_retrieval.py
 src/tests/benchmarks/test_locomo_runner.py
 src/tests/benchmarks/test_locomo_sharding.py
 src/tests/core/test_blockizer_corpus.py
