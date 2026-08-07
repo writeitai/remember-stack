@@ -1,0 +1,110 @@
+export const metadata = {
+  title: "Knowledge (Plane K)",
+  description:
+    "Compiled and authored knowledge pages: orient first, verify on facts, never treat synthesis as live truth. Scopes, routing, staleness, and agent rules.",
+};
+
+# Knowledge (Plane K)
+
+Plane K is the **high-level reading layer**: markdown pages in a **git** repository that agents open first to get oriented, then leave when something must be verified as current belief.
+
+K is **not** a second fact store. Facts live in Postgres (E3). K is pre-paid synthesis and authored commitment — with citations, freshness, and review flags.
+
+![Plane K: compiled vs authored](/docs/diagrams/plane-k.jpg)
+
+## TL;DR for agents
+
+| Rule | Why |
+| --- | --- |
+| Use K to **orient** | Cheap map of what the deployment knows about |
+| Use **facts** to **verify** | Load-bearing answers need validity-filtered relations/observations |
+| Treat compiled pages as **stamped synthesis** | They have `compiled_at` / stale / open flags — not live confirmation |
+| Never rewrite authored principles from evidence | Principles are commitments; evidence only **flags** them |
+| Empty K is honest | Prefer open query / P3 / facts when K has nothing yet |
+
+Default motion remains: **orient → verify → audit**.
+
+## Two page kinds
+
+| Kind | Who writes | When it changes | Ownership |
+| --- | --- | --- | --- |
+| **Compiled** | LLM writers under a deterministic driver | Regenerates when routing says evidence changed | Machine owns content; citations recorded |
+| **Authored** | Human or agent | Only the accountable author edits | Machine never rewrites; evidence drift raises **review flags** |
+
+**Core principles and stances are authored** (D73). There is no separate machine-promoted “belief tier” that upgrades evidence into principles.
+
+## Scopes (layout is configuration)
+
+One compilation **mechanism**; many **scopes**:
+
+| Scope pattern | Role |
+| --- | --- |
+| **K1 — general knowledge** | Default scope: entity pages, topic/community pages, source digests, root index |
+| **K2 — purpose scopes** | Extra subtrees (people profiles, projects, operating doctrine, migration as-is/to-be, …) |
+
+Scopes share one entity space and one fact spine. They own **markdown**, not separate truth databases.
+
+A deployment can rename, drop, or invent scopes. The framework contract stays fixed: two page kinds, routing rules with citations, one git repo, one automated committer (the driver).
+
+## How evidence reaches pages
+
+1. Facts/claims arrive **pre-labeled** (entities, predicates, communities) from Plane E.  
+2. **Routing rules** (mechanically evaluable) decide which pages a change affects.  
+3. Affected **compiled** pages are marked stale and recompiled on the debounced cycle.  
+4. Affected **authored** pages get **watch/review flags**, not silent edits.  
+5. Citations record which evidence IDs a page rests on — staleness and deletion blast radius become computable.
+
+Intelligence chooses structure (planner/writers). Machinery routes and books. Session improvisation is not the control plane.
+
+## What agents see on the wire / mounts
+
+| Surface | How K appears |
+| --- | --- |
+| **Mount: Plane K checkout** | Browse/grep markdown like a codebase |
+| **Envelope `freshness.k`** | When an answer consumed a K page: `compiled_at`, stale, open flag count |
+| **`pages` / pages_about-class discovery** | Which pages exist about an entity or routing key (when exposed) |
+| **Consumption skill** | Says when K is empty; forbids treating compiled prose as current fact |
+
+Assured ops that return `grain: compiled` are orientation. For present-tense belief use `current_context` / `facts_current`.
+
+## Agent checklist
+
+1. If K has pages about the topic — skim for map and vocabulary.  
+2. Check open flags / stale before planning against prose.  
+3. Re-verify every load-bearing sentence on the **fact** grain.  
+4. For “why do we believe this?” — follow citations to claims/sources, not only the prose.  
+5. For principles (“we never do X”) — treat as **authored**; do not expect auto-promotion from evidence.
+
+## Failure modes
+
+| Symptom | Meaning | Move |
+| --- | --- | --- |
+| Empty K tree | Compile not run / no routed pages yet | Use open query + P3; do not invent synthesis |
+| Stale flag set | Evidence moved under the page | Recompile cycle pending; verify facts now |
+| Open review flags on authored page | Cited evidence changed | Human/agent author must decide; machine will not rewrite |
+| Beautiful prose, wrong action | Grain confusion | You treated compiled as fact |
+
+## Relationship to other planes
+
+```
+E (facts) ──routes──► K (prose + citations)
+E ──projects──► P1/P2/P3
+K ↔ P3 cross-link for navigation
+K is never a structural input to P rebuilds
+```
+
+## Progressive disclosure
+
+| Depth | Where |
+| --- | --- |
+| This page | Contract agents need |
+| [Architecture](/docs/architecture) | Planes and stores |
+| [Mounts](/docs/mounts) | How to open the K checkout |
+| [Retrieval](/docs/retrieval) | Verify path after orientation |
+| Repo design | `plan/designs/k_layers_design.md` (binding full mechanism) |
+
+## Next
+
+- [Mounts and skill](/docs/mounts)  
+- [Retrieval](/docs/retrieval)  
+- [Concepts](/docs/concepts)  

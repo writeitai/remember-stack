@@ -1,123 +1,105 @@
 export const metadata = {
   title: "Mounts and the Consumption Skill",
   description:
-    "How agents browse RememberStack through four read-only mounts, when to use the query surfaces, and how the deployment-rendered skill keeps the grains straight.",
+    "Four read-only mounts, filesystem-first rules, library mount APIs, and the deployment-rendered SKILL.md that keeps grains straight.",
 };
 
 # Mounts and the Consumption Skill
 
-RememberStack has two deliberately separate truth layers. Claims are
-immutable source testimony (“what was asserted, by whom, when”);
-facts—relations and observations—are the adjudicated current
-worldview (“what the system currently holds true”):
-supersession-adjudicated, clocked on two time axes (when a fact held in
-the world, and when the system learned it), evidence-counted per
-distinct source—repetition is not corroboration—and
-contradiction-tracked. The `fact_claim_evidence` association is the
-auditable bridge between the layers, recording which claims support or
-contradict each fact. Query claims to inspect testimony; query facts to
-answer current-truth questions, then follow the bridge to see why the
-system believes the fact.
+Agents that can navigate files should treat memory like a **read-only codebase**. Mounts make that cheap. Query surfaces (API / CLI / MCP) cover what files cannot: semantic search, graph, time-travel, open SQL/Cypher, hydration.
 
-(Internally these guarantees are decisions D41 and D54.)
+## TL;DR for agents
 
-RememberStack is designed for coding agents that already know how to navigate
-files well. A deployment can therefore give an agent four read-only filesystem
-views, plus a generated `SKILL.md` that explains how to use those views with
-open SQL/Cypher, assured operations, and the query API.
+| Situation | Do this |
+| --- | --- |
+| Mounts available | `ls` / read / `grep` first |
+| Need current truth | Leave files; call `current_context` or query `facts_current` |
+| Need source testimony | `question_context` or claims views — not claim validity as “true now” |
+| Load-bearing decision | Verify on the **spine** after any mount/K orientation |
+| No mounts | API/CLI/MCP carry full parity (including artifact handles) |
+
+Two truth layers never change: **claims** = testimony; **facts** = adjudicated current belief. Bridge: `fact_claim_evidence`.
 
 ## The four read-only views
 
-| view | what it contains | how to use it |
+| View | Contains | Prefer for |
 | --- | --- | --- |
-| P3 corpus tree | generated indexes and stable document/entity paths | navigate the corpus first; use `ls`, file reads, and grep |
-| E0 artifacts | converted Markdown, structure, and derived media | drill from a P3 document stub into the readable source representation |
-| raw originals | the original uploaded bytes | follow an explicit pointer only when the converted representation is insufficient; access is audited |
-| Plane K checkout | compiled and authored knowledge pages | orient quickly, then verify anything load-bearing against the live fact layer |
+| **P3 corpus tree** | Generated indexes + stable document/entity paths | First navigation |
+| **E0 artifacts** | Converted Markdown, structure, derived media | Readable source representation |
+| **Raw originals** | Uploaded bytes (off nav path; audited) | Only when conversion lost something |
+| **Plane K checkout** | Compiled + authored knowledge pages | Orientation — then verify facts |
 
-The raw view is deliberately outside the normal navigation tree. This keeps
-Markdown-first browsing cheap while preserving access to a recording, image, or
-other original when conversion has lost something important.
+Raw sits **outside** normal navigation so Markdown-first browsing stays cheap.
 
-The self-host mount publisher returns the exact paths as a typed
-`PublishedMounts` value. A mount set is bound to one deployment and is always
-marked read-only; the consumption-skill renderer refuses paths from a different
-deployment.
+### Library API (not a Compose service)
 
-## Filesystem first, query when files cannot do the job
+The smoke Compose profile does **not** ship a separate “mount daemon.” Paths come from the self-host **mount publisher**:
 
-When mounts are available, prefer them for navigation, reading, and grep. Use
-the API, CLI, or MCP tools for operations without a filesystem equivalent:
-
-- open SQL (`query_sql`) and full read-only Cypher (`query_cypher`);
-- schema discovery (`describe_query_space`);
-- semantic/lexical nomination SRFs inside SQL;
-- live graph helpers and snapshot graph traversal;
-- `valid_at` or `believed_at` time-travel;
-- fact-to-evidence hydration and saved queries;
-- decision transcripts and change feeds.
-
-An environment that cannot mount the deployment still has the API/CLI/MCP
-route. The generated skill states that it is unmounted and directs the agent to
-those surfaces instead of advertising paths that do not exist.
-
-## The generated consumption skill
-
-`ConsumptionSkillSurface` reads the live deployment name, language,
-special-purpose scopes, current Plane K page count, and latest active recipe
-versions from PostgreSQL. It combines them with the published mount locations
-and renders a versioned, standard `SKILL.md` (skill revision `2.1.0`).
-
-The skill opens with the bound two-layer headline, then presents three neutral
-choices — Cypher for native graph power with point-in-time semantics, SQL for
-live/evidence-composable reads, and the three assured operations for one-call
-typed answers — with the four bound SQL examples (wrong claim-window query and
-`facts_current` replacement, predicate vocabulary, full audit trail, and
-latest-contradicting-testimony divergence) plus snapshot-ID-to-live composition.
-
-When Plane K is empty, the skill says so honestly and prefers open query or P3
-rather than inventing synthesis. Its assured-operation section is the complete
-three-name catalog: `resolve_entity`, `question_context`, and `current_context`.
-The former query patterns are discoverable only as `examples.*` saved queries.
-
-The renderer can return the artifact without writing it, or publish it
-atomically so a harness never reads a partially-written skill:
+- Returns a typed `PublishedMounts` value bound to **one** deployment  
+- Always marked read-only  
+- Consumption-skill renderer **refuses** paths from another deployment  
 
 ```python
-rendered = skill_surface.render(mounts=published_mounts)
-skill_path = skill_surface.publish(
-    directory=harness_skill_directory,
-    rendered=rendered,
-)
+# conceptual — see package surfaces / profiles
+published = mount_publisher.publish(deployment_id=...)
+rendered = skill_surface.render(mounts=published)
+skill_path = skill_surface.publish(directory=harness_skill_directory, rendered=rendered)
 ```
+
+## Filesystem first; query when files cannot
+
+| Filesystem | Query surface |
+| --- | --- |
+| Navigate, read, grep | Open SQL (`query_sql`) and read-only Cypher (`query_cypher`) |
+| Browse K pages | Schema discovery (`describe_query_space` / `GET /query/space`) |
+| Open artifact Markdown | Semantic/lexical nomination, graph helpers, time-travel |
+| | Fact↔evidence hydration, saved queries, decision transcripts, deltas |
+
+Unmounted environments get the same operations over the network; the skill states that it is unmounted instead of advertising fake paths.
+
+## Generated consumption skill
+
+`ConsumptionSkillSurface` reads live deployment metadata (name, language, scopes, K page count, active recipe versions) plus published mounts and renders a versioned standard `SKILL.md` (skill revision **2.1.0**).
+
+Skill contents (high level):
+
+1. Two-layer headline (claims vs facts)  
+2. Three neutral choices — Cypher, SQL, three assured ops  
+3. Bound SQL examples (wrong claim-window query vs `facts_current`, predicate vocab, audit trail, divergence)  
+4. Honest empty-K behavior  
+5. Assured catalog only: `resolve_entity`, `question_context`, `current_context`  
+6. Former patterns as `examples.*` saved queries only  
+
+Atomic publish so harnesses never read a partial skill file.
 
 ## What the skill prevents
 
-The fixed curriculum is the correctness boundary for a cold agent:
+| Mistake | Correct behavior |
+| --- | --- |
+| Claims as current truth | Facts for present tense |
+| `examples.claims_as_of` as belief | Assertion history only |
+| Ignoring withdrawn support | Caveat + audit |
+| One-sided contradictions | Report co-members |
+| Compiled as live | Check freshness; verify facts |
+| Mixing media locator with clocks | Three different coordinates |
 
-- claims are source testimony; relations and observations are current,
-  adjudicated facts;
-- the `examples.claims_as_of` saved query means assertion history, never
-  current truth;
-- superseded testimony is excluded by default;
-- `support: withdrawn` means a fact still stands but needs a caveat and audit;
-- contradiction co-members must be reported together instead of silently
-  choosing one;
-- compiled pages carry their own freshness and must be verified when
-  load-bearing;
-- a media locator, world-validity time, and system-belief time are three
-  different coordinates.
+## S58 cold-agent check
 
-## The S58 cold-agent check
+Eval **S58** gives a model only the rendered skill + a task. It must:
 
-The retrieval eval suite now includes S58. It gives a model only the rendered
-skill and a task—no design documents or repository context—and asks for a
-structured plan. The check passes only if the agent orients on K, falls back
-honestly when K is empty, routes current truth to facts, keeps fact and evidence
-grains separate, treats withdrawn support cautiously, reports contradiction
-co-members, prefers mounts for readable work, and hydrates to sources for an
-audit.
+- Orient on K (or fall back honestly when empty)  
+- Route current truth to facts  
+- Keep grains separate  
+- Treat withdrawn support carefully  
+- Report contradiction co-members  
+- Prefer mounts for readable work  
+- Hydrate to sources for audit  
 
-The canary is seeded per deployment and each run is recorded in `eval_runs`
-against the skill revision. A wrong plan, including using claim search as the
-answer to a current-truth question, fails the suite.
+Wrong plans (including claim search as current-truth answers) fail. Runs record against skill revision in `eval_runs`.
+
+## Related
+
+- [Knowledge (Plane K)](/docs/knowledge)  
+- [Retrieval](/docs/retrieval)  
+- [Getting started](/docs/getting-started)  
+- [API reference](/docs/reference/api)  

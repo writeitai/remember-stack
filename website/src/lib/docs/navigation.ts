@@ -24,6 +24,7 @@ export const docsNavigation: NavItem[] = [
     children: [
       { title: "Concepts", href: "/docs/concepts" },
       { title: "Architecture", href: "/docs/architecture" },
+      { title: "Knowledge (Plane K)", href: "/docs/knowledge" },
     ],
   },
   {

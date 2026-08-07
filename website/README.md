@@ -98,6 +98,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/why` | Competitive advantages without fluff |
 | `/docs/concepts` | Claims / facts / grains / two clocks / counting |
 | `/docs/architecture` | Planes, stores, write vs read path |
+| `/docs/knowledge` | Plane K: compiled vs authored pages, scopes, agent rules |
 | `/docs/ingestion` | Write-path overview + guarantees |
 | `/docs/ingestion/pipeline` | Exhaustive E0→E3 stage reference |
 | `/docs/ingestion/lifecycle` | Versions, currency, counting, deletion |
@@ -111,7 +112,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/reference/api`, `cli`, `mcp` | Surface wire contracts |
 
 Still planned when their operator stories need a dedicated home (not empty stubs):
-`/docs/configuration`, `/docs/knowledge`, `/docs/evaluation`, `/docs/troubleshooting`.
+`/docs/configuration`, `/docs/evaluation`, `/docs/troubleshooting`.
 
 Diagrams for top pages live under `public/docs/diagrams/`.
 
