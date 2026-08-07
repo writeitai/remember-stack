@@ -1,0 +1,133 @@
+export const metadata = {
+  title: "Evaluation",
+  description:
+    "How RememberStack is evaluated: design-conformance gates, cold-agent skill checks, golden sets, and the public LoCoMo protocol posture.",
+};
+
+# Evaluation
+
+RememberStack is **design-first and gate-heavy**. Evaluation is not a marketing scoreboard first — it is how regressions in truth, retrieval honesty, and agent curriculum are caught.
+
+## TL;DR for agents and operators
+
+| Layer | What it guards |
+| --- | --- |
+| **Unit / contract / CI** | Code correctness and surface contracts |
+| **Design-conformance evals** | Implementation stays aligned with the architecture the product claims |
+| **Cold-agent skill check** | Consumption skill teaches correct grain routing |
+| **Golden sets** | Resolution, blockizer, contradiction, lifecycle canaries |
+| **LoCoMo adapter** | Full-system competitive/diagnostic protocol (operator-run) |
+
+Public docs state **methodology posture**, not a live SLA score. Published numbers require pinned dataset, protocol version, and revision.
+
+## What “good” means here
+
+1. **Correctness over recall theater** — projections may lag; they must not serve dead facts as current.  
+2. **Grain honesty** — claims never answer “is it true now?”  
+3. **Agent curriculum** — a cold harness with only `SKILL.md` plans correctly.  
+4. **Replayability** — decisions, costs, and traces are ledgered where the product requires.  
+5. **Comparable benchmarks** — only under a fixed protocol fingerprint.
+
+## Design-conformance evals
+
+Acceptance checks in the repository judge the code against the architecture the product documents — not against ad-hoc prompts.
+
+Use these when changing spine, retrieval, or lifecycle behavior: failing a design eval is a product regression even if a demo still “looks fine.”
+
+## Cold-agent skill check
+
+**Input:** rendered deployment `SKILL.md` + a task.  
+**No:** design corpus, repository context, or hidden cheats.
+
+**Must demonstrate:**
+
+| Behavior | Fail if |
+| --- | --- |
+| Orient on K or honest empty-K fallback | Invents synthesis |
+| Current truth → facts | Uses claim search as verdict |
+| Grains stay separate | Blends testimony and belief |
+| Withdrawn support caveated | Treats as full confidence |
+| Contradiction co-members reported | One-sided answer |
+| Mounts preferred when available | Ignores filesystem for readable work |
+| Audit hydrates to sources | Stops at summary only |
+
+See [Mounts](/docs/mounts) for the skill surface.
+
+## Golden sets and regression canaries
+
+Examples that ship with the system (not exhaustive):
+
+| Area | Guard |
+| --- | --- |
+| Blockizer | Golden regression corpus |
+| Entity resolution | Versioned thresholds + precision/recall curves |
+| Observations | Contradiction eval gate |
+| Lifecycle | Cache/ledger/count canaries (edit-proportional reuse, no retract flicker) |
+| Retrieval spikes | Large index/graph size batteries (measurements, not hosted SLAs) |
+
+Treat measured spike numbers as **capacity evidence**, not promises.
+
+## LoCoMo (full-system protocol)
+
+Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember-stack/tree/main/benchmarks/locomo).
+
+### Posture
+
+- **Unshipped as a vendored dataset** — you supply pinned `locomo10.json` after confirming **CC BY-NC 4.0** terms.  
+- **Operator-invoked** real provider runs; not silent CI spend.  
+- Current protocol is versioned and fingerprinted in the adapter README and design notes.  
+- Answer agent uses **public recipes** (for example `question_context`), not private hard-coded search.  
+- Readiness is **machine-verified** before answer; graph/corpus projections must be published when required.  
+- Costs, tool calls, envelopes, and failures are **checkpointed**.  
+- Primary metric: judge accuracy; secondary: official LoCoMo F1; diagnostic: coarse evidence-session recall.
+
+### Safe first command (no API spend)
+
+```bash
+uv sync --extra benchmark
+uv run --extra benchmark python -m benchmarks.locomo prepare \
+  --dataset /absolute/path/locomo10.json \
+  --tier smoke \
+  --protocol full-v10 \
+  --output .benchmark-runs/locomo-smoke
+```
+
+Do not run remote stages until you have read the adapter README and accepted cost/isolation gates.
+
+### Honesty about scores
+
+- Protocol version, model IDs, surface hashes, and dataset pin **must** match to compare runs.  
+- A weak reader/harness can tank accuracy with a healthy store — diagnose retrieval vs reader separately.  
+- Optional Langfuse tracing for answer/judge requires the observability extra **and** all three Langfuse env vars ([Configuration](/docs/configuration)).  
+- Sharding across hosts is supported for large publication runs; merge via documented summarize flags.
+
+## How agents should use this page
+
+| Goal | Action |
+| --- | --- |
+| Change retrieval/skill | Run cold-agent skill checks; do not “fix by vibes” |
+| Change lifecycle/counting | Hit lifecycle canaries / design evals |
+| Publish a competitive number | Freeze protocol + revision + dataset; retain artifacts |
+| Debug a bad demo | [Troubleshooting](/docs/troubleshooting) first; then the eval layer that failed |
+
+## What evaluation is not
+
+- Not a substitute for honest product claims on the managed cloud site  
+- Not automatic continuous LoCoMo spend on every PR  
+- Not permission to game judges with protocol-specific hacks  
+- Not a finished public scoreboard until methodology and results are published together  
+
+## Progressive disclosure
+
+| Depth | Where |
+| --- | --- |
+| This page | Layers and posture |
+| [Mounts](/docs/mounts) | Skill + cold-agent narrative |
+| [Project status](/docs/project-status) | What ships |
+| `benchmarks/locomo/README.md` | Operator commands |
+
+## Next
+
+- [Troubleshooting](/docs/troubleshooting)  
+- [Configuration](/docs/configuration)  
+- [Project status](/docs/project-status)  

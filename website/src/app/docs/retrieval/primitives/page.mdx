@@ -8,7 +8,7 @@ export const metadata = {
 
 Primitives are the **typed, zero-completion building blocks** of the query machine. Assured operations freeze chains over them. This page catalogs engine ops and labels **what an agent can call** vs what is **internal composition**.
 
-Parent: [Retrieval](/docs/retrieval). Binding design: `plan/designs/retrieval_design.md` (design scope). Shipped HTTP: [API reference](/docs/reference/api).
+Parent: [Retrieval](/docs/retrieval). Shipped HTTP: [API reference](/docs/reference/api).
 
 ## Rules that apply to every primitive
 
@@ -16,7 +16,7 @@ Parent: [Retrieval](/docs/retrieval). Binding design: `plan/designs/retrieval_de
 2. **No write side effects** — reads never enqueue work.  
 3. **Grain is declared** where an envelope is returned.  
 4. **Temporal params** `valid_at` / `believed_at` compose where validity exists.  
-5. **Query-engine results hydrate through Postgres** (D48) except pure mount reads.
+5. **Query-engine results hydrate through Postgres** except pure mount reads.
 
 ## Prefer these public surfaces first
 

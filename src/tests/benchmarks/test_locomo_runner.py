@@ -1203,6 +1203,61 @@ def test_answer_refuses_extra_live_documents_before_model_calls(
     assert document_checks == 3
 
 
+def test_ingest_attestation_uses_visible_version_before_readiness() -> None:
+    """A durable upload is attestable before its ready pointer is published."""
+    captured_sql = ""
+
+    def visible_version(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_sql
+        body = json.loads(request.content)
+        captured_sql = body["sql"]
+        return httpx.Response(
+            200,
+            json={
+                "termination_reason": "completed",
+                "truncated": False,
+                "rows": [
+                    [
+                        "57000000-0000-0000-0000-000000000001",
+                        f"{DATASET_COMMIT}/conv-test/D1",
+                        "57000000-0000-0000-0000-000000000002",
+                        "57000000-0000-0000-0000-000000000003",
+                    ]
+                ],
+            },
+        )
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(visible_version)
+    )
+    client = MemoryClient(client=raw_client)
+    try:
+        runner._require_exact_live_ingests(
+            client=client,
+            expected=(
+                IngestRecord(
+                    sample_id="conv-test",
+                    session_id="D1",
+                    source_ref=f"{DATASET_COMMIT}/conv-test/D1",
+                    content_sha256="a" * 64,
+                    source_modified_at=datetime(2023, 5, 1, tzinfo=timezone.utc),
+                    source_timezone_basis="assumed_utc",
+                    deployment_id=UUID("57000000-0000-0000-0000-000000000001"),
+                    doc_id=UUID("57000000-0000-0000-0000-000000000002"),
+                    version_id=UUID("57000000-0000-0000-0000-000000000003"),
+                    created=True,
+                ),
+            ),
+        )
+    finally:
+        raw_client.close()
+
+    assert "JOIN document_versions_visible AS v" in captured_sql
+    assert "v.deployment_id = d.deployment_id" in captured_sql
+    assert "v.doc_id = d.doc_id" in captured_sql
+    assert "current_version_id" not in captured_sql
+
+
 def test_missing_records_remain_in_full_manifest_denominator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

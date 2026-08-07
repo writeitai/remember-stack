@@ -6,11 +6,10 @@ export const metadata = {
 
 # API Reference
 
-> **Current pre-release query contract.** RememberStack exposes exactly three
-> top-level assured operations: `resolve_entity`, `question_context`, and
-> `current_context`. The 17 former stock query patterns are discoverable
-> `examples.*` saved queries only. There is no legacy compatibility layer or
-> deprecation window.
+> **Query contract.** RememberStack exposes exactly three top-level assured
+> operations: `resolve_entity`, `question_context`, and `current_context`. The
+> 17 former stock query patterns are discoverable `examples.*` saved queries
+> only. There is no legacy compatibility layer or deprecation window.
 
 RememberStack has two deliberately separate truth layers. Claims are
 immutable source testimony (“what was asserted, by whom, when”);
@@ -25,11 +24,9 @@ contradict each fact. Query claims to inspect testimony; query facts to
 answer current-truth questions, then follow the bridge to see why the
 system believes the fact.
 
-(Internally these guarantees are decisions D41 and D54.)
-
 The HTTP API is a thin, typed veneer over one deployment. Open SQL and
-Cypher return **`QueryResult/v1`**. The three assured operations return the D49
-**envelope**. No query endpoint calls an LLM, and
+Cypher return **`QueryResult/v1`**. The three assured operations return the
+**response envelope**. No query endpoint calls an LLM completion, and
 reads never trigger writes. An explicitly composed ingest capability is the
 sole client write path and always enters E0.
 
@@ -155,7 +152,7 @@ Shipped `examples.*` identities run only through
 ## Recipes — the registry, rendered
 
 The registry contains exactly three assured, named operations. They keep the
-typed D49 envelope where that contract adds value; reusable query patterns
+typed response envelope where that contract adds value; reusable query patterns
 belong under `examples.*`, not in a second compatibility catalog.
 
 ### `GET /recipes`
@@ -249,8 +246,8 @@ This endpoint inspects work; it does not wait, retry, or trigger a rebuild.
 
 Connector credentials remain deployment-side. The client may send a
 `credential_ref` naming an existing secret, but connector execution never
-moves into the client process. WP-5.7 defines this typed composition port; the
-deployment profile supplies the persistent manager.
+moves into the client process. The deployment profile supplies the persistent
+manager for this typed composition port.
 
 ## Python SDK
 
@@ -352,8 +349,9 @@ withdrawn is returned flagged, not hidden.
 ## Open Cypher surface
 
 The SQL helpers `memory_v1.graph_neighborhood` and `memory_v1.graph_path` use
-both D41 clocks. Omit both `valid_at` and `believed_at` for the statement
-instant, or supply both for a historical traversal; supplying exactly one fails
+both time axes (world validity and system belief). Omit both `valid_at` and
+`believed_at` for the statement instant, or supply both for a historical
+traversal; supplying exactly one fails
 with PostgreSQL `invalid_parameter_value`. Both intervals are half-open.
 
 Deployments that compose the open query gateway publish these exact graph

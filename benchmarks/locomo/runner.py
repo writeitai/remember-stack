@@ -1359,11 +1359,14 @@ def _require_current_query_surface(
 def _require_exact_live_ingests(
     *, client: MemoryClient, expected: tuple[IngestRecord, ...]
 ) -> None:
-    """Require live lineages and current versions to equal the checkpoints."""
+    """Require live lineages and their visible versions to equal checkpoints."""
     result = client.query_sql(
         sql=(
-            "SELECT deployment_id, source_ref, doc_id, current_version_id "
-            "FROM documents_live ORDER BY source_ref, doc_id"
+            "SELECT d.deployment_id, d.source_ref, d.doc_id, v.version_id "
+            "FROM documents_live AS d "
+            "JOIN document_versions_visible AS v "
+            "ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id "
+            "ORDER BY d.source_ref, d.doc_id, v.version_id"
         ),
         max_rows=len(expected) + 1,
     )

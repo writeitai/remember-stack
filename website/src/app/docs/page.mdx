@@ -10,7 +10,7 @@ export const metadata = {
 
 Scale is a design requirement, not a slide: the system is built to stay useful at **a million documents**.
 
-> **Pre-release (`v0.2.0`).** Phases 0–7 are implemented. The smoke self-host profile routes **Markdown** conversion out of the box; additional MIME routes (HTML/PDF/media) are engine-supported but must be registered on the deployment. Interfaces may still change before a stable release. See [Project status](/docs/project-status).
+The default self-host profile routes **Markdown** conversion out of the box; additional MIME routes (HTML/PDF/media) are engine-supported but must be registered on the deployment. See [Project status](/docs/project-status) for what ships.
 
 ## Why you should care
 
@@ -49,7 +49,7 @@ Primary consumers are agent harnesses (Claude Code, Codex, OpenCode, and peers).
 1. **Filesystem-first.** Four read-only mounts: corpus tree, converted artifacts, raw originals (off the nav path), Plane K checkout. Prefer `ls` / read / `grep` when mounts exist.
 2. **Query when files cannot.** Semantic search, graph traversal, time-travel, hydration, open SQL/Cypher — via API, CLI, and MCP with the **same** operations.
 3. **Honest envelopes.** Every assured answer declares grain, freshness, contradictions, truncation, and typed “no”s so the agent can *reason about* the answer. Wire shape is flat single-grain by default — see [Envelope](/docs/retrieval/envelope).
-4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the three assured operations. Cold-agent eval **S58** guards that curriculum.
+4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the three assured operations. Automated cold-agent checks guard that curriculum.
 
 Humans get the same audit trail: every conclusion drills to claims, then to the exact span, page, image region, or second of audio.
 

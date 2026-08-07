@@ -56,11 +56,15 @@ agent consumes.
 
 - The harness has one protocol and no weak/strong or v9 compatibility branch.
 - A fresh run starts from an empty live document set and rejects any
-  deduplicated ingest. Before every upload it proves that live lineage and
-  current-version coordinates equal its durable ingest checkpoints, which also
-  makes an interrupted upload safely resumable. Before answering it proves the
-  complete prepared sample against those same coordinates. Old benchmark
-  databases and backups are not inputs and need not be retained.
+  deduplicated ingest. Before every upload it joins `documents_live` to
+  `document_versions_visible` on deployment and document identity and proves
+  that the resulting lineage/version coordinates equal its durable ingest
+  checkpoints. The version relation is authoritative immediately after upload;
+  `documents_live.current_version_id` is not, because it remains null until
+  processing publishes ready content. This also makes an interrupted upload
+  safely resumable. Before answering it proves the complete prepared sample
+  against those same coordinates. Old benchmark databases and backups are not
+  inputs and need not be retained.
 - The answer prompt mentions only capabilities the three current operations
   provide.
 - The run remains revision-stamped and refuses a deployment built from a
