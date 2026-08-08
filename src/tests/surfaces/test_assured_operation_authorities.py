@@ -5,6 +5,7 @@ from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CURRENT_FACTS
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
+from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
 from rememberstack.surfaces.query_engine import _MULTI_HOP_EDGE_EVIDENCE
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
@@ -41,9 +42,17 @@ def test_current_context_uses_fact_and_contradiction_authorities() -> None:
     for statement in _CONTRADICTION_MEMBERS.values():
         contradiction_sql = str(statement)
         assert "memory_v1.contradiction_members_current" in contradiction_sql
-        assert "memory_v1.facts_current" in contradiction_sql
+        assert "memory_v1.facts_current" not in contradiction_sql
+        assert "contradiction_group = ANY(CAST(:groups AS uuid[]))" in (
+            contradiction_sql
+        )
         assert "FROM relations" not in contradiction_sql
         assert "FROM observations" not in contradiction_sql
+    label_sql = str(_CURRENT_FACT_LABELS)
+    assert "memory_v1.facts_current" in label_sql
+    assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in label_sql
+    assert "FROM relations" not in label_sql
+    assert "FROM observations" not in label_sql
 
 
 def test_question_context_confirms_claims_and_chunks_through_memory_v1() -> None:
