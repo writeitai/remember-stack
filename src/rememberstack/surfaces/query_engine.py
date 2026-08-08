@@ -2229,17 +2229,41 @@ class QueryEngine:
             if support_state == "withdrawn"
         }
         if groups:
-            for row in (
-                connection.execute(
+            member_rows = [
+                dict(row)
+                for row in connection.execute(
                     _CONTRADICTION_MEMBERS[kind],
                     {"deployment_id": deployment_id, "groups": groups},
                 )
                 .mappings()
                 .all()
-            ):
-                members_by_group.setdefault(row["contradiction_group"], []).append(
-                    dict(row)
-                )
+            ]
+            missing_label_ids = [
+                row["fact_id"] for row in member_rows if row["label"] is None
+            ]
+            if missing_label_ids:
+                labels_by_fact = {
+                    row["fact_id"]: row["label"]
+                    for row in connection.execute(
+                        _CURRENT_FACT_LABELS,
+                        {
+                            "deployment_id": deployment_id,
+                            "fact_kind": kind,
+                            "fact_ids": missing_label_ids,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                }
+                for row in member_rows:
+                    if row["label"] is None:
+                        row["label"] = labels_by_fact.get(row["fact_id"])
+                    if row["label"] is None:
+                        raise RuntimeError(
+                            "current contradiction member has no authoritative label"
+                        )
+            for row in member_rows:
+                members_by_group.setdefault(row["contradiction_group"], []).append(row)
         if support_by_fact is None:
             withdrawn = {
                 row["fact_id"]
@@ -3734,18 +3758,14 @@ _SCAN_EXPORTS = {
 _CONTRADICTION_MEMBERS_RELATIONS = text(
     """
     SELECT member.contradiction_group, member.fact_id,
-           coalesce(member.fact_label, fact.statement, fact.predicate) AS label,
+           member.fact_label AS label,
            member.evidence_count,
            member.valid_from, member.valid_until, member.ingested_at,
            NULL::timestamptz AS invalidated_at, member.support_state
     FROM memory_v1.contradiction_members_current AS member
-    JOIN memory_v1.facts_current AS fact
-      ON fact.deployment_id = member.deployment_id
-     AND fact.fact_kind = member.fact_kind
-     AND fact.fact_id = member.fact_id
     WHERE member.deployment_id = :deployment_id
       AND member.fact_kind = 'relation'
-      AND member.contradiction_group = ANY(:groups)
+      AND member.contradiction_group = ANY(CAST(:groups AS uuid[]))
     ORDER BY member.contradiction_group, member.ingested_at, member.fact_id
     """
 )
@@ -3753,18 +3773,14 @@ _CONTRADICTION_MEMBERS_RELATIONS = text(
 _CONTRADICTION_MEMBERS_OBSERVATIONS = text(
     """
     SELECT member.contradiction_group, member.fact_id,
-           coalesce(member.fact_label, fact.statement, fact.predicate) AS label,
+           member.fact_label AS label,
            member.evidence_count,
            member.valid_from, member.valid_until, member.ingested_at,
            NULL::timestamptz AS invalidated_at, member.support_state
     FROM memory_v1.contradiction_members_current AS member
-    JOIN memory_v1.facts_current AS fact
-      ON fact.deployment_id = member.deployment_id
-     AND fact.fact_kind = member.fact_kind
-     AND fact.fact_id = member.fact_id
     WHERE member.deployment_id = :deployment_id
       AND member.fact_kind = 'observation'
-      AND member.contradiction_group = ANY(:groups)
+      AND member.contradiction_group = ANY(CAST(:groups AS uuid[]))
     ORDER BY member.contradiction_group, member.ingested_at, member.fact_id
     """
 )
@@ -3773,6 +3789,18 @@ _CONTRADICTION_MEMBERS = {
     "relation": _CONTRADICTION_MEMBERS_RELATIONS,
     "observation": _CONTRADICTION_MEMBERS_OBSERVATIONS,
 }
+
+_CURRENT_FACT_LABELS = text(
+    """
+    SELECT fact.fact_id,
+           coalesce(fact.fact_label, fact.statement, fact.predicate) AS label
+    FROM memory_v1.facts_current AS fact
+    WHERE fact.deployment_id = :deployment_id
+      AND fact.fact_kind = :fact_kind
+      AND fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
+    ORDER BY fact.fact_id
+    """
+)
 
 _OPEN_SUPPORT_FLAGS = text(
     """
