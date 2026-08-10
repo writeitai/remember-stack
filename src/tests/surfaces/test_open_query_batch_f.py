@@ -943,7 +943,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
         CLAIMS_VERBATIM_SQL,
     )
     # The hashed manifest keeps the node-list example (not the discovery
-    # traversal body). D83 rolled the surface for the clean assured-operation
+    # traversal body). D87 rolled the surface for the clean assured-operation
     # cut; first-call prose still is not a hash input.
     cypher_entry = next(
         entry
@@ -957,7 +957,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
     assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "0d8e567f5981c09b3003f70d1be557e0cdf8058abb344c484f89b4cbad6dc99d"
+        == "b9ef94b71f10d8ad03ad6e3dc959daa747882ea929c62ff58c7384497886c168"
     )
 
 

@@ -1569,7 +1569,7 @@ def test_single_run_summary_json_is_unchanged(
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v12","protocol_fingerprint":'
-        '"12e32b69d86e07ea59c4d20082a780cd921c64ca14311123de1fbaff3e0ad23c",'
+        '"1707bd1ea53425148de3c2272aec8ffdea7b0293bd269a1066bbf65e026074f8",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
