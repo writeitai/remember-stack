@@ -787,10 +787,15 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
 def _expected_input_schema(operation: object) -> dict[str, object]:
     """Rebuild the public input schema the same way OperationSurface does."""
     from rememberstack.model import AssuredOperation
+    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
     from rememberstack.surfaces.operation_surface import operation_descriptors
 
     assert isinstance(operation, AssuredOperation)
-    return operation_descriptors(operations=(operation,))[0].input_schema
+    descriptors = {
+        descriptor.name: descriptor
+        for descriptor in operation_descriptors(operations=CANONICAL_OPERATIONS)
+    }
+    return descriptors[operation.name.value].input_schema
 
 
 # --- MemoryClient HTTP + CLI parse/dispatch ---------------------------------
