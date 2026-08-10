@@ -3506,9 +3506,17 @@ deferred per-claim fan-out while fixing FK dead-letter. Analysis:
 **Consequences.** Queue depth for `normalize_relations` approximates unfinished
 **claims** — a correct signal for self-host and UMC scale-up. Continuous
 multi-doc ingest remains correct because barriers are **per document version**,
-not global. Fact evidence attach stays commutative; supersession stays
-version-scoped after the barrier and uses claim `asserted_at`, not process
-order. Postgres carries O(claims) processing rows per large version.
+not global. Relation evidence attach is commutative under concurrency.
+Observation final adjudication is a **post-barrier ordered flush** (D43 remains
+order-sensitive). Supersession is version-scoped after the barrier with a bound
+origin-claim evidence selector and `asserted_at` direction. Barrier evaluation
+requires a version/representation advisory lock (D84 pattern). Fan-out materializes
+the full expected claim set in the extract-handoff transaction. Component version
+bumps for fan-out so coordinator success is not mistaken for normalize readiness.
+Postgres carries O(claims) processing rows per large version.
+
+**Design review.** Codex REQUEST_CHANGES absorbed into the design revision
+(`design/reviews/REVIEW_codex-sol_e3_claim_level_normalize_fanout_design_2026-08-10.md`).
 
 **Rejected.** Scale version-level normalize only; rely on FIFO queue order for
 adjudication correctness; run supersession inside each claim job; global or

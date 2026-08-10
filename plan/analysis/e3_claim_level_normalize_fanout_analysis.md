@@ -84,9 +84,17 @@ model (immutable representation). New text ⇒ new version.
 ## 5. Residual product choices (recommended)
 
 1. **Mint type:** first-under-lemma-lock wins (status quo); no doc-order typing in v1.  
-2. **Observations:** write in claim job under entity lock; not only end-of-version batch.  
-3. **Supersession payload:** post-barrier **version-scoped** adjudicate (not worker-local `relation_ids`).  
-4. **Partial failure:** strict barrier — every expected claim job `succeeded`; soft assertion drops inside a job still count as success.
+2. **Observations:** D43 is order-sensitive today; v1 uses **post-barrier ordered flush**
+   by `asserted_at` (entity lock alone ≠ commutativity). Parallel claim jobs may
+   only stage candidates.  
+3. **Supersession payload:** post-barrier **version-scoped** adjudicate with
+   relations evidenced by expected origin claims (not worker-local `relation_ids`;
+   not creation-time windows).  
+4. **Partial failure:** strict barrier — every expected claim job `status=succeeded`;
+   soft assertion drops inside a job still count as success; DLQ blocks readiness.  
+5. **Fan-out durability:** full expected set inserted in the extract-barrier handoff
+   transaction (no incomplete coordinator success).  
+6. **Barrier races:** mandatory advisory lock on complete+barrier (landed D84 pattern).
 
 ## 6. Costs
 
