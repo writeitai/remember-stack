@@ -55,7 +55,6 @@ The file has two halves, and the split is deliberate.
   explicitly excluded from the hash, so a new index must not roll it.
 """
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -69,7 +68,6 @@ from sqlalchemy import Connection
 from sqlalchemy import text
 
 from rememberstack.spine.query_space.ast_serializer import SERIALIZER_VERSION
-from rememberstack.spine.query_space.canonical import canonical_json_bytes
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.catalog import POSTGRESQL_MAJOR
@@ -572,61 +570,48 @@ def stub_core_operation_descriptors() -> dict[str, CanonicalValue]:
 
 
 def _core_operation_descriptors() -> dict[str, CanonicalValue]:
-    """The three assured operations, derived from their canonical recipes."""
-    from rememberstack.spine.recipes import CANONICAL_RECIPES
-    from rememberstack.surfaces.recipe_surface import recipe_descriptors
+    """The four assured operations, derived from canonical registry values."""
+    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
+    from rememberstack.surfaces.operation_surface import operation_descriptors
 
-    assured = {"resolve_entity", "question_context", "current_context"}
-    recipes = {recipe.name: recipe for recipe in CANONICAL_RECIPES}
-    if set(recipes) & assured != assured:
-        raise SchemaManifestError("the canonical recipe set lacks an assured operation")
+    assured = {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
+    canonical = {operation.name.value: operation for operation in CANONICAL_OPERATIONS}
+    if set(canonical) != assured:
+        raise SchemaManifestError("the canonical catalog is not the exact D87 set")
     public_descriptors = {
         descriptor.name: descriptor
-        for descriptor in recipe_descriptors(
-            recipes=tuple(recipes[name] for name in sorted(assured))
+        for descriptor in operation_descriptors(
+            operations=tuple(canonical[name] for name in sorted(assured))
         )
     }
     operations: list[CanonicalValue] = []
     for name in sorted(assured):
-        recipe = recipes[name]
         public = public_descriptors[name]
-        chain = cast(
-            "CanonicalValue", [step.model_dump(mode="json") for step in recipe.chain]
-        )
         descriptor: dict[str, CanonicalValue] = {
             "name": public.name,
             "version": public.version,
             "description": public.description,
             "input_schema": cast("CanonicalValue", public.input_schema),
-            "envelope_contract": "D49",
+            "result_schema": cast("CanonicalValue", public.result_schema),
+            "result_contract": public.result_contract,
             "grain": public.output_grain,
             "intent": public.answer_intent,
-            "implementation_chain_hash": hashlib.sha256(
-                canonical_json_bytes(chain)
-            ).hexdigest(),
+            "implementation_plan_hash": public.implementation_plan_hash,
         }
-        if name == "question_context":
+        if name == "testimony_context":
             descriptor["channels"] = {
                 "claims": {"enabled": True, "grain": "evidence", "hybrid": True},
                 "chunks": {"enabled": True, "grain": "evidence", "hybrid": True},
+            }
+        if name == "fact_context":
+            descriptor["channels"] = {
                 "facts": {
-                    "enabled_by": "include_facts",
-                    "default": False,
                     "grain": "fact",
                     "nomination": "semantic",
                     "confirmed_in": "postgresql",
-                    "max_facts": 30,
-                    "evidence_per_fact": 3,
+                    "time_modes": ["current", "at", "overlap", "history"],
                     "evidence_budget": 60,
-                },
-                "entities": {
-                    "enabled_by": "include_entities",
-                    "default": False,
-                    "grain": "fact",
-                    "order": "exact_resolution_then_semantic",
-                    "confirmed_in": "postgresql",
-                    "max_candidates": 20,
-                },
+                }
             }
         operations.append(descriptor)
     return {"contract": "memory_v1.core_operations/1", "operations": operations}

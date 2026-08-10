@@ -30,6 +30,7 @@ from pydantic import ValidationError
 import pytest
 
 from rememberstack.model import ChunkEvidenceResult
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
@@ -90,6 +91,8 @@ def test_answer_agent_prompt_contains_only_public_tools_trace_and_question() -> 
         name="claims_verbatim",
         description="What sources asserted",
         input_schema={"type": "object"},
+        result_schema={"type": "object"},
+        result_contract="envelope",
         output_grain="evidence",
         answer_intent="assertion_history",
     )
@@ -100,6 +103,9 @@ def test_answer_agent_prompt_contains_only_public_tools_trace_and_question() -> 
             latency_ms=1,
             response=Envelope(
                 grain=Grain.EVIDENCE,
+                temporal_scope=current_temporal_scope(
+                    evaluated_at=datetime(2026, 7, 23, tzinfo=timezone.utc)
+                ),
                 freshness=Freshness(
                     pg_live_ts=datetime(2026, 7, 23, tzinfo=timezone.utc)
                 ),
@@ -128,11 +134,14 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     """Prompt compaction cannot discard a retrieved source passage."""
     chunk_id = uuid4()
     call = ToolCallRecord(
-        name="question_context",
+        name="testimony_context",
         arguments={"query": "launch code"},
         latency_ms=1,
         response=Envelope(
             grain=Grain.EVIDENCE,
+            temporal_scope=current_temporal_scope(
+                evaluated_at=datetime(2026, 7, 30, tzinfo=timezone.utc)
+            ),
             chunks=(
                 ChunkEvidenceResult(
                     chunk_id=chunk_id,
@@ -170,23 +179,25 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert EXPECTED_SURFACE_MANIFEST_HASH == manifest["surface_manifest_hash"]
     assured = assured_tool_catalog()
     assert tuple(tool.name for tool in assured) == (
-        "current_context",
-        "question_context",
+        "answer_context",
+        "fact_context",
         "resolve_entity",
+        "testimony_context",
     )
     operations = manifest["hash_members"]["core_operation_descriptors"]["operations"]
     expected_chain_hashes = {
-        operation["name"]: operation["implementation_chain_hash"]
+        operation["name"]: operation["implementation_plan_hash"]
         for operation in operations
     }
     assert {
-        tool.name: tool.implementation_chain_hash for tool in assured
+        tool.name: tool.implementation_plan_hash for tool in assured
     } == expected_chain_hashes
     tools = answer_tool_catalog()
-    assert len(tools) == 22
+    assert len(tools) == 23
     assert {tool.name for tool in tools} == {
-        "current_context",
-        "question_context",
+        "answer_context",
+        "fact_context",
+        "testimony_context",
         "resolve_entity",
         "resolve",
         "lookup_relations",
@@ -211,10 +222,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v11_and_answer_prompt_has_loop_guards() -> None:
-    """The current v11 identity and answer-loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v11"
-    assert DEFAULT_PROTOCOL_KEY == "full-v11"
+def test_protocol_is_v12_and_answer_prompt_has_loop_guards() -> None:
+    """The current v12 identity and answer-loop discipline are locked."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v12"
+    assert DEFAULT_PROTOCOL_KEY == "full-v12"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -236,10 +247,10 @@ def test_protocol_is_v11_and_answer_prompt_has_loop_guards() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v11",)
-    protocol = PROTOCOL_REGISTRY["full-v11"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v12",)
+    protocol = PROTOCOL_REGISTRY["full-v12"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v11"
+    assert protocol.name == "RS-LoCoMo-Full-v12"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
@@ -277,7 +288,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v11"]
+    assert selected == ["full-v12"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(

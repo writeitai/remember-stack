@@ -89,6 +89,7 @@ from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from rememberstack.adapters.openrouter import OpenRouterProviderError
+from rememberstack.model import ContextBundleV1
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import Envelope
 from rememberstack.model import ModelRequest
@@ -521,7 +522,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v11 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v12 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1108,7 +1109,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v11")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v12")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1118,7 +1119,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v11")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v12")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1391,10 +1392,10 @@ def _require_current_query_surface(
         raise ExecutionGuardError(
             "deployment query surface differs from the prepared protocol"
         )
-    recipes = client.recipes()
-    if recipes != assured_tool_catalog():
+    operations = client.list_operations()
+    if operations != assured_tool_catalog():
         raise ExecutionGuardError(
-            "deployment recipe catalog is not the canonical three-operation surface"
+            "deployment operation catalog is not the canonical four-operation surface"
         )
     tools = answer_tool_catalog()
     if tool_catalog_sha256() != context.configuration.tool_catalog_sha256:
@@ -2355,31 +2356,26 @@ def _claims_from_trace(
     seen: set[UUID] = set()
     claims: list[RetrievedClaim] = []
     for call in trace:
-        if not isinstance(call.response, Envelope):
-            continue
-        evidence = [
-            *call.response.evidence,
-            *(item for part in call.response.parts for item in part.evidence),
-        ]
-        for claim in evidence:
-            if claim.claim_id in seen:
-                continue
-            seen.add(claim.claim_id)
-            claims.append(
-                RetrievedClaim(
-                    rank=len(claims) + 1,
-                    claim_id=claim.claim_id,
-                    doc_id=claim.doc_id,
-                    chunk_id=claim.chunk_id,
-                    claim_text=claim.claim_text,
-                    source_span=claim.source_span,
-                    char_start=claim.char_start,
-                    char_end=claim.char_end,
-                    is_attributed=claim.is_attributed,
-                    is_current_testimony=claim.is_current_testimony,
-                    session_id=doc_sessions.get(claim.doc_id),
+        for envelope in _response_envelopes(response=call.response):
+            for claim in envelope.evidence:
+                if claim.claim_id in seen:
+                    continue
+                seen.add(claim.claim_id)
+                claims.append(
+                    RetrievedClaim(
+                        rank=len(claims) + 1,
+                        claim_id=claim.claim_id,
+                        doc_id=claim.doc_id,
+                        chunk_id=claim.chunk_id,
+                        claim_text=claim.claim_text,
+                        source_span=claim.source_span,
+                        char_start=claim.char_start,
+                        char_end=claim.char_end,
+                        is_attributed=claim.is_attributed,
+                        is_current_testimony=claim.is_current_testimony,
+                        session_id=doc_sessions.get(claim.doc_id),
+                    )
                 )
-            )
     return tuple(claims)
 
 
@@ -2391,17 +2387,12 @@ def _retrieved_sessions(
         claim.session_id for claim in answer.claims if claim.session_id is not None
     }
     for call in answer.tool_calls:
-        if not isinstance(call.response, Envelope):
-            continue
-        chunks = [
-            *call.response.chunks,
-            *(item for part in call.response.parts for item in part.chunks),
-        ]
-        sessions.update(
-            session
-            for chunk in chunks
-            if (session := doc_sessions.get(chunk.doc_id)) is not None
-        )
+        for envelope in _response_envelopes(response=call.response):
+            sessions.update(
+                session
+                for chunk in envelope.chunks
+                if (session := doc_sessions.get(chunk.doc_id)) is not None
+            )
     return sessions
 
 
@@ -2411,10 +2402,22 @@ def _trace_succeeded(*, trace: list[ToolCallRecord]) -> bool:
 
 
 def _dropped_by_hydration(*, call: ToolCallRecord) -> int:
-    """Read hydration drops from envelope tools and zero from other responses."""
-    return (
-        call.response.dropped_by_hydration if isinstance(call.response, Envelope) else 0
+    """Sum hydration drops from every authority carried by one response."""
+    return sum(
+        envelope.dropped_by_hydration
+        for envelope in _response_envelopes(response=call.response)
     )
+
+
+def _response_envelopes(
+    *, response: Envelope | ContextBundleV1 | JsonValue
+) -> tuple[Envelope, ...]:
+    """Expose typed envelope children without blending their authorities."""
+    if isinstance(response, Envelope):
+        return (response,)
+    if isinstance(response, ContextBundleV1):
+        return (response.testimony, response.facts)
+    return ()
 
 
 def _aggregate_usage(*, usages: tuple[ProviderCallUsage, ...]) -> ProviderCallUsage:

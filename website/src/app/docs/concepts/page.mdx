@@ -6,6 +6,20 @@ export const metadata = {
 
 # Concepts
 
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated worldview (“what the
+system holds or held true”): supersession-adjudicated, clocked on two time
+axes (when a fact held in the world, and when the system learned it),
+evidence-counted per distinct source—repetition is not corroboration—and
+contradiction-tracked. The `fact_claim_evidence` association is the auditable
+bridge between the layers, recording which claims support or contradict each
+fact. Query claims to inspect testimony; query facts to answer current or
+historical truth questions, then follow the bridge to see why the system
+believes or believed the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
+
 One distinction carries the whole system: **what a source said is not the same as what is currently true.** Sources go stale, contradict each other, and get corrected. Memory that conflates testimony with truth either serves outdated statements as facts or silently rewrites history.
 
 This page is the vocabulary every other page assumes.
@@ -46,9 +60,13 @@ Every assured response is labeled with the **grain** of what it contains:
 | **`fact`** | Relations + observations under validity filters | Default for “is it true now?” |
 | **`evidence`** | Claims (and typed chunks as source-text fallback) | “Who said what”; may be stale or contradictory |
 | **`compiled`** | K pages with `compiled_at` / staleness | Orientation; verify before acting |
-| **`composite`** | Explicit multi-part (e.g. said-vs-believe) | Read each `parts[]` grain separately |
+| **`composite`** | One operation's cohesive mixed typed result | Independent complete responses |
 
-**Contract:** current-fact answers may be assembled only from validity-filtered facts. Claim asserted-validity intervals are **testimony**, never verdict. The registry linter rejects recipes that would smuggle claims into `current_facts` intent.
+When an agent needs both testimony and facts, `answer_context` returns
+`ContextBundle/v1` with complete `testimony` and `facts` envelopes. It is not a
+composite envelope and does not blend or re-rank the two authorities.
+
+**Contract:** current-fact answers may be assembled only from validity-filtered facts. Claim asserted-validity intervals are **testimony**, never verdict. The registry linter rejects operations that would smuggle claims into `current_facts` intent.
 
 Evidence-grain defaults to **current testimony**: re-extracted or living-version-superseded claims are excluded unless you opt into historical/superseded modes. See [Lifecycle](/docs/ingestion/lifecycle).
 
@@ -99,7 +117,7 @@ Entities live in a **canonical registry** with aliases and typed resolution.
 | **Write-time resolution** | Full cascade (exact → fuzzy → phonetic → embedding → gated LLM) |
 | **Query-time `resolve_entity`** | **T0 exact alias** match; ranked candidates on ambiguity — never a silent single guess |
 
-Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`question_context`) rather than assuming fuzzy resolve.
+Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve.
 
 ## Document identity (write path)
 

@@ -59,11 +59,11 @@ def test_name_candidates_include_domain_tokens() -> None:
 
 
 def test_ingest_envelope_folds_evidence_facts_entities() -> None:
-    """Recipe envelopes map into the retrieval bundle fields."""
+    """Operation envelopes map into the retrieval bundle fields."""
     bundle = RetrievalBundle()
     _ingest_envelope(
         bundle,
-        recipe="question_context",
+        operation="testimony_context",
         envelope={
             "grain": "evidence",
             "negative": None,
@@ -88,7 +88,7 @@ def test_ingest_envelope_folds_evidence_facts_entities() -> None:
     assert bundle.facts == ["sprint ends March 29"]
     assert any("March 29" in chunk for chunk in bundle.chunks)
     assert len(bundle.entities) == 1
-    assert bundle.recipe_calls[0]["recipe"] == "question_context"
+    assert bundle.operation_calls[0]["operation"] == "testimony_context"
 
 
 def test_cli_registers_answer_retrieval_command() -> None:

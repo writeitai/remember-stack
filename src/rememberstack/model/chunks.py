@@ -214,7 +214,8 @@ class P1ClaimRow(BaseModel):
     """One row of the P1 claims channel: the needle index (D8/D58).
 
     `is_current_testimony` is the scalar the DEFAULT claims channel filters
-    on (retrieval §5): current-testimony-only unless a recipe asks otherwise.
+    on (retrieval §5): current-testimony-only unless an explicit historical
+    query asks otherwise.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -230,7 +231,7 @@ class P1ClaimRow(BaseModel):
 
 
 class P1FactRow(BaseModel):
-    """One row of the P1 facts channel: fact/observation labels (D8)."""
+    """One fact label plus rebuildable D87 pre-ranking eligibility metadata."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -239,4 +240,23 @@ class P1FactRow(BaseModel):
     kind: Annotated[str, Field(min_length=1)]  # relation | observation
     label: Annotated[str, Field(min_length=1)]
     status: Annotated[str, Field(min_length=1)]  # active | invalidated
+    valid_from: UTCDateTime | None
+    valid_until: UTCDateTime | None
+    ingested_at: UTCDateTime
+    invalidated_at: UTCDateTime | None
     vector: Annotated[tuple[float, ...], Field(min_length=1)]
+
+
+class P1FactMetadataRow(BaseModel):
+    """Mutable fact scope fields refreshed without recomputing its vector."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    fact_id: UUID
+    deployment_id: UUID
+    kind: Annotated[str, Field(min_length=1)]
+    status: Annotated[str, Field(min_length=1)]
+    valid_from: UTCDateTime | None
+    valid_until: UTCDateTime | None
+    ingested_at: UTCDateTime
+    invalidated_at: UTCDateTime | None

@@ -1,5 +1,8 @@
 """Postgres spine package."""
 
+from rememberstack.spine.assured_operations import AssuredOperationRegistry
+from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
+from rememberstack.spine.assured_operations import seed_canonical_operations
 from rememberstack.spine.backfill import BackfillFinalizer
 from rememberstack.spine.backfill import BackfillSeeder
 from rememberstack.spine.backfill import BackfillSeederSettings
@@ -32,9 +35,6 @@ from rememberstack.spine.operations import OperationalCatalog
 from rememberstack.spine.operations import OperationalSettings
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
-from rememberstack.spine.recipes import CANONICAL_RECIPES
-from rememberstack.spine.recipes import RecipeRegistry
-from rememberstack.spine.recipes import seed_canonical_recipes
 from rememberstack.spine.resolver import CascadeResolver
 from rememberstack.spine.resolver import RESOLVER_VERSION
 from rememberstack.spine.resolver import seed_resolver_version
@@ -80,9 +80,9 @@ __all__ = (
     "KnowledgeDispatchUnavailableError",
     "ProjectionCatalog",
     "PipelineReadinessCatalog",
-    "CANONICAL_RECIPES",
-    "RecipeRegistry",
-    "seed_canonical_recipes",
+    "AssuredOperationRegistry",
+    "CANONICAL_OPERATIONS",
+    "seed_canonical_operations",
     "ReviewQueue",
     "seed_resolver_version",
     "T0_RESOLVER_VERSION",

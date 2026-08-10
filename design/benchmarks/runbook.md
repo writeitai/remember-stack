@@ -33,16 +33,17 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocol (`--protocol`, prepare-time only): `full-v10`. Both the answer
+- Protocol (`--protocol`, prepare-time only): `full-v12`. Both the answer
   agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
   `none` for both. It is the sole executable protocol and is not comparable with
-  historical v1–v9 runs.
-- The answer agent sees only the envelopes returned by the current assured
-  operations (`question_context`, `current_context`, and `resolve_entity`). It
-  is allowed 8 tool calls / 9 total agent calls per question and must return
-  the shortest phrase that fully answers the question. The reader
-  step auto-retries invalid (non-JSON) completions up to 2 extra attempts —
-  this fired 83 times in 1540 questions, so it is load-bearing.
+  historical v1–v11 runs.
+- The answer agent can use the complete public read plane: the four assured
+  operations (`testimony_context`, `fact_context`, `answer_context`, and
+  `resolve_entity`), direct primitives, open SQL and Cypher, saved queries,
+  and the P3 mount. It is allowed 8 tool calls / 9 total agent calls per
+  question and must return the shortest phrase that fully answers the question.
+  The reader step auto-retries invalid (non-JSON) completions up to 2 extra
+  attempts — this fired 83 times in 1540 questions, so it is load-bearing.
 
 ## 3. Environment a run needs
 
@@ -67,7 +68,7 @@ P1-label, and small adjudicator seats use `openai/gpt-5.6-luna`.
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v10
+export LOCOMO_PROTOCOL=full-v12
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
@@ -130,8 +131,8 @@ numbers: such runs measured different systems.
 
 ## 7. Historical sizing estimate
 
-These figures came from the pre-v10 GLM-5.2 extraction path and are only useful
-for rough capacity planning. V10 uses the current `main` bindings and must record
+These figures came from the pre-v12 GLM-5.2 extraction path and are only useful
+for rough capacity planning. V12 uses the current `main` bindings and must record
 its own actual cost and duration; the provider account cap remains the hard
 monetary boundary.
 

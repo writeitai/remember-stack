@@ -6,6 +6,20 @@ export const metadata = {
 
 # Mounts and the Consumption Skill
 
+RememberStack has two deliberately separate truth layers. Claims are
+immutable source testimony (“what was asserted, by whom, when”);
+facts—relations and observations—are the adjudicated worldview (“what the
+system holds or held true”): supersession-adjudicated, clocked on two time
+axes (when a fact held in the world, and when the system learned it),
+evidence-counted per distinct source—repetition is not corroboration—and
+contradiction-tracked. The `fact_claim_evidence` association is the auditable
+bridge between the layers, recording which claims support or contradict each
+fact. Query claims to inspect testimony; query facts to answer current or
+historical truth questions, then follow the bridge to see why the system
+believes or believed the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
+
 Agents that can navigate files should treat memory like a **read-only codebase**. Mounts make that cheap. Query surfaces (API / CLI / MCP) cover what files cannot: semantic search, graph, time-travel, open SQL/Cypher, hydration.
 
 ## TL;DR for agents
@@ -13,8 +27,8 @@ Agents that can navigate files should treat memory like a **read-only codebase**
 | Situation | Do this |
 | --- | --- |
 | Mounts available | `ls` / read / `grep` first |
-| Need current truth | Leave files; call `current_context` or query `facts_current` |
-| Need source testimony | `question_context` or claims views — not claim validity as “true now” |
+| Need current truth | Leave files; call `fact_context` or query `facts_current` |
+| Need source testimony | `testimony_context` or claims views — not claim validity as “true now” |
 | Load-bearing decision | Verify on the **spine** after any mount/K orientation |
 | No mounts | API/CLI/MCP carry full parity (including artifact handles) |
 
@@ -59,15 +73,15 @@ Unmounted environments get the same operations over the network; the skill state
 
 ## Generated consumption skill
 
-`ConsumptionSkillSurface` reads live deployment metadata (name, language, scopes, K page count, active recipe versions) plus published mounts and renders a versioned standard `SKILL.md`.
+`ConsumptionSkillSurface` reads live deployment metadata (name, language, scopes, K page count, active operation versions) plus published mounts and renders a versioned standard `SKILL.md`.
 
 Skill contents (high level):
 
 1. Two-layer headline (claims vs facts)  
-2. Three neutral choices — Cypher, SQL, three assured ops  
+2. Three neutral choices — Cypher, SQL, or the four assured operations
 3. Bound SQL examples (wrong claim-window query vs `facts_current`, predicate vocab, audit trail, divergence)  
 4. Honest empty-K behavior  
-5. Assured catalog only: `resolve_entity`, `question_context`, `current_context`  
+5. Assured catalog only: `resolve_entity`, `testimony_context`, `fact_context`, `answer_context`
 6. Former patterns as `examples.*` saved queries only  
 
 Atomic publish so harnesses never read a partial skill file.

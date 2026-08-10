@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v11 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v12 protocol."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from pydantic import model_serializer
 from pydantic import model_validator
 from pydantic import SerializerFunctionWrapHandler
 
+from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
@@ -27,8 +28,8 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v11"]
-ProtocolName = Literal["RS-LoCoMo-Full-v11"]
+ProtocolKey = Literal["full-v12"]
+ProtocolName = Literal["RS-LoCoMo-Full-v12"]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
@@ -119,7 +120,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v11"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v12"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -210,7 +211,7 @@ class BenchmarkFailure(FrozenModel):
 
 
 class AnswerAgentStep(FrozenModel):
-    """One bounded answer-agent decision: call a public recipe or finish.
+    """One bounded answer-agent decision: call a public read tool or finish.
 
     Tool arguments travel as `arguments_json` — one JSON object encoded as a
     string — because OpenAI-compatible strict mode requires every object in the
@@ -261,14 +262,16 @@ class AnswerAgentStep(FrozenModel):
 
 
 class ToolCallRecord(FrozenModel):
-    """One public read call and its complete envelope or JSON response."""
+    """One public read call and its complete typed or JSON response."""
 
     name: NonEmpty
     arguments: dict[str, object]
     arguments_trailing: str = ""
     latency_ms: int = Field(ge=0)
     succeeded: bool = True
-    response: Annotated[Envelope | JsonValue, Field(union_mode="left_to_right")]
+    response: Annotated[
+        Envelope | ContextBundleV1 | JsonValue, Field(union_mode="left_to_right")
+    ]
 
 
 class JudgeOutput(FrozenModel):
@@ -382,7 +385,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v11"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v12"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

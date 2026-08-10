@@ -18,18 +18,20 @@ class _DeploymentHandler(BaseHTTPRequestHandler):
     """Tiny HTTP deployment used from outside the source environment."""
 
     ingested: list[tuple[dict[str, list[str]], bytes]] = []
-    recipe_arguments: list[dict[str, object]] = []
+    operation_arguments: list[dict[str, object]] = []
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
-        if self.path == "/recipes":
+        if self.path == "/operations":
             self._json(
                 [
                     {
-                        "name": "entity_resolve",
+                        "name": "resolve_entity",
                         "description": "Resolve an entity.",
                         "input_schema": {"type": "object"},
+                        "result_schema": {"type": "object"},
+                        "result_contract": "envelope",
                         "output_grain": "fact",
-                        "answer_intent": "current_facts",
+                        "answer_intent": "identity",
                     }
                 ]
             )
@@ -51,10 +53,19 @@ class _DeploymentHandler(BaseHTTPRequestHandler):
                 }
             )
             return
-        if parsed.path == "/recipe/entity_resolve":
-            self.recipe_arguments.append(json.loads(content))
+        if parsed.path == "/operations/resolve_entity":
+            self.operation_arguments.append(json.loads(content))
             self._json(
-                {"grain": "fact", "freshness": {"pg_live_ts": "2026-07-20T10:30:00Z"}}
+                {
+                    "grain": "fact",
+                    "temporal_scope": {
+                        "mode": "current",
+                        "evaluated_at": "2026-07-20T10:30:00Z",
+                        "believed_at": "2026-07-20T10:30:00Z",
+                        "identity_regime": "current",
+                    },
+                    "freshness": {"pg_live_ts": "2026-07-20T10:30:00Z"},
+                }
             )
             return
         self.send_error(404)
@@ -119,7 +130,7 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
     source = tmp_path / "fresh-wheel.md"
     source.write_bytes(b"fresh wheel push\n")
     _DeploymentHandler.ingested = []
-    _DeploymentHandler.recipe_arguments = []
+    _DeploymentHandler.operation_arguments = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _DeploymentHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -131,13 +142,20 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
             [str(executable), "--version"], check=True, capture_output=True, text=True
         )
         listing = subprocess.run(
-            [str(executable), "query", "list"],
+            [str(executable), "operations", "list"],
             check=True,
             capture_output=True,
             text=True,
         )
         query = subprocess.run(
-            [str(executable), "query", "run", "entity_resolve", "--arg", "name=Alice"],
+            [
+                str(executable),
+                "operations",
+                "run",
+                "resolve_entity",
+                "--arg",
+                "name=Alice",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -164,10 +182,10 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         thread.join()
 
     assert version.stdout.strip() == "RememberStack 0.2.0"
-    assert json.loads(listing.stdout)["name"] == "entity_resolve"
+    assert json.loads(listing.stdout)["name"] == "resolve_entity"
     assert json.loads(query.stdout)["grain"] == "fact"
     assert json.loads(ingest.stdout)["created"] is True
-    assert _DeploymentHandler.recipe_arguments == [{"name": "Alice"}]
+    assert _DeploymentHandler.operation_arguments == [{"name": "Alice"}]
     ((parameters, content),) = _DeploymentHandler.ingested
     assert parameters["source_kind"] == ["fresh-wheel"]
     assert parameters["source_ref"] == ["external/note-7"]

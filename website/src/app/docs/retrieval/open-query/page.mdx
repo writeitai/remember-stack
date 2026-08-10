@@ -6,7 +6,7 @@ export const metadata = {
 
 # Open query space
 
-Open query is the power surface for agents that can write SQL or Cypher. It sits beside the three assured operations — not under them.
+Open query is the power surface for agents that can write SQL or Cypher. It sits beside the four assured operations — not under them.
 
 Parent: [Retrieval](/docs/retrieval). Wire paths: [API reference](/docs/reference/api).
 
@@ -111,7 +111,7 @@ These are **nomination** helpers. Confirm against live facts/claims views before
 ## Saved queries
 
 - Versioned registry rows under namespaces (e.g. `examples.*`).
-- Seventeen former recipe patterns live here as examples — **not** top-level tools.
+- Seventeen former operation patterns live here as examples — **not** top-level tools.
 - Running a saved query executes its immutable SQL at the active version.
 
 List: `GET /query/saved`. Run: `POST /query/saved/{namespace}/{name}/run`.
@@ -130,7 +130,7 @@ Writes never go through open query. The sole ordinary client write is **ingest**
 
 ## When to prefer assured ops instead
 
-Use `current_context` / `question_context` / `resolve_entity` when you want:
+Use `fact_context` / `testimony_context` / `resolve_entity` when you want:
 
 - grain-typed envelopes
 - automatic contradiction packaging

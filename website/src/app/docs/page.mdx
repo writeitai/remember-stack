@@ -49,7 +49,7 @@ Primary consumers are agent harnesses (Claude Code, Codex, OpenCode, and peers).
 1. **Filesystem-first.** Four read-only mounts: corpus tree, converted artifacts, raw originals (off the nav path), Plane K checkout. Prefer `ls` / read / `grep` when mounts exist.
 2. **Query when files cannot.** Semantic search, graph traversal, time-travel, hydration, open SQL/Cypher — via API, CLI, and MCP with the **same** operations.
 3. **Honest envelopes.** Every assured answer declares grain, freshness, contradictions, truncation, and typed “no”s so the agent can *reason about* the answer. Wire shape is flat single-grain by default — see [Envelope](/docs/retrieval/envelope).
-4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the three assured operations. Automated cold-agent checks guard that curriculum.
+4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the four assured operations. Automated cold-agent checks guard that curriculum.
 
 Humans get the same audit trail: every conclusion drills to claims, then to the exact span, page, image region, or second of audio.
 
@@ -65,13 +65,14 @@ Never stop at orientation for decisions that cost money, trust, or irreversible 
 
 ## Ship surface (what agents call today)
 
-Exactly **three** top-level assured operations:
+Exactly **four** top-level assured operations:
 
 | Operation | Use for |
 | --- | --- |
 | `resolve_entity` | Turn a name/string into ranked entity candidates |
-| `question_context` | High-recall **evidence** context (claims + chunks) for a question |
-| `current_context` | **Current-fact** context with live testimony under budget |
+| `testimony_context` | High-recall **evidence** context (claims + chunks) for a question |
+| `fact_context` | **Current or historical fact** context with live testimony under budget |
+| `answer_context` | Both complete authority views in `ContextBundle/v1` |
 
 Plus open query: sandboxed SQL, read-only Cypher over the graph snapshot, saved `examples.*` queries, and schema discovery. Full contracts: [Retrieval](/docs/retrieval), [API](/docs/reference/api).
 

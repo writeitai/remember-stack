@@ -1,7 +1,9 @@
 """The embedded-LanceDB P1 chunk index: one table of text + vectors (D8)."""
 
 from collections.abc import Mapping
+from datetime import datetime
 from datetime import timedelta
+from datetime import UTC
 import math
 from pathlib import Path
 import random
@@ -22,13 +24,23 @@ from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
+from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import P1FactRow
+from rememberstack.model.assured_operations import AtFactTime
+from rememberstack.model.assured_operations import CurrentFactTime
+from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.assured_operations import HistoryFactTime
+from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.p1_index import P1Nomination
 
 _CHUNK_TABLE = "chunks"
 _CLAIM_TABLE = "claims"
 _FACT_TABLE = "facts"
 _ENTITY_TABLE = "entities"
+
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_MIN_TIME_US: Final = -(2**63) + 1
+_MAX_TIME_US: Final = 2**63 - 1
 
 LANCE_TARGET_PARTITION_ROWS: Final = 8_192
 """WP-5.6 IVF_FLAT target: one vector partition per roughly 8k rows."""
@@ -228,10 +240,12 @@ class LanceChunkIndex:
         return {row["claim_id"]: tuple(row["vector"]) for row in rows}
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
-        """Insert or replace facts-channel rows by fact_id; idempotent."""
+        """Insert or replace facts by their complete deployment/kind/id key."""
+        if not rows:
+            return
         self._upsert(
             table=_FACT_TABLE,
-            key="fact_id",
+            key=["deployment_id", "kind", "fact_id"],
             payload=[
                 {
                     "fact_id": str(row.fact_id),
@@ -239,11 +253,62 @@ class LanceChunkIndex:
                     "kind": row.kind,
                     "label": row.label,
                     "status": row.status,
+                    "valid_from_us": _optional_time_us(
+                        value=row.valid_from, absent=_MIN_TIME_US
+                    ),
+                    "valid_until_us": _optional_time_us(
+                        value=row.valid_until, absent=_MAX_TIME_US
+                    ),
+                    "ingested_at_us": _utc_epoch_micros(value=row.ingested_at),
+                    "invalidated_at_us": _optional_time_us(
+                        value=row.invalidated_at, absent=_MAX_TIME_US
+                    ),
                     "vector": list(row.vector),
                 }
                 for row in rows
             ],
         )
+        self._ensure_scalar_index(table_name=_FACT_TABLE, column="deployment_id")
+        self._ensure_scalar_index(table_name=_FACT_TABLE, column="kind")
+        self._ensure_bitmap_index(table_name=_FACT_TABLE, column="status")
+        for column in (
+            "valid_from_us",
+            "valid_until_us",
+            "ingested_at_us",
+            "invalidated_at_us",
+        ):
+            self._ensure_scalar_index(table_name=_FACT_TABLE, column=column)
+        self._maintain_indexed_tail(table_name=_FACT_TABLE)
+
+    def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
+        """Refresh exact mutable eligibility fields without provider calls."""
+        if not rows or not self._has_table(table_name=_FACT_TABLE):
+            return
+        for row in rows:
+            deployment_id = str(row.deployment_id)
+            fact_id = str(row.fact_id)
+            if row.kind not in {"relation", "observation"}:
+                raise ValueError(f"unknown fact kind {row.kind!r}")
+            where = (
+                f"deployment_id = '{deployment_id}'"
+                f" AND kind = '{row.kind}'"
+                f" AND fact_id = '{fact_id}'"
+            )
+            values = {
+                "status": row.status,
+                "valid_from_us": _optional_time_us(
+                    value=row.valid_from, absent=_MIN_TIME_US
+                ),
+                "valid_until_us": _optional_time_us(
+                    value=row.valid_until, absent=_MAX_TIME_US
+                ),
+                "ingested_at_us": _utc_epoch_micros(value=row.ingested_at),
+                "invalidated_at_us": _optional_time_us(
+                    value=row.invalidated_at, absent=_MAX_TIME_US
+                ),
+            }
+            self._update_with_retry(where=where, values=values)
+        self._maintain_indexed_tail(table_name=_FACT_TABLE)
 
     def search_claims(
         self,
@@ -496,6 +561,7 @@ class LanceChunkIndex:
         k: int,
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         deployment_id = str(UUID(deployment_id))
@@ -515,7 +581,8 @@ class LanceChunkIndex:
                 table.search(list(vector)).where(
                     f"deployment_id = '{deployment_id}'"
                     + (" AND is_current_testimony" if current_only else "")
-                    + narrowing,
+                    + narrowing
+                    + _uuid_membership_clause(column="claim_id", ids=candidate_ids),
                     prefilter=True,
                 ),
             )
@@ -534,6 +601,7 @@ class LanceChunkIndex:
         k: int,
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         deployment_id = str(UUID(deployment_id))
@@ -553,6 +621,7 @@ class LanceChunkIndex:
                 field.name for field in self._connection.open_table(_CLAIM_TABLE).schema
             },
         )
+        where += _uuid_membership_clause(column="claim_id", ids=candidate_ids)
         rows = (
             self._connection.open_table(_CLAIM_TABLE)
             .search(query, query_type="fts", fts_columns="text")
@@ -571,6 +640,7 @@ class LanceChunkIndex:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel."""
         deployment_id = str(UUID(deployment_id))
@@ -585,12 +655,16 @@ class LanceChunkIndex:
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
         )
-        where = _chunk_search_where(
-            deployment_id=deployment_id,
-            policy_generation=policy_generation,
-            embedder_generation=embedder_generation,
-            columns=columns,
-        ) + _equality_clause(filters=equality_filters, columns=columns)
+        where = (
+            _chunk_search_where(
+                deployment_id=deployment_id,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                columns=columns,
+            )
+            + _equality_clause(filters=equality_filters, columns=columns)
+            + _uuid_membership_clause(column="chunk_id", ids=candidate_ids)
+        )
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -614,6 +688,7 @@ class LanceChunkIndex:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         deployment_id = str(UUID(deployment_id))
@@ -629,12 +704,16 @@ class LanceChunkIndex:
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
         )
-        where = _chunk_search_where(
-            deployment_id=deployment_id,
-            policy_generation=policy_generation,
-            embedder_generation=embedder_generation,
-            columns=columns,
-        ) + _equality_clause(filters=equality_filters, columns=columns)
+        where = (
+            _chunk_search_where(
+                deployment_id=deployment_id,
+                policy_generation=policy_generation,
+                embedder_generation=embedder_generation,
+                columns=columns,
+            )
+            + _equality_clause(filters=equality_filters, columns=columns)
+            + _uuid_membership_clause(column="chunk_id", ids=candidate_ids)
+        )
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
             .search(query, query_type="fts", fts_columns="text")
@@ -645,9 +724,17 @@ class LanceChunkIndex:
         return self._nominations(rows, id_column="chunk_id", channel="bm25")
 
     def search_facts_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        kind: str | None,
+        candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Scored fact nominations from the facts channel."""
+        """Scored fact nominations after optional D87 temporal eligibility."""
         deployment_id = str(UUID(deployment_id))
         if kind is not None and kind not in ("relation", "observation"):
             raise ValueError(f"unknown facts-channel kind {kind!r}")
@@ -656,6 +743,8 @@ class LanceChunkIndex:
         where = f"deployment_id = '{deployment_id}'"
         if kind is not None:
             where += f" AND kind = '{kind}'"
+        where += _fact_time_clause(time=time, evaluated_at=evaluated_at)
+        where += _fact_membership_clause(keys=candidate_keys)
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -987,6 +1076,22 @@ class LanceChunkIndex:
                     raise
                 self._pause_before_retry(attempt=attempt)
 
+    def _update_with_retry(self, *, where: str, values: dict[str, object]) -> None:
+        """Apply one scalar update despite concurrent Lance commits."""
+        for attempt in range(_LANCE_COMMIT_RETRIES):
+            try:
+                self._connection.open_table(_FACT_TABLE).update(
+                    where=where, values=values
+                )
+                return
+            except RuntimeError as exc:
+                if (
+                    "Retryable commit conflict" not in str(exc)
+                    or attempt == _LANCE_COMMIT_RETRIES - 1
+                ):
+                    raise
+                self._pause_before_retry(attempt=attempt)
+
     def _purge_table_rows(
         self, *, table: str, key: str, deployment_id: UUID, ids: tuple[UUID, ...]
     ) -> None:
@@ -1089,6 +1194,79 @@ def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) ->
             raise ValueError(f"the projection has no {column} column to filter on")
         clause += f" AND {column} = '{_escape_literal(str(value))}'"
     return clause
+
+
+def _uuid_membership_clause(*, column: str, ids: tuple[str, ...] | None) -> str:
+    """Render an exact UUID candidate set for pre-top-k nomination."""
+    if ids is None:
+        return ""
+    if not ids:
+        return " AND false"
+    rendered = ", ".join(f"'{UUID(item)}'" for item in ids)
+    return f" AND {column} IN ({rendered})"
+
+
+def _fact_membership_clause(*, keys: tuple[tuple[str, str], ...] | None) -> str:
+    """Render exact composite fact identities for pre-top-k nomination."""
+    if keys is None:
+        return ""
+    if not keys:
+        return " AND false"
+    predicates: list[str] = []
+    for kind, fact_id in keys:
+        if kind not in {"relation", "observation"}:
+            raise ValueError(f"unknown fact kind {kind!r}")
+        predicates.append(f"(kind = '{kind}' AND fact_id = '{UUID(fact_id)}')")
+    return " AND (" + " OR ".join(predicates) + ")"
+
+
+def _utc_epoch_micros(*, value: datetime) -> int:
+    """Encode an aware timestamp exactly as signed Unix microseconds."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("fact eligibility timestamps must be timezone-aware")
+    delta = value.astimezone(UTC) - _EPOCH
+    return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
+def _optional_time_us(*, value: datetime | None, absent: int) -> int:
+    """Encode a nullable interval endpoint with an explicit unbounded sentinel."""
+    return absent if value is None else _utc_epoch_micros(value=value)
+
+
+def _fact_time_clause(*, time: FactTime | None, evaluated_at: datetime | None) -> str:
+    """Render D87 current-belief time eligibility as a Lance prefilter."""
+    if time is None:
+        return ""
+    if evaluated_at is None:
+        raise ValueError("evaluated_at is required with a fact time selector")
+    evaluation_us = _utc_epoch_micros(value=evaluated_at)
+    clause = (
+        " AND status = 'active'"
+        f" AND ingested_at_us <= {evaluation_us}"
+        f" AND invalidated_at_us = {_MAX_TIME_US}"
+    )
+    if isinstance(time, CurrentFactTime):
+        return (
+            clause
+            + f" AND valid_from_us <= {evaluation_us}"
+            + f" AND valid_until_us > {evaluation_us}"
+        )
+    if isinstance(time, AtFactTime):
+        at_us = _utc_epoch_micros(value=time.at)
+        return (
+            clause + f" AND valid_from_us <= {at_us}" + f" AND valid_until_us > {at_us}"
+        )
+    if isinstance(time, OverlapFactTime):
+        from_us = _utc_epoch_micros(value=time.from_)
+        to_us = _utc_epoch_micros(value=time.to)
+        return (
+            clause
+            + f" AND valid_from_us <= {to_us}"
+            + f" AND valid_until_us > {from_us}"
+        )
+    if isinstance(time, HistoryFactTime):
+        return clause + f" AND valid_from_us <= {evaluation_us}"
+    raise TypeError(f"unsupported fact time selector {type(time).__name__}")
 
 
 def _chunk_search_where(

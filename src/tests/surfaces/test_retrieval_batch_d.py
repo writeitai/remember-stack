@@ -83,11 +83,35 @@ class _QuestionIndex:
     def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
         return (self.claim_id,)
 
+    def search_claims_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the claim only when PostgreSQL declared it eligible."""
+        return self._scored(item_id=self.claim_id, candidate_ids=candidate_ids)
+
+    def search_claims_lexical_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the same eligible claim for the lexical channel."""
+        return self._scored(item_id=self.claim_id, candidate_ids=candidate_ids)
+
     def search_chunks(self, **_: object) -> tuple[str, ...]:
         return (self.chunk_id,)
 
     def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
         return (self.chunk_id,)
+
+    def search_chunks_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the chunk only when PostgreSQL declared it eligible."""
+        return self._scored(item_id=self.chunk_id, candidate_ids=candidate_ids)
+
+    def search_chunks_lexical_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the same eligible chunk for the lexical channel."""
+        return self._scored(item_id=self.chunk_id, candidate_ids=candidate_ids)
 
     def chunk_texts(
         self,
@@ -109,6 +133,15 @@ class _QuestionIndex:
             )
             for rank, entity_id in enumerate(self.entity_ids, start=1)
         )
+
+    @staticmethod
+    def _scored(
+        *, item_id: str, candidate_ids: tuple[str, ...]
+    ) -> tuple[P1Nomination, ...]:
+        """Build one deterministic exact-membership nomination."""
+        if item_id not in candidate_ids:
+            return ()
+        return (P1Nomination(item_id=item_id, rank=1, score=1.0, channel="test"),)
 
 
 class _Corpus:
@@ -232,6 +265,38 @@ class _Corpus:
                 stance="contradicts",
                 at=_NOW - timedelta(days=1),
             )
+        scoped_mention = uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO mentions (mention_id, deployment_id, surface_form,"
+                " normalized_lemma, chunk_id, claim_id, doc_id, created_at)"
+                " VALUES (:mention, :deployment, 'Alice', 'alice', :chunk,"
+                " :claim, :doc, :at)"
+            ),
+            {
+                "mention": scoped_mention,
+                "deployment": _DEPLOYMENT_ID,
+                "chunk": self.query_chunk_id,
+                "claim": self.claims["alice_beacon-support-0"],
+                "doc": self.docs["alice_beacon-support-0"],
+                "at": _NOW,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO resolution_decisions (decision_id, deployment_id,"
+                " mention_id, entity_id, method, confidence, resolver_version,"
+                " decided_at) VALUES (:decision, :deployment, :mention, :entity,"
+                " 'T0', 1.0, 'batch-d', :at)"
+            ),
+            {
+                "decision": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "mention": scoped_mention,
+                "entity": self.entities["alice"],
+                "at": _NOW,
+            },
+        )
         # Repeating a claim inside one source lineage must not inflate D54's
         # evidence total. The production query therefore has to count the
         # authoritative evidence_lineage rows, not raw claim associations.
@@ -292,7 +357,7 @@ class _Corpus:
             text("UPDATE documents SET deleted_at = :at WHERE doc_id = :doc"),
             {"at": _NOW, "doc": tombstoned_doc},
         )
-        # The v4 entity channel confirms through entities_current, whose D48
+        # Context entity validation confirms through entities_current, whose D48
         # membership requires a surviving document association. Give the
         # three connected entities explicit, live document provenance instead
         # of weakening the production view for a test fixture.
@@ -594,11 +659,11 @@ def _answer(corpus: tuple[_Corpus, GraphQueries], **arguments: Any):  # noqa: AN
     )
 
 
-def test_question_context_v4_flags_default_false(
+def test_testimony_context_contains_only_testimony(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:
     seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
+    answer = seeded.query_engine().testimony_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice"
     )
 
@@ -608,112 +673,49 @@ def test_question_context_v4_flags_default_false(
     assert answer.entities == ()
 
 
-def test_question_context_v4_fact_channel_reuses_current_context(
+def test_testimony_context_can_be_scoped_to_a_current_entity(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:
     seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
-        deployment_id=_DEPLOYMENT_ID, query="Alice", include_facts=True
-    )
-
-    assert {fact.fact_id for fact in answer.facts} == {seeded.relations["alice_beacon"]}
-    assert answer.fact_evidence
-    assert answer.evidence_totals
-    assert len(answer.fact_evidence) <= 60
-
-
-def test_question_context_v4_entity_channel_is_resolution_first_and_confirmed(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
-        deployment_id=_DEPLOYMENT_ID, query="Alice", include_entities=True
-    )
-
-    assert [candidate.entity_id for candidate in answer.entities] == [
-        seeded.entities["alice"],
-        seeded.entities["acme"],
-    ]
-    assert [candidate.tier for candidate in answer.entities] == ["T0", "semantic"]
-
-
-def test_question_context_confirms_before_cutting_the_entity_cap(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    """A stale semantic head cannot hide the 21st, live ranked nomination."""
-    seeded, _graph = corpus
-    stale_head = tuple(uuid4() for _ in range(20))
-    engine = seeded.query_engine(entity_ids=(*stale_head, seeded.entities["acme"]))
-
-    answer = engine.question_context(
-        deployment_id=_DEPLOYMENT_ID, query="no exact alias", include_entities=True
-    )
-
-    assert [candidate.entity_id for candidate in answer.entities] == [
-        seeded.entities["acme"]
-    ]
-    assert answer.dropped_by_hydration >= len(stale_head)
-
-
-def test_question_context_bounds_exact_alias_fanout_before_confirmation(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    """A common alias cannot create an unbounded confirmation parameter set."""
-    seeded, _graph = corpus
-    with seeded.engine.begin() as connection:
-        for index in range(30):
-            entity_id = uuid4()
-            connection.execute(
-                text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
-                    " canonical_name, normalized_name) VALUES (:entity,"
-                    " :deployment, 'Concept', :name, lower(:name))"
-                ),
-                {
-                    "entity": entity_id,
-                    "deployment": _DEPLOYMENT_ID,
-                    "name": f"Fanout {index:02d}",
-                },
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
-                    " alias_text, normalized_lemma, provenance) VALUES"
-                    " (:alias, :deployment, :entity, 'Fanout', 'fanout',"
-                    " 'llm_canonical')"
-                ),
-                {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
-            )
-
-    engine = seeded.query_engine()
-    resolved = engine.resolve(deployment_id=_DEPLOYMENT_ID, name="Fanout")
-    assert len(resolved.entities) == 30
-
-    answer = engine.question_context(
-        deployment_id=_DEPLOYMENT_ID, query="Fanout", include_entities=True
-    )
-
-    assert [candidate.entity_id for candidate in answer.entities] == [
-        seeded.entities["acme"]
-    ]
-    assert answer.dropped_by_hydration == 21
-
-
-def test_question_context_v4_flags_work_together(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
+    answer = seeded.query_engine().testimony_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Alice",
-        include_facts=True,
-        include_entities=True,
+        entity_ids=(seeded.entities["alice"],),
     )
 
-    assert answer.facts
-    assert answer.entities
     assert answer.evidence
     assert answer.chunks
+    assert answer.facts == ()
+    assert answer.entities == ()
+
+
+def test_testimony_context_rejects_an_unknown_entity_without_partial_results(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().testimony_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", entity_ids=(uuid4(),)
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.UNKNOWN_ENTITY
+    assert answer.evidence == ()
+    assert answer.chunks == ()
+
+
+def test_testimony_context_discloses_bounded_claim_and_chunk_nomination(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    """A saturated P1 channel is marked as truncated instead of a quiet top-k."""
+    seeded, _graph = corpus
+    answer = seeded.query_engine().testimony_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", k=1, candidate_k=1
+    )
+
+    assert answer.truncation is not None
+    assert answer.truncation.truncated
+    assert not answer.truncation.total_is_exact
+    assert answer.truncation.returned == len(answer.evidence) + len(answer.chunks)
 
 
 def test_two_entity_path_has_both_stances_and_exact_totals(
@@ -723,7 +725,6 @@ def test_two_entity_path_has_both_stances_and_exact_totals(
     answer = _answer(corpus, entity_b="Acme", hops=2, evidence_per_fact=1)
 
     assert answer.grain is Grain.EVIDENCE
-    assert not answer.parts
     assert answer.negative is None
     assert answer.paths and answer.paths[0].length == 2
     assert {edge.relation_id for edge in answer.edges} == {
@@ -734,12 +735,12 @@ def test_two_entity_path_has_both_stances_and_exact_totals(
         assert {
             link.stance
             for link in answer.fact_evidence
-            if link.fact_id == edge.relation_id
+            if link.fact_kind == "relation" and link.fact_id == edge.relation_id
         } == {"supports", "contradicts"}
         assert {
             total.stance: (total.returned, total.total)
             for total in answer.evidence_totals
-            if total.fact_id == edge.relation_id
+            if total.fact_kind == "relation" and total.fact_id == edge.relation_id
         } == {"supports": (1, 2), "contradicts": (1, 1)}
 
 

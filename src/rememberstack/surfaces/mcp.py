@@ -1,6 +1,6 @@
 """The MCP surface (retrieval §7, D50 + open query space §3.1).
 
-Recipe tools still render from the recipe registry. When an `OpenQueryFacade`
+Assured tools render from the operation registry. When an `OpenQueryFacade`
 is composed, the nine static infrastructure tools are listed and dispatched
 alongside them. When both ingest and pipeline-readiness ports are composed,
 the Layer 1 write tools (`ingest`, `pipeline_readiness`) are advertised first.
@@ -23,15 +23,15 @@ from rememberstack.surfaces.http_api import PipelineReadinessPort
 from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
 from rememberstack.surfaces.mcp_memory_tools import memory_write_tool_descriptors
 from rememberstack.surfaces.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
+from rememberstack.surfaces.operation_surface import InvalidArgumentError
+from rememberstack.surfaces.operation_surface import MissingArgumentError
+from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import UnknownOperationError
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.mcp_tools import dispatch_open_query_tool
 from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
 from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
-from rememberstack.surfaces.recipe_surface import InvalidArgumentError
-from rememberstack.surfaces.recipe_surface import MissingArgumentError
-from rememberstack.surfaces.recipe_surface import RecipeSurface
-from rememberstack.surfaces.recipe_surface import UnknownRecipeError
 
 
 class _LocalMemoryWriteBackend:
@@ -93,28 +93,28 @@ class _LocalMemoryWriteBackend:
         return None
 
 
-class RecipeMcpServer:
-    """Render and dispatch recipes, optional write tools, and open-query tools."""
+class OperationMcpServer:
+    """Render assured operations, optional write tools, and open-query tools."""
 
     def __init__(
         self,
         *,
-        surface: RecipeSurface,
+        surface: OperationSurface,
         open_query: OpenQueryFacade | None = None,
         ingest: IngestPort | None = None,
         pipeline_readiness: PipelineReadinessPort | None = None,
     ) -> None:
-        """Bind the MCP server to the shared recipe surface and optional ports.
+        """Bind the MCP server to the operation surface and optional ports.
 
-        Fail closed when both recipe and open-query authorities are composed for
+        Fail closed when operation and open-query authorities are composed for
         different deployments — one MCP server is one trust domain (D50). Write
         tools require both ingest and pipeline_readiness; half-wiring either
         port alone is refused so tools/list never advertises a half-broken pair.
-        Recipe-only compositions omit the write tools (O2).
+        Operation-only compositions omit the write tools (O2).
         """
         if open_query is not None and open_query.deployment_id != surface.deployment_id:
             raise ValueError(
-                "the recipe surface and the open-query facade serve different"
+                "the operation surface and the open-query facade serve different"
                 " deployments — one deployment is one trust domain (D50)"
             )
         if (ingest is None) != (pipeline_readiness is None):
@@ -133,12 +133,11 @@ class RecipeMcpServer:
             )
 
     def list_tools(self) -> dict[str, object]:
-        """The `tools/list` result: write tools (when composed), recipes, open-query.
+        """List write tools, assured operations, then open-query infrastructure.
 
-        Each recipe tool carries its name, description, and JSON-Schema
-        `inputSchema` — the recipe registry rendered verbatim. Write tools lead
-        when both ports are present. When open query is composed, the nine §3.1
-        tools are appended. `examples.*` never appear as tools.
+        Operation schemas render from the registry. Write tools lead when both
+        ports are composed; the nine §3.1 tools follow when open query is
+        composed. `examples.*` never appear as top-level tools.
         """
         tools: list[dict[str, object]] = []
         if self._write_backend is not None:
@@ -158,12 +157,11 @@ class RecipeMcpServer:
     def call_tool(
         self, *, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        """The `tools/call` result: write, recipe, or open-query infrastructure tool.
+        """Run a write, assured-operation, or open-query tool.
 
-        Recipe answers are the D49 envelope as JSON text. Open-query answers
-        are QueryResult/v1 or discovery payloads as JSON text. Write tools use
-        the structured error envelope. Unknown tools and typed failures are
-        protocol error results (`isError`), never exceptions across the wire.
+        Operation answers use their declared contract as JSON text. Open-query
+        answers are QueryResult/v1 or discovery payloads. Write tools use their
+        structured error envelope. Typed failures remain protocol error results.
         """
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(
@@ -194,14 +192,14 @@ class RecipeMcpServer:
                 "isError": False,
             }
         try:
-            envelope = self._surface.run(name=name, arguments=arguments)
+            result = self._surface.run(name=name, arguments=arguments)
         except (
-            UnknownRecipeError,
+            UnknownOperationError,
             MissingArgumentError,
             InvalidArgumentError,
         ) as error:
             return {"content": [{"type": "text", "text": str(error)}], "isError": True}
         return {
-            "content": [{"type": "text", "text": envelope.model_dump_json()}],
+            "content": [{"type": "text", "text": result.model_dump_json()}],
             "isError": False,
         }
