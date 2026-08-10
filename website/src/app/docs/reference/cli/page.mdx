@@ -62,8 +62,10 @@ remember operations run fact_context \
 
 Runs one operation by name over `key=value` arguments and prints its declared
 result as JSON. The first three operations return an `Envelope`;
-`answer_context` returns `ContextBundle/v1`. Arguments are coerced by the
-operation's declared types. An unknown operation
+`answer_context` returns `ContextBundle/v1`. The CLI parses JSON literals such
+as integers, arrays, and objects before sending them; an ordinary unquoted token
+remains a string. Operation dispatch then validates those exact JSON types
+without coercion. An unknown operation
 or a missing required argument prints the API's error to stderr and exits
 nonzero.
 

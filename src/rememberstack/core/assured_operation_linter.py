@@ -37,22 +37,29 @@ _CONTRACTS = {
 }
 
 
-def lint_assured_operation(operation: AssuredOperation) -> None:
-    """Reject any descriptor that diverges from the four canonical tuples."""
+def lint_assured_operation(
+    operation: AssuredOperation, *, expected: AssuredOperation
+) -> None:
+    """Reject any descriptor that diverges from its canonical operation."""
+    if operation.name is not expected.name:
+        raise AssuredOperationLintError(
+            f"expected canonical operation {expected.name.value!r},"
+            f" got {operation.name.value!r}"
+        )
     if operation.version != 1:
         raise AssuredOperationLintError(
             f"operation {operation.name.value!r} must use canonical version 1"
         )
-    expected = _CONTRACTS[operation.name]
+    expected_contract = _CONTRACTS[operation.name]
     actual = (
         operation.result_contract,
         operation.output_grain,
         operation.answer_intent,
     )
-    if actual != expected:
+    if actual != expected_contract:
         raise AssuredOperationLintError(
             f"operation {operation.name.value!r} has contract tuple {actual!r};"
-            f" expected {expected!r}"
+            f" expected {expected_contract!r}"
         )
     if operation.name is AssuredOperationName.ANSWER_CONTEXT:
         if not isinstance(operation.execution_plan, OperationBundlePlan):
@@ -63,14 +70,18 @@ def lint_assured_operation(operation: AssuredOperation) -> None:
             raise AssuredOperationLintError(
                 "answer_context must bundle testimony_context then fact_context"
             )
-        return
-    if not isinstance(operation.execution_plan, PrimitiveChainPlan):
+    else:
+        if not isinstance(operation.execution_plan, PrimitiveChainPlan):
+            raise AssuredOperationLintError(
+                f"{operation.name.value} must use a primitive_chain plan"
+            )
+        if tuple(step.op for step in operation.execution_plan.steps) != (
+            operation.name.value,
+        ):
+            raise AssuredOperationLintError(
+                f"{operation.name.value} must delegate to its same-named authority"
+            )
+    if operation != expected:
         raise AssuredOperationLintError(
-            f"{operation.name.value} must use a primitive_chain plan"
-        )
-    if tuple(step.op for step in operation.execution_plan.steps) != (
-        operation.name.value,
-    ):
-        raise AssuredOperationLintError(
-            f"{operation.name.value} must delegate to its same-named authority"
+            f"operation {operation.name.value!r} must match its canonical descriptor exactly"
         )

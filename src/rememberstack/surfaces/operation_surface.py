@@ -1,9 +1,7 @@
 """Shared HTTP/SDK/CLI/MCP rendering for the four assured operations."""
 
 from datetime import datetime
-from datetime import UTC
 import hashlib
-import json
 from typing import cast
 from uuid import UUID
 
@@ -143,7 +141,7 @@ def _plan_hash(*, operation: AssuredOperation, child_hashes: dict[str, str]) -> 
 def _coerce_arguments(
     *, operation: AssuredOperation, arguments: dict[str, object]
 ) -> dict[str, object]:
-    """Coerce one transport object according to the canonical parameter schema."""
+    """Validate one transport object against the canonical parameter schema."""
     unknown = set(arguments) - set(operation.parameters)
     if unknown:
         raise InvalidArgumentError(f"unknown argument(s): {', '.join(sorted(unknown))}")
@@ -169,31 +167,29 @@ def _coerce_arguments(
 
 
 def _coerce_value(*, name: str, value: object, declared: str) -> object:
-    """Coerce one value without accepting lossy or ambiguous conversions."""
+    """Validate one JSON value and convert only validated domain values."""
     if declared == "string":
         if not isinstance(value, str):
             raise TypeError("expected a string")
         return value
     if declared == "integer":
-        if isinstance(value, bool):
-            raise ValueError("expected an integer, got a boolean")
-        integer = int(str(value))
-        if isinstance(value, float) and not value.is_integer():
-            raise ValueError("expected an integer")
-        return integer
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("expected an integer")
+        return value
     if declared == "array":
-        raw = json.loads(value) if isinstance(value, str) else value
-        if not isinstance(raw, (list, tuple)):
+        if not isinstance(value, list):
             raise TypeError("expected an array")
-        return tuple(UUID(str(item)) for item in raw)
+        if any(not isinstance(item, str) for item in value):
+            raise TypeError("expected an array of strings")
+        return tuple(UUID(item) for item in value)
     if declared == "object" and name == "time":
-        raw = json.loads(value) if isinstance(value, str) else value
-        return _FACT_TIME.validate_python(raw)
+        if not isinstance(value, dict):
+            raise TypeError("expected an object")
+        return _FACT_TIME.validate_python(value)
     if declared == "timestamp":
-        instant = (
-            value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
-        )
-        return instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant
+        if not isinstance(value, datetime):
+            raise TypeError("expected a timestamp")
+        return value
     return value
 
 

@@ -128,10 +128,10 @@ class ReconcileHandler:
         )
 
         zero_relations = self._catalog.open_zero_support_relations(
-            relation_ids=relation_ids
+            deployment_id=deployment_id, relation_ids=relation_ids
         )
         zero_observations = self._catalog.open_zero_support_observations(
-            observation_ids=observation_ids
+            deployment_id=deployment_id, observation_ids=observation_ids
         )
         source_claims = tuple({t.claim_id for t in source_acted})
         source_relations = set(
@@ -235,7 +235,9 @@ class ReconcileHandler:
             ("observation", zero_observations),
         ):
             for fact_id in fact_ids:
-                if self._review_queue.has_open_support_withdrawn(fact_id=fact_id):
+                if self._review_queue.has_open_support_withdrawn(
+                    deployment_id=deployment_id, fact_kind=fact_kind, fact_id=fact_id
+                ):
                     continue
                 withdrawn = self._withdrawn_claim(
                     fact_kind=fact_kind, fact_id=fact_id, transcription=transcription
@@ -346,7 +348,7 @@ class CycleFinalizer:
         closed_relations = self._catalog.close_relations(
             deployment_id=deployment_id,
             relation_ids=self._catalog.open_zero_support_relations(
-                relation_ids=relation_ids
+                deployment_id=deployment_id, relation_ids=relation_ids
             ),
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
             reconciliation_id=reconciliation_id,
@@ -354,7 +356,7 @@ class CycleFinalizer:
         closed_observations = self._catalog.close_observations(
             deployment_id=deployment_id,
             observation_ids=self._catalog.open_zero_support_observations(
-                observation_ids=observation_ids
+                deployment_id=deployment_id, observation_ids=observation_ids
             ),
             reconciliation_id=reconciliation_id,
         )
@@ -474,14 +476,16 @@ def _cascade(
     catalog.recount(relation_ids=relation_ids, observation_ids=observation_ids)
     closed_relations = catalog.close_relations(
         deployment_id=deployment_id,
-        relation_ids=catalog.open_zero_support_relations(relation_ids=relation_ids),
+        relation_ids=catalog.open_zero_support_relations(
+            deployment_id=deployment_id, relation_ids=relation_ids
+        ),
         boundary=boundary,
         reconciliation_id=reconciliation_id,
     )
     closed_observations = catalog.close_observations(
         deployment_id=deployment_id,
         observation_ids=catalog.open_zero_support_observations(
-            observation_ids=observation_ids
+            deployment_id=deployment_id, observation_ids=observation_ids
         ),
         reconciliation_id=reconciliation_id,
     )

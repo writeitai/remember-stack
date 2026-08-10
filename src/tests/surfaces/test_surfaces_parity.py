@@ -47,6 +47,7 @@ from rememberstack.surfaces import OperationExecutor
 from rememberstack.surfaces import OperationMcpServer
 from rememberstack.surfaces import OperationSurface
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.cli import _split_operation_arg
 from rememberstack.surfaces.cli import operations_list
 from rememberstack.surfaces.cli import operations_run
 
@@ -383,6 +384,26 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         name="fact_context", arguments={"query": "Alice", "k": "not-an-integer"}
     )
     assert mcp_bad["isError"] is True
+
+    wrong_json_types = (
+        {"query": "Alice", "k": "2"},
+        {"query": "Alice", "entity_ids": json.dumps([str(uuid4())])},
+        {"query": "Alice", "time": json.dumps({"mode": "current"})},
+    )
+    for arguments in wrong_json_types:
+        response = deployment.client.post("/operations/fact_context", json=arguments)
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "invalid_parameter"
+
+
+def test_cli_operation_arguments_parse_json_before_strict_dispatch() -> None:
+    """CLI syntax adapts JSON literals; API and MCP dispatch never coerce them."""
+    assert _split_operation_arg("query=Who leads?") == ("query", "Who leads?")
+    assert _split_operation_arg("k=2") == ("k", 2)
+    assert _split_operation_arg('time={"mode":"current"}') == (
+        "time",
+        {"mode": "current"},
+    )
 
 
 def test_the_api_and_surface_must_serve_one_deployment(deployment: _Deployment) -> None:

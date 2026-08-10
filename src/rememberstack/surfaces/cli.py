@@ -179,7 +179,7 @@ def _run_operations(args: argparse.Namespace) -> int:
                 print(descriptor.model_dump_json())
             return 0
         try:
-            arguments = dict(_split_arg(pair) for pair in args.arg)
+            arguments = dict(_split_operation_arg(pair) for pair in args.arg)
         except ValueError as error:
             print(f"error: {error}", file=sys.stderr)
             return 2
@@ -393,7 +393,7 @@ def operations_list(*, client: httpx.Client) -> int:
 def operations_run(*, client: httpx.Client, name: str, arg_pairs: list[str]) -> int:
     """Run one operation through an injected client and print its response."""
     try:
-        arguments = dict(_split_arg(pair) for pair in arg_pairs)
+        arguments = dict(_split_operation_arg(pair) for pair in arg_pairs)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
@@ -414,6 +414,15 @@ def _split_arg(pair: str) -> tuple[str, str]:
     if not separator or not key:
         raise ValueError(f"argument {pair!r} is not key=value")
     return key, value
+
+
+def _split_operation_arg(pair: str) -> tuple[str, object]:
+    """Parse a CLI operation value as JSON, retaining ordinary bare strings."""
+    key, raw = _split_arg(pair)
+    try:
+        return key, json.loads(raw)
+    except json.JSONDecodeError:
+        return key, raw
 
 
 def _list(*, queue: ReviewQueue, deployment_id: UUID) -> int:

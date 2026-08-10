@@ -125,9 +125,11 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
         if operation.name is AssuredOperationName.TESTIMONY_CONTEXT
     )
     assert isinstance(testimony.execution_plan, PrimitiveChainPlan)
+    lint_assured_operation(testimony, expected=testimony)
     with pytest.raises(AssuredOperationLintError, match="contract tuple"):
         lint_assured_operation(
-            testimony.model_copy(update={"output_grain": Grain.FACT})
+            testimony.model_copy(update={"output_grain": Grain.FACT}),
+            expected=testimony,
         )
     with pytest.raises(AssuredOperationLintError, match="same-named authority"):
         lint_assured_operation(
@@ -143,7 +145,19 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
                         }
                     )
                 }
-            )
+            ),
+            expected=testimony,
+        )
+
+    with pytest.raises(AssuredOperationLintError, match="canonical descriptor exactly"):
+        lint_assured_operation(
+            testimony.model_copy(
+                update={
+                    "parameters": {"query": {"type": "integer", "required": True}},
+                    "result_schema": {"type": "string"},
+                }
+            ),
+            expected=testimony,
         )
 
 

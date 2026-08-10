@@ -19,6 +19,7 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ReviewDecisionError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import FactCatalog
+from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import cli_main
@@ -143,6 +144,57 @@ def _withdrawn_fact(*, engine: Engine) -> tuple[UUID, UUID]:
         normalizer_version="test",
     ).relation_id
     return relation, claim_id
+
+
+def test_open_withdrawn_guards_use_the_complete_fact_identity(
+    database_engine: Engine,
+) -> None:
+    """A relation flag cannot suppress a same-UUID observation or another tenant."""
+    relation_id, claim_id = _withdrawn_fact(engine=database_engine)
+    subject_id = _entity(engine=database_engine, name="Observed subject")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, obs_label, normalizer_version)"
+                " VALUES (:fact_id, :deployment_id, :subject_id,"
+                " 'Observed state', 'Observed state', 'test')"
+            ),
+            {
+                "fact_id": relation_id,
+                "deployment_id": _DEPLOYMENT_ID,
+                "subject_id": subject_id,
+            },
+        )
+    queue = ReviewQueue(engine=database_engine)
+    queue.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation_id,
+        claim_id=claim_id,
+        diff={},
+    )
+
+    assert queue.has_open_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID, fact_kind="relation", fact_id=relation_id
+    )
+    assert not queue.has_open_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID, fact_kind="observation", fact_id=relation_id
+    )
+    assert not queue.has_open_support_withdrawn(
+        deployment_id=uuid4(), fact_kind="relation", fact_id=relation_id
+    )
+
+    lifecycle = LifecycleCatalog(engine=database_engine)
+    assert (
+        lifecycle.open_zero_support_relations(
+            deployment_id=_DEPLOYMENT_ID, relation_ids=(relation_id,)
+        )
+        == ()
+    )
+    assert lifecycle.open_zero_support_observations(
+        deployment_id=_DEPLOYMENT_ID, observation_ids=(relation_id,)
+    ) == (relation_id,)
 
 
 def test_merge_verdict_performs_a_reversible_human_merge(

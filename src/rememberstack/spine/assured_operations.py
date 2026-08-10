@@ -32,7 +32,7 @@ class AssuredOperationRegistry:
 
     def register(self, *, deployment_id: UUID, operation: AssuredOperation) -> None:
         """Validate and idempotently register one canonical operation version."""
-        lint_assured_operation(operation)
+        _lint_canonical_operation(operation=operation)
         with self._engine.begin() as connection:
             connection.execute(
                 _INSERT_OPERATION,
@@ -85,7 +85,7 @@ class AssuredOperationRegistry:
                 "the assured-operation catalog must contain all four names"
             )
         for operation in operations:
-            lint_assured_operation(operation)
+            _lint_canonical_operation(operation=operation)
         with self._engine.begin() as connection:
             connection.execute(_DELETE_OPERATIONS, {"deployment_id": deployment_id})
             for operation in operations:
@@ -126,7 +126,7 @@ def _json_value(value: object) -> object:
 
 def _operation_from_row(row: RowMapping) -> AssuredOperation:
     """Rebuild one typed descriptor from its registry row."""
-    return AssuredOperation.model_validate(
+    operation = AssuredOperation.model_validate(
         {
             "name": row["name"],
             "description": row["description"],
@@ -139,6 +139,8 @@ def _operation_from_row(row: RowMapping) -> AssuredOperation:
             "version": row["version"],
         }
     )
+    _lint_canonical_operation(operation=operation)
+    return operation
 
 
 _TIME_SCHEMA = {
@@ -286,6 +288,16 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
     ),
 )
+
+
+def _lint_canonical_operation(*, operation: AssuredOperation) -> None:
+    """Validate one row against the same-named canonical descriptor."""
+    expected = next(
+        candidate
+        for candidate in CANONICAL_OPERATIONS
+        if candidate.name is operation.name
+    )
+    lint_assured_operation(operation, expected=expected)
 
 
 def seed_canonical_operations(
