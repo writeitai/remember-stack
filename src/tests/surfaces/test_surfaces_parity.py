@@ -389,11 +389,18 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         {"query": "Alice", "k": "2"},
         {"query": "Alice", "entity_ids": json.dumps([str(uuid4())])},
         {"query": "Alice", "time": json.dumps({"mode": "current"})},
+        {"query": "Alice", "time": {"mode": "at", "at": 0}},
+        {"query": "Alice", "time": {"mode": "at", "at": "0"}},
     )
     for arguments in wrong_json_types:
         response = deployment.client.post("/operations/fact_context", json=arguments)
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "invalid_parameter"
+
+    integral_json_number = deployment.client.post(
+        "/operations/fact_context", json={"query": "Alice", "k": 2.0}
+    )
+    assert integral_json_number.status_code == 200
 
 
 def test_cli_operation_arguments_parse_json_before_strict_dispatch() -> None:

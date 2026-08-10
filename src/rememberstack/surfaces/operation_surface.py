@@ -173,9 +173,13 @@ def _coerce_value(*, name: str, value: object, declared: str) -> object:
             raise TypeError("expected a string")
         return value
     if declared == "integer":
-        if isinstance(value, bool) or not isinstance(value, int):
+        if isinstance(value, bool):
             raise TypeError("expected an integer")
-        return value
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        raise TypeError("expected an integer")
     if declared == "array":
         if not isinstance(value, list):
             raise TypeError("expected an array")
@@ -185,12 +189,30 @@ def _coerce_value(*, name: str, value: object, declared: str) -> object:
     if declared == "object" and name == "time":
         if not isinstance(value, dict):
             raise TypeError("expected an object")
+        _validate_time_strings(value=value)
         return _FACT_TIME.validate_python(value)
     if declared == "timestamp":
         if not isinstance(value, datetime):
             raise TypeError("expected a timestamp")
         return value
     return value
+
+
+def _validate_time_strings(*, value: dict[object, object]) -> None:
+    """Reject timestamp coercions that the published JSON Schema does not allow."""
+    mode = value.get("mode")
+    fields = ("at",) if mode == "at" else ("from", "to") if mode == "overlap" else ()
+    for field in fields:
+        if field not in value:
+            continue
+        raw = value[field]
+        if not isinstance(raw, str):
+            raise TypeError(f"time.{field} must be a date-time string")
+        normalized = raw[:-1] + "+00:00" if raw.endswith(("Z", "z")) else raw
+        try:
+            datetime.fromisoformat(normalized)
+        except ValueError as error:
+            raise ValueError(f"time.{field} must be an ISO-8601 date-time") from error
 
 
 def _validate_facets(*, name: str, value: object, spec: dict[str, object]) -> None:

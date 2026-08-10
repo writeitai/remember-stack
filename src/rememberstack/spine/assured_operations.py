@@ -10,6 +10,7 @@ from sqlalchemy import RowMapping
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.assured_operation_linter import AssuredOperationLintError
 from rememberstack.core.assured_operation_linter import lint_assured_operation
 from rememberstack.model import AssuredAnswerIntent
 from rememberstack.model import AssuredOperation
@@ -290,6 +291,22 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
 )
 
 
+def _canonical_operation_json(*, operation: AssuredOperation) -> str:
+    """Serialize a descriptor deterministically for immutable baseline checks."""
+    return json.dumps(
+        operation.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+_CANONICAL_OPERATION_JSON: tuple[tuple[AssuredOperationName, str], ...] = tuple(
+    (operation.name, _canonical_operation_json(operation=operation))
+    for operation in CANONICAL_OPERATIONS
+)
+
+
 def _lint_canonical_operation(*, operation: AssuredOperation) -> None:
     """Validate one row against the same-named canonical descriptor."""
     expected = next(
@@ -298,6 +315,13 @@ def _lint_canonical_operation(*, operation: AssuredOperation) -> None:
         if candidate.name is operation.name
     )
     lint_assured_operation(operation, expected=expected)
+    expected_json = next(
+        payload for name, payload in _CANONICAL_OPERATION_JSON if name is operation.name
+    )
+    if _canonical_operation_json(operation=operation) != expected_json:
+        raise AssuredOperationLintError(
+            f"operation {operation.name.value!r} must match its immutable canonical descriptor"
+        )
 
 
 def seed_canonical_operations(

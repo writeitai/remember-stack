@@ -31,9 +31,12 @@ from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.assured_operations import _lint_canonical_operation
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import InvalidArgumentError
 from rememberstack.surfaces import OperationExecutor
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.operation_surface import _coerce_arguments
 from rememberstack.surfaces.operation_surface import operation_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -159,6 +162,43 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
             ),
             expected=testimony,
         )
+
+
+def test_registry_linter_uses_an_immutable_canonical_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutating an exported descriptor cannot redefine the accepted registry row."""
+    testimony = next(
+        operation
+        for operation in CANONICAL_OPERATIONS
+        if operation.name is AssuredOperationName.TESTIMONY_CONTEXT
+    )
+    monkeypatch.setitem(
+        testimony.parameters, "query", {"type": "integer", "required": True}
+    )
+    with pytest.raises(
+        AssuredOperationLintError, match="immutable canonical descriptor"
+    ):
+        _lint_canonical_operation(operation=testimony)
+
+
+def test_dispatch_matches_the_published_json_types() -> None:
+    """Integral JSON numbers work, while time never accepts epoch coercions."""
+    fact = next(
+        operation
+        for operation in CANONICAL_OPERATIONS
+        if operation.name is AssuredOperationName.FACT_CONTEXT
+    )
+    assert (
+        _coerce_arguments(operation=fact, arguments={"query": "Alice", "k": 2.0})["k"]
+        == 2
+    )
+    for at in (0, 1_700_000_000, "0", "1700000000"):
+        with pytest.raises(InvalidArgumentError, match="date-time"):
+            _coerce_arguments(
+                operation=fact,
+                arguments={"query": "Alice", "time": {"mode": "at", "at": at}},
+            )
 
 
 def test_seed_replaces_the_catalog_atomically_and_round_trips(
