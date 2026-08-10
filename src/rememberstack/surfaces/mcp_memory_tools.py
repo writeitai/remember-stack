@@ -2,7 +2,7 @@
 
 Both MCP servers advertise and dispatch the same two static tools — ``ingest``
 and ``pipeline_readiness`` — from this module so schemas, argument parsing, and
-structured error envelopes cannot drift. Recipe and open-query tools stay in
+structured error envelopes cannot drift. Assured-operation and open-query tools stay in
 their own modules; this is only the write/readiness pair D37 requires on every
 general-purpose memory surface.
 
