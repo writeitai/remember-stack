@@ -25,6 +25,7 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ObservationAssertion
 from rememberstack.model import PipelineStage
+from rememberstack.model import RelationCandidate
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
@@ -45,9 +46,15 @@ _logger = logging.getLogger(__name__)
 _OTHER_PREDICATE: Final = OTHER_PREDICATE_GRAMMAR
 """The escape-value routing check (the spine re-validates authoritatively)."""
 
-E3_NORMALIZER_VERSION: Final = "e3-normalize-2026.07b:temp0-1"
+E3_NORMALIZER_VERSION: Final = "e3-normalize-2026.08a:temp0-1:unknown-type-gate-1"
 """The normalize sub-worker's component version (D12 idempotency member).
-07b pins temperature=0.0 — generation parameters are part of provenance."""
+
+08a: D86 unknown-entity-type gate (inner retry then drop). Temperature=0.0 is
+part of provenance.
+"""
+
+_MAX_INNER_NORMALIZE_ATTEMPTS: Final = 2
+"""First generate plus one type-gate retry (D86)."""
 
 _NORMALIZE_PROMPT: Final = """You are the normalizer of a memory system. Turn
 the CLAIM into zero or more of:
@@ -68,6 +75,13 @@ GOVERNED PREDICATES:
 REGISTRY TYPES: {types}
 
 CLAIM (attributed={is_attributed}): {claim_text}"""
+
+_TYPE_RETRY_SUFFIX: Final = """
+
+TYPE GATE RETRY: The previous response used illegal entity type(s): {illegal}.
+Every entity `type` field MUST be exactly one of: {types}.
+Do not invent types. Prefer dropping a relation or observation over inventing
+a type. Re-emit the full JSON NormalizationResponse."""
 
 
 class E3Settings(BaseSettings):
@@ -141,20 +155,29 @@ class NormalizeRelationsHandler:
             claim_ids=tuple(claim.claim_id for claim in claims)
         )
         observations_by_entity: dict[UUID, list[ObservationAssertion]] = {}
+        allowed_types = frozenset(type_parents)
         for claim in claims:
             if claim.claim_id in normalized_claim_ids:
                 continue  # replay: stored mentions/facts are the output (D7)
-            self._normalize_claim(
-                created_relations=created_relations,
-                observations_by_entity=observations_by_entity,
-                deployment_id=deployment_id,
-                claim=claim,
-                predicates=predicates,
-                prompt_lines=prompt_lines,
-                signatures=signatures,
-                type_parents=type_parents,
-                meter=meter,
-            )
+            try:
+                self._normalize_claim(
+                    created_relations=created_relations,
+                    observations_by_entity=observations_by_entity,
+                    deployment_id=deployment_id,
+                    claim=claim,
+                    predicates=predicates,
+                    prompt_lines=prompt_lines,
+                    signatures=signatures,
+                    type_parents=type_parents,
+                    allowed_types=allowed_types,
+                    meter=meter,
+                )
+            except Exception:
+                # Soft-isolate unexpected claim failures so one assertion cannot
+                # dead-letter the whole document version (D86).
+                _logger.exception(
+                    "e3.claim_normalize_error claim_id=%s", claim.claim_id
+                )
         for entity_id, assertions in observations_by_entity.items():
             self._observation_adjudicator.add_observations(
                 deployment_id=deployment_id,
@@ -218,29 +241,36 @@ class NormalizeRelationsHandler:
         prompt_lines: str,
         signatures: dict[str, tuple[tuple[str, str], ...]],
         type_parents: dict[str, str | None],
+        allowed_types: frozenset[str],
         meter: CostMeterPort,
     ) -> None:
         """One claim through the normalizer call and the deterministic gates."""
-        response_call = self._model_provider.generate(
-            request=ModelRequest(
-                model=self._settings.normalize_model,
-                prompt=_NORMALIZE_PROMPT.format(
-                    predicates=prompt_lines,
-                    types=", ".join(sorted(type_parents)),
-                    is_attributed=claim.is_attributed,
-                    claim_text=claim.claim_text,
-                ),
-                temperature=0.0,
-            ),
-            response_type=NormalizationResponse,
+        types_csv = ", ".join(sorted(allowed_types))
+        base_prompt = _NORMALIZE_PROMPT.format(
+            predicates=prompt_lines,
+            types=types_csv,
+            is_attributed=claim.is_attributed,
+            claim_text=claim.claim_text,
         )
-        meter.record(
-            call_key=f"normalize:{claim.claim_id}",
-            tier="normalize",
-            usage=response_call.usage,
+        response = self._generate_normalize_response(
+            claim=claim,
+            base_prompt=base_prompt,
+            allowed_types=allowed_types,
+            types_csv=types_csv,
+            meter=meter,
         )
-        response = response_call.output
         for relation_index, relation in enumerate(response.relations):
+            illegal = _illegal_types_in_relation(
+                relation=relation, allowed_types=allowed_types
+            )
+            if illegal:
+                _logger.warning(
+                    "e3.unknown_entity_type_dropped claim_id=%s kind=relation "
+                    "illegal_types=%s",
+                    claim.claim_id,
+                    sorted(illegal),
+                )
+                continue
             if _OTHER_PREDICATE.fullmatch(relation.predicate):
                 # the D5 escape funnel: register tier=other, unconstrained
                 # by signatures, ranked by usage for periodic promotion
@@ -316,6 +346,14 @@ class NormalizeRelationsHandler:
             if upserted.created:
                 created_relations.append(str(upserted.relation_id))
         for observation_index, observation in enumerate(response.observations):
+            if observation.subject.type not in allowed_types:
+                _logger.warning(
+                    "e3.unknown_entity_type_dropped claim_id=%s kind=observation "
+                    "illegal_types=%s",
+                    claim.claim_id,
+                    [observation.subject.type],
+                )
+                continue
             subject = self._resolver.resolve(
                 deployment_id=deployment_id,
                 reference=observation.subject,
@@ -335,6 +373,88 @@ class NormalizeRelationsHandler:
                     doc_id=claim.doc_id,
                 )
             )
+
+    def _generate_normalize_response(
+        self,
+        *,
+        claim: ClaimForNormalization,
+        base_prompt: str,
+        allowed_types: frozenset[str],
+        types_csv: str,
+        meter: CostMeterPort,
+    ) -> NormalizationResponse:
+        """Generate with D86 type-gate inner retry; return the final response only."""
+        prompt = base_prompt
+        response: NormalizationResponse | None = None
+        for attempt in range(1, _MAX_INNER_NORMALIZE_ATTEMPTS + 1):
+            response_call = self._model_provider.generate(
+                request=ModelRequest(
+                    model=self._settings.normalize_model, prompt=prompt, temperature=0.0
+                ),
+                response_type=NormalizationResponse,
+            )
+            meter.record(
+                call_key=f"normalize:{claim.claim_id}:a{attempt}",
+                tier="normalize",
+                usage=response_call.usage,
+            )
+            response = response_call.output
+            illegal = _illegal_types_in_response(
+                response=response, allowed_types=allowed_types
+            )
+            if not illegal:
+                if attempt > 1:
+                    _logger.info(
+                        "e3.unknown_entity_type_recovered claim_id=%s attempts_used=%s",
+                        claim.claim_id,
+                        attempt,
+                    )
+                return response
+            _logger.warning(
+                "e3.unknown_entity_type claim_id=%s attempt=%s illegal_types=%s",
+                claim.claim_id,
+                attempt,
+                sorted(illegal),
+            )
+            if attempt >= _MAX_INNER_NORMALIZE_ATTEMPTS:
+                break
+            _logger.info(
+                "e3.unknown_entity_type_retry claim_id=%s attempt=%s",
+                claim.claim_id,
+                attempt,
+            )
+            prompt = base_prompt + _TYPE_RETRY_SUFFIX.format(
+                illegal=", ".join(sorted(illegal)), types=types_csv
+            )
+        assert response is not None
+        return response
+
+
+def _illegal_types_in_response(
+    *, response: NormalizationResponse, allowed_types: frozenset[str]
+) -> frozenset[str]:
+    """Entity types emitted by the normalizer that are outside the registry."""
+    found: set[str] = set()
+    for relation in response.relations:
+        found.update(
+            _illegal_types_in_relation(relation=relation, allowed_types=allowed_types)
+        )
+    for observation in response.observations:
+        if observation.subject.type not in allowed_types:
+            found.add(observation.subject.type)
+    return frozenset(found)
+
+
+def _illegal_types_in_relation(
+    *, relation: RelationCandidate, allowed_types: frozenset[str]
+) -> frozenset[str]:
+    """Illegal types on one relation's endpoints."""
+    found: set[str] = set()
+    if relation.subject.type not in allowed_types:
+        found.add(relation.subject.type)
+    if relation.object.type not in allowed_types:
+        found.add(relation.object.type)
+    return frozenset(found)
 
 
 def _signature_allows(
