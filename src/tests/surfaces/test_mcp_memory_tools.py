@@ -923,7 +923,9 @@ def test_remote_mcp_maps_cloud_body_too_large() -> None:
 
 def test_remote_and_local_descriptors_match() -> None:
     """Both servers share one schema source for the static write pair."""
-    remote_names = [tool["name"] for tool in memory_write_tool_descriptors()]
+    descriptors = memory_write_tool_descriptors()
+    remote_names = [tool["name"] for tool in descriptors]
+    assert "recipe" not in json.dumps(descriptors).lower()
     local = OperationMcpServer(
         surface=_StubOperationSurface(),  # type: ignore[arg-type]
         ingest=_StubIngestPort(),  # type: ignore[arg-type]
