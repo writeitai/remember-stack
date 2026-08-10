@@ -1,6 +1,9 @@
 """Pure guards that retained operations consume the accepted query authorities."""
 
+from unittest.mock import MagicMock
+
 from rememberstack.spine import CANONICAL_OPERATIONS
+from rememberstack.surfaces.query_engine import _configure_fact_context_connection
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
@@ -8,6 +11,7 @@ from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
+from rememberstack.surfaces.query_engine import _FACT_CONTEXT_CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _MULTI_HOP_EDGE_EVIDENCE
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
@@ -56,6 +60,25 @@ def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in label_sql
     assert "FROM relations" not in label_sql
     assert "FROM observations" not in label_sql
+
+
+def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() -> None:
+    """Eligibility cannot hit the deep authority without its bounded plan settings."""
+    connection = MagicMock()
+
+    _configure_fact_context_connection(connection=connection)
+
+    assert [call.args[0] for call in connection.exec_driver_sql.call_args_list] == [
+        "SET LOCAL jit = off",
+        "SET LOCAL join_collapse_limit = 1",
+        "SET LOCAL from_collapse_limit = 1",
+        "SET LOCAL max_parallel_workers_per_gather = 0",
+        "SET LOCAL enable_nestloop = off",
+    ]
+    contradiction_sql = str(_FACT_CONTEXT_CONTRADICTION_MEMBERS)
+    assert "memory_v1.facts_visible_history" in contradiction_sql
+    assert "fact.ingested_at <= :evaluated_at" in contradiction_sql
+    assert "fact.fact_kind AS kind" in contradiction_sql
 
 
 def test_testimony_context_confirms_claims_and_chunks_through_memory_v1() -> None:

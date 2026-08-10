@@ -566,19 +566,6 @@ class QueryEngine:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
-            # The coordinate-complete live evidence views expand into a deep
-            # authorization tree. Preserve this bounded query's written order
-            # so PostgreSQL does not exhaust memory exploring equivalent plans.
-            connection.exec_driver_sql("SET LOCAL jit = off")
-            connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
-            connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
-            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
-            # The coordinate-complete facts authority expands into nested
-            # survivor and live-evidence views.  For a bounded P1 nomination,
-            # PostgreSQL's nested-loop plan repeatedly evaluates that tree and
-            # can exceed the API timeout even for a handful of facts.  A hash
-            # plan evaluates the authority once without changing membership.
-            connection.exec_driver_sql("SET LOCAL enable_nestloop = off")
             fact_rows = _confirm_fact_context(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -1486,11 +1473,10 @@ class QueryEngine:
         output of `fuse`/`rerank`): re-reads each claim from the spine and
         drops what no longer confirms. When a ranking is supplied, scores and
         order are preserved on the envelope for the confirmed ids so a fused
-        result is usable without a second tool call. Hybrid operations pass their
-        final ``limit`` only here, after the complete fused candidate pool has
-        been confirmed, so a rejected head candidate is deterministically
-        replaced from the already-fetched tail. Claim hybrids additionally
-        group exact normalized-text duplicates before that final cut.
+        result is usable without a second tool call. A caller may apply ``limit``
+        after the complete supplied candidate pool has been confirmed, so a
+        rejected head candidate is deterministically replaced from the supplied
+        tail. Exact normalized-text duplicates may be grouped before that cut.
         """
         if limit is not None and limit < 1:
             raise ValueError("hydrate_claims limit must be at least 1")
@@ -1546,7 +1532,7 @@ class QueryEngine:
     ) -> Envelope:
         """Confirm chunk ids into live source evidence, preserving scores.
 
-        A hybrid supplies its final ``limit`` after the complete fused pool,
+        A caller may apply ``limit`` after the complete supplied candidate pool,
         allowing confirmed tail candidates to refill head candidates that no
         longer pass D48 without another projection read.
         """
@@ -2369,7 +2355,13 @@ class QueryEngine:
             }
         return tuple(
             self._enrich_one(
-                fact=fact, members_by_group=members_by_group, withdrawn=withdrawn
+                fact=fact,
+                members=(
+                    members_by_group.get(fact.contradiction_group, [])
+                    if fact.contradiction_group is not None
+                    else []
+                ),
+                withdrawn=withdrawn,
             )
             for fact in facts
         )
@@ -2408,7 +2400,7 @@ class QueryEngine:
                 if fact.contradiction_group is not None
             )
         )
-        members_by_group: dict[UUID, list[dict[str, object]]] = {}
+        members_by_kind_group: dict[tuple[str, UUID], list[dict[str, object]]] = {}
         if groups:
             params = _fact_time_parameters(time=time, evaluated_at=evaluated_at)
             member_rows = connection.execute(
@@ -2416,13 +2408,16 @@ class QueryEngine:
                 {"deployment_id": deployment_id, "groups": list(groups), **params},
             ).mappings()
             for row in member_rows:
-                members_by_group.setdefault(row["contradiction_group"], []).append(
-                    dict(row)
-                )
+                key = (str(row["kind"]), row["contradiction_group"])
+                members_by_kind_group.setdefault(key, []).append(dict(row))
         enriched = {
             (kind, fact.fact_id): self._enrich_one(
                 fact=fact,
-                members_by_group=members_by_group,
+                members=(
+                    members_by_kind_group.get((kind, fact.contradiction_group), [])
+                    if fact.contradiction_group is not None
+                    else []
+                ),
                 withdrawn={
                     fact_id
                     for fact_id, support in support_by_kind[kind].items()
@@ -2438,7 +2433,7 @@ class QueryEngine:
         self,
         *,
         fact: FactResult,
-        members_by_group: dict[UUID, list[dict[str, object]]],
+        members: list[dict[str, object]],
         withdrawn: set[UUID],
     ) -> FactResult:
         """One fact, with its contradiction block and support marker resolved."""
@@ -2446,11 +2441,7 @@ class QueryEngine:
         if fact.fact_id in withdrawn:
             update["support"] = FactSupport.WITHDRAWN
         if fact.contradiction_group is not None:
-            others = [
-                member
-                for member in members_by_group.get(fact.contradiction_group, [])
-                if member["fact_id"] != fact.fact_id
-            ]
+            others = [member for member in members if member["fact_id"] != fact.fact_id]
             returned = others[:CONTRADICTION_COMEMBER_CAP]
             update["contradiction"] = Contradiction(
                 group_id=fact.contradiction_group,
@@ -2780,6 +2771,7 @@ def _fact_eligibility(
     evaluated_at: datetime,
 ) -> dict[tuple[str, UUID], int]:
     """Enumerate exact eligible composite facts before bounded P1 ranking."""
+    _configure_fact_context_connection(connection=connection)
     rows = connection.execute(
         _FACT_CONTEXT_ELIGIBILITY,
         {
@@ -2803,6 +2795,7 @@ def _confirm_fact_context(
     """Re-confirm exact nominated identities, time, and anchors in PostgreSQL."""
     if not candidate_keys:
         return ()
+    _configure_fact_context_connection(connection=connection)
     rows = connection.execute(
         _CONFIRM_FACT_CONTEXT,
         {
@@ -2814,6 +2807,15 @@ def _confirm_fact_context(
         },
     ).mappings()
     return tuple(rows)
+
+
+def _configure_fact_context_connection(*, connection: Connection) -> None:
+    """Bound planning work for the deep coordinate-complete fact authority."""
+    connection.exec_driver_sql("SET LOCAL jit = off")
+    connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
+    connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
+    connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+    connection.exec_driver_sql("SET LOCAL enable_nestloop = off")
 
 
 def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
@@ -3532,7 +3534,7 @@ _CONFIRM_FACT_CONTEXT = text(
 
 _FACT_CONTEXT_CONTRADICTION_MEMBERS = text(
     f"""
-    SELECT fact.contradiction_group, fact.fact_id,
+    SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
            fact.valid_from, fact.valid_until, fact.ingested_at,

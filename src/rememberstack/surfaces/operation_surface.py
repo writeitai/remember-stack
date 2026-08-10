@@ -13,9 +13,7 @@ from pydantic import ValidationError
 from rememberstack.model import AssuredOperation
 from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
-from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import FactTime
-from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.spine.assured_operations import AssuredOperationRegistry
 from rememberstack.spine.query_space.canonical import canonical_json_bytes
@@ -190,27 +188,7 @@ def _coerce_value(*, name: str, value: object, declared: str) -> object:
         return tuple(UUID(str(item)) for item in raw)
     if declared == "object" and name == "time":
         raw = json.loads(value) if isinstance(value, str) else value
-        fact_time = _FACT_TIME.validate_python(raw)
-        if isinstance(fact_time, AtFactTime):
-            at = (
-                fact_time.at.replace(tzinfo=UTC)
-                if fact_time.at.tzinfo is None
-                else fact_time.at.astimezone(UTC)
-            )
-            fact_time = fact_time.model_copy(update={"at": at})
-        if isinstance(fact_time, OverlapFactTime):
-            from_ = fact_time.from_
-            to = fact_time.to
-            from_ = (
-                from_.replace(tzinfo=UTC)
-                if from_.tzinfo is None
-                else from_.astimezone(UTC)
-            )
-            to = to.replace(tzinfo=UTC) if to.tzinfo is None else to.astimezone(UTC)
-            if to < from_:
-                raise ValueError("time.to must be at or after time.from")
-            fact_time = fact_time.model_copy(update={"from_": from_, "to": to})
-        return fact_time
+        return _FACT_TIME.validate_python(raw)
     if declared == "timestamp":
         instant = (
             value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
