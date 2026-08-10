@@ -141,10 +141,14 @@ retries). Do not double-bill a systemic `ProviderCallError` under both
 
 - Soft drops (unknown type after budget, unknown predicate, signature reject)
   never raise.
-- **Claim-soft exceptions** are only `ProviderInvalidResponseError`; log
-  `e3.claim_normalize_error` with `error_class` and continue the claim loop.
-- **Systemic exceptions** (other provider errors, DB, mint refusal, bugs)
-  re-raise immediately — do not mark the version succeeded empty.
+- **Claim-soft failures** are only `ProviderInvalidResponseError` raised by the
+  **normalizer generate** call (site=generate). Log `e3.claim_normalize_error`
+  with `error_class` and `site=generate`, skip that claim, continue the loop.
+  The same exception class from resolve/T4/upsert is **not** claim-soft.
+- **Systemic exceptions** (other provider errors, resolver invalid response,
+  DB, mint refusal, bugs) re-raise immediately — do not mark the version
+  succeeded empty. Partial relation writes from a mid-claim systemic failure
+  may already be committed; replay uses evidence markers (pre-existing).
 - After all claims without systemic abort: always return terminal follow-ups
   (adjudicate + embed_claim). Log `e3.claims_processed` once per job.
 
