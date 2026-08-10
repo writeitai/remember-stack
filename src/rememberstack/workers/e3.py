@@ -188,12 +188,13 @@ class NormalizeRelationsHandler:
                     UnregisteredEntityTypeError.__name__,
                 )
                 raise
-            except IntegrityError:
-                _logger.error(
-                    "e3.entity_type_fk_violation claim_id=%s error_class=%s",
-                    claim.claim_id,
-                    IntegrityError.__name__,
-                )
+            except IntegrityError as integrity_error:
+                if _is_entity_type_fk_violation(error=integrity_error):
+                    _logger.error(
+                        "e3.entity_type_fk_violation claim_id=%s error_class=%s",
+                        claim.claim_id,
+                        type(integrity_error).__name__,
+                    )
                 raise
             except Exception as exception:
                 if not _is_claim_soft_failure(exception=exception):
@@ -201,7 +202,8 @@ class NormalizeRelationsHandler:
                     raise
                 soft_claim_errors += 1
                 # Usage for ProviderInvalidResponseError is recorded under
-                # normalize:{id}:aN:failure inside _generate_normalize_response.
+                # normalize:{id}:aN:failure inside _generate_normalize_response
+                # (only for soft failures so Worker.run_one does not double-bill).
                 _logger.exception(
                     "e3.claim_normalize_error claim_id=%s error_class=%s",
                     claim.claim_id,
@@ -218,11 +220,12 @@ class NormalizeRelationsHandler:
             and not created_relations
             and not observations_by_entity
         ):
-            # Whole-handle soft-failure with zero progress is an outage class:
-            # do not mark normalize succeeded empty (D86 §5 systemic escape).
-            raise RuntimeError(
-                "e3.normalize_no_progress: every claim soft-failed with no "
-                "relations or observations written"
+            # All claims were content-poison soft failures with zero facts.
+            # Still succeed the version job (D86: soft failures must not DLQ);
+            # log loudly so ops can distinguish from a clean empty extract.
+            _logger.error(
+                "e3.normalize_all_soft_failed count=%s relations=0 observations=0",
+                claims_processed,
             )
         for entity_id, assertions in observations_by_entity.items():
             self._observation_adjudicator.add_observations(
@@ -314,7 +317,7 @@ class NormalizeRelationsHandler:
                     "e3.unknown_entity_type_dropped claim_id=%s kind=relation "
                     "illegal_types=%s site=relation",
                     claim.claim_id,
-                    sorted(illegal),
+                    [_bounded_type_label(value=value) for value in sorted(illegal)],
                 )
                 continue
             if _OTHER_PREDICATE.fullmatch(relation.predicate):
@@ -397,7 +400,10 @@ class NormalizeRelationsHandler:
                     "e3.unknown_entity_type_dropped claim_id=%s kind=observation "
                     "illegal_types=%s site=observation",
                     claim.claim_id,
-                    [observation.subject.type],
+                    [
+                        _bounded_type_label(value=value)
+                        for value in [observation.subject.type]
+                    ],
                 )
                 continue
             subject = self._resolver.resolve(
@@ -444,12 +450,17 @@ class NormalizeRelationsHandler:
                     response_type=NormalizationResponse,
                 )
             except ProviderCallError as exception:
-                # Bill attempt-specific keys before outer soft/systemic routing
-                # so usage-bearing invalid/retry failures are not unmetered.
-                if exception.usage is not None:
+                # Soft content poison is swallowed by the claim loop, so bill it
+                # here under the attempt key. Systemic ProviderCallError escapes
+                # to Worker.run_one, which meters provider_failure — do not
+                # double-bill that path.
+                if (
+                    isinstance(exception, ProviderInvalidResponseError)
+                    and exception.usage is not None
+                ):
                     meter.record(
                         call_key=f"{call_key}:failure",
-                        tier="normalize_failed",
+                        tier="normalize_failed_response",
                         usage=exception.usage,
                     )
                 raise
@@ -471,7 +482,7 @@ class NormalizeRelationsHandler:
                 "site=response",
                 claim.claim_id,
                 attempt,
-                sorted(illegal),
+                [_bounded_type_label(value=value) for value in sorted(illegal)],
             )
             if attempt >= _MAX_INNER_NORMALIZE_ATTEMPTS:
                 break
@@ -500,6 +511,19 @@ def _is_claim_soft_failure(*, exception: BaseException) -> bool:
     the outer work ledger retries or dead-letters the job.
     """
     return isinstance(exception, ProviderInvalidResponseError)
+
+
+def _is_entity_type_fk_violation(*, error: IntegrityError) -> bool:
+    """Whether an IntegrityError is the entities.type → entity_types FK (D86)."""
+    message = str(error).lower()
+    if "entity_types" in message:
+        return True
+    orig = getattr(error, "orig", None)
+    diag = getattr(orig, "diag", None) if orig is not None else None
+    constraint = getattr(diag, "constraint_name", None) if diag is not None else None
+    if constraint is not None and "entity_type" in str(constraint).lower():
+        return True
+    return False
 
 
 def _bounded_type_label(*, value: str, max_len: int = 48) -> str:

@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
@@ -374,13 +375,87 @@ def test_generate_failure_records_attempt_failure_key() -> None:
             meter=meter,
         )
     assert meter.records == [
-        (f"normalize:{claim.claim_id}:a1:failure", "normalize_failed")
+        (f"normalize:{claim.claim_id}:a1:failure", "normalize_failed_response")
     ]
 
 
-def test_unregistered_entity_type_error_message() -> None:
-    """Typed mint refusal carries the illegal type (unit surface)."""
-    error = UnregisteredEntityTypeError(
-        "entity type 'Process' is not registered for deployment x"
+def test_systemic_provider_error_not_metered_in_generate() -> None:
+    """Escaping ProviderCallError must not write aN:failure (Worker bills it)."""
+    from rememberstack.model import ProviderCallError
+
+    usage = ProviderCallUsage(
+        model_name="m", tokens_in=3, tokens_out=0, cost_usd=Decimal(0), latency_ms=1
     )
-    assert "Process" in str(error)
+
+    class RaisingProvider:
+        def generate(self, *, request: object, response_type: object) -> object:
+            del request, response_type
+            raise ProviderCallError("transport", usage=usage)
+
+    handler = NormalizeRelationsHandler(
+        claim_catalog=None,  # type: ignore[arg-type]
+        chunk_catalog=None,  # type: ignore[arg-type]
+        registry=None,  # type: ignore[arg-type]
+        resolver=None,  # type: ignore[arg-type]
+        facts=None,  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        model_provider=RaisingProvider(),  # type: ignore[arg-type]
+        settings=E3Settings(normalize_model="test-model"),
+        chunker_version="test",
+    )
+    meter = RecordingCostMeter()
+    with pytest.raises(ProviderCallError):
+        handler._generate_normalize_response(
+            claim=_claim(),
+            base_prompt="BASE",
+            allowed_types=frozenset({"Concept"}),
+            types_csv="Concept",
+            meter=meter,
+        )
+    assert meter.records == []
+
+
+def test_mint_refuses_unregistered_type_before_insert() -> None:
+    """CascadeResolver._mint raises typed error when entity_types lookup misses."""
+    from rememberstack.spine.resolver import CascadeResolver
+
+    class _Result:
+        def one_or_none(self) -> None:
+            return None
+
+    class _Conn:
+        def execute(self, statement: object, params: object = None) -> _Result:
+            del statement, params
+            return _Result()
+
+    resolver = CascadeResolver.__new__(CascadeResolver)
+    resolver._last_rejection = None
+    with pytest.raises(UnregisteredEntityTypeError, match="Process"):
+        CascadeResolver._mint(
+            resolver,
+            connection=_Conn(),  # type: ignore[arg-type]
+            deployment_id=uuid4(),
+            reference=EntityRef(name="caching", type="Process"),
+            claim=_claim(),
+            lemma="caching",
+            considered=(),
+            meter=None,
+            call_key="test",
+        )
+
+
+def test_entity_type_fk_violation_classifier() -> None:
+    """Only entity_types-related IntegrityError maps to the FK alarm."""
+    from rememberstack.workers.e3 import _is_entity_type_fk_violation
+
+    entity_fk = IntegrityError(
+        "INSERT",
+        {},
+        Exception(
+            'insert or update on table "entities" violates foreign key '
+            'constraint "entities_deployment_id_type_fkey" on entity_types'
+        ),
+    )
+    other = IntegrityError("INSERT", {}, Exception("unique violation on relations"))
+    assert _is_entity_type_fk_violation(error=entity_fk)
+    assert not _is_entity_type_fk_violation(error=other)

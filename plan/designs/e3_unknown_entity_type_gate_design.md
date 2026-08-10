@@ -107,11 +107,16 @@ for each observation in response.observations:
 - **Full response replacement:** the last successful generate replaces the
   prior response entirely (legal facts from attempt 1 may be omitted — accepted
   tradeoff; metrics quantify recovered/drop).
-- If a **retry generate raises** (provider error): treat like other claim-level
-  soft failures — log, skip this claim, **continue** the version job (do not
-  re-raise to DLQ the document for type-path recovery failures). Systemic
-  provider outages still fail via outer ledger when the whole handle cannot
-  progress (e.g. first claim of many all fail network — existing behavior).
+- **Soft vs systemic on generate raise:** only
+  `ProviderInvalidResponseError` (structured-output content poison) is
+  claim-soft — log `e3.claim_normalize_error`, skip that claim, **continue**
+  the version job (including when every claim soft-fails with zero facts;
+  emit `e3.normalize_all_soft_failed`). Generic `ProviderCallError`,
+  transport/timeouts, database errors, `UnregisteredEntityTypeError`, and
+  unexpected bugs **re-raise** so the outer work ledger retries or dead-letters.
+  Soft isolation must not convert a true outage into a successful empty
+  normalize; the soft class is intentionally narrow (same pattern as E1
+  chunk poison).
 
 ### Cost ledger keys
 
@@ -121,24 +126,28 @@ for each observation in response.observations:
 | --- | --- |
 | First normalize | `normalize:{claim_id}:a1` |
 | Retry | `normalize:{claim_id}:a2` |
+| Soft invalid-response failure | `normalize:{claim_id}:aN:failure` (only when soft-isolated; systemic failures use Worker `provider_failure`) |
 | Resolve calls | keep existing distinct keys |
 
 Never reuse `normalize:{claim_id}` alone across inner attempts (silent unbilled
-retries).
+retries). Do not double-bill a systemic `ProviderCallError` under both
+`aN:failure` and `provider_failure`.
 
 ## 6. Isolation (document blast radius)
 
 `_normalize_claim` (or its caller loop) must ensure:
 
-- Soft drops never raise.
-- Unexpected exceptions on a **single claim** are caught, logged as
-  `e3.claim_normalize_error`, and the loop continues unless a **systemic**
-  failure class is defined later.
-- After all claims: always return terminal follow-ups (adjudicate + embed_claim)
-  when the version job reaches the end of the loop without a systemic abort.
+- Soft drops (unknown type after budget, unknown predicate, signature reject)
+  never raise.
+- **Claim-soft exceptions** are only `ProviderInvalidResponseError`; log
+  `e3.claim_normalize_error` with `error_class` and continue the claim loop.
+- **Systemic exceptions** (other provider errors, DB, mint refusal, bugs)
+  re-raise immediately — do not mark the version succeeded empty.
+- After all claims without systemic abort: always return terminal follow-ups
+  (adjudicate + embed_claim). Log `e3.claims_processed` once per job.
 
-This is what makes “one bad type cannot dead-letter the doc” true even if a
-gate is incomplete.
+This is what makes “one bad type cannot dead-letter the doc” true for the type
+gate and for single-claim content poison, without hiding outages.
 
 ## 7. Component versioning and DLQ recovery
 
