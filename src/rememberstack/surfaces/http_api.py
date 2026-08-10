@@ -1,10 +1,8 @@
-"""The HTTP API surface (WP-1.6/WP-5.4): primitives and recipes over FastAPI.
+"""The HTTP API surface: primitives and assured operations over FastAPI.
 
 A thin, typed veneer: every endpoint delegates to one QueryEngine primitive or
-runs one recipe through the shared `RecipeSurface`, and returns the D49
-envelope verbatim. The recipe endpoints render from the registry — `/recipes`
-IS the registry's active rows — so the CLI and MCP surfaces stay in lockstep
-by construction (they render the same surface).
+runs one operation through the shared ``OperationSurface``. ``/operations``
+is the registry's active rows, so CLI and MCP stay in lockstep by construction.
 
 The API is the one place authorization is enforced for query-engine reads
 (retrieval §9): a deployment that passes an `AuthPerimeterPort` gets every
@@ -38,6 +36,7 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
+from rememberstack.model import ContextBundleV1
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
@@ -46,16 +45,16 @@ from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.surfaces.operation_surface import InvalidArgumentError
+from rememberstack.surfaces.operation_surface import MissingArgumentError
+from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import UnknownOperationError
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
 from rememberstack.surfaces.query_sandbox.result import QueryResult
-from rememberstack.surfaces.recipe_surface import InvalidArgumentError
-from rememberstack.surfaces.recipe_surface import MissingArgumentError
-from rememberstack.surfaces.recipe_surface import RecipeSurface
-from rememberstack.surfaces.recipe_surface import UnknownRecipeError
 
 PIPELINE_READINESS_VERSION_LIMIT: Final = 1_000
 """Maximum document versions in one read-only readiness inspection."""
@@ -183,7 +182,7 @@ def build_api(
     deployment_id: UUID,
     admission: AdmissionPort,
     readiness: ReadinessPort,
-    surface: RecipeSurface | None = None,
+    surface: OperationSurface | None = None,
     open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
     ingest: IngestPort | None = None,
@@ -192,7 +191,7 @@ def build_api(
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
-    `surface` adds registry-rendered recipes; `open_query` adds the §3.1 open
+    `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; and `auth` gates every endpoint
     on one perimeter credential. Each capability is explicitly composed;
@@ -200,7 +199,7 @@ def build_api(
     """
     if surface is not None and surface.deployment_id != deployment_id:
         raise ValueError(
-            "the recipe surface and the API serve different deployments —"
+            "the operation surface and the API serve different deployments —"
             " one deployment is one trust domain (D50)"
         )
     if open_query is not None and open_query.deployment_id != deployment_id:
@@ -307,7 +306,7 @@ def build_api(
         )
 
     if surface is not None:
-        _mount_recipes(app=app, surface=surface)
+        _mount_operations(app=app, surface=surface)
     if open_query is not None:
         _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
     if ingest is not None:
@@ -327,8 +326,7 @@ def _mount_open_query(
 ) -> None:
     """Add the nine §3.1 open-query routes when the facade is composed.
 
-    Paths are short and consistent under `/query/…`. Legacy `/recipes` and
-    `/recipe/{name}` are untouched. Sandbox and registry failures map to typed
+    Paths are short and consistent under `/query/…`. Sandbox and registry failures map to typed
     HTTP status + public error code without private engine detail.
 
     When a perimeter dependency is composed, every execution-bearing route
@@ -594,22 +592,22 @@ def _mount_pipeline_readiness(
         )
 
 
-def _mount_recipes(*, app: FastAPI, surface: RecipeSurface) -> None:
-    """Add the registry-rendered recipe endpoints to the app (D50)."""
+def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
+    """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
-    @app.get("/recipes", response_model=list[ToolDescriptor])
-    def list_recipes() -> list[ToolDescriptor]:
-        """The recipe tool list — this deployment's active registry rows."""
+    @app.get("/operations", response_model=list[ToolDescriptor])
+    def list_operations() -> list[ToolDescriptor]:
+        """The four assured operations for this deployment."""
         return list(surface.descriptors())
 
-    @app.post("/recipe/{name}", response_model=Envelope)
-    def run_recipe(
+    @app.post("/operations/{name}", response_model=Envelope | ContextBundleV1)
+    def run_operation(
         name: str, arguments: Annotated[dict[str, object], Body(default_factory=dict)]
-    ) -> Envelope:
-        """Run one recipe by name over JSON arguments (the D50 executor)."""
+    ) -> Envelope | ContextBundleV1:
+        """Run one assured operation by name over JSON arguments."""
         try:
             return surface.run(name=name, arguments=arguments)
-        except UnknownRecipeError as error:
+        except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

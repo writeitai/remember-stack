@@ -6,6 +6,8 @@ typed negative from the fixed taxonomy (retrieval §5). The walking skeleton
 carries the minimal envelope; the full contract grows on these same fields.
 """
 
+from datetime import datetime
+from datetime import UTC
 from enum import StrEnum
 from typing import Annotated
 from typing import Literal
@@ -57,6 +59,88 @@ class IdentityRegime(StrEnum):
 
     CURRENT = "current"
     AS_OF = "as_of"
+
+
+class CurrentTemporalScope(BaseModel):
+    """A read evaluated against the world and identity state at one instant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["current"] = "current"
+    evaluated_at: UTCDateTime
+    believed_at: UTCDateTime
+    identity_regime: IdentityRegime = IdentityRegime.CURRENT
+
+
+class AtTemporalScope(BaseModel):
+    """A current-belief read of the world-valid state at one instant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["at"] = "at"
+    at: UTCDateTime
+    evaluated_at: UTCDateTime
+    believed_at: UTCDateTime
+    identity_regime: IdentityRegime = IdentityRegime.CURRENT
+
+
+class OverlapTemporalScope(BaseModel):
+    """A current-belief read of facts overlapping one inclusive interval."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["overlap"] = "overlap"
+    from_: UTCDateTime = Field(alias="from")
+    to: UTCDateTime
+    evaluated_at: UTCDateTime
+    believed_at: UTCDateTime
+    identity_regime: IdentityRegime = IdentityRegime.CURRENT
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "OverlapTemporalScope":
+        """Reject an interval whose end precedes its start."""
+        if self.to < self.from_:
+            raise ValueError("temporal scope 'to' must be at or after 'from'")
+        return self
+
+
+class HistoryTemporalScope(BaseModel):
+    """All currently believed fact intervals that began by evaluation time."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["history"] = "history"
+    evaluated_at: UTCDateTime
+    believed_at: UTCDateTime
+    identity_regime: IdentityRegime = IdentityRegime.CURRENT
+
+
+class AsOfTemporalScope(BaseModel):
+    """A two-axis audit read with an explicitly reconstructed identity regime."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["as_of"] = "as_of"
+    valid_at: UTCDateTime
+    evaluated_at: UTCDateTime
+    believed_at: UTCDateTime
+    identity_regime: IdentityRegime = IdentityRegime.CURRENT
+
+
+TemporalScope = Annotated[
+    CurrentTemporalScope
+    | AtTemporalScope
+    | OverlapTemporalScope
+    | HistoryTemporalScope
+    | AsOfTemporalScope,
+    Field(discriminator="mode"),
+]
+
+
+def current_temporal_scope(*, evaluated_at: datetime | None = None) -> CurrentTemporalScope:
+    """Build the ordinary current scope from one shared UTC evaluation instant."""
+    instant = evaluated_at or datetime.now(UTC)
+    return CurrentTemporalScope(evaluated_at=instant, believed_at=instant)
 
 
 class FactSupport(StrEnum):
@@ -451,80 +535,18 @@ class Truncation(BaseModel):
     continuation: str | None = None
 
 
-class EnvelopePart(BaseModel):
-    """One single-grain section of a composite answer (S47).
-
-    A mixed answer — S47's "everything Alice *said* about pricing, plus what
-    we *believe*" — is EXPLICITLY two-part, never blended: each part carries
-    its own grain and its own single-grain results, so the fact/evidence
-    discipline is never diluted. Single-grain answers skip `parts` and read
-    flat off the top-level fields.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    grain: Grain  # strictly single-grain: fact | evidence | compiled (S47)
-    label: str | None = None  # e.g. "said" vs "believed"
-    facts: tuple[FactResult, ...] = ()
-    evidence: tuple[EvidenceResult, ...] = ()
-    chunks: tuple[ChunkEvidenceResult, ...] = ()
-    sources: tuple[SourceRecord, ...] = ()
-    nodes: tuple[GraphNode, ...] = ()
-    aggregate: AggregateReport | None = None
-    pages: tuple[PageRef, ...] = ()
-    truncation: Truncation | None = None
-
-    @model_validator(mode="after")
-    def _payload_matches_grain(self) -> "EnvelopePart":
-        """A part is strictly single-grain: it carries only the payload its
-        own grain owns — a fact part holds facts (and graph nodes / an
-        aggregate), an evidence part holds claims, a compiled part holds K
-        pages. Carrying another grain's payload, or being composite, is the
-        blending S47 forbids. `sources` (hydration handles) is cross-grain."""
-        if self.grain is Grain.COMPOSITE:
-            raise ValueError("a composite part is not single-grain (S47)")
-        owned = {
-            Grain.FACT: {"facts", "nodes", "aggregate"},
-            Grain.EVIDENCE: {"evidence", "chunks"},
-            Grain.COMPILED: {"pages"},
-        }[self.grain]
-        populated = {
-            name
-            for name, value in (
-                ("facts", self.facts),
-                ("evidence", self.evidence),
-                ("chunks", self.chunks),
-                ("nodes", self.nodes),
-                ("aggregate", self.aggregate),
-                ("pages", self.pages),
-            )
-            if value
-        }
-        stray = populated - owned
-        if stray:
-            raise ValueError(
-                f"a {self.grain.value}-grain part carries {sorted(stray)}"
-                " belonging to another grain (S47)"
-            )
-        return self
-
-
 class Envelope(BaseModel):
     """The D49 envelope: results plus the answer's machine-readable self-account.
 
-    A single-grain answer (the common case) reads flat: the top-level
-    `grain` and the matching result tuple. A `composite` answer sets
-    `grain = composite` and carries `parts[]`, each strictly single-grain
-    (S47) — so a caller never has to disentangle blended grains.
+    Each answer is one operation's cohesive typed result. Independent complete
+    testimony and fact responses use ``ContextBundleV1`` instead of nesting or
+    blending payloads inside an envelope.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     grain: Grain
-    parts: tuple["EnvelopePart", ...] = ()  # S47: composite ⇒ read parts[]
-    as_of_valid_at: UTCDateTime | None = None  # echo of the applied valid_at
-    as_of_believed_at: UTCDateTime | None = None  # echo of the applied believed_at
-    identity_regime: IdentityRegime = IdentityRegime.CURRENT  # S61: which regime
+    temporal_scope: TemporalScope
     entities: tuple[EntityCandidate, ...] = ()
     facts: tuple[FactResult, ...] = ()
     evidence: tuple[EvidenceResult, ...] = ()
@@ -546,38 +568,22 @@ class Envelope(BaseModel):
     excluded_unstamped: int = Field(default=0, ge=0)
     negative: Negative | None = None
 
+
+
+class ContextBundleV1(BaseModel):
+    """The sole side-by-side response for complete testimony and fact reads."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    contract: Literal["ContextBundle/v1"] = "ContextBundle/v1"
+    testimony: Envelope
+    facts: Envelope
+
     @model_validator(mode="after")
-    def _composite_uses_parts(self) -> "Envelope":
-        """Enforce the S47 discipline: `parts` belong only to a composite
-        answer, and a composite's data lives IN its parts, never blended into
-        the top-level result tuples. (Each part's own single-grain purity is
-        checked on `EnvelopePart`.) A flat compound answer with no parts —
-        hydrate's fact-with-evidence bundle — is untouched."""
-        if not self.parts:
-            return self
-        if self.grain is not Grain.COMPOSITE:
-            raise ValueError("only a composite envelope carries parts[]")
-        blended = self.aggregate is not None or any(
-            (
-                self.entities,
-                self.facts,
-                self.evidence,
-                self.fact_evidence,
-                self.evidence_totals,
-                self.chunks,
-                self.sources,
-                self.transcript,
-                self.nodes,
-                self.paths,
-                self.edges,
-                self.ranking,
-                self.changes,
-                self.pages,
-            )
-        )
-        if blended:
-            raise ValueError(
-                "a composite answer's data lives in parts[], never blended"
-                " into the top-level result tuples (S47)"
-            )
+    def _child_grains_are_exact(self) -> "ContextBundleV1":
+        """Keep the two authorities explicit instead of accepting mixed children."""
+        if self.testimony.grain is not Grain.EVIDENCE:
+            raise ValueError("ContextBundle testimony must be evidence grain")
+        if self.facts.grain is not Grain.FACT:
+            raise ValueError("ContextBundle facts must be fact grain")
         return self

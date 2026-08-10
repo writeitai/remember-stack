@@ -228,10 +228,10 @@ class LanceChunkIndex:
         return {row["claim_id"]: tuple(row["vector"]) for row in rows}
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
-        """Insert or replace facts-channel rows by fact_id; idempotent."""
+        """Insert or replace facts by their complete deployment/kind/id key."""
         self._upsert(
             table=_FACT_TABLE,
-            key="fact_id",
+            key=["deployment_id", "kind", "fact_id"],
             payload=[
                 {
                     "fact_id": str(row.fact_id),
@@ -496,6 +496,7 @@ class LanceChunkIndex:
         k: int,
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         deployment_id = str(UUID(deployment_id))
@@ -515,7 +516,8 @@ class LanceChunkIndex:
                 table.search(list(vector)).where(
                     f"deployment_id = '{deployment_id}'"
                     + (" AND is_current_testimony" if current_only else "")
-                    + narrowing,
+                    + narrowing
+                    + _uuid_membership_clause(column="claim_id", ids=candidate_ids),
                     prefilter=True,
                 ),
             )
@@ -534,6 +536,7 @@ class LanceChunkIndex:
         k: int,
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         deployment_id = str(UUID(deployment_id))
@@ -553,6 +556,7 @@ class LanceChunkIndex:
                 field.name for field in self._connection.open_table(_CLAIM_TABLE).schema
             },
         )
+        where += _uuid_membership_clause(column="claim_id", ids=candidate_ids)
         rows = (
             self._connection.open_table(_CLAIM_TABLE)
             .search(query, query_type="fts", fts_columns="text")
@@ -571,6 +575,7 @@ class LanceChunkIndex:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel."""
         deployment_id = str(UUID(deployment_id))
@@ -590,7 +595,9 @@ class LanceChunkIndex:
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
             columns=columns,
-        ) + _equality_clause(filters=equality_filters, columns=columns)
+        ) + _equality_clause(
+            filters=equality_filters, columns=columns
+        ) + _uuid_membership_clause(column="chunk_id", ids=candidate_ids)
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -614,6 +621,7 @@ class LanceChunkIndex:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         deployment_id = str(UUID(deployment_id))
@@ -634,7 +642,9 @@ class LanceChunkIndex:
             policy_generation=policy_generation,
             embedder_generation=embedder_generation,
             columns=columns,
-        ) + _equality_clause(filters=equality_filters, columns=columns)
+        ) + _equality_clause(
+            filters=equality_filters, columns=columns
+        ) + _uuid_membership_clause(column="chunk_id", ids=candidate_ids)
         rows = (
             self._connection.open_table(_CHUNK_TABLE)
             .search(query, query_type="fts", fts_columns="text")
@@ -645,7 +655,13 @@ class LanceChunkIndex:
         return self._nominations(rows, id_column="chunk_id", channel="bm25")
 
     def search_facts_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        kind: str | None,
+        candidate_keys: tuple[tuple[str, str], ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored fact nominations from the facts channel."""
         deployment_id = str(UUID(deployment_id))
@@ -656,6 +672,7 @@ class LanceChunkIndex:
         where = f"deployment_id = '{deployment_id}'"
         if kind is not None:
             where += f" AND kind = '{kind}'"
+        where += _fact_membership_clause(keys=candidate_keys)
         query = (
             cast(
                 "LanceVectorQueryBuilder",
@@ -1089,6 +1106,34 @@ def _equality_clause(*, filters: Mapping[str, str] | None, columns: set[str]) ->
             raise ValueError(f"the projection has no {column} column to filter on")
         clause += f" AND {column} = '{_escape_literal(str(value))}'"
     return clause
+
+
+def _uuid_membership_clause(
+    *, column: str, ids: tuple[str, ...] | None
+) -> str:
+    """Render an exact UUID candidate set for pre-top-k nomination."""
+    if ids is None:
+        return ""
+    if not ids:
+        return " AND false"
+    rendered = ", ".join(f"'{UUID(item)}'" for item in ids)
+    return f" AND {column} IN ({rendered})"
+
+
+def _fact_membership_clause(
+    *, keys: tuple[tuple[str, str], ...] | None
+) -> str:
+    """Render exact composite fact identities for pre-top-k nomination."""
+    if keys is None:
+        return ""
+    if not keys:
+        return " AND false"
+    predicates: list[str] = []
+    for kind, fact_id in keys:
+        if kind not in {"relation", "observation"}:
+            raise ValueError(f"unknown fact kind {kind!r}")
+        predicates.append(f"(kind = '{kind}' AND fact_id = '{UUID(fact_id)}')")
+    return " AND (" + " OR ".join(predicates) + ")"
 
 
 def _chunk_search_where(

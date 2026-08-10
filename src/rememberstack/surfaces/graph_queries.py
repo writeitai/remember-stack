@@ -35,6 +35,9 @@ from uuid import UUID
 
 import ladybug
 
+from rememberstack.model import AsOfTemporalScope
+from rememberstack.model import AtTemporalScope
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
@@ -193,7 +196,7 @@ class GraphQueries:
                     f"entity {entity_id} exists but no neighbor within"
                     f" {clamped} hop(s) satisfies the requested filters"
                 ),
-                valid_at=applied_valid_at,
+                valid_at=valid_at,
                 believed_at=believed_at,
             )
         # The bounded count probe is metadata, never the paging boundary.
@@ -203,10 +206,11 @@ class GraphQueries:
         estimated_total = (
             total if exact else max(total, offset + len(nodes) + int(more))
         )
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
-            as_of_valid_at=applied_valid_at,
-            as_of_believed_at=believed_at,
+            temporal_scope=_graph_temporal_scope(
+                valid_at=valid_at, believed_at=believed_at
+            ),
             nodes=nodes,
             paths=paths,
             edges=edges,
@@ -289,14 +293,15 @@ class GraphQueries:
                     f"both entities exist, but no path of {clamped} hop(s) or"
                     " fewer connects them under the applied temporal filters"
                 ),
-                valid_at=applied_valid_at,
+                valid_at=valid_at,
                 believed_at=believed_at,
             )
         paths = tuple(_path_from_row(row) for row in rows)
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
-            as_of_valid_at=applied_valid_at,
-            as_of_believed_at=believed_at,
+            temporal_scope=_graph_temporal_scope(
+                valid_at=valid_at, believed_at=believed_at
+            ),
             paths=paths,
             edges=tuple(edge for path in paths for edge in path.edges),
             nodes=tuple(node for path in paths for node in path.nodes),
@@ -357,7 +362,7 @@ class GraphQueries:
                 believed_at=None,
             )
         paths = tuple(_citation_path_from_row(row) for row in rows)
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
             paths=paths,
             nodes=tuple(node for path in paths for node in path.nodes),
@@ -463,7 +468,7 @@ class GraphQueries:
 
     def _no_snapshot(self) -> Envelope:
         """A typed boundary: the graph plane has never published (S39)."""
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
             freshness=Freshness(pg_live_ts=datetime.now(tz=UTC)),
             negative=Negative(
@@ -478,7 +483,7 @@ class GraphQueries:
 
     def _stale_continuation(self) -> Envelope:
         """The cursor belongs to a superseded snapshot (S18 honesty)."""
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
             freshness=self._freshness(),
             negative=Negative(
@@ -494,7 +499,7 @@ class GraphQueries:
 
     def _unknown_entity(self, *, entity_id: UUID, kind: str = "entity") -> Envelope:
         """The endpoint is not in the graph at all (S29's first branch)."""
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
             freshness=self._freshness(),
             negative=Negative(
@@ -515,7 +520,7 @@ class GraphQueries:
         The caller sees a typed boundary with "retry" as the workaround
         rather than an INT128 RuntimeError.
         """
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
             freshness=self._freshness(),
             negative=Negative(
@@ -536,10 +541,11 @@ class GraphQueries:
         believed_at: datetime | None,
     ) -> Envelope:
         """A typed known_empty: the traversal ran and found nothing (S29)."""
-        return Envelope(
+        return _envelope(
             grain=Grain.FACT,
-            as_of_valid_at=valid_at,
-            as_of_believed_at=believed_at,
+            temporal_scope=_graph_temporal_scope(
+                valid_at=valid_at, believed_at=believed_at
+            ),
             freshness=self._freshness(),
             negative=Negative(
                 kind=NegativeKind.KNOWN_EMPTY,
@@ -547,6 +553,32 @@ class GraphQueries:
                 workaround="widen the hop bound, relax predicates, or drop the as-of",
             ),
         )
+
+
+def _graph_temporal_scope(
+    *, valid_at: datetime | None, believed_at: datetime | None
+):
+    """Disclose current, world-at, or two-axis audit graph selection."""
+    evaluated_at = datetime.now(UTC)
+    if believed_at is not None:
+        return AsOfTemporalScope(
+            valid_at=valid_at or evaluated_at,
+            evaluated_at=evaluated_at,
+            believed_at=believed_at,
+        )
+    if valid_at is not None:
+        return AtTemporalScope(
+            at=valid_at,
+            evaluated_at=evaluated_at,
+            believed_at=evaluated_at,
+        )
+    return current_temporal_scope(evaluated_at=evaluated_at)
+
+
+def _envelope(**values: object) -> Envelope:
+    """Build a graph envelope with an explicit current scope by default."""
+    values.setdefault("temporal_scope", current_temporal_scope())
+    return Envelope.model_validate(values)
 
 
 def _temporal_predicate(

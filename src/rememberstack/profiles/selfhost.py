@@ -35,9 +35,9 @@ from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine import RecipeRegistry
-from rememberstack.spine import seed_canonical_recipes
+from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -353,7 +353,7 @@ class SelfHostProfile:
         self._engine.dispose()
 
     def setup(self) -> None:
-        """Apply migrations, provision buckets, bootstrap core rows, and seed recipes."""
+        """Apply migrations, provision stores, bootstrap, and seed operations."""
         migration = Config(str(self._settings.migration_config))
         migration.set_main_option(
             "sqlalchemy.url", load_database_settings().sqlalchemy_url()
@@ -377,8 +377,8 @@ class SelfHostProfile:
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
             )
         )
-        seed_canonical_recipes(
-            registry=RecipeRegistry(engine=self._engine),
+        seed_canonical_operations(
+            registry=AssuredOperationRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
         # Install the seventeen examples.* saved-query identities (idempotent).
@@ -418,9 +418,9 @@ class SelfHostProfile:
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
         from rememberstack.surfaces import build_api
+        from rememberstack.surfaces import OperationExecutor
+        from rememberstack.surfaces import OperationSurface
         from rememberstack.surfaces import QueryEngine
-        from rememberstack.surfaces import RecipeExecutor
-        from rememberstack.surfaces import RecipeSurface
         from rememberstack.surfaces.query_sandbox.audit import AuditTrail
         from rememberstack.surfaces.query_sandbox.audit import KillSwitches
         from rememberstack.surfaces.query_sandbox.cypher_executor import (
@@ -497,9 +497,9 @@ class SelfHostProfile:
                     root=self._settings.forget_manifest_root
                 )
             ),
-            surface=RecipeSurface(
-                registry=RecipeRegistry(engine=self._engine),
-                executor=RecipeExecutor(query_engine=query_engine),
+            surface=OperationSurface(
+                registry=AssuredOperationRegistry(engine=self._engine),
+                executor=OperationExecutor(query_engine=query_engine),
                 deployment_id=self._settings.deployment_id,
             ),
             open_query=open_query,

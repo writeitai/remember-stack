@@ -52,9 +52,9 @@ RETRIEVAL_CHOICES: Final[tuple[str, ...]] = (
     "Cypher gives native graph power over a complete, point-in-time P2"
     " snapshot with mandatory built_at and age.",
     "SQL gives live PostgreSQL state and direct evidence composition.",
-    "The three assured operations (resolve_entity, question_context,"
-    " current_context) give one-call typed answers with D49 Envelope"
-    " guarantees.",
+    "The four assured operations (resolve_entity, testimony_context,"
+    " fact_context, answer_context) give one-call typed answers with explicit"
+    " Envelope or ContextBundle/v1 guarantees.",
 )
 
 #: Bound wrong current-truth query: claim windows are testimony, not verdict.

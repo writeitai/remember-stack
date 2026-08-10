@@ -31,6 +31,7 @@ from rememberstack.model.client import DeploymentBuildInfo
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.documents import IngestedVersion
+from rememberstack.model.envelope import ContextBundleV1
 from rememberstack.model.envelope import Envelope
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 
@@ -175,27 +176,29 @@ class MemoryClient:
         if self._owned:
             self._client.close()
 
-    def recipes(self) -> tuple[ToolDescriptor, ...]:
-        """Return the deployment recipe registry as typed tool descriptors."""
-        payload = self._json("GET", "/recipes")
+    def list_operations(self) -> tuple[ToolDescriptor, ...]:
+        """Return the deployment's four assured-operation descriptors."""
+        payload = self._json("GET", "/operations")
         if not isinstance(payload, list):
             raise MemoryApiError(
-                status_code=200, detail="GET /recipes did not return a list"
+                status_code=200, detail="GET /operations did not return a list"
             )
         return tuple(
-            _validated(ToolDescriptor, item, endpoint="GET /recipes")
+            _validated(ToolDescriptor, item, endpoint="GET /operations")
             for item in payload
         )
 
-    def run_recipe(
+    def run_operation(
         self, *, name: str, arguments: Mapping[str, object] | None = None
-    ) -> Envelope:
-        """Run one registry recipe and return its self-accounting envelope."""
-        return _validated(
-            Envelope,
-            self._json("POST", f"/recipe/{name}", json_body=dict(arguments or {})),
-            endpoint=f"POST /recipe/{name}",
+    ) -> Envelope | ContextBundleV1:
+        """Run one assured operation and validate its exact wire contract."""
+        endpoint = f"POST /operations/{name}"
+        payload = self._json(
+            "POST", endpoint, json_body=dict(arguments or {})
         )
+        if isinstance(payload, dict) and payload.get("contract") == "ContextBundle/v1":
+            return _validated(ContextBundleV1, payload, endpoint=endpoint)
+        return _validated(Envelope, payload, endpoint=endpoint)
 
     def query_sql(
         self,

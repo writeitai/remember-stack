@@ -8,7 +8,7 @@ from typing import Final
 from rememberstack.core.open_query_prose import HONESTY_WARNINGS
 from rememberstack.core.open_query_prose import RETRIEVAL_CHOICES
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_FULL
-from rememberstack.model import ConsumptionRecipe
+from rememberstack.model import ConsumptionOperation
 from rememberstack.model import ConsumptionScope
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
@@ -30,9 +30,9 @@ def render_consumption_skill(
         _deployment(context=context),
         _bound_examples(),
         _honesty_warnings(),
-        _assured_operations(recipes=context.recipes),
+        _assured_operations(operations=context.operations),
         _grains(),
-        _testimony(recipes=context.recipes),
+        _testimony(),
         _time_and_media(),
         _envelope(),
         _mounts(mounts=context.mounts),
@@ -135,29 +135,33 @@ def _honesty_warnings() -> str:
     return f"## Honesty rules for open results\n\n{bullets}"
 
 
-def _assured_operations(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
-    """Name the complete three-operation assured surface."""
-    core = {"resolve_entity", "question_context", "current_context"}
-    enabled_core = [recipe for recipe in recipes if recipe.name in core]
+def _assured_operations(*, operations: tuple[ConsumptionOperation, ...]) -> str:
+    """Name the complete four-operation assured surface."""
+    core = {
+        "resolve_entity",
+        "testimony_context",
+        "fact_context",
+        "answer_context",
+    }
+    enabled_core = [operation for operation in operations if operation.name in core]
     if enabled_core:
         core_rows = "\n".join(
-            f"- `{recipe.name}` — `{recipe.output_grain}` / "
-            f"`{recipe.answer_intent}`: {_one_line(value=recipe.description)}"
-            for recipe in enabled_core
+            f"- `{operation.name}` — `{operation.output_grain or 'ContextBundle/v1'}` / "
+            f"`{operation.answer_intent}`: {_one_line(value=operation.description)}"
+            for operation in enabled_core
         )
     else:
         core_rows = (
-            "- The three assured operations are"
-            " `resolve_entity`, `question_context`, and `current_context`"
-            " (D49 Envelope contracts)."
+            "- The four assured operations are `resolve_entity`,"
+            " `testimony_context`, `fact_context`, and `answer_context`."
         )
     return (
         "## Assured operations\n\n"
-        "Exactly three platform intent operations ship with D49 Envelope"
-        " contracts:\n\n"
+        "Exactly four platform intent operations ship; three return D49"
+        " Envelopes and `answer_context` returns `ContextBundle/v1`:\n\n"
         f"{core_rows}\n\n"
         "All other shipped retrieval patterns are open SQL/Cypher or non-tool "
-        "`examples.*` saved queries; there is no compatibility recipe catalog."
+        "`examples.*` saved queries; there is no compatibility operation catalog."
     )
 
 
@@ -181,9 +185,8 @@ def _grains() -> str:
     )
 
 
-def _testimony(*, recipes: tuple[ConsumptionRecipe, ...]) -> str:
+def _testimony() -> str:
     """Teach current testimony, historical opt-in, and withdrawn support."""
-    del recipes
     return (
         "## Testimony currency and shaky support\n\n"
         "Claim search and claim views default to **current testimony**. Claims "

@@ -8,6 +8,13 @@ from rememberstack.model.adjudication import ReviewItem
 from rememberstack.model.adjudication import SupersessionOutcome
 from rememberstack.model.adjudication import SupersessionVerdict
 from rememberstack.model.adjudication import TranscriptEntry
+from rememberstack.model.assured_operations import AssuredAnswerIntent
+from rememberstack.model.assured_operations import AssuredOperation
+from rememberstack.model.assured_operations import AssuredOperationName
+from rememberstack.model.assured_operations import AssuredResultContract
+from rememberstack.model.assured_operations import OperationBundlePlan
+from rememberstack.model.assured_operations import OperationStep
+from rememberstack.model.assured_operations import PrimitiveChainPlan
 from rememberstack.model.auth import AuthenticatedContext
 from rememberstack.model.auth import PerimeterCredential
 from rememberstack.model.blocks import Block
@@ -65,7 +72,7 @@ from rememberstack.model.component_version import PipelineComponent
 from rememberstack.model.component_version import RegisterComponentVersionInput
 from rememberstack.model.component_version import RegisterComponentVersionResult
 from rememberstack.model.consumption import ConsumptionDeployment
-from rememberstack.model.consumption import ConsumptionRecipe
+from rememberstack.model.consumption import ConsumptionOperation
 from rememberstack.model.consumption import ConsumptionScope
 from rememberstack.model.consumption import ConsumptionSkillContext
 from rememberstack.model.consumption import RenderedConsumptionSkill
@@ -91,13 +98,17 @@ from rememberstack.model.documents import SyntheticRootRecord
 from rememberstack.model.documents import UploadRecord
 from rememberstack.model.envelope import AggregateBucket
 from rememberstack.model.envelope import AggregateReport
+from rememberstack.model.envelope import AsOfTemporalScope
+from rememberstack.model.envelope import AtTemporalScope
 from rememberstack.model.envelope import ChangeRecord
 from rememberstack.model.envelope import ChunkEvidenceResult
 from rememberstack.model.envelope import CoMember
+from rememberstack.model.envelope import ContextBundleV1
 from rememberstack.model.envelope import Contradiction
+from rememberstack.model.envelope import current_temporal_scope
+from rememberstack.model.envelope import CurrentTemporalScope
 from rememberstack.model.envelope import EntityCandidate
 from rememberstack.model.envelope import Envelope
-from rememberstack.model.envelope import EnvelopePart
 from rememberstack.model.envelope import EvidenceResult
 from rememberstack.model.envelope import EvidenceTotal
 from rememberstack.model.envelope import FactEvidence
@@ -108,10 +119,12 @@ from rememberstack.model.envelope import Grain
 from rememberstack.model.envelope import GraphEdge
 from rememberstack.model.envelope import GraphNode
 from rememberstack.model.envelope import GraphPath
+from rememberstack.model.envelope import HistoryTemporalScope
 from rememberstack.model.envelope import IdentityRegime
 from rememberstack.model.envelope import KFreshness
 from rememberstack.model.envelope import Negative
 from rememberstack.model.envelope import NegativeKind
+from rememberstack.model.envelope import OverlapTemporalScope
 from rememberstack.model.envelope import PageRef
 from rememberstack.model.envelope import RankedItem
 from rememberstack.model.envelope import ScanRow
@@ -283,9 +296,6 @@ from rememberstack.model.queue import PipelineStage
 from rememberstack.model.queue import ProcessingLane
 from rememberstack.model.queue import QueueRoute
 from rememberstack.model.queue import UTCDateTime
-from rememberstack.model.recipes import Recipe
-from rememberstack.model.recipes import RecipeAnswerIntent
-from rememberstack.model.recipes import RecipeStep
 from rememberstack.model.relations import ClaimForNormalization
 from rememberstack.model.relations import EntityRef
 from rememberstack.model.relations import NormalizationResponse
@@ -330,7 +340,13 @@ __all__ = (
     "AdjudicationVerdict",
     "AggregateBucket",
     "AggregateReport",
+    "AsOfTemporalScope",
+    "AssuredAnswerIntent",
+    "AssuredOperation",
+    "AssuredOperationName",
+    "AssuredResultContract",
     "AuthenticatedContext",
+    "AtTemporalScope",
     "Block",
     "BlockType",
     "CanaryCase",
@@ -368,10 +384,12 @@ __all__ = (
     "ConversionError",
     "ConversionResult",
     "ConsumptionDeployment",
-    "ConsumptionRecipe",
+    "ConsumptionOperation",
     "ConsumptionScope",
     "ConsumptionSkillContext",
+    "ContextBundleV1",
     "ConvertSource",
+    "CurrentTemporalScope",
     "CoreManifestConflictError",
     "DecisionRecord",
     "DecisionType",
@@ -394,7 +412,6 @@ __all__ = (
     "EnqueueOutcome",
     "EnqueueWork",
     "EntityCandidate",
-    "EnvelopePart",
     "EntityRef",
     "Envelope",
     "GraphEdge",
@@ -426,6 +443,7 @@ __all__ = (
     "Freshness",
     "Grain",
     "IdentityRegime",
+    "HistoryTemporalScope",
     "KFreshness",
     "HandlerAlreadyRegisteredError",
     "IngestedVersion",
@@ -446,10 +464,13 @@ __all__ = (
     "ObservationForEmbedding",
     "ObservationOutcome",
     "ObservationVerdict",
+    "OperationBundlePlan",
+    "OperationStep",
     "OperationalScaleMeasurement",
     "OperationalScaleReport",
     "OperationalReport",
     "OtherPredicateGrammarError",
+    "OverlapTemporalScope",
     "P1ChunkRow",
     "P1ChunkText",
     "P1ClaimRow",
@@ -469,6 +490,7 @@ __all__ = (
     "ProcessingTarget",
     "ProjectionSnapshotState",
     "ProjectionReadiness",
+    "PrimitiveChainPlan",
     "ProviderAccountingError",
     "ProviderCallError",
     "ProviderCallUsage",
@@ -478,9 +500,6 @@ __all__ = (
     "QueueRoute",
     "PageRef",
     "RankedItem",
-    "Recipe",
-    "RecipeAnswerIntent",
-    "RecipeStep",
     "RecordCall",
     "RegisterComponentVersionInput",
     "RegisterComponentVersionResult",
@@ -640,6 +659,7 @@ __all__ = (
     "WorkNotDeadLetterError",
     "WorkNotFoundError",
     "WorkNotRunningError",
+    "current_temporal_scope",
     "merge_authored_review_payloads",
     "merge_knowledge_deltas",
 )

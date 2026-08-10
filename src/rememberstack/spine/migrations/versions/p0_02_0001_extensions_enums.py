@@ -115,9 +115,11 @@ CREATE TYPE subscription_status    AS ENUM ('active','paused','retired');  -- di
 CREATE TYPE knowledge_trigger      AS ENUM ('evidence_changed','community_changed','debounce_timer','manual','tombstone','authored_review');
 CREATE TYPE refresh_status         AS ENUM ('pending','running','done','failed');
 
--- D50 retrieval recipe registry (§11.A) — the two enums the grain linter checks mechanically:
-CREATE TYPE recipe_output_grain    AS ENUM ('fact','evidence','compiled','composite');
-CREATE TYPE recipe_answer_intent   AS ENUM ('current_facts','assertion_history','orientation','audit','change_feed');
+-- D50/D87 closed assured-operation registry (§11.A):
+CREATE TYPE assured_operation_name AS ENUM ('resolve_entity','testimony_context','fact_context','answer_context');
+CREATE TYPE assured_result_contract AS ENUM ('envelope','context_bundle_v1');
+CREATE TYPE assured_output_grain AS ENUM ('fact','evidence','compiled','composite');
+CREATE TYPE assured_answer_intent AS ENUM ('identity','testimony','facts','combined_context');
 """
 _TABLES = ()
 _TYPES = (
@@ -173,8 +175,10 @@ _TYPES = (
     "subscription_status",
     "knowledge_trigger",
     "refresh_status",
-    "recipe_output_grain",
-    "recipe_answer_intent",
+    "assured_operation_name",
+    "assured_result_contract",
+    "assured_output_grain",
+    "assured_answer_intent",
 )
 
 

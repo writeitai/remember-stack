@@ -181,6 +181,7 @@ class P1ScoredSearchPort(Protocol):
         k: int,
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         ...
@@ -193,6 +194,7 @@ class P1ScoredSearchPort(Protocol):
         k: int,
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         ...
@@ -206,6 +208,7 @@ class P1ScoredSearchPort(Protocol):
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel.
 
@@ -224,12 +227,19 @@ class P1ScoredSearchPort(Protocol):
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
+        candidate_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         ...
 
     def search_facts_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        kind: str | None,
+        candidate_keys: tuple[tuple[str, str], ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored fact nominations from the facts channel."""
         ...

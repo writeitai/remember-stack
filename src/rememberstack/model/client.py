@@ -30,17 +30,19 @@ class ConnectorNotFoundError(Exception):
 
 
 class ToolDescriptor(BaseModel):
-    """One deployment recipe and its live implementation identity."""
+    """One assured operation and its live implementation identity."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     description: str
     input_schema: dict[str, object]
-    output_grain: str
+    result_schema: dict[str, object]
+    result_contract: Literal["envelope", "context_bundle_v1"]
+    output_grain: str | None
     answer_intent: str
     version: int | None = Field(default=None, ge=1)
-    implementation_chain_hash: str | None = Field(
+    implementation_plan_hash: str | None = Field(
         default=None, min_length=64, max_length=64
     )
 
