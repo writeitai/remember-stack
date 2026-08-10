@@ -34,6 +34,7 @@ from rememberstack.surfaces import GraphQueries
 from rememberstack.surfaces import QueryEngine
 from rememberstack.workers import GraphRebuildWorker
 from rememberstack.workers import GraphSnapshotReader
+from tests.surfaces.lineage_seed import seed_entity_mention
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5b000000-0000-0000-0000-000000000001")
@@ -377,6 +378,26 @@ class _Corpus:
                     "deployment": _DEPLOYMENT_ID,
                     "doc": self.docs[document_key],
                 },
+            )
+        # Ambiguity fixtures (Alex Alpha / Alex Beta) must gain membership the
+        # way a real extracted Person does — a mention on a live chunk plus its
+        # resolution decision. The document-entity bridge is the other arm, but
+        # it belongs to Document-typed registry entities, not to people.
+        for key, surface, chunk_key in (
+            ("alex_a", "Alex", "alice_beacon-support-0"),
+            ("alex_b", "Alex", "beacon_acme-support-0"),
+        ):
+            doc_id = self.docs[chunk_key]
+            seed_entity_mention(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                entity_id=self.entities[key],
+                doc_id=doc_id,
+                chunk_id=self.doc_chunks[doc_id],
+                surface_form=surface,
+                normalized_lemma="alex",
+                at=_NOW,
+                resolver_version="batch-d",
             )
 
     def _document(self, connection: Connection, *, key: str, live_chunk: bool) -> UUID:

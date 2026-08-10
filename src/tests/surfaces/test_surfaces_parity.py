@@ -50,6 +50,8 @@ from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.cli import _split_operation_arg
 from rememberstack.surfaces.cli import operations_list
 from rememberstack.surfaces.cli import operations_run
+from tests.surfaces.lineage_seed import seed_entity_mention
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("54000000-0000-0000-0000-000000000001")
@@ -157,6 +159,33 @@ class _Deployment:
                         " VALUES (:e, :d, :t, :n, lower(:n))"
                     ),
                     {"e": entity_id, "d": _DEPLOYMENT_ID, "t": kind, "n": name},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                        " alias_text, normalized_lemma, provenance) VALUES"
+                        " (:alias, :d, :e, :n, lower(:n), 'llm_canonical')"
+                    ),
+                    {"alias": uuid4(), "d": _DEPLOYMENT_ID, "e": entity_id, "n": name},
+                )
+            # resolve_entity reads memory_v1.entities_current; membership needs
+            # a mention on a live chunk, not only the bare entities row.
+            lineage = seed_live_document_lineage(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                label="surface-parity",
+                title="Surface parity",
+                source_ref="surface-parity",
+            )
+            for entity_id, name in ((self.alice, "Alice"), (acme, "Acme")):
+                seed_entity_mention(
+                    connection=connection,
+                    deployment_id=_DEPLOYMENT_ID,
+                    entity_id=entity_id,
+                    doc_id=lineage.doc_id,
+                    chunk_id=lineage.chunk_id,
+                    surface_form=name,
+                    resolver_version="surface-parity",
                 )
             connection.execute(
                 text(
