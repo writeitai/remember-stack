@@ -3,7 +3,7 @@
 **Status:** analysis (non-binding)  
 **Date:** 2026-08-10  
 **Incident:** BEAM 1M conversation-1 on `umc-beam-bench-01` — `normalize_relations` dead-lettered after Claimify completed (~15k claims).  
-**Related binding design:** [e3_unknown_entity_type_gate_design.md](../designs/e3_unknown_entity_type_gate_design.md)
+**Related binding design:** [e3_unknown_entity_type_gate_design.md](../designs/e3_unknown_entity_type_gate_design.md) (D86)
 
 ## 1. Problem frame
 
@@ -104,12 +104,15 @@ single vocabulary fluke.
 ## 8. Open implementation notes
 
 - Where to gate: after `NormalizationResponse` parse, **before**
-  `EntityResolver.resolve` / `EntityRegistry.resolve_t0` mint.
-- Signature checks already use LLM-emitted types; illegal types may already be
-  signature-rejected for some triples — still gate types for **observations**
-  and any path that mints without a signature check.
-- Metrics: structured logs first; optional counters on CostMeter / worker
-  outcome attributes.
+  `CascadeResolver.resolve` mint (E3 does not use `EntityRegistry.resolve_t0`
+  for production resolve).
+- Relation triples often already fail closed via `_signature_allows` when the
+  type is absent from `type_parents`; **observations** had no type gate — the
+  primary FK path in the BEAM incident.
+- Inner retries need unique cost `call_key`s (`normalize:{claim_id}:aN`); reuse
+  of `normalize:{claim_id}` silently drops retry spend from the ledger.
+- Metrics: structured logs first; denominators = claims_processed + generate
+  calls; bound label cardinality on illegal type strings.
 
 ## 9. Conclusion
 

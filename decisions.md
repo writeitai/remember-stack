@@ -10,29 +10,6 @@ L-numbers as historical record.
 ---
 
 
-## D85. E3 unknown entity types: retry then drop (not coerce)
-
-**Decision.** When the E3 normalizer emits an entity type outside the deployment
-`entity_types` registry, re-call the normalizer for that claim (small inner
-budget). If still illegal, **drop** the offending relation/observation assertion
-and continue the version job. Do **not** coerce to Concept. Do **not** auto-create
-registry types from LLM output. Track unknown-type rates.
-
-**Context.** BEAM 1M normalize dead-lettered on FK `entities.type = Process`
-after successful Claimify (~15k claims), leaving zero observations and no scores.
-Unknown predicates already soft-drop; unknown types did not.
-
-**Alternatives.** Coerce to Concept (rejected — silent type rewrite). Auto-register
-types (rejected — ontology pollution). Status quo job DLQ (rejected — document
-blast radius). Per-claim work-ledger fan-out (deferred).
-
-**Consequences.** Inner LLM cost on a rare path; residual drops are re-derivable;
-version normalize completes so later stages and scoring can run.
-
-**Design.** `plan/designs/e3_unknown_entity_type_gate_design.md`  
-**Analysis.** `plan/analysis/e3_unknown_entity_type_gate_analysis.md`
-
----
 ## D1. Split source of truth: Postgres vs. the git repo
 
 **Decision.** Postgres is authoritative for L0–L2 and L6 — everything deterministically
@@ -3335,3 +3312,30 @@ projection/store, transport, and server failures remain terminal.
 **Rejected.** Calling the three-operation seat “full”; adding only SQL/Cypher
 while omitting primitives/P3; private benchmark reads from Postgres, Lance,
 MinIO, or graph files; inventing a P3 HTTP endpoint; pretending absent K ran.
+
+## D86. E3 unknown entity types: retry then drop (not coerce)
+
+**Decision.** When the E3 normalizer emits an entity type outside the deployment
+`entity_types` registry, re-call the normalizer for that claim (small inner
+budget, unique cost `call_key`s). If still illegal, **drop** the offending
+relation/observation assertion and continue the version job. Do **not** coerce
+to Concept. Do **not** auto-create registry types from LLM output. Track
+unknown-type rates. Gate before mint on the real resolve path
+(`CascadeResolver`).
+
+**Context.** BEAM 1M normalize dead-lettered on FK `entities.type = Process`
+after successful Claimify (~15k claims), leaving zero observations and no scores.
+Unknown predicates already soft-drop; unknown types did not. Relation triples
+often fail closed via signature gate first; **observations** had no type gate
+and were the primary FK path.
+
+**Alternatives.** Coerce to Concept (rejected). Auto-register types (rejected).
+Status quo job DLQ (rejected). Per-claim work-ledger fan-out (deferred).
+
+**Consequences.** Inner LLM cost on a rare path; residual drops are re-derivable;
+version normalize completes so later stages and scoring can run. Bumps
+`E3_NORMALIZER_VERSION`.
+
+**Design.** `plan/designs/e3_unknown_entity_type_gate_design.md`  
+**Analysis.** `plan/analysis/e3_unknown_entity_type_gate_analysis.md`
+
