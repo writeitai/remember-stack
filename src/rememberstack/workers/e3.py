@@ -167,7 +167,7 @@ class NormalizeRelationsHandler:
                 continue  # replay: stored mentions/facts are the output (D7)
             claims_processed += 1
             try:
-                self._normalize_claim(
+                soft_skipped = self._normalize_claim(
                     created_relations=created_relations,
                     observations_by_entity=observations_by_entity,
                     deployment_id=deployment_id,
@@ -196,19 +196,10 @@ class NormalizeRelationsHandler:
                         type(integrity_error).__name__,
                     )
                 raise
-            except Exception as exception:
-                if not _is_claim_soft_failure(exception=exception):
-                    # Systemic provider/DB/accounting outages use the outer ledger.
-                    raise
+            if soft_skipped:
+                # Normalizer generate content poison only (already metered under
+                # aN:failure). Resolver/upsert exceptions are never soft here.
                 soft_claim_errors += 1
-                # Usage for ProviderInvalidResponseError is recorded under
-                # normalize:{id}:aN:failure inside _generate_normalize_response
-                # (only for soft failures so Worker.run_one does not double-bill).
-                _logger.exception(
-                    "e3.claim_normalize_error claim_id=%s error_class=%s",
-                    claim.claim_id,
-                    type(exception).__name__,
-                )
         _logger.info(
             "e3.claims_processed count=%s soft_claim_errors=%s",
             claims_processed,
@@ -292,8 +283,13 @@ class NormalizeRelationsHandler:
         type_parents: dict[str, str | None],
         allowed_types: frozenset[str],
         meter: CostMeterPort,
-    ) -> None:
-        """One claim through the normalizer call and the deterministic gates."""
+    ) -> bool:
+        """One claim through the normalizer call and the deterministic gates.
+
+        Returns True when the normalizer generate path soft-skipped the claim
+        (content poison already metered). Returns False after gates run.
+        Resolver and fact writes re-raise; they are never claim-soft.
+        """
         types_csv = ", ".join(sorted(allowed_types))
         base_prompt = _NORMALIZE_PROMPT.format(
             predicates=prompt_lines,
@@ -308,6 +304,8 @@ class NormalizeRelationsHandler:
             types_csv=types_csv,
             meter=meter,
         )
+        if response is None:
+            return True
         for relation_index, relation in enumerate(response.relations):
             illegal = _illegal_types_in_relation(
                 relation=relation, allowed_types=allowed_types
@@ -425,6 +423,7 @@ class NormalizeRelationsHandler:
                     doc_id=claim.doc_id,
                 )
             )
+        return False
 
     def _generate_normalize_response(
         self,
@@ -434,8 +433,13 @@ class NormalizeRelationsHandler:
         allowed_types: frozenset[str],
         types_csv: str,
         meter: CostMeterPort,
-    ) -> NormalizationResponse:
-        """Generate with D86 type-gate inner retry; return the final response only."""
+    ) -> NormalizationResponse | None:
+        """Generate with D86 type-gate inner retry; return the final response only.
+
+        Returns ``None`` when the normalizer generate path hits claim-soft
+        content poison (``ProviderInvalidResponseError``), after metering
+        ``normalize:{id}:aN:failure``. Systemic provider errors re-raise.
+        """
         prompt = base_prompt
         response: NormalizationResponse | None = None
         for attempt in range(1, _MAX_INNER_NORMALIZE_ATTEMPTS + 1):
@@ -449,20 +453,25 @@ class NormalizeRelationsHandler:
                     ),
                     response_type=NormalizationResponse,
                 )
-            except ProviderCallError as exception:
-                # Soft content poison is swallowed by the claim loop, so bill it
-                # here under the attempt key. Systemic ProviderCallError escapes
-                # to Worker.run_one, which meters provider_failure — do not
-                # double-bill that path.
-                if (
-                    isinstance(exception, ProviderInvalidResponseError)
-                    and exception.usage is not None
-                ):
+            except ProviderInvalidResponseError as exception:
+                # Soft boundary is generate-only: meter and skip the claim.
+                # Resolver ProviderInvalidResponseError is not soft (re-raises
+                # from resolve) so Worker can meter provider_failure.
+                if exception.usage is not None:
                     meter.record(
                         call_key=f"{call_key}:failure",
                         tier="normalize_failed_response",
                         usage=exception.usage,
                     )
+                _logger.exception(
+                    "e3.claim_normalize_error claim_id=%s error_class=%s site=generate",
+                    claim.claim_id,
+                    type(exception).__name__,
+                )
+                return None
+            except ProviderCallError:
+                # Systemic: do not meter here (Worker.run_one records
+                # provider_failure once).
                 raise
             meter.record(call_key=call_key, tier="normalize", usage=response_call.usage)
             response = response_call.output
@@ -500,17 +509,6 @@ class NormalizeRelationsHandler:
             )
         assert response is not None
         return response
-
-
-def _is_claim_soft_failure(*, exception: BaseException) -> bool:
-    """Whether a single-claim failure may be soft-isolated (D86).
-
-    Only claim-attributable content poison is soft: a structured-output schema
-    failure on one claim must not dead-letter the whole version. Transport and
-    generic provider outages, database errors, and unexpected bugs re-raise so
-    the outer work ledger retries or dead-letters the job.
-    """
-    return isinstance(exception, ProviderInvalidResponseError)
 
 
 def _is_entity_type_fk_violation(*, error: IntegrityError) -> bool:

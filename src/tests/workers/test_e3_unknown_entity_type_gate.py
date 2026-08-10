@@ -19,7 +19,6 @@ from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import ResolvedEntity
 from rememberstack.spine.resolver import UnregisteredEntityTypeError
 from rememberstack.workers.e3 import _illegal_types_in_response
-from rememberstack.workers.e3 import _is_claim_soft_failure
 from rememberstack.workers.e3 import _MAX_INNER_NORMALIZE_ATTEMPTS
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
@@ -328,22 +327,8 @@ def test_normalize_claim_keeps_legal_sibling_observation() -> None:
     assert only[0].statement == "legal"
 
 
-def test_soft_failure_is_only_invalid_response() -> None:
-    """Systemic errors are not claim-soft; content poison is."""
-    usage = ProviderCallUsage(
-        model_name="m", tokens_in=1, tokens_out=0, cost_usd=Decimal(0), latency_ms=0
-    )
-    assert _is_claim_soft_failure(
-        exception=ProviderInvalidResponseError("bad json", usage=usage)
-    )
-    assert not _is_claim_soft_failure(exception=RuntimeError("db down"))
-    assert not _is_claim_soft_failure(
-        exception=UnregisteredEntityTypeError("Process not registered")
-    )
-
-
-def test_generate_failure_records_attempt_failure_key() -> None:
-    """Usage-bearing invalid response meters normalize:{id}:a1:failure."""
+def test_generate_soft_poison_returns_none_and_meters() -> None:
+    """Generate content poison: None return + a1:failure (not raised)."""
     usage = ProviderCallUsage(
         model_name="m", tokens_in=3, tokens_out=0, cost_usd=Decimal(0), latency_ms=1
     )
@@ -366,17 +351,92 @@ def test_generate_failure_records_attempt_failure_key() -> None:
     )
     meter = RecordingCostMeter()
     claim = _claim()
-    with pytest.raises(ProviderInvalidResponseError):
-        handler._generate_normalize_response(
-            claim=claim,
-            base_prompt="BASE",
-            allowed_types=frozenset({"Concept"}),
-            types_csv="Concept",
-            meter=meter,
-        )
+    out = handler._generate_normalize_response(
+        claim=claim,
+        base_prompt="BASE",
+        allowed_types=frozenset({"Concept"}),
+        types_csv="Concept",
+        meter=meter,
+    )
+    assert out is None
     assert meter.records == [
         (f"normalize:{claim.claim_id}:a1:failure", "normalize_failed_response")
     ]
+
+
+def test_normalize_claim_soft_skip_does_not_resolve() -> None:
+    """Soft generate poison returns soft_skipped and never calls resolve."""
+    usage = ProviderCallUsage(
+        model_name="m", tokens_in=1, tokens_out=0, cost_usd=Decimal(0), latency_ms=0
+    )
+
+    class RaisingProvider:
+        def generate(self, *, request: object, response_type: object) -> object:
+            del request, response_type
+            raise ProviderInvalidResponseError("schema fail", usage=usage)
+
+    resolver = RecordingResolver()
+    handler = NormalizeRelationsHandler(
+        claim_catalog=None,  # type: ignore[arg-type]
+        chunk_catalog=None,  # type: ignore[arg-type]
+        registry=None,  # type: ignore[arg-type]
+        resolver=resolver,  # type: ignore[arg-type]
+        facts=RecordingFacts(),  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        model_provider=RaisingProvider(),  # type: ignore[arg-type]
+        settings=E3Settings(normalize_model="test-model"),
+        chunker_version="test",
+    )
+    soft = handler._normalize_claim(
+        created_relations=[],
+        observations_by_entity={},
+        deployment_id=uuid4(),
+        claim=_claim(),
+        predicates={},
+        prompt_lines="",
+        signatures={},
+        type_parents={"Concept": None},
+        allowed_types=frozenset({"Concept"}),
+        meter=NoopCostMeter(),
+    )
+    assert soft is True
+    assert resolver.calls == []
+
+
+def test_resolver_invalid_response_is_not_soft() -> None:
+    """ProviderInvalidResponseError from resolve re-raises (not claim-soft)."""
+    legal = {
+        "observations": [
+            {"subject": {"name": "cache", "type": "Concept"}, "statement": "legal"}
+        ]
+    }
+    usage = ProviderCallUsage(
+        model_name="m", tokens_in=2, tokens_out=0, cost_usd=Decimal(0), latency_ms=0
+    )
+
+    class RaisingResolver:
+        def resolve(self, **kwargs: object) -> ResolvedEntity:
+            del kwargs
+            raise ProviderInvalidResponseError("t4 schema fail", usage=usage)
+
+    handler = _handler(
+        provider=FakeModelProvider(generate_payload=legal),
+        resolver=RaisingResolver(),
+        facts=RecordingFacts(),
+    )
+    with pytest.raises(ProviderInvalidResponseError):
+        handler._normalize_claim(
+            created_relations=[],
+            observations_by_entity={},
+            deployment_id=uuid4(),
+            claim=_claim(),
+            predicates={},
+            prompt_lines="",
+            signatures={},
+            type_parents={"Concept": None},
+            allowed_types=frozenset({"Concept"}),
+            meter=NoopCostMeter(),
+        )
 
 
 def test_systemic_provider_error_not_metered_in_generate() -> None:

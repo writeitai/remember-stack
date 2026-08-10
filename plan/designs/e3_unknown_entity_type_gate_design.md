@@ -107,16 +107,18 @@ for each observation in response.observations:
 - **Full response replacement:** the last successful generate replaces the
   prior response entirely (legal facts from attempt 1 may be omitted — accepted
   tradeoff; metrics quantify recovered/drop).
-- **Soft vs systemic on generate raise:** only
-  `ProviderInvalidResponseError` (structured-output content poison) is
-  claim-soft — log `e3.claim_normalize_error`, skip that claim, **continue**
-  the version job (including when every claim soft-fails with zero facts;
-  emit `e3.normalize_all_soft_failed`). Generic `ProviderCallError`,
+- **Soft vs systemic:** soft isolation applies **only at the normalizer
+  generate boundary** (not around resolve/upsert). On
+  `ProviderInvalidResponseError` from normalize generate: meter
+  `normalize:{id}:aN:failure`, log `e3.claim_normalize_error` with
+  `site=generate`, skip that claim, **continue** the version job (including
+  when every claim soft-fails with zero facts; emit
+  `e3.normalize_all_soft_failed`). The same exception class from
+  **CascadeResolver T4** (or any post-generate path) is **not** soft — it
+  re-raises so the outer worker can meter `provider_failure` and retry/DLQ
+  without partial unbilled claim application. Generic `ProviderCallError`,
   transport/timeouts, database errors, `UnregisteredEntityTypeError`, and
-  unexpected bugs **re-raise** so the outer work ledger retries or dead-letters.
-  Soft isolation must not convert a true outage into a successful empty
-  normalize; the soft class is intentionally narrow (same pattern as E1
-  chunk poison).
+  unexpected bugs also **re-raise**.
 
 ### Cost ledger keys
 
