@@ -362,6 +362,20 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
     assert empty_time.status_code == 422
     assert empty_time.json()["detail"]["code"] == "invalid_parameter"
 
+    for time in (
+        {"mode": "at", "at": "2026-08-10T12:00:00"},
+        {
+            "mode": "overlap",
+            "from": "2026-08-10T12:00:00",
+            "to": "2026-08-10T13:00:00Z",
+        },
+    ):
+        naive_time = deployment.client.post(
+            "/operations/fact_context", json={"query": "Alice", "time": time}
+        )
+        assert naive_time.status_code == 422
+        assert naive_time.json()["detail"]["code"] == "invalid_parameter"
+
     typo = deployment.client.post("/operations/resolve_entity", json={"naem": "Alice"})
     assert typo.status_code == 422  # a typo never silently broadens the query
 

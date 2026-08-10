@@ -31,7 +31,7 @@ invariant logic?
   `src/rememberstack/profiles/selfhost.py`.
 - Retained-operation SQL:
   `src/rememberstack/surfaces/query_engine.py`, especially
-  `_RESOLVE_T0_SQL`, `_CONFIRM_CURRENT_FACTS`,
+  `_RESOLVE_T0_SQL`, `_CONFIRM_FACT_CONTEXT`,
   `_CONTRADICTION_MEMBERS_*`, and `_MULTI_HOP_EDGE_EVIDENCE`.
 - The schema authorities and live-shape comparator:
   `src/rememberstack/spine/query_space/manifest.py`.

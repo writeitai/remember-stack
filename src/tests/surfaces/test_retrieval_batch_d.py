@@ -703,6 +703,21 @@ def test_testimony_context_rejects_an_unknown_entity_without_partial_results(
     assert answer.chunks == ()
 
 
+def test_testimony_context_discloses_bounded_claim_and_chunk_nomination(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    """A saturated P1 channel is marked as truncated instead of a quiet top-k."""
+    seeded, _graph = corpus
+    answer = seeded.query_engine().testimony_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice", k=1, candidate_k=1
+    )
+
+    assert answer.truncation is not None
+    assert answer.truncation.truncated
+    assert not answer.truncation.total_is_exact
+    assert answer.truncation.returned == len(answer.evidence) + len(answer.chunks)
+
+
 def test_two_entity_path_has_both_stances_and_exact_totals(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:

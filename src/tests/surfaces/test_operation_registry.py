@@ -25,6 +25,8 @@ from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import PrimitiveChainPlan
+from rememberstack.model.assured_operations import AtFactTime
+from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
@@ -99,6 +101,20 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     assert isinstance(fact_properties, dict)
     assert "entity_ids" in testimony_properties
     assert "time" in fact_properties
+
+
+def test_fact_time_models_reject_naive_wall_times() -> None:
+    """D87 timestamptz inputs require an explicit offset before retrieval."""
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        AtFactTime(at=datetime(2026, 8, 10, 12, 0))
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        OverlapFactTime.model_validate(
+            {
+                "mode": "overlap",
+                "from": "2026-08-10T12:00:00",
+                "to": "2026-08-10T13:00:00Z",
+            }
+        )
 
 
 def test_linter_rejects_contract_tuple_or_plan_drift() -> None:

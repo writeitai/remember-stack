@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import FactSupport
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
 from rememberstack.model.assured_operations import AtFactTime
@@ -58,7 +59,7 @@ def database_engine() -> Iterator[Engine]:
 class _FactIndex:
     """Deterministic P1 facts nomination with no unrelated channel behavior."""
 
-    def __init__(self, *, fact_keys: tuple[tuple[str | None, UUID], ...]) -> None:
+    def __init__(self, *, fact_keys: tuple[tuple[str, UUID], ...]) -> None:
         self.fact_keys = tuple((kind, str(fact_id)) for kind, fact_id in fact_keys)
         self.requested_k: list[int] = []
 
@@ -118,6 +119,7 @@ class _Corpus:
         self.relation_id = uuid4()
         self.observation_id = uuid4()
         self.unbacked_id = uuid4()
+        self.withdrawn_id = uuid4()
         self.ended_id = uuid4()
         self.future_id = uuid4()
         self.invalidated_id = uuid4()
@@ -175,6 +177,11 @@ class _Corpus:
             object_id=self.object_id,
         )
         self._relation(connection, fact_id=self.unbacked_id, label="Alice knows Acme")
+        self._relation(
+            connection,
+            fact_id=self.withdrawn_id,
+            label="Alice previously supported a legacy project",
+        )
         connection.execute(
             text(
                 "INSERT INTO observations (observation_id, deployment_id,"
@@ -265,6 +272,30 @@ class _Corpus:
             kind="observation",
             stance="contradicts",
             at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="withdrawn-historical",
+            fact_id=self.withdrawn_id,
+            kind="relation",
+            stance="supports",
+            current=False,
+            at=_NOW - timedelta(days=2),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO review_queue (review_id, deployment_id, item_kind,"
+                " candidate, blast_radius, confidence, expected_impact, status)"
+                " VALUES (:review, :deployment, 'support_withdrawn',"
+                " CAST(:candidate AS jsonb), 1, 0.5, 0.5, 'pending')"
+            ),
+            {
+                "review": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "candidate": (
+                    f'{{"fact_kind":"relation","fact_id":"{self.withdrawn_id}"}}'
+                ),
+            },
         )
 
     def _seed_budget_facts(self, connection: Connection) -> None:
@@ -525,16 +556,12 @@ class _Corpus:
         )
 
     def query_engine(
-        self, *, fact_ids: tuple[UUID, ...], qualified: bool = True
+        self, *, fact_ids: tuple[UUID, ...]
     ) -> tuple[QueryEngine, _FactIndex]:
         index = _FactIndex(
             fact_keys=tuple(
                 (
-                    None
-                    if not qualified
-                    else (
-                        "observation" if fact_id == self.observation_id else "relation"
-                    ),
+                    "observation" if fact_id == self.observation_id else "relation",
                     fact_id,
                 )
                 for fact_id in fact_ids
@@ -595,46 +622,6 @@ def test_fact_context_returns_both_fact_kinds_with_both_stances(
     ]
     assert len({corpus.claim_docs[claim_id] for claim_id in selected_support}) == 2
     assert corpus.claims["support-old-same-lineage"] not in selected_support
-
-
-def test_fact_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -> None:
-    """A P1 UUID that names two fact kinds is incomplete and fails closed."""
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text(
-                "INSERT INTO observations (observation_id, deployment_id, "
-                "subject_entity_id, statement, normalizer_version, ingested_at) "
-                "VALUES (:fact, :deployment, :subject, 'Colliding observation', "
-                "'batch-c', :at)"
-            ),
-            {
-                "fact": corpus.relation_id,
-                "deployment": _DEPLOYMENT_ID,
-                "subject": corpus.subject_id,
-                "at": _NOW,
-            },
-        )
-    try:
-        engine, _index = corpus.query_engine(
-            fact_ids=(corpus.relation_id,), qualified=False
-        )
-        answer = engine.fact_context(
-            deployment_id=_DEPLOYMENT_ID,
-            query="ambiguous fact identity",
-            k=1,
-            evidence_per_fact=1,
-        )
-        assert answer.facts == ()
-        assert answer.dropped_by_hydration == 1
-    finally:
-        with corpus.engine.begin() as connection:
-            connection.execute(
-                text(
-                    "DELETE FROM observations "
-                    "WHERE deployment_id = :deployment AND observation_id = :fact"
-                ),
-                {"deployment": _DEPLOYMENT_ID, "fact": corpus.relation_id},
-            )
 
 
 @pytest.mark.parametrize(
@@ -736,6 +723,40 @@ def test_fact_context_time_modes_apply_world_and_belief_time(
         ids[name] for name in expected
     )
     assert corpus.invalidated_id not in {fact.fact_id for fact in answer.facts}
+
+
+def test_current_fact_context_uses_the_disclosed_half_open_boundary(
+    corpus: _Corpus,
+) -> None:
+    """A fact ending exactly at evaluated_at is outside current membership."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.ended_id,))
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="boundary assignment",
+        time=CurrentFactTime(),
+        evaluated_at=_NOW - timedelta(days=2),
+    )
+
+    assert answer.temporal_scope.evaluated_at == _NOW - timedelta(days=2)
+    assert answer.facts == ()
+
+
+def test_withdrawn_fact_keeps_historical_provenance_and_zero_live_totals(
+    corpus: _Corpus,
+) -> None:
+    """D54 flags a historically backed fact instead of making it disappear."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.withdrawn_id,))
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID, query="legacy project", evaluated_at=_NOW
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.withdrawn_id,)
+    assert answer.facts[0].support is FactSupport.WITHDRAWN
+    assert answer.evidence == ()
+    assert answer.fact_evidence == ()
+    assert {
+        total.stance: (total.returned, total.total) for total in answer.evidence_totals
+    } == {"supports": (0, 0), "contradicts": (0, 0)}
 
 
 def test_fact_context_rejects_unknown_entity_ids_without_partial_results(

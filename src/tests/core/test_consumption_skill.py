@@ -90,7 +90,7 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
         context=_context(mounted=True, knowledge_page_count=2)
     )
 
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.1.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.2.0"
     assert skill.filename == "SKILL.md"
     assert TWO_LAYER_HEADLINE_FULL in skill.content
     assert TWO_LAYER_HEADLINE_NOTE in skill.content

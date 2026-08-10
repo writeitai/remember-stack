@@ -295,9 +295,12 @@ These modes deliberately do not overload the separate audit question “what
 did the system believe at T?” That two-axis reconstruction remains the
 `facts_as_of(valid_at, believed_at, ...)`/open-SQL contract. Every returned fact
 still discloses `valid_from`, `valid_until`, `ingested_at`, and
-`invalidated_at`. `current` confirms against `facts_current`; `at`, `overlap`,
-and `history` confirm against `facts_visible_history` with the predicates above,
-the current-system-belief predicate, and the same D48 survivor/provenance conditions. They
+`invalidated_at`. All four modes confirm against `facts_visible_history` with
+the predicates above, the current-system-belief predicate, and the same D48
+survivor/provenance conditions. For `current`, this is the parameterized form
+of `facts_current` membership at the envelope's exact disclosed evaluation
+instant; the non-parameterized view would choose a new statement timestamp.
+They
 do not call the current-only public `semantic_facts` SRF and do not reuse
 `facts_as_of` accidentally. The operation returns supporting and contradicting
 current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
@@ -1647,7 +1650,8 @@ for the shipping surface pass before release.
    source audit, latest-contradicting-testimony divergence, and a
    snapshot-ID-to-live-SQL composition. Context-operation fixtures prove:
    `testimony_context` returns claims/chunks and never facts/entities;
-   `fact_context` default-current membership equals `facts_current`; each result
+   `fact_context` default-current membership equals `facts_current` at the same
+   evaluation instant; each result
    carries the exact required `temporal_scope` variant and applied timestamps;
    its `at`,
    `overlap`, and `history` modes include the correct ended intervals without

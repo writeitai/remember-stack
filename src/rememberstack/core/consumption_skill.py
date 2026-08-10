@@ -14,8 +14,8 @@ from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
-#: Bumped for the integrated open-query rewrite (Batch F).
-CONSUMPTION_SKILL_VERSION: Final = "2.1.0"
+#: Bumped for the D87 four-operation clean cut and context contracts.
+CONSUMPTION_SKILL_VERSION: Final = "2.2.0"
 
 
 def render_consumption_skill(

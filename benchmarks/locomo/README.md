@@ -26,13 +26,13 @@ current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
-LoCoMo supplies session wall times without a timezone. V6 treats those values
+LoCoMo supplies session wall times without a timezone. The current adapter treats those values
 as UTC in this adapter only, records `source_timezone_basis=assumed_utc` in
 `documents.json`, discloses the assumption in each rendered document, and
 forwards the aware timestamp to ingestion. RememberStack's general SDK and API
 remain strict: arbitrary naive or non-UTC source timestamps are rejected.
 
-V7 uses the ordinary public `testimony_context` operation as its first-recall path:
+V12 uses the ordinary public `testimony_context` operation as its first-recall path:
 independent semantic and BM25 claim search plus live-confirmed semantic and
 BM25 source-chunk search. The durable trace keeps each complete envelope. The
 repeated answer-agent prompt removes rank-score bookkeeping and empty

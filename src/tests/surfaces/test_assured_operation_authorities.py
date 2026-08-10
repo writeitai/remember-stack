@@ -5,7 +5,7 @@ from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
-from rememberstack.surfaces.query_engine import _CONFIRM_CURRENT_FACTS
+from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
 from rememberstack.surfaces.query_engine import _MULTI_HOP_EDGE_EVIDENCE
@@ -36,10 +36,10 @@ def test_entity_resolution_uses_memory_v1_identity_and_adjacency() -> None:
 
 def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     """Current membership, D54 state, and co-members come from memory_v1."""
-    confirmation_sql = str(_CONFIRM_CURRENT_FACTS)
-    assert "memory_v1.facts_current" in confirmation_sql
-    assert "identity_matches = 1" in confirmation_sql
-    assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
+    confirmation_sql = str(_CONFIRM_FACT_CONTEXT)
+    assert "memory_v1.facts_visible_history" in confirmation_sql
+    assert "fact.valid_until > :evaluated_at" in confirmation_sql
+    assert "fact.fact_kind = requested.kind" in confirmation_sql
     assert "JOIN relations" not in confirmation_sql
     assert "JOIN observations" not in confirmation_sql
     for statement in _CONTRADICTION_MEMBERS.values():
