@@ -16,6 +16,7 @@ from uuid import UUID
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+from sqlalchemy.exc import IntegrityError
 
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimForNormalization
@@ -25,6 +26,8 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ObservationAssertion
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import RelationCandidate
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -35,6 +38,7 @@ from rememberstack.spine.fact_catalog import FactCatalog
 from rememberstack.spine.fact_catalog import OTHER_PREDICATE_GRAMMAR
 from rememberstack.spine.observation_adjudication import ObservationAdjudicator
 from rememberstack.spine.resolver import CascadeResolver
+from rememberstack.spine.resolver import UnregisteredEntityTypeError
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.workers.base import HandlerOutcome
@@ -156,9 +160,12 @@ class NormalizeRelationsHandler:
         )
         observations_by_entity: dict[UUID, list[ObservationAssertion]] = {}
         allowed_types = frozenset(type_parents)
+        claims_processed = 0
+        soft_claim_errors = 0
         for claim in claims:
             if claim.claim_id in normalized_claim_ids:
                 continue  # replay: stored mentions/facts are the output (D7)
+            claims_processed += 1
             try:
                 self._normalize_claim(
                     created_relations=created_relations,
@@ -172,12 +179,51 @@ class NormalizeRelationsHandler:
                     allowed_types=allowed_types,
                     meter=meter,
                 )
-            except Exception:
-                # Soft-isolate unexpected claim failures so one assertion cannot
-                # dead-letter the whole document version (D86).
-                _logger.exception(
-                    "e3.claim_normalize_error claim_id=%s", claim.claim_id
+            except UnregisteredEntityTypeError:
+                # Defense-in-depth mint refusal: gate should have dropped first.
+                # Loud alarm + outer ledger (do not soft-succeed the version).
+                _logger.error(
+                    "e3.entity_type_fk_violation claim_id=%s error_class=%s",
+                    claim.claim_id,
+                    UnregisteredEntityTypeError.__name__,
                 )
+                raise
+            except IntegrityError:
+                _logger.error(
+                    "e3.entity_type_fk_violation claim_id=%s error_class=%s",
+                    claim.claim_id,
+                    IntegrityError.__name__,
+                )
+                raise
+            except Exception as exception:
+                if not _is_claim_soft_failure(exception=exception):
+                    # Systemic provider/DB/accounting outages use the outer ledger.
+                    raise
+                soft_claim_errors += 1
+                # Usage for ProviderInvalidResponseError is recorded under
+                # normalize:{id}:aN:failure inside _generate_normalize_response.
+                _logger.exception(
+                    "e3.claim_normalize_error claim_id=%s error_class=%s",
+                    claim.claim_id,
+                    type(exception).__name__,
+                )
+        _logger.info(
+            "e3.claims_processed count=%s soft_claim_errors=%s",
+            claims_processed,
+            soft_claim_errors,
+        )
+        if (
+            claims_processed > 0
+            and soft_claim_errors == claims_processed
+            and not created_relations
+            and not observations_by_entity
+        ):
+            # Whole-handle soft-failure with zero progress is an outage class:
+            # do not mark normalize succeeded empty (D86 §5 systemic escape).
+            raise RuntimeError(
+                "e3.normalize_no_progress: every claim soft-failed with no "
+                "relations or observations written"
+            )
         for entity_id, assertions in observations_by_entity.items():
             self._observation_adjudicator.add_observations(
                 deployment_id=deployment_id,
@@ -266,7 +312,7 @@ class NormalizeRelationsHandler:
             if illegal:
                 _logger.warning(
                     "e3.unknown_entity_type_dropped claim_id=%s kind=relation "
-                    "illegal_types=%s",
+                    "illegal_types=%s site=relation",
                     claim.claim_id,
                     sorted(illegal),
                 )
@@ -349,7 +395,7 @@ class NormalizeRelationsHandler:
             if observation.subject.type not in allowed_types:
                 _logger.warning(
                     "e3.unknown_entity_type_dropped claim_id=%s kind=observation "
-                    "illegal_types=%s",
+                    "illegal_types=%s site=observation",
                     claim.claim_id,
                     [observation.subject.type],
                 )
@@ -387,17 +433,27 @@ class NormalizeRelationsHandler:
         prompt = base_prompt
         response: NormalizationResponse | None = None
         for attempt in range(1, _MAX_INNER_NORMALIZE_ATTEMPTS + 1):
-            response_call = self._model_provider.generate(
-                request=ModelRequest(
-                    model=self._settings.normalize_model, prompt=prompt, temperature=0.0
-                ),
-                response_type=NormalizationResponse,
-            )
-            meter.record(
-                call_key=f"normalize:{claim.claim_id}:a{attempt}",
-                tier="normalize",
-                usage=response_call.usage,
-            )
+            call_key = f"normalize:{claim.claim_id}:a{attempt}"
+            try:
+                response_call = self._model_provider.generate(
+                    request=ModelRequest(
+                        model=self._settings.normalize_model,
+                        prompt=prompt,
+                        temperature=0.0,
+                    ),
+                    response_type=NormalizationResponse,
+                )
+            except ProviderCallError as exception:
+                # Bill attempt-specific keys before outer soft/systemic routing
+                # so usage-bearing invalid/retry failures are not unmetered.
+                if exception.usage is not None:
+                    meter.record(
+                        call_key=f"{call_key}:failure",
+                        tier="normalize_failed",
+                        usage=exception.usage,
+                    )
+                raise
+            meter.record(call_key=call_key, tier="normalize", usage=response_call.usage)
             response = response_call.output
             illegal = _illegal_types_in_response(
                 response=response, allowed_types=allowed_types
@@ -411,7 +467,8 @@ class NormalizeRelationsHandler:
                     )
                 return response
             _logger.warning(
-                "e3.unknown_entity_type claim_id=%s attempt=%s illegal_types=%s",
+                "e3.unknown_entity_type claim_id=%s attempt=%s illegal_types=%s "
+                "site=response",
                 claim.claim_id,
                 attempt,
                 sorted(illegal),
@@ -423,11 +480,34 @@ class NormalizeRelationsHandler:
                 claim.claim_id,
                 attempt,
             )
+            # Bound free-form illegal labels in the retry prompt (cardinality).
+            illegal_labels = ", ".join(
+                _bounded_type_label(value=value) for value in sorted(illegal)
+            )
             prompt = base_prompt + _TYPE_RETRY_SUFFIX.format(
-                illegal=", ".join(sorted(illegal)), types=types_csv
+                illegal=illegal_labels, types=types_csv
             )
         assert response is not None
         return response
+
+
+def _is_claim_soft_failure(*, exception: BaseException) -> bool:
+    """Whether a single-claim failure may be soft-isolated (D86).
+
+    Only claim-attributable content poison is soft: a structured-output schema
+    failure on one claim must not dead-letter the whole version. Transport and
+    generic provider outages, database errors, and unexpected bugs re-raise so
+    the outer work ledger retries or dead-letters the job.
+    """
+    return isinstance(exception, ProviderInvalidResponseError)
+
+
+def _bounded_type_label(*, value: str, max_len: int = 48) -> str:
+    """Truncate free-form model type tokens for prompts and log fields."""
+    cleaned = value.strip().replace("\n", " ")
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1] + "…"
 
 
 def _illegal_types_in_response(
