@@ -22,7 +22,7 @@ from pydantic import JsonValue
 from rememberstack import __version__
 from rememberstack.model.adjudication import ReviewDecisionError
 from rememberstack.model.client import ConnectorCreate
-from rememberstack.surfaces.remote_mcp import RemoteRecipeMcpServer
+from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
 from rememberstack.surfaces.remote_mcp import serve_mcp_stdio
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
@@ -46,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_budget(args)
         if args.command == "ops":
             return _run_ops(args)
+        if args.command == "operations":
+            return _run_operations(args)
         if args.command == "query":
             return _run_query(args)
         if args.command == "ingest":
@@ -166,23 +168,27 @@ def _run_ops(args: argparse.Namespace) -> int:
 def _run_query(args: argparse.Namespace) -> int:
     """Run a query command through the typed remote SDK."""
     with MemoryClient.from_settings() as client:
-        if args.query_command == "list":
-            for descriptor in client.recipes():
+        return _run_open_query(client=client, args=args)
+
+
+def _run_operations(args: argparse.Namespace) -> int:
+    """List or run the closed assured-operation catalog."""
+    with MemoryClient.from_settings() as client:
+        if args.operation_command == "list":
+            for descriptor in client.list_operations():
                 print(descriptor.model_dump_json())
             return 0
-        if args.query_command == "run":
-            try:
-                arguments = dict(_split_arg(pair) for pair in args.arg)
-            except ValueError as error:
-                print(f"error: {error}", file=sys.stderr)
-                return 2
-            print(
-                client.run_recipe(
-                    name=args.recipe, arguments=arguments
-                ).model_dump_json()
-            )
-            return 0
-        return _run_open_query(client=client, args=args)
+        try:
+            arguments = dict(_split_operation_arg(pair) for pair in args.arg)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        print(
+            client.run_operation(
+                name=args.operation, arguments=arguments
+            ).model_dump_json()
+        )
+        return 0
 
 
 def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
@@ -368,15 +374,15 @@ def _run_connectors(args: argparse.Namespace) -> int:
 
 
 def _run_mcp() -> int:
-    """Expose the remote deployment recipe registry over MCP stdio."""
+    """Expose the remote assured operations and open retrieval tools over MCP."""
     with MemoryClient.from_settings() as client:
-        return serve_mcp_stdio(server=RemoteRecipeMcpServer(client=client))
+        return serve_mcp_stdio(server=RemoteOperationMcpServer(client=client))
 
 
-def query_list(*, client: httpx.Client) -> int:
-    """Print recipes from an injected client (the parity-testable CLI seam)."""
+def operations_list(*, client: httpx.Client) -> int:
+    """Print operations from an injected client (the parity-testable seam)."""
     try:
-        for descriptor in MemoryClient(client=client).recipes():
+        for descriptor in MemoryClient(client=client).list_operations():
             print(descriptor.model_dump_json())
     except MemoryApiError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -384,21 +390,21 @@ def query_list(*, client: httpx.Client) -> int:
     return 0
 
 
-def query_run(*, client: httpx.Client, name: str, arg_pairs: list[str]) -> int:
-    """Run one recipe through an injected client and print its envelope."""
+def operations_run(*, client: httpx.Client, name: str, arg_pairs: list[str]) -> int:
+    """Run one operation through an injected client and print its response."""
     try:
-        arguments = dict(_split_arg(pair) for pair in arg_pairs)
+        arguments = dict(_split_operation_arg(pair) for pair in arg_pairs)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     try:
-        envelope = MemoryClient(client=client).run_recipe(
+        result = MemoryClient(client=client).run_operation(
             name=name, arguments=arguments
         )
     except MemoryApiError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    print(envelope.model_dump_json())
+    print(result.model_dump_json())
     return 0
 
 
@@ -408,6 +414,15 @@ def _split_arg(pair: str) -> tuple[str, str]:
     if not separator or not key:
         raise ValueError(f"argument {pair!r} is not key=value")
     return key, value
+
+
+def _split_operation_arg(pair: str) -> tuple[str, object]:
+    """Parse a CLI operation value as JSON, retaining ordinary bare strings."""
+    key, raw = _split_arg(pair)
+    try:
+        return key, json.loads(raw)
+    except json.JSONDecodeError:
+        return key, raw
 
 
 def _list(*, queue: ReviewQueue, deployment_id: UUID) -> int:
@@ -533,16 +548,23 @@ def _build_parser() -> argparse.ArgumentParser:
     rebuild.add_argument("--workdir", type=Path, required=True)
     rebuild.add_argument("--version", required=True)
 
-    query = commands.add_parser(
-        "query", help="query deployment recipes and the open query space"
+    operations = commands.add_parser(
+        "operations", help="list or run assured operations"
     )
-    query_commands = query.add_subparsers(dest="query_command", required=True)
-    query_commands.add_parser("list", help="list the remote recipe tools")
-    run = query_commands.add_parser("run", help="run one recipe by name")
-    run.add_argument("recipe", help="the recipe name (see `remember query list`)")
-    run.add_argument(
+    operation_commands = operations.add_subparsers(
+        dest="operation_command", required=True
+    )
+    operation_commands.add_parser("list", help="list the four remote operations")
+    run_operation = operation_commands.add_parser(
+        "run", help="run one assured operation by name"
+    )
+    run_operation.add_argument("operation", help="the operation name")
+    run_operation.add_argument(
         "--arg", action="append", default=[], metavar="KEY=VALUE", help="repeatable"
     )
+
+    query = commands.add_parser("query", help="query the open retrieval space")
+    query_commands = query.add_subparsers(dest="query_command", required=True)
     sql = query_commands.add_parser("sql", help="run one sandboxed SQL statement")
     sql.add_argument("statement", help="SQL text")
     sql.add_argument("--parameters", help="JSON array of positional bound parameters")
@@ -635,7 +657,7 @@ def _build_parser() -> argparse.ArgumentParser:
     status = connector_commands.add_parser("status", help="show connector status")
     status.add_argument("connector_id", type=UUID)
 
-    commands.add_parser("mcp", help="serve remote recipes over MCP stdio")
+    commands.add_parser("mcp", help="serve remote retrieval tools over MCP stdio")
     return parser
 
 

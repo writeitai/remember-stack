@@ -1,23 +1,23 @@
 export const metadata = {
   title: "MCP Reference",
   description:
-    "The MCP surface: memory write tools (ingest, pipeline_readiness), recipe tools from the registry, and nine static open-query infrastructure tools. examples.* are never top-level tools.",
+    "The MCP surface: memory write tools, four assured operations, and nine static open-query infrastructure tools. examples.* are never top-level tools.",
 };
 
 # MCP Reference
 
 RememberStack has two deliberately separate truth layers. Claims are
 immutable source testimony (“what was asserted, by whom, when”);
-facts—relations and observations—are the adjudicated current
-worldview (“what the system currently holds true”):
+facts—relations and observations—are the adjudicated worldview (“what the
+system holds or held true”):
 supersession-adjudicated, clocked on two time axes (when a fact held in
 the world, and when the system learned it), evidence-counted per
 distinct source—repetition is not corroboration—and
 contradiction-tracked. The `fact_claim_evidence` association is the
 auditable bridge between the layers, recording which claims support or
 contradict each fact. Query claims to inspect testimony; query facts to
-answer current-truth questions, then follow the bridge to see why the
-system believes the fact.
+answer current or historical truth questions, then follow the bridge to see
+why the system believes or believed the fact.
 
 (Internally these guarantees are decisions D41 and D54.)
 
@@ -26,22 +26,29 @@ system believes the fact.
 | Goal | Tool |
 | --- | --- |
 | **Store** memory | `ingest`, then poll `pipeline_readiness` |
-| **Recall** evidence / current facts | Recipe tools from the registry (for example `question_context`, `current_context`, or the live deployment’s recipe list) |
+| **Recall** testimony / current or historical facts | `testimony_context`, `fact_context`, or `answer_context` |
+| **Resolve** an ambiguous identity | `resolve_entity` |
 | **Explore** SQL/Cypher / saved queries | Nine open-query infrastructure tools when composed |
 
-There is **no** generic `recall` or `search` MCP alias: recipe tools are the
-agent-first retrieval surface and already carry purpose-shaped descriptions.
-Low-level `search_claims` / `search_chunks` remain HTTP/SDK-only.
+The MCP surface exposes the deployment's four assured-operation registry rows
+as MCP tools. That namespace is closed: adding a query pattern means adding an
+`examples.*` saved query, not another tool. MCP, the API's `/operations`, and the
+CLI's `remember operations list` all render the same four registry-backed
+operations.
+
+There is no generic `recall` or `search` MCP alias. Low-level direct primitives
+remain HTTP/SDK infrastructure; MCP agents use the assured operations or the
+open-query surface.
 
 When the open-query facade is composed, **nine static open-query
-infrastructure tools** are listed alongside recipe tools. Local and remote
+infrastructure tools** are listed alongside operation tools. Local and remote
 MCP share the same schemas and strict argument validation. Shipped
 `examples.*` saved queries are **never** top-level tools — they run only
 through `run_saved_query`.
 
 Write tools (`ingest`, `pipeline_readiness`) are always present on the remote
-stdio server (`remember mcp`). The in-process `RecipeMcpServer` advertises them
-only when both ingest and pipeline-readiness ports are composed; recipe-only
+stdio server (`remember mcp`). The in-process `OperationMcpServer` advertises them
+only when both ingest and pipeline-readiness ports are composed; operation-only
 compositions omit them rather than advertising tools that cannot run.
 
 ## `tools/list`
@@ -49,8 +56,12 @@ compositions omit them rather than advertising tools that cannot run.
 Stable order:
 
 1. **Static write tools** (when composed): `ingest`, `pipeline_readiness`
-2. **Recipe tools** from the registry (`GET /recipes` / in-process registry)
+2. **Four assured operations** from the registry (`GET /operations` / in-process registry)
 3. **Open-query tools** when the open facade is composed
+
+The operation registry contains exactly:
+`resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`. The seventeen
+demoted patterns are discoverable `examples.*` saved queries, not tools.
 
 | Infrastructure tool | Purpose |
 | --- | --- |
@@ -135,23 +146,23 @@ envelope).
    projections and are on a profile that runs them).
 4. While `ready=false` and no stage is `failed` / `dead_letter`: wait 30–60s
    (back-off, floor ~15s), poll again.
-5. On `ready=true`: call recipe tools (for example `question_context`).
+5. On `ready=true`: call the appropriate assured operation (often `answer_context`).
 6. On `failed` / `dead_letter`: **STOP** polling and report the stage to the
    user — do not keep polling.
 7. After ~20–30 minutes without `ready=true` and without a terminal stage
    failure: stop and escalate to the operator (include `version_id` and last
    `stages[]`).
 
-### Recipe tools
+### Operation tools
 
-Recipe tools still render from the registry:
+Operation tools render from the registry:
 
 ```json
 {
   "tools": [
     {
-      "name": "current_context",
-      "description": "Current evidence-backed facts matching a question …",
+      "name": "fact_context",
+      "description": "Current or historical adjudicated facts matching a question …",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -166,9 +177,10 @@ Recipe tools still render from the registry:
 ```
 
 The `inputSchema` is the contract an MCP client validates arguments against
-before calling — the same schema the API advertises at `/recipes` for recipe
-tools, and the static schemas above for write and open-query tools. Open-query
-and write dispatch reject wrong types, missing required fields, and unknown keys
+before calling — the same schema the API advertises at `/operations` for operation
+tools, and the static schemas above for write and open-query tools. Operation,
+open-query, and write dispatch reject wrong types, bool-as-int, missing required
+fields, and unknown keys
 rather than coercing them.
 
 ## `tools/call`
@@ -176,8 +188,9 @@ rather than coercing them.
 - **`ingest` / `pipeline_readiness`** return JSON text; failures use a
   **structured** error object (`code`, `message`, `http_status`, `retryable`,
   `agent_action`, optional `reason_code`).
-- **Recipe tools** run the named recipe and return the **envelope** serialized
-  to JSON in one text content block.
+- **Operation tools** run the named operation and return its declared contract
+  serialized to JSON in one text content block. Three return `Envelope`;
+  `answer_context` returns `ContextBundle/v1`.
 - **Open-query tools** return `QueryResult/v1` or discovery/metadata JSON in
   one text content block.
 
@@ -207,12 +220,14 @@ an exception across the wire. The client re-plans against a stated failure.
 
 ## What the tools return
 
-Recipe tools return the self-accounting envelope: the answer, its grain
+Three operation tools return the self-accounting envelope: the answer, its grain
 (`fact` / `evidence` / `compiled` / `composite`), its validity and freshness,
 and any typed negative. Because the grain travels with the answer, a client
-can tell a **current-fact** answer from **what a source asserted** — a recipe
+can tell a **current-fact** answer from **what a source asserted** — a operation
 that answers "what holds now" can never be one that returns evidence (the
-registry's grain bar guarantees it).
+registry's grain bar guarantees it). `answer_context` keeps the complete
+evidence and fact envelopes in separate `testimony` and `facts` fields; it has
+no single output grain and never flattens the two authorities.
 
 Open-query tools return `QueryResult/v1` (grade `exploratory_tabular` for SQL,
 `snapshot_graph` for Cypher) or content-free discovery payloads. Caps, drops,
@@ -222,16 +237,15 @@ and snapshot provenance are part of the contract.
 
 Run `remember mcp` to start the dependency-light stdio JSON-RPC server. It reaches
 the deployment at `REMEMBERSTACK_API_URL`, uses `REMEMBERSTACK_API_AUTHORIZATION` when set, renders
-`tools/list` as write tools + `GET /recipes` + the nine open-query tools when
+`tools/list` as write tools + `GET /operations` + the nine open-query tools when
 composed, and proxies `tools/call` to `POST /ingest`, `POST /readiness`,
-`POST /recipe/{name}`, or the matching `/query/…` route. The server supports
+`POST /operations/{name}`, or the matching `/query/…` route. The server supports
 the MCP `initialize`, `tools/list`, and `tools/call` lifecycle; notifications
 produce no response.
 
-The recipe registry and execution remain deployment-side. The MCP process is
+The operation registry and execution remain deployment-side. The MCP process is
 therefore a client transport, not another server composition and not a second
 tool registry.
 
-**Release note:** MCP write tools ship in `rememberstack>=0.3.0`. Installs pinned
-to `0.2.0` expose recipe (and, on older clouds, only recipe) tools without
-`ingest` / `pipeline_readiness`.
+MCP write tools and the four-operation D87 catalog ship together in the current
+surface. There is no recipe compatibility namespace.

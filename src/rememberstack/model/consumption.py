@@ -8,9 +8,9 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from rememberstack.model.assured_operations import AssuredAnswerIntent
 from rememberstack.model.envelope import Grain
 from rememberstack.model.mounts import PublishedMounts
-from rememberstack.model.recipes import RecipeAnswerIntent
 
 _NonEmptyText = Annotated[str, Field(min_length=1)]
 
@@ -26,15 +26,15 @@ class ConsumptionScope(BaseModel):
     git_path: str | None = None
 
 
-class ConsumptionRecipe(BaseModel):
-    """One latest active recipe advertised by the rendered skill."""
+class ConsumptionOperation(BaseModel):
+    """One active assured operation advertised by the rendered skill."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: _NonEmptyText
     description: _NonEmptyText
-    output_grain: Grain
-    answer_intent: RecipeAnswerIntent
+    output_grain: Grain | None
+    answer_intent: AssuredAnswerIntent
 
 
 class ConsumptionDeployment(BaseModel):
@@ -57,7 +57,7 @@ class ConsumptionSkillContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     deployment: ConsumptionDeployment
-    recipes: tuple[ConsumptionRecipe, ...]
+    operations: tuple[ConsumptionOperation, ...]
     mounts: PublishedMounts | None = None
 
 

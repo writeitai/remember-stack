@@ -295,14 +295,23 @@ These modes deliberately do not overload the separate audit question “what
 did the system believe at T?” That two-axis reconstruction remains the
 `facts_as_of(valid_at, believed_at, ...)`/open-SQL contract. Every returned fact
 still discloses `valid_from`, `valid_until`, `ingested_at`, and
-`invalidated_at`. `current` confirms against `facts_current`; `at`, `overlap`,
-and `history` confirm against `facts_visible_history` with the predicates above,
-the current-system-belief predicate, and the same D48 survivor/provenance conditions. They
+`invalidated_at`. All four modes confirm against `facts_visible_history` with
+the predicates above, the current-system-belief predicate, and the same D48
+survivor/provenance conditions. For `current`, this is the parameterized form
+of `facts_current` membership at the envelope's exact disclosed evaluation
+instant; the non-parameterized view would choose a new statement timestamp.
+They
 do not call the current-only public `semantic_facts` SRF and do not reuse
 `facts_as_of` accidentally. The operation returns supporting and contradicting
 current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
 contradiction co-members, support state, and the same 60-record evidence budget
 for every mode.
+
+Fact identity is always the composite `(fact_kind, fact_id)`: relation and
+observation UUID namespaces can overlap. Every `fact_evidence[]` association
+and `evidence_totals[]` row therefore carries both `fact_kind` and `fact_id`,
+and implementations must use both coordinates for partitioning, allocation,
+counting, and lookup. Collapsing either structure by bare UUID is forbidden.
 
 #### Eligibility precedes bounded ranking
 
@@ -316,17 +325,21 @@ set:
   eligible when either endpoint is anchored; and
 - fact world-time membership is the selected mode above.
 
-The P1 projections therefore carry rebuildable nomination metadata for current
-survivor entity associations and, for fact labels, kind, endpoints,
-`valid_from`, `valid_until`, `ingested_at`, and active/invalidated status. A backend may instead
-have PostgreSQL enumerate the exact eligible composite IDs and ask P1 to score
-only those IDs. In either implementation, a globally bounded P1 result followed
-by entity or time filtering is forbidden. P1 metadata remains a proposal: live
-PostgreSQL repeats every selector before returning data, so stale metadata can
-cost disclosed recall but never correctness. `testimony_context` applies its
-public `candidate_k` inside this scope. `fact_context` uses a descriptor-pinned
-internal candidate depth of 200 with a hard ceiling of 400; it is not another
-public planning knob.
+The P1 projections therefore carry rebuildable nomination metadata for every
+selector they apply directly. A backend may instead have PostgreSQL enumerate
+the exact eligible composite IDs and ask P1 to score only those IDs; selectors
+may choose either authority independently. The shipping self-host path stores
+fact kind, `valid_from`, `valid_until`, `ingested_at`, and active/invalidated
+status in P1 for time prefiltering, while supplied survivor IDs and multi-anchor
+coverage come from exact PostgreSQL-selected fact IDs. Testimony entity scope
+uses the same PostgreSQL-ID pattern. This deliberately avoids duplicating
+entity associations into P1 when they are not used there. In every case, a
+globally bounded P1 result followed by entity or time filtering is forbidden.
+P1 metadata remains a proposal: live PostgreSQL repeats every selector before
+returning data, so stale metadata can cost disclosed recall but never
+correctness. `testimony_context` applies its public `candidate_k` inside this
+scope. `fact_context` uses a descriptor-pinned internal candidate depth of 200
+with a hard ceiling of 400; it is not another public planning knob.
 
 Ending a fact's world-valid interval does not delete its label from P1: an
 ended-but-still-believed fact remains searchable for `at`, `overlap`, and
@@ -1643,7 +1656,8 @@ for the shipping surface pass before release.
    source audit, latest-contradicting-testimony divergence, and a
    snapshot-ID-to-live-SQL composition. Context-operation fixtures prove:
    `testimony_context` returns claims/chunks and never facts/entities;
-   `fact_context` default-current membership equals `facts_current`; each result
+   `fact_context` default-current membership equals `facts_current` at the same
+   evaluation instant; each result
    carries the exact required `temporal_scope` variant and applied timestamps;
    its `at`,
    `overlap`, and `history` modes include the correct ended intervals without

@@ -82,18 +82,18 @@ class _RemoteMemoryWriteBackend:
         return None
 
 
-class RemoteRecipeMcpServer:
-    """Render remote recipes, write tools, and open-query tools; proxy to the API."""
+class RemoteOperationMcpServer:
+    """Render remote writes, assured operations, and open-query tools."""
 
     def __init__(self, *, client: MemoryClient) -> None:
         self._client = client
         self._write_backend = _RemoteMemoryWriteBackend(client=client)
 
     def list_tools(self) -> dict[str, object]:
-        """The MCP ``tools/list`` result for this remote deployment.
+        """List remote write tools, assured operations, then open-query tools.
 
-        Order is stable: write/readiness static tools, then recipes from
-        ``GET /recipes``, then the nine open-query tools when the remote
+        Order is stable: write/readiness tools, operations from
+        ``GET /operations``, then the nine open-query tools when the remote
         deployment mounts the open facade (same composition gate as local MCP
         and HTTP).
         """
@@ -104,7 +104,7 @@ class RemoteRecipeMcpServer:
                 "description": descriptor.description,
                 "inputSchema": descriptor.input_schema,
             }
-            for descriptor in self._client.recipes()
+            for descriptor in self._client.list_operations()
         )
         if self._remote_open_query_is_composed():
             tools.extend(open_query_tool_descriptors())
@@ -137,11 +137,11 @@ class RemoteRecipeMcpServer:
                 "isError": False,
             }
         try:
-            envelope = self._client.run_recipe(name=name, arguments=arguments)
+            result = self._client.run_operation(name=name, arguments=arguments)
         except (MemoryApiError, ValueError) as error:
             return {"content": [{"type": "text", "text": str(error)}], "isError": True}
         return {
-            "content": [{"type": "text", "text": envelope.model_dump_json()}],
+            "content": [{"type": "text", "text": result.model_dump_json()}],
             "isError": False,
         }
 
@@ -185,7 +185,7 @@ def _is_authoritative_open_query_discovery(payload: object) -> bool:
 
 def serve_mcp_stdio(
     *,
-    server: RemoteRecipeMcpServer,
+    server: RemoteOperationMcpServer,
     input_stream: TextIO = sys.stdin,
     output_stream: TextIO = sys.stdout,
 ) -> int:
@@ -218,7 +218,7 @@ def serve_mcp_stdio(
 
 
 def _dispatch(
-    *, server: RemoteRecipeMcpServer, request: dict[str, object]
+    *, server: RemoteOperationMcpServer, request: dict[str, object]
 ) -> dict[str, object] | None:
     """Dispatch one MCP request; notifications deliberately have no response."""
     request_id = request.get("id")

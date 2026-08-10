@@ -225,6 +225,10 @@ class LabelFactsHandler:
                     kind="relation",
                     label=relation.fact_label,
                     status=relation.status,
+                    valid_from=relation.valid_from,
+                    valid_until=relation.valid_until,
+                    ingested_at=relation.ingested_at,
+                    invalidated_at=relation.invalidated_at,
                     vector=(0.0,),
                 )
                 for relation in self._facts.relations_for_embedding(
@@ -241,6 +245,10 @@ class LabelFactsHandler:
                     kind="observation",
                     label=observation.obs_label,
                     status=observation.status,
+                    valid_from=observation.valid_from,
+                    valid_until=observation.valid_until,
+                    ingested_at=observation.ingested_at,
+                    invalidated_at=observation.invalidated_at,
                     vector=(0.0,),
                 )
                 for observation in self._facts.observations_for_embedding(
@@ -249,8 +257,6 @@ class LabelFactsHandler:
                     label_version=embed_generation,
                 )
             )
-            if not rows:
-                return HandlerOutcome()
             batch_size = self._settings.embed_batch_size
             for batch_start in range(0, len(rows), batch_size):
                 batch = rows[batch_start : batch_start + batch_size]
@@ -281,6 +287,11 @@ class LabelFactsHandler:
                         self._facts.record_observation_embedding(
                             observation_id=row.fact_id, label_version=embed_generation
                         )
+            self._fact_index.update_fact_metadata(
+                rows=self._facts.fact_metadata_for_document(
+                    deployment_id=work.deployment_id, doc_id=doc_id
+                )
+            )
         return HandlerOutcome()
 
 

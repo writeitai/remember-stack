@@ -49,6 +49,7 @@ from rememberstack.eval import record_retrieval_spike_report
 from rememberstack.eval import RETRIEVAL_SPIKE_VERSION
 from rememberstack.model import CoMember
 from rememberstack.model import Contradiction
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import FactResult
@@ -685,7 +686,12 @@ def _contradiction_envelope(*, co_members: int) -> Envelope:
             continuation=str(members[-1].fact_id) if len(members) < 50 else None,
         ),
     )
-    return Envelope(grain=Grain.FACT, facts=(fact,), freshness=Freshness(pg_live_ts=at))
+    return Envelope(
+        grain=Grain.FACT,
+        temporal_scope=current_temporal_scope(evaluated_at=at),
+        facts=(fact,),
+        freshness=Freshness(pg_live_ts=at),
+    )
 
 
 def _hydration_batching(*, engine: Engine) -> RetrievalSpikeMeasurement:

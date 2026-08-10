@@ -5,13 +5,13 @@ from uuid import UUID
 from uuid import uuid4
 
 from rememberstack.core import render_consumption_skill
-from rememberstack.model import ConsumptionRecipe
+from rememberstack.model import AssuredOperation
+from rememberstack.model import ConsumptionOperation
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
-from rememberstack.model import Recipe
 from rememberstack.model import RenderedConsumptionSkill
+from rememberstack.spine.assured_operations import AssuredOperationRegistry
 from rememberstack.spine.consumption import ConsumptionCatalog
-from rememberstack.spine.recipes import RecipeRegistry
 
 
 class ConsumptionSkillSurface:
@@ -21,12 +21,12 @@ class ConsumptionSkillSurface:
         self,
         *,
         catalog: ConsumptionCatalog,
-        recipes: RecipeRegistry,
+        operations: AssuredOperationRegistry,
         deployment_id: UUID,
     ) -> None:
         """Bind the renderer to one deployment and its two spine read models."""
         self._catalog = catalog
-        self._recipes = recipes
+        self._operations = operations
         self._deployment_id = deployment_id
 
     @property
@@ -42,21 +42,21 @@ class ConsumptionSkillSurface:
             raise ValueError(
                 "the mount set and consumption skill serve different deployments"
             )
-        recipes = tuple(
-            ConsumptionRecipe(
-                name=recipe.name,
-                description=recipe.description,
-                output_grain=recipe.output_grain,
-                answer_intent=recipe.answer_intent,
+        operations = tuple(
+            ConsumptionOperation(
+                name=operation.name.value,
+                description=operation.description,
+                output_grain=operation.output_grain,
+                answer_intent=operation.answer_intent,
             )
-            for recipe in _latest_recipes(
-                recipes=self._recipes.active(deployment_id=self._deployment_id)
+            for operation in _latest_operations(
+                operations=self._operations.active(deployment_id=self._deployment_id)
             )
         )
         return render_consumption_skill(
             context=ConsumptionSkillContext(
                 deployment=self._catalog.deployment(deployment_id=self._deployment_id),
-                recipes=recipes,
+                operations=operations,
                 mounts=mounts,
             )
         )
@@ -75,13 +75,15 @@ class ConsumptionSkillSurface:
         return destination
 
 
-def _latest_recipes(*, recipes: tuple[Recipe, ...]) -> tuple[Recipe, ...]:
-    """Keep one latest active recipe per name from registry-ordered rows."""
+def _latest_operations(
+    *, operations: tuple[AssuredOperation, ...]
+) -> tuple[AssuredOperation, ...]:
+    """Keep one active descriptor per operation name."""
     seen: set[str] = set()
-    latest: list[Recipe] = []
-    for recipe in recipes:
-        if recipe.name in seen:
+    latest: list[AssuredOperation] = []
+    for operation in operations:
+        if operation.name.value in seen:
             continue
-        seen.add(recipe.name)
-        latest.append(recipe)
+        seen.add(operation.name.value)
+        latest.append(operation)
     return tuple(latest)

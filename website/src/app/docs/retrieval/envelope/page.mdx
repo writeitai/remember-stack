@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Response envelope",
   description:
-    "Response envelope wire contract: flat single-grain fields, freshness, contradictions, fact_evidence, typed negatives.",
+    "Envelope and ContextBundle/v1 wire contracts: explicit temporal scope, separate authorities, freshness, contradictions, and typed negatives.",
 };
 
 # Response envelope
@@ -10,25 +10,28 @@ Most systems return rows. RememberStack returns rows **plus a machine-readable a
 
 This page documents the **shipped wire shape** for assured operations (and primitive compositions that emit the same envelope). Open SQL/Cypher use `QueryResult/v1` instead; see [Open query](/docs/retrieval/open-query).
 
-## Default shape: flat single-grain
+## Envelope: one cohesive typed response
 
-The common case is **not** nested under `parts[]`. Top-level `grain` selects which result tuples are populated:
+An `Envelope` is flat. Top-level `grain` selects which result tuples are
+populated, and `temporal_scope` states the exact selection applied:
 
 ```
 {
   grain: fact | evidence | compiled | composite,
 
-  // temporal echo (flat)
-  as_of_valid_at: instant | null,
-  as_of_believed_at: instant | null,
-  identity_regime: current | as_of,
+  temporal_scope:
+    | { mode: current, evaluated_at, believed_at, identity_regime }
+    | { mode: at, at, evaluated_at, believed_at, identity_regime }
+    | { mode: overlap, from, to, evaluated_at, believed_at, identity_regime }
+    | { mode: history, evaluated_at, believed_at, identity_regime }
+    | { mode: as_of, valid_at, evaluated_at, believed_at, identity_regime },
 
   // result tuples (populated by grain / operation)
   entities: [ EntityCandidate… ],
   facts: [ FactResult… ],
   evidence: [ EvidenceResult… ],
-  fact_evidence: [ { fact_id, claim_id, stance: supports|contradicts }… ],
-  evidence_totals: [ { fact_id, stance, returned, total }… ],
+  fact_evidence: [ { fact_kind, fact_id, claim_id, stance: supports|contradicts }… ],
+  evidence_totals: [ { fact_kind, fact_id, stance, returned, total }… ],
   chunks: [ ChunkEvidenceResult… ],
   sources: [ SourceRecord… ],
   transcript: [ … ],
@@ -46,10 +49,7 @@ The common case is **not** nested under `parts[]`. Top-level `grain` selects whi
   truncation: { truncated, returned, estimated_total, total_is_exact, continuation } | null,
   dropped_by_hydration: n,
   excluded_unstamped: n,
-  negative: null | { kind, explanation, workaround },
-
-  // composite only
-  parts: [ EnvelopePart… ]
+  negative: null | { kind, explanation, workaround }
 }
 ```
 
@@ -79,14 +79,33 @@ Provenance is **flat on the claim** (and via top-level `sources[]`), not a neste
 
 ### `fact_evidence` + `evidence_totals`
 
-How `current_context` binds facts to testimony without blending grains:
+How `fact_context` binds facts to testimony without blending grains:
 
 - `fact_evidence[]` — explicit fact↔claim stance edges returned with the answer
 - `evidence_totals[]` — exact per-fact stance counts (`returned` / `total`) so caps stay honest
 
-## Composite answers use `parts[]`
+Both arrays identify a fact by `(fact_kind, fact_id)`. Relation and observation
+UUIDs are separate namespaces and may contain the same UUID, so consumers must
+never join or group these records by `fact_id` alone.
 
-Only when `grain = composite`. Each `EnvelopePart` is strictly single-grain and carries its own `facts` / `evidence` / `chunks` / `pages` / … — never a blended unlabeled list. Single-grain answers leave `parts` empty and read the top-level tuples.
+## ContextBundle/v1: both authorities, still separate
+
+`answer_context` is the sole side-by-side testimony/fact response. It does not
+use `grain = composite`, and it does not nest parts inside an envelope:
+
+```text
+{
+  contract: "ContextBundle/v1",
+  testimony: Envelope,  // complete evidence-grain testimony_context response
+  facts: Envelope       // complete fact-grain fact_context response
+}
+```
+
+Each child retains its own temporal scope, freshness, truncation, drops, and
+typed negative. The wrapper adds no retrieval, ranking, or transformation. A
+schema or execution failure in either child fails the whole request; a typed
+negative is a valid completed child and remains inside the bundle. There is no
+`EnvelopePart`, `Envelope.parts`, or compatibility wire shape.
 
 ## Grain discipline
 
@@ -95,11 +114,11 @@ Only when `grain = composite`. Each `EnvelopePart` is strictly single-grain and 
 | **fact** | What we currently hold true (validity-filtered) | Source gossip as verdict |
 | **evidence** | What sources asserted (claims) / current source text (chunks) | “Is it true now?” without adjudication |
 | **compiled** | Pre-paid synthesis with citations | Live confirmed fact |
-| **composite** | Labeled multi-section answers | Blended unlabeled mash |
+| **composite** | One operation's cohesive mixed typed payload | A container for independent responses |
 
 Evidence envelopes may carry both `evidence[]` (claims) and `chunks[]` (confirmed source-text). Different semantics — never fuse as one unlabeled UUID soup.
 
-Default evidence mode: **current testimony only**. Opt in for superseded testimony; historical recipes declare history explicitly.
+Default evidence mode: **current testimony only**. Opt in for superseded testimony; historical operations declare history explicitly.
 
 ## Three non-negotiable rules
 
@@ -152,11 +171,17 @@ Hard-forgotten content is **not** a separate kind — it is indistinguishable fr
 | `current` | At least one current-testimony lineage supports |
 | `withdrawn` | Fact still present but current testimony support hit zero via toolchain path — caveat + audit |
 
-## Temporal echo
+## Temporal scope
 
-`as_of_valid_at` / `as_of_believed_at` echo the filters actually applied. Multi-step questions compose: take a timestamp from result A, pass as `valid_at` to call B.
+`temporal_scope` is required and discriminated by `mode`. `fact_context`
+returns `current`, `at`, `overlap`, or `history`; each response includes its
+evaluation and belief instant plus the requested world-time coordinates.
+These modes use current system belief. A historical system-belief audit uses
+the separate `facts_as_of(valid_at, believed_at, …)`/open-SQL path and returns
+an `as_of` scope where applicable.
 
-`identity_regime` prevents silently mixing today’s merge map with yesterday’s beliefs when you did not ask for identity-as-of.
+`identity_regime` prevents silently mixing today’s merge map with yesterday’s
+beliefs when an explicit identity-as-of audit is requested.
 
 ## Agent consumption checklist
 
@@ -165,8 +190,9 @@ Hard-forgotten content is **not** a separate kind — it is indistinguishable fr
 3. If `contradiction` — report all sides (or fetch continuation).  
 4. If `truncated` — decide whether to continue.  
 5. If `dropped_by_hydration` high — consider re-query / freshness.  
-6. Prefer `fact_evidence` + `evidence_totals` when using `current_context`.  
-7. If using K — check `freshness.k`.  
+6. Prefer `fact_evidence` + `evidence_totals` when using `fact_context`.
+7. For `ContextBundle/v1`, inspect both complete child envelopes separately.
+8. If using K — check `freshness.k`.
 
 ## Related
 

@@ -7,19 +7,19 @@ from rememberstack.core import render_consumption_skill
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_FULL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_NOTE
 from rememberstack.core.open_query_prose import WRONG_CLAIM_WINDOW_CURRENT_TRUTH_SQL
+from rememberstack.model import AssuredAnswerIntent
 from rememberstack.model import ConsumptionDeployment
-from rememberstack.model import ConsumptionRecipe
+from rememberstack.model import ConsumptionOperation
 from rememberstack.model import ConsumptionScope
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import Grain
 from rememberstack.model import PublishedMounts
-from rememberstack.model import RecipeAnswerIntent
 
 _DEPLOYMENT_ID = UUID("55000000-0000-0000-0000-000000000001")
 
 
 def _context(
-    *, mounted: bool, knowledge_page_count: int, recipes: bool = True
+    *, mounted: bool, knowledge_page_count: int, operations: bool = True
 ) -> ConsumptionSkillContext:
     """Build one small deployment context for renderer proofs."""
     mounts = (
@@ -50,28 +50,34 @@ def _context(
             ),
             knowledge_page_count=knowledge_page_count,
         ),
-        recipes=(
+        operations=(
             (
-                ConsumptionRecipe(
+                ConsumptionOperation(
                     name="resolve_entity",
                     description="Resolve a name to survivor entities.",
                     output_grain=Grain.FACT,
-                    answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
+                    answer_intent=AssuredAnswerIntent.IDENTITY,
                 ),
-                ConsumptionRecipe(
-                    name="question_context",
-                    description="High-recall typed question context.",
+                ConsumptionOperation(
+                    name="testimony_context",
+                    description="High-recall source testimony.",
                     output_grain=Grain.EVIDENCE,
-                    answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+                    answer_intent=AssuredAnswerIntent.TESTIMONY,
                 ),
-                ConsumptionRecipe(
-                    name="current_context",
-                    description="Current evidence-backed facts for a question.",
+                ConsumptionOperation(
+                    name="fact_context",
+                    description="Evidence-backed facts across a requested time scope.",
                     output_grain=Grain.FACT,
-                    answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
+                    answer_intent=AssuredAnswerIntent.FACTS,
+                ),
+                ConsumptionOperation(
+                    name="answer_context",
+                    description="Both authorities, kept side by side.",
+                    output_grain=None,
+                    answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
                 ),
             )
-            if recipes
+            if operations
             else ()
         ),
         mounts=mounts,
@@ -84,7 +90,7 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
         context=_context(mounted=True, knowledge_page_count=2)
     )
 
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.1.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.2.0"
     assert skill.filename == "SKILL.md"
     assert TWO_LAYER_HEADLINE_FULL in skill.content
     assert TWO_LAYER_HEADLINE_NOTE in skill.content
@@ -99,9 +105,9 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
     assert "/memory/corpus" in skill.content
     assert "`target-state`" in skill.content
     assert "`resolve_entity`" in skill.content
-    assert "`question_context`" in skill.content
-    assert "`current_context`" in skill.content
-    # recipe-first steering is gone
+    assert "`testimony_context`" in skill.content
+    assert "`fact_context`" in skill.content
+    # The old intent-first steering is gone.
     assert "Default motion: orient, verify, audit" not in skill.content
 
 
@@ -118,29 +124,29 @@ def test_empty_k_and_unmounted_surfaces_degrade_honestly() -> None:
     assert "/memory/corpus" not in skill.content
 
 
-def test_only_enabled_recipes_are_advertised() -> None:
-    """Unavailable recipes and parameters are never presented as callable."""
+def test_only_enabled_operations_are_advertised() -> None:
+    """An empty registry falls back to the closed canonical operation names."""
     skill = render_consumption_skill(
-        context=_context(mounted=False, knowledge_page_count=0, recipes=False)
+        context=_context(mounted=False, knowledge_page_count=0, operations=False)
     )
 
-    assert "`question_context`" in skill.content
-    assert "`current_context`" in skill.content
-    assert "there is no compatibility recipe catalog" in skill.content
+    assert "`testimony_context`" in skill.content
+    assert "`fact_context`" in skill.content
+    assert "there is no compatibility operation catalog" in skill.content
     assert "include_superseded_testimony" not in skill.content
 
 
-def test_noncore_recipe_rows_are_not_advertised_as_assured_operations() -> None:
+def test_noncore_rows_are_not_advertised_as_assured_operations() -> None:
     """A stale noncore row cannot revive the removed compatibility catalog."""
-    context = _context(mounted=False, knowledge_page_count=0, recipes=False)
+    context = _context(mounted=False, knowledge_page_count=0, operations=False)
     context = context.model_copy(
         update={
-            "recipes": (
-                ConsumptionRecipe(
+            "operations": (
+                ConsumptionOperation(
                     name="claims_as_of",
                     description="Historical source assertions.",
                     output_grain=Grain.EVIDENCE,
-                    answer_intent=RecipeAnswerIntent.ASSERTION_HISTORY,
+                    answer_intent=AssuredAnswerIntent.TESTIMONY,
                 ),
             )
         }

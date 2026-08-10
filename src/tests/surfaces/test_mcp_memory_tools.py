@@ -20,12 +20,12 @@ from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
-from rememberstack.surfaces.mcp import RecipeMcpServer
+from rememberstack.surfaces.mcp import OperationMcpServer
 from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
 from rememberstack.surfaces.mcp_memory_tools import map_backend_error
 from rememberstack.surfaces.mcp_memory_tools import McpMemorySettings
 from rememberstack.surfaces.mcp_memory_tools import memory_write_tool_descriptors
-from rememberstack.surfaces.remote_mcp import RemoteRecipeMcpServer
+from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
@@ -107,8 +107,8 @@ class _RecordingWriteBackend:
         return self.max_body
 
 
-class _StubRecipeSurface:
-    """Minimal recipe surface for local MCP composition tests."""
+class _StubOperationSurface:
+    """Minimal operation surface for local MCP composition tests."""
 
     deployment_id = _DEPLOYMENT
 
@@ -116,7 +116,7 @@ class _StubRecipeSurface:
         return []
 
     def run(self, *, name: str, arguments: dict[str, object]) -> object:
-        raise AssertionError(f"unexpected recipe call {name}")
+        raise AssertionError(f"unexpected operation call {name}")
 
 
 class _StubIngestPort:
@@ -760,7 +760,7 @@ def test_backend_errors_surface_as_structured_tool_errors() -> None:
 
 
 def test_tool_not_composed_when_backend_absent() -> None:
-    """Local recipe-only composition returns tool_not_composed for write names."""
+    """Local operation-only composition returns tool_not_composed for writes."""
     result = handle_memory_write_tool(
         name="ingest", arguments={"text": "x", "filename": "x.md"}, backend=None
     )
@@ -768,8 +768,10 @@ def test_tool_not_composed_when_backend_absent() -> None:
 
 
 def test_local_mcp_omits_write_tools_without_ports() -> None:
-    """O2: recipe-only local MCP does not advertise write tools."""
-    server = RecipeMcpServer(surface=_StubRecipeSurface())  # type: ignore[arg-type]
+    """O2: operation-only local MCP does not advertise write tools."""
+    server = OperationMcpServer(
+        surface=_StubOperationSurface()  # type: ignore[arg-type]
+    )
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
     assert names == []
     result = server.call_tool(
@@ -781,13 +783,13 @@ def test_local_mcp_omits_write_tools_without_ports() -> None:
 def test_local_mcp_refuses_half_wired_ports() -> None:
     """Half-composing ingest without readiness (or vice versa) fails closed."""
     with pytest.raises(ValueError, match="both be composed"):
-        RecipeMcpServer(
-            surface=_StubRecipeSurface(),  # type: ignore[arg-type]
+        OperationMcpServer(
+            surface=_StubOperationSurface(),  # type: ignore[arg-type]
             ingest=_StubIngestPort(),  # type: ignore[arg-type]
         )
     with pytest.raises(ValueError, match="both be composed"):
-        RecipeMcpServer(
-            surface=_StubRecipeSurface(),  # type: ignore[arg-type]
+        OperationMcpServer(
+            surface=_StubOperationSurface(),  # type: ignore[arg-type]
             pipeline_readiness=_StubReadinessPort(),  # type: ignore[arg-type]
         )
 
@@ -795,8 +797,8 @@ def test_local_mcp_refuses_half_wired_ports() -> None:
 def test_local_mcp_wires_write_tools_when_ports_composed() -> None:
     """Full local composition advertises and dispatches the static write pair."""
     ingest = _StubIngestPort()
-    server = RecipeMcpServer(
-        surface=_StubRecipeSurface(),  # type: ignore[arg-type]
+    server = OperationMcpServer(
+        surface=_StubOperationSurface(),  # type: ignore[arg-type]
         ingest=ingest,  # type: ignore[arg-type]
         pipeline_readiness=_StubReadinessPort(),  # type: ignore[arg-type]
     )
@@ -833,7 +835,7 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
     ingested: list[bytes] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/recipes":
+        if request.url.path == "/operations":
             return httpx.Response(200, json=[])
         if request.url.path == "/query/space":
             return httpx.Response(404, json={"detail": "Not Found"})
@@ -875,7 +877,7 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
     assert names[:2] == ["ingest", "pipeline_readiness"]
 
@@ -902,14 +904,14 @@ def test_remote_mcp_maps_cloud_body_too_large() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/ingest":
             return httpx.Response(413, json={"detail": "body_too_large"})
-        if request.url.path == "/recipes":
+        if request.url.path == "/operations":
             return httpx.Response(200, json=[])
         return httpx.Response(404, json={"detail": "Not Found"})
 
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     result = server.call_tool(
         name="ingest", arguments={"text": "x", "filename": "x.md"}
     )
@@ -921,9 +923,11 @@ def test_remote_mcp_maps_cloud_body_too_large() -> None:
 
 def test_remote_and_local_descriptors_match() -> None:
     """Both servers share one schema source for the static write pair."""
-    remote_names = [tool["name"] for tool in memory_write_tool_descriptors()]
-    local = RecipeMcpServer(
-        surface=_StubRecipeSurface(),  # type: ignore[arg-type]
+    descriptors = memory_write_tool_descriptors()
+    remote_names = [tool["name"] for tool in descriptors]
+    assert "recipe" not in json.dumps(descriptors).lower()
+    local = OperationMcpServer(
+        surface=_StubOperationSurface(),  # type: ignore[arg-type]
         ingest=_StubIngestPort(),  # type: ignore[arg-type]
         pipeline_readiness=_StubReadinessPort(),  # type: ignore[arg-type]
     )

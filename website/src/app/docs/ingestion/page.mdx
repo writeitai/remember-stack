@@ -90,8 +90,8 @@ Edited watched sources create new **versions**. Unchanged chunks **reuse** prior
 ## Agent checklist after ingest
 
 1. Wait for stage terminal state (or readiness for target version ids).
-2. Prefer `current_context` / `facts_current` for “what do we know now?”
-3. Use `question_context` / claims for “what sources said.”
+2. Prefer `fact_context` / `facts_current` for “what do we know now?”
+3. Use `testimony_context` / claims for “what sources said.”
 4. Hydrate to sources before high-stakes action.
 5. If mounts exist, open P3 stubs → artifacts → raw only when needed.
 

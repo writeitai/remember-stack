@@ -368,7 +368,7 @@ class LifecycleCatalog:
         )
 
     def open_zero_support_relations(
-        self, *, relation_ids: tuple[UUID, ...]
+        self, *, deployment_id: UUID, relation_ids: tuple[UUID, ...]
     ) -> tuple[UUID, ...]:
         """Still-open, still-believed relations whose support hit zero."""
         if not relation_ids:
@@ -376,12 +376,16 @@ class LifecycleCatalog:
         with self._engine.connect() as connection:
             return tuple(
                 connection.execute(
-                    _SELECT_ZERO_RELATIONS, {"relation_ids": list(relation_ids)}
+                    _SELECT_ZERO_RELATIONS,
+                    {
+                        "deployment_id": deployment_id,
+                        "relation_ids": list(relation_ids),
+                    },
                 ).scalars()
             )
 
     def open_zero_support_observations(
-        self, *, observation_ids: tuple[UUID, ...]
+        self, *, deployment_id: UUID, observation_ids: tuple[UUID, ...]
     ) -> tuple[UUID, ...]:
         """Still-believed observations whose support hit zero."""
         if not observation_ids:
@@ -390,7 +394,10 @@ class LifecycleCatalog:
             return tuple(
                 connection.execute(
                     _SELECT_ZERO_OBSERVATIONS,
-                    {"observation_ids": list(observation_ids)},
+                    {
+                        "deployment_id": deployment_id,
+                        "observation_ids": list(observation_ids),
+                    },
                 ).scalars()
             )
 
@@ -878,7 +885,8 @@ _RECOUNT_OBSERVATIONS = text(
 _SELECT_ZERO_RELATIONS = text(
     """
     SELECT relation_id FROM relations
-    WHERE relation_id = ANY(:relation_ids)
+    WHERE deployment_id = :deployment_id
+      AND relation_id = ANY(:relation_ids)
       AND evidence_count = 0
       AND invalidated_at IS NULL
       AND valid_until IS NULL
@@ -886,8 +894,10 @@ _SELECT_ZERO_RELATIONS = text(
           -- a fact under an open support_withdrawn review is the
           -- transcription-only branch: a reviewer decides, never mechanics
           SELECT 1 FROM review_queue q
-          WHERE q.item_kind = 'support_withdrawn'
+          WHERE q.deployment_id = relations.deployment_id
+            AND q.item_kind = 'support_withdrawn'
             AND q.status IN ('pending', 'deferred')
+            AND q.candidate ->> 'fact_kind' = 'relation'
             AND q.candidate ->> 'fact_id' = relations.relation_id::text
       )
     """
@@ -896,13 +906,16 @@ _SELECT_ZERO_RELATIONS = text(
 _SELECT_ZERO_OBSERVATIONS = text(
     """
     SELECT observation_id FROM observations
-    WHERE observation_id = ANY(:observation_ids)
+    WHERE deployment_id = :deployment_id
+      AND observation_id = ANY(:observation_ids)
       AND evidence_count = 0
       AND invalidated_at IS NULL
       AND NOT EXISTS (
           SELECT 1 FROM review_queue q
-          WHERE q.item_kind = 'support_withdrawn'
+          WHERE q.deployment_id = observations.deployment_id
+            AND q.item_kind = 'support_withdrawn'
             AND q.status IN ('pending', 'deferred')
+            AND q.candidate ->> 'fact_kind' = 'observation'
             AND q.candidate ->> 'fact_id' = observations.observation_id::text
       )
     """

@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _answer_retrieval(args: argparse.Namespace) -> int:
-    """Answer BEAM probes using the full recipe + open-query retrieval plane."""
+    """Answer BEAM probes using the full operation + open-query retrieval plane."""
     import os
 
     from benchmarks.rs_harness_beam.answer_agent import answer_run_dir
@@ -169,7 +169,7 @@ def _parser() -> argparse.ArgumentParser:
     score.add_argument("--run", required=True)
     answer = sub.add_parser(
         "answer-retrieval",
-        help="answer probes via full retrieval plane (recipes + open query)",
+        help="answer probes via full retrieval plane (operations + open query)",
     )
     answer.add_argument("--run", required=True)
     answer.add_argument("--api-url", default="http://127.0.0.1:18000")

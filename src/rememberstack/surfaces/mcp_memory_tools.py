@@ -2,7 +2,7 @@
 
 Both MCP servers advertise and dispatch the same two static tools — ``ingest``
 and ``pipeline_readiness`` — from this module so schemas, argument parsing, and
-structured error envelopes cannot drift. Recipe and open-query tools stay in
+structured error envelopes cannot drift. Assured-operation and open-query tools stay in
 their own modules; this is only the write/readiness pair D37 requires on every
 general-purpose memory surface.
 
@@ -75,7 +75,7 @@ _INGEST_DESCRIPTION: Final = (
     "Store a document into this deployment's memory (E0 write). Returns a"
     " version_id immediately; the indexing pipeline is asynchronous and may"
     " take many minutes (structure alone has been measured at ~11 minutes on a"
-    " ~2.5KB file). Do NOT call recipe recall tools expecting this content until"
+    " ~2.5KB file). Do NOT call assured recall operations expecting this content until"
     " pipeline_readiness reports ready=true for the version_id."
     " Prefer source_kind plus a stable source_ref for durable agent memory so"
     " later writes become new versions of the same document; omit both only for"
@@ -97,7 +97,7 @@ _PIPELINE_READINESS_DESCRIPTION: Final = (
     "Inspect whether one or more document version_ids have finished the"
     " continuous pipeline (and optionally projections) and are safe to recall."
     " Call after ingest with the returned version_id."
-    " ready=true means recipe tools may see the content (subject to retrieval"
+    " ready=true means assured recall operations may see the content (subject to retrieval"
     " relevance)."
     " require_projections=false answers 'can I recall this yet?' against"
     " continuous stages only (structure/extract/index) — use this default for"
@@ -400,7 +400,7 @@ def handle_memory_write_tool(
 ) -> dict[str, object]:
     """Dispatch one write/readiness tool to a success or structured error result.
 
-    When ``backend`` is ``None`` the tools are not composed (recipe-only local
+    When ``backend`` is ``None`` the tools are not composed (operation-only local
     MCP). Unknown names are the caller's responsibility — this function only
     handles ``MEMORY_WRITE_TOOL_NAMES``.
 

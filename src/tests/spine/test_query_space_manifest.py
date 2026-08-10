@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from rememberstack.spine import CANONICAL_RECIPES
+from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
 from rememberstack.spine.query_space import build_manifest
@@ -35,9 +35,9 @@ from rememberstack.spine.query_space import surface_manifest_hash
 from rememberstack.spine.query_space import VIEW_CONTRACTS
 from rememberstack.spine.query_space.canonical import CanonicalizationError
 from rememberstack.spine.query_space.deletion_matrix import MATRIX_PATH
+from rememberstack.surfaces.operation_surface import operation_descriptors
 from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
-from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 
 def _golden() -> dict[str, object]:
@@ -210,13 +210,14 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     operations = core["operations"]
     assert isinstance(operations, list)
     assert [operation["name"] for operation in operations] == [  # type: ignore[index]
-        "current_context",
-        "question_context",
+        "answer_context",
+        "fact_context",
         "resolve_entity",
+        "testimony_context",
     ]
     public = {
         descriptor.name: descriptor
-        for descriptor in recipe_descriptors(recipes=CANONICAL_RECIPES)
+        for descriptor in operation_descriptors(operations=CANONICAL_OPERATIONS)
     }
     for operation in operations:
         assert isinstance(operation, dict)
@@ -229,15 +230,17 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     question = next(
         operation
         for operation in operations
-        if isinstance(operation, dict) and operation["name"] == "question_context"
+        if isinstance(operation, dict) and operation["name"] == "testimony_context"
     )
-    assert question["version"] == 4
+    assert question["version"] == 1
     schema = question["input_schema"]
     assert isinstance(schema, dict)
     properties = schema["properties"]
     assert isinstance(properties, dict)
-    assert properties["include_facts"]["default"] is False  # type: ignore[index]
-    assert properties["include_entities"]["default"] is False  # type: ignore[index]
+    assert "include_facts" not in properties
+    assert "include_entities" not in properties
+    assert properties["entity_ids"]["minItems"] == 1  # type: ignore[index]
+    assert properties["entity_ids"]["maxItems"] == 20  # type: ignore[index]
     limits = members["limits"]
     assert isinstance(limits, dict)
     assert sorted(limits) == [

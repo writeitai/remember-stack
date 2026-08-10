@@ -15,7 +15,7 @@ implemented continuous document routes: conversion, structure, chunking, chunk
 embedding, claim extraction, normalization, supersession, claim embedding,
 reconciliation, and fact labeling. The one-shot `setup` service applies every
 migration, provisions object buckets, bootstraps the deployment, and seeds
-the three canonical assured operations plus the `examples.*` saved queries.
+the four canonical assured operations plus the `examples.*` saved queries.
 The RememberStack, `rememberstack`, and `remember` names used here are final. Do
 not expose this stack to untrusted traffic.
 
@@ -84,11 +84,11 @@ from disjoint item records. The repository's
 covers balanced shard planning, scaled workers, six-hour drain waits, forensic
 database dumps, collection, and merge validation.
 
-Check the API and the deployment-seeded recipe registry:
+Check the API and the deployment-seeded operation registry:
 
 ```bash
 curl --fail http://localhost:8000/healthz
-curl --fail http://localhost:8000/recipes
+curl --fail http://localhost:8000/operations
 ```
 
 ## Ingest a document

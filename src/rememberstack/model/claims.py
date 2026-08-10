@@ -262,6 +262,10 @@ class FactForEmbedding(BaseModel):
     relation_id: UUID
     fact_label: _NonEmpty
     status: _NonEmpty
+    valid_from: UTCDateTime | None
+    valid_until: UTCDateTime | None
+    ingested_at: UTCDateTime
+    invalidated_at: UTCDateTime | None
 
 
 class ObservationForEmbedding(BaseModel):
@@ -272,6 +276,10 @@ class ObservationForEmbedding(BaseModel):
     observation_id: UUID
     obs_label: _NonEmpty
     status: _NonEmpty
+    valid_from: UTCDateTime | None
+    valid_until: UTCDateTime | None
+    ingested_at: UTCDateTime
+    invalidated_at: UTCDateTime | None
 
 
 class FactLabelResponse(BaseModel):

@@ -10,8 +10,8 @@ rules are contract, not garnish — proved here over a seeded corpus:
 - **A withdrawn fact is flagged, not vanished (D54).** An open
   `support_withdrawn` review marks the fact `support=withdrawn`; it is still
   returned.
-- **Composite answers are explicitly two-part, never blended (S47).** `parts`
-  belong only to a composite envelope, and each part is strictly single-grain.
+- **Combined answers preserve both authorities (D87).** `ContextBundle/v1`
+  carries complete testimony and fact envelopes side by side.
 - **Identity regime and believed_at horizons are stated (S61, §3).** Reads
   echo which identity boundary answered; a query before a finite channel
   horizon is a typed `boundary`, never a silent truncation.
@@ -35,13 +35,13 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.model import ContextBundleV1
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
-from rememberstack.model import EnvelopePart
 from rememberstack.model import EvidenceResult
 from rememberstack.model import EvidenceTotal
 from rememberstack.model import FactEvidence
-from rememberstack.model import FactResult
 from rememberstack.model import FactSupport
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
@@ -50,7 +50,6 @@ from rememberstack.model import IdentityRegime
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
 from rememberstack.model import SourceRecord
-from rememberstack.model import Validity
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import query_engine as query_engine_module
@@ -366,104 +365,35 @@ def test_hydrate_also_discloses_contradiction_and_support(corpus: _Corpus) -> No
     assert withdrawn.facts[0].support is FactSupport.WITHDRAWN
 
 
-# --- S47: composite parts are single-grain ---------------------------------
+# --- D87: combined context preserves two complete authorities --------------
 
 
-def test_a_composite_answer_is_explicitly_single_grain_parts() -> None:
-    """S47: a said-vs-believe answer is two labeled single-grain parts."""
-    said = EnvelopePart(
-        grain=Grain.EVIDENCE,
-        label="said",
-        evidence=(
-            EvidenceResult(
-                claim_id=uuid4(),
-                doc_id=uuid4(),
-                chunk_id=uuid4(),
-                claim_text="Alice said pricing rose.",
-                source_span="pricing rose",
-                char_start=0,
-                char_end=12,
-                is_attributed=True,
-                is_current_testimony=True,
-            ),
-        ),
-    )
-    believed = EnvelopePart(
-        grain=Grain.FACT,
-        label="believed",
-        facts=(
-            FactResult(
-                fact_id=uuid4(),
-                kind="relation",
-                label="Pricing is $10.",
-                evidence_count=3,
-                validity=Validity(
-                    valid_from=None,
-                    valid_until=None,
-                    ingested_at=_NOW,
-                    invalidated_at=None,
-                ),
-            ),
-        ),
-    )
-    envelope = Envelope(
-        grain=Grain.COMPOSITE,
-        parts=(said, believed),
-        freshness=Freshness(pg_live_ts=_NOW),
-    )
-    assert [part.grain for part in envelope.parts] == [Grain.EVIDENCE, Grain.FACT]
-
-
-def test_parts_require_a_composite_grain() -> None:
-    """A non-composite envelope may not carry parts (the discipline is typed)."""
-    part = EnvelopePart(grain=Grain.FACT)
-    with pytest.raises(ValidationError, match="composite"):
-        Envelope(grain=Grain.FACT, parts=(part,), freshness=Freshness(pg_live_ts=_NOW))
-
-
-def test_a_part_may_not_itself_be_composite() -> None:
-    """Each part is strictly single-grain — no nested blending (S47)."""
-    with pytest.raises(ValidationError, match="single-grain"):
-        EnvelopePart(grain=Grain.COMPOSITE)
-
-
-def test_a_part_may_not_carry_another_grains_payload() -> None:
-    """A fact-grain part carrying evidence records is blended, not
-    single-grain — the discipline is enforced per part (Codex finding)."""
-    span = EvidenceResult(
-        claim_id=uuid4(),
-        doc_id=uuid4(),
-        chunk_id=uuid4(),
-        claim_text="x",
-        source_span="x",
-        char_start=0,
-        char_end=1,
-        is_attributed=True,
-        is_current_testimony=True,
-    )
-    with pytest.raises(ValidationError, match="another grain"):
-        EnvelopePart(grain=Grain.FACT, evidence=(span,))
-
-
-def test_a_composite_may_not_blend_parts_with_top_level_payload() -> None:
-    """A composite's data lives in parts[], never also blended into the
-    top-level result tuples (Codex finding)."""
-    fact = FactResult(
-        fact_id=uuid4(),
-        kind="relation",
-        label="Pricing is $10.",
-        evidence_count=1,
-        validity=Validity(
-            valid_from=None, valid_until=None, ingested_at=_NOW, invalidated_at=None
-        ),
-    )
-    with pytest.raises(ValidationError, match="blended"):
-        Envelope(
-            grain=Grain.COMPOSITE,
-            parts=(EnvelopePart(grain=Grain.FACT, facts=(fact,)),),
-            facts=(fact,),  # also blended at the top — forbidden
+def test_context_bundle_keeps_testimony_and_facts_separate() -> None:
+    """The combined contract has two complete children and no blended payload."""
+    scope = current_temporal_scope(evaluated_at=_NOW)
+    bundle = ContextBundleV1(
+        testimony=Envelope(
+            grain=Grain.EVIDENCE,
+            temporal_scope=scope,
             freshness=Freshness(pg_live_ts=_NOW),
-        )
+        ),
+        facts=Envelope(
+            grain=Grain.FACT, temporal_scope=scope, freshness=Freshness(pg_live_ts=_NOW)
+        ),
+    )
+    assert bundle.contract == "ContextBundle/v1"
+    assert bundle.testimony.grain is Grain.EVIDENCE
+    assert bundle.facts.grain is Grain.FACT
+
+
+def test_context_bundle_rejects_swapped_authorities() -> None:
+    """Child positions are typed; callers cannot relabel a fact as testimony."""
+    scope = current_temporal_scope(evaluated_at=_NOW)
+    fact = Envelope(
+        grain=Grain.FACT, temporal_scope=scope, freshness=Freshness(pg_live_ts=_NOW)
+    )
+    with pytest.raises(ValidationError, match="testimony"):
+        ContextBundleV1(testimony=fact, facts=fact)
 
 
 # --- S61 identity regime, horizons, and the negative taxonomy --------------
@@ -475,7 +405,7 @@ def test_reads_echo_the_current_identity_regime(corpus: _Corpus) -> None:
     answer = _engine(corpus).lookup_relations(
         deployment_id=_DEPLOYMENT_ID, subject_entity_id=corpus.ids["Bob"]
     )
-    assert answer.identity_regime is IdentityRegime.CURRENT
+    assert answer.temporal_scope.identity_regime is IdentityRegime.CURRENT
     assert set(IdentityRegime) == {IdentityRegime.CURRENT, IdentityRegime.AS_OF}
 
 
@@ -513,13 +443,16 @@ def test_source_mention_metadata_is_optional_for_stored_envelopes() -> None:
     assert legacy.last_mentioned_at is None
 
     envelope = Envelope(
-        grain=Grain.EVIDENCE, sources=(legacy,), freshness=Freshness(pg_live_ts=_NOW)
+        grain=Grain.EVIDENCE,
+        temporal_scope=current_temporal_scope(evaluated_at=_NOW),
+        sources=(legacy,),
+        freshness=Freshness(pg_live_ts=_NOW),
     )
     assert envelope.excluded_unstamped == 0
 
 
 def test_fact_evidence_fields_are_explicit_optional_envelope_contract() -> None:
-    """Batch C associations are flat and explicit while legacy payloads stay valid."""
+    """Batch C associations carry the complete fact coordinate explicitly."""
     fact_id = uuid4()
     claim_id = uuid4()
     evidence = EvidenceResult(
@@ -535,21 +468,45 @@ def test_fact_evidence_fields_are_explicit_optional_envelope_contract() -> None:
     )
     envelope = Envelope(
         grain=Grain.FACT,
+        temporal_scope=current_temporal_scope(evaluated_at=_NOW),
         evidence=(evidence,),
         fact_evidence=(
-            FactEvidence(fact_id=fact_id, claim_id=claim_id, stance="supports"),
+            FactEvidence(
+                fact_kind="relation",
+                fact_id=fact_id,
+                claim_id=claim_id,
+                stance="supports",
+            ),
         ),
         evidence_totals=(
-            EvidenceTotal(fact_id=fact_id, stance="supports", returned=1, total=4),
-            EvidenceTotal(fact_id=fact_id, stance="contradicts", returned=0, total=0),
+            EvidenceTotal(
+                fact_kind="relation",
+                fact_id=fact_id,
+                stance="supports",
+                returned=1,
+                total=4,
+            ),
+            EvidenceTotal(
+                fact_kind="relation",
+                fact_id=fact_id,
+                stance="contradicts",
+                returned=0,
+                total=0,
+            ),
         ),
         freshness=Freshness(pg_live_ts=_NOW),
     )
 
+    assert envelope.fact_evidence[0].fact_kind == "relation"
     assert envelope.fact_evidence[0].claim_id == claim_id
+    assert envelope.evidence_totals[0].fact_kind == "relation"
     assert envelope.evidence_totals[0].total == 4
     assert (
-        Envelope(grain=Grain.FACT, freshness=Freshness(pg_live_ts=_NOW)).fact_evidence
+        Envelope(
+            grain=Grain.FACT,
+            temporal_scope=current_temporal_scope(evaluated_at=_NOW),
+            freshness=Freshness(pg_live_ts=_NOW),
+        ).fact_evidence
         == ()
     )
 
@@ -560,6 +517,7 @@ def test_graph_edge_support_marker_defaults_for_old_stored_envelopes() -> None:
     legacy = Envelope.model_validate(
         {
             "grain": "evidence",
+            "temporal_scope": current_temporal_scope(evaluated_at=_NOW),
             "edges": [
                 {
                     "relation_id": relation_id,
@@ -608,4 +566,10 @@ def test_claim_grouping_fields_default_for_old_stored_envelopes() -> None:
 def test_evidence_total_rejects_a_returned_count_above_total() -> None:
     """The exact-total disclosure cannot contradict itself."""
     with pytest.raises(ValidationError, match="cannot exceed"):
-        EvidenceTotal(fact_id=uuid4(), stance="supports", returned=2, total=1)
+        EvidenceTotal(
+            fact_kind="observation",
+            fact_id=uuid4(),
+            stance="supports",
+            returned=2,
+            total=1,
+        )

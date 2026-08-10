@@ -25,11 +25,11 @@ from rememberstack.model import EvalSuite
 from rememberstack.model import P1ChunkText
 from rememberstack.model import PublishedMounts
 from rememberstack.model import S58Answer
-from rememberstack.spine import CANONICAL_RECIPES
+from rememberstack.spine import AssuredOperationRegistry
+from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import ConsumptionCatalog
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine import RecipeRegistry
-from rememberstack.spine import seed_canonical_recipes
+from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import ConsumptionSkillSurface
 from rememberstack.surfaces import QueryEngine
@@ -98,7 +98,7 @@ def database_engine() -> Iterator[Engine]:
 
 @pytest.fixture()
 def skill_surface(database_engine: Engine) -> ConsumptionSkillSurface:
-    """Build a fresh deployment with one scope and the canonical recipes."""
+    """Build a fresh deployment with one scope and the canonical operations."""
     with database_engine.begin() as connection:
         connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
@@ -122,17 +122,11 @@ def skill_surface(database_engine: Engine) -> ConsumptionSkillSurface:
             ),
             {"scope_id": uuid4(), "deployment_id": _DEPLOYMENT_ID},
         )
-    registry = RecipeRegistry(engine=database_engine)
-    seed_canonical_recipes(registry=registry, deployment_id=_DEPLOYMENT_ID)
-    registry.register(
-        deployment_id=_DEPLOYMENT_ID,
-        recipe=CANONICAL_RECIPES[0].model_copy(
-            update={"version": 2, "description": "Latest entity resolution operation."}
-        ),
-    )
+    registry = AssuredOperationRegistry(engine=database_engine)
+    seed_canonical_operations(registry=registry, deployment_id=_DEPLOYMENT_ID)
     return ConsumptionSkillSurface(
         catalog=ConsumptionCatalog(engine=database_engine),
-        recipes=registry,
+        operations=registry,
         deployment_id=_DEPLOYMENT_ID,
     )
 
@@ -157,7 +151,7 @@ def _passing_answer() -> dict[str, object]:
 def test_surface_renders_live_deployment_state_and_publishes_atomically(
     skill_surface: ConsumptionSkillSurface, tmp_path: Path
 ) -> None:
-    """Scopes, K emptiness, mounts, and latest active recipes reach SKILL.md."""
+    """Scopes, K emptiness, mounts, and assured operations reach SKILL.md."""
     rendered = skill_surface.render(mounts=_mounts())
     published = skill_surface.publish(directory=tmp_path, rendered=rendered)
 
@@ -165,7 +159,7 @@ def test_surface_renders_live_deployment_state_and_publishes_atomically(
     assert published.read_text(encoding="utf-8") == rendered.content
     assert "`migration`" in rendered.content
     assert "known empty: no K pages are registered" in rendered.content
-    assert "Latest entity resolution operation." in rendered.content
+    assert CANONICAL_OPERATIONS[0].description in rendered.content
     assert rendered.content.count("`resolve_entity` —") == 1
     assert not list(tmp_path.glob(".SKILL.md.*.tmp"))
 

@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Primitives catalog",
   description:
-    "Engine retrieval primitives and which ones are public call surfaces vs internal recipe composition.",
+    "Engine retrieval primitives and which ones are public call surfaces vs internal operation composition.",
 };
 
 # Primitives catalog
@@ -22,7 +22,7 @@ Parent: [Retrieval](/docs/retrieval). Shipped HTTP: [API reference](/docs/refere
 
 | Surface | Call |
 | --- | --- |
-| Assured ops | `POST /recipe/resolve_entity`, `question_context`, `current_context` |
+| Assured ops | `POST /operations/resolve_entity`, `testimony_context`, `fact_context`, `answer_context` |
 | Open SQL | `POST /query/sql` (+ explain, space discovery, saved queries) |
 | Open Cypher | `POST /query/cypher` (+ explain) |
 | Direct primitives (subset) | See API reference: resolve / lookup / search claims & chunks / hydrate / transcript endpoints as composed |
@@ -33,7 +33,7 @@ Do **not** invent `/fuse`, `/rerank`, `/scan`, etc. unless the API reference lis
 
 ## Catalog (engine ops)
 
-Legend: **Public** = stable agent call path today · **Internal** = used inside recipes / engine · **Design** = specified, not a public agent surface yet
+Legend: **Public** = stable agent call path today · **Internal** = used inside operations / engine · **Design** = specified, not a public agent surface yet
 
 ### `resolve`
 
@@ -79,7 +79,7 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 
 | | |
 | --- | --- |
-| **Surface** | **Internal** composition (also frozen inside recipes like `question_context`) |
+| **Surface** | **Internal** composition (also frozen inside operations like `testimony_context`) |
 | **Job** | RRF merge, inspectable re-sort, typed evidence combination without UUID soup |
 
 ### `hydrate`
@@ -108,7 +108,7 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 
 ## How assured ops use them
 
-### `question_context` (evidence)
+### `testimony_context` (evidence)
 
 Conceptual chain:
 
@@ -116,7 +116,7 @@ Conceptual chain:
 2. Semantic + lexical **chunk** nomination → fuse → hydrate once  
 3. `combine_evidence` under one evidence envelope  
 
-### `current_context` (fact)
+### `fact_context` (fact)
 
 Conceptual chain:
 
@@ -124,6 +124,12 @@ Conceptual chain:
 2. Hydrate live relations/observations  
 3. Attach live testimony under a **hard evidence budget**  
 4. Package `fact_evidence`, `evidence_totals`, contradictions, support markers  
+
+### `answer_context` (`ContextBundle/v1`)
+
+Purely composes the complete `testimony_context` and `fact_context` responses
+under separate named fields. It adds no retrieval, ranking, hydration, or
+flattening.
 
 ### `resolve_entity`
 

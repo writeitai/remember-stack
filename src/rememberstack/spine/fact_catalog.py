@@ -22,6 +22,7 @@ from rememberstack.model import FactForEmbedding
 from rememberstack.model import FactForLabeling
 from rememberstack.model import ObservationForEmbedding
 from rememberstack.model import OtherPredicateGrammarError
+from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import RelationUpsert
 
 OTHER_PREDICATE_GRAMMAR: Final = re.compile(r"other:[a-z][a-z0-9_]{1,40}")
@@ -308,6 +309,21 @@ class FactCatalog:
                 },
             )
 
+    def fact_metadata_for_document(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[P1FactMetadataRow, ...]:
+        """Return fact scalars changed by one document's adjudication/lifecycle."""
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_FACT_METADATA_FOR_DOCUMENT,
+                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(P1FactMetadataRow.model_validate(dict(row)) for row in rows)
+
     def ensure_other_predicate(self, *, deployment_id: UUID, predicate: str) -> None:
         """Register one `other:<freetext>` escape value (tier=other, D5/D18).
 
@@ -550,7 +566,8 @@ _STAMP_FACT_LABEL = text(
 
 _SELECT_RELATIONS_FOR_EMBEDDING = text(
     """
-    SELECT r.relation_id, r.fact_label, r.status::text AS status
+    SELECT r.relation_id, r.fact_label, r.status::text AS status,
+           r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at
     FROM relations r
     WHERE r.deployment_id = :deployment_id
       AND r.fact_label IS NOT NULL
@@ -584,9 +601,11 @@ _STAMP_FACT_EMBEDDING = text(
 
 _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
     """
-    SELECT observation_id, obs_label, status::text AS status
+    SELECT observation_id, obs_label, status::text AS status,
+           valid_from, valid_until, ingested_at, invalidated_at
     FROM observations
     WHERE observations.deployment_id = :deployment_id
+      AND obs_label IS NOT NULL
       AND (
             obs_label_version IS NULL
             OR obs_label_version <> :label_version
@@ -616,6 +635,74 @@ _STAMP_OBSERVATION_EMBEDDING = text(
             OR obs_label_embedding_ref IS NULL
             OR obs_label_embedding_ref <> :embedding_ref
           )
+    """
+)
+
+_SELECT_FACT_METADATA_FOR_DOCUMENT = text(
+    """
+    WITH doc_relations AS (
+        SELECT DISTINCT evidence.relation_id
+        FROM relation_evidence AS evidence
+        WHERE evidence.deployment_id = :deployment_id
+          AND evidence.doc_id = :doc_id
+    ), affected_relations AS (
+        SELECT relation_id FROM doc_relations
+        UNION
+        SELECT adjudication.relation_id
+        FROM relation_adjudications AS adjudication
+        JOIN doc_relations AS linked
+          ON linked.relation_id = adjudication.relation_id
+          OR linked.relation_id = adjudication.related_relation_id
+        WHERE adjudication.deployment_id = :deployment_id
+        UNION
+        SELECT adjudication.related_relation_id
+        FROM relation_adjudications AS adjudication
+        JOIN doc_relations AS linked
+          ON linked.relation_id = adjudication.relation_id
+          OR linked.relation_id = adjudication.related_relation_id
+        WHERE adjudication.deployment_id = :deployment_id
+          AND adjudication.related_relation_id IS NOT NULL
+    ), doc_claims AS (
+        SELECT claim_id
+        FROM claims
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+    ), affected_observations AS (
+        SELECT DISTINCT evidence.observation_id
+        FROM observation_evidence AS evidence
+        WHERE evidence.deployment_id = :deployment_id
+          AND evidence.doc_id = :doc_id
+        UNION
+        SELECT adjudication.observation_id
+        FROM observation_adjudications AS adjudication
+        JOIN doc_claims AS linked
+          ON linked.claim_id = adjudication.triggering_claim_id
+        WHERE adjudication.deployment_id = :deployment_id
+        UNION
+        SELECT adjudication.related_observation_id
+        FROM observation_adjudications AS adjudication
+        JOIN doc_claims AS linked
+          ON linked.claim_id = adjudication.triggering_claim_id
+        WHERE adjudication.deployment_id = :deployment_id
+          AND adjudication.related_observation_id IS NOT NULL
+    )
+    SELECT relation.relation_id AS fact_id, relation.deployment_id,
+           'relation'::text AS kind, relation.status::text AS status,
+           relation.valid_from, relation.valid_until, relation.ingested_at,
+           relation.invalidated_at
+    FROM relations AS relation
+    JOIN affected_relations AS affected
+      ON affected.relation_id = relation.relation_id
+    WHERE relation.deployment_id = :deployment_id
+    UNION ALL
+    SELECT observation.observation_id AS fact_id, observation.deployment_id,
+           'observation'::text AS kind, observation.status::text AS status,
+           observation.valid_from, observation.valid_until,
+           observation.ingested_at, observation.invalidated_at
+    FROM observations AS observation
+    JOIN affected_observations AS affected
+      ON affected.observation_id = observation.observation_id
+    WHERE observation.deployment_id = :deployment_id
+    ORDER BY kind, fact_id
     """
 )
 

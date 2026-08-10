@@ -1,5 +1,8 @@
 """P1 acceptance for independent lexical and semantic evidence channels."""
 
+from datetime import datetime
+from datetime import timedelta
+from datetime import UTC
 from typing import Any
 from uuid import UUID
 from uuid import uuid4
@@ -11,6 +14,13 @@ from rememberstack.adapters.selfhost import LanceChunkIndex
 import rememberstack.adapters.selfhost.lance as lance_adapter
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
+from rememberstack.model import P1FactMetadataRow
+from rememberstack.model import P1FactRow
+from rememberstack.model.assured_operations import AtFactTime
+from rememberstack.model.assured_operations import CurrentFactTime
+from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.assured_operations import HistoryFactTime
+from rememberstack.model.assured_operations import OverlapFactTime
 
 
 def test_claim_lexical_nomination_is_independent_from_dense_search(tmp_path) -> None:
@@ -107,6 +117,97 @@ def test_chunk_fts_is_bootstrapped_and_covers_appended_tail(tmp_path) -> None:
     )[str(tail_id)]
     assert text.indexed_text.endswith("The fallback code is TAIL-884.")
     assert text.section_role == "body"
+
+
+def test_fact_time_eligibility_is_applied_before_vector_top_k(tmp_path) -> None:
+    """Every D87 time mode narrows P1 before ANN depth is applied."""
+    deployment_id = uuid4()
+    evaluated_at = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    current_id = uuid4()
+    ended_id = uuid4()
+    future_id = uuid4()
+    invalidated_id = uuid4()
+    late_ingest_id = uuid4()
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_facts(
+        rows=(
+            _fact(
+                fact_id=current_id,
+                deployment_id=deployment_id,
+                ingested_at=evaluated_at - timedelta(days=5),
+            ),
+            _fact(
+                fact_id=ended_id,
+                deployment_id=deployment_id,
+                valid_from=evaluated_at - timedelta(days=10),
+                valid_until=evaluated_at - timedelta(days=2),
+                ingested_at=evaluated_at - timedelta(days=9),
+            ),
+            _fact(
+                fact_id=future_id,
+                deployment_id=deployment_id,
+                valid_from=evaluated_at + timedelta(days=2),
+                ingested_at=evaluated_at - timedelta(days=1),
+            ),
+            _fact(
+                fact_id=invalidated_id,
+                deployment_id=deployment_id,
+                status="invalidated",
+                ingested_at=evaluated_at - timedelta(days=6),
+                invalidated_at=evaluated_at - timedelta(hours=1),
+            ),
+            _fact(
+                fact_id=late_ingest_id,
+                deployment_id=deployment_id,
+                ingested_at=evaluated_at + timedelta(hours=1),
+            ),
+        )
+    )
+
+    def selected(*, time: FactTime) -> set[str]:
+        return {
+            item.item_id
+            for item in index.search_facts_scored(
+                deployment_id=str(deployment_id),
+                vector=(1.0, 0.0),
+                k=10,
+                kind=None,
+                time=time,
+                evaluated_at=evaluated_at,
+            )
+        }
+
+    assert selected(time=CurrentFactTime()) == {str(current_id)}
+    assert selected(time=AtFactTime(at=evaluated_at - timedelta(days=3))) == {
+        str(current_id),
+        str(ended_id),
+    }
+    assert selected(
+        time=OverlapFactTime.model_validate(
+            {
+                "mode": "overlap",
+                "from": evaluated_at - timedelta(days=3),
+                "to": evaluated_at - timedelta(days=1),
+            }
+        )
+    ) == {str(current_id), str(ended_id)}
+    assert selected(time=HistoryFactTime()) == {str(current_id), str(ended_id)}
+
+    index.update_fact_metadata(
+        rows=(
+            P1FactMetadataRow(
+                fact_id=current_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="invalidated",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=evaluated_at - timedelta(days=5),
+                invalidated_at=evaluated_at,
+            ),
+        )
+    )
+    assert selected(time=CurrentFactTime()) == set()
 
 
 def test_upgraded_store_bootstraps_fts_and_chunk_id_index_on_read(tmp_path) -> None:
@@ -246,5 +347,30 @@ def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:
         version_id=uuid4(),
         section_role="body",
         text=text,
+        vector=(1.0, 0.0),
+    )
+
+
+def _fact(
+    *,
+    fact_id: UUID,
+    deployment_id: UUID,
+    ingested_at: datetime,
+    status: str = "active",
+    valid_from: datetime | None = None,
+    valid_until: datetime | None = None,
+    invalidated_at: datetime | None = None,
+) -> P1FactRow:
+    """Build one fact projection row for temporal prefilter acceptance."""
+    return P1FactRow(
+        fact_id=fact_id,
+        deployment_id=deployment_id,
+        kind="relation",
+        label=str(fact_id),
+        status=status,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        ingested_at=ingested_at,
+        invalidated_at=invalidated_at,
         vector=(1.0, 0.0),
     )

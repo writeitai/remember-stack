@@ -341,27 +341,39 @@ COMMENT ON TABLE knowledge_refresh_queue IS
   'Debounced domain-trigger queue for the K compile driver (D12/D45), not D61 delivery state. Evidence batches route mechanically; authored_review surfaces D46 flags; this not_before coalesces triggers, while a materialized K job is delivered only from its unlaned processing_state row (D67).';
 CREATE INDEX ix_krefresh_runnable ON knowledge_refresh_queue (deployment_id, status, not_before) WHERE status = 'pending';
 -- ─────────────────────────────────────────────────────────────────────────
--- retrieval_recipes — the closed assured-operation descriptor registry (D50/D83).
--- Surfaces render only the canonical active version of the three assured names. The CHECK is
--- the mechanical half of the grain linter (D41/D49); saved patterns use saved_queries instead.
+-- assured_operations — the closed four-operation descriptor registry (D50/D87).
+-- Saved patterns use saved_queries and cannot mint more assured tools.
 -- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE retrieval_recipes (
-  recipe_id       uuid PRIMARY KEY,
+CREATE TABLE assured_operations (
+  operation_id    uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  name            text NOT NULL,               -- e.g. 'relation_hybrid_rrf', 'claims_as_of', 'identity_as_of'
-  description     text NOT NULL,               -- rendered into the MCP tool description (D50)
-  parameters      jsonb NOT NULL,              -- typed parameter schema (JSON-Schema form)
-  chain           jsonb NOT NULL,              -- the typed primitive composition: ordered ops + fixed settings (channel sets, RRF constants, rerank weights)
-  output_grain    recipe_output_grain NOT NULL, -- fact | evidence | compiled | composite (the D49 envelope grain)
-  answer_intent   recipe_answer_intent NOT NULL, -- current_facts | assertion_history | orientation | audit | change_feed
-  version         integer NOT NULL DEFAULT 1,  -- recall@k measured per (name, version) — regressions attributable (D22)
+  name            assured_operation_name NOT NULL,
+  description     text NOT NULL,
+  parameters      jsonb NOT NULL,
+  result_schema   jsonb NOT NULL,
+  execution_plan  jsonb NOT NULL,
+  result_contract assured_result_contract NOT NULL,
+  output_grain    assured_output_grain,
+  answer_intent   assured_answer_intent NOT NULL,
+  version         integer NOT NULL DEFAULT 1,
   status          ontology_status NOT NULL DEFAULT 'active',
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (deployment_id, name, version),
-  CHECK (answer_intent <> 'current_facts' OR output_grain = 'fact')  -- the D41 bar, mechanical
+  CHECK (
+    (name = 'resolve_entity' AND result_contract = 'envelope'
+      AND output_grain = 'fact' AND answer_intent = 'identity') OR
+    (name = 'testimony_context' AND result_contract = 'envelope'
+      AND output_grain = 'evidence' AND answer_intent = 'testimony') OR
+    (name = 'fact_context' AND result_contract = 'envelope'
+      AND output_grain = 'fact' AND answer_intent = 'facts') OR
+    (name = 'answer_context' AND result_contract = 'context_bundle_v1'
+      AND output_grain IS NULL AND answer_intent = 'combined_context')
+  )
 );
-COMMENT ON TABLE retrieval_recipes IS
-  'D50/D83: closed registry for the three assured operation descriptors rendered by API, CLI, and MCP. Bootstrap atomically reconciles the canonical rows; reusable query patterns belong in saved_queries. The CHECK enforces the D41 grain bar mechanically (current_facts ⇒ fact grain), with chain-level validation in the registration linter.';
+COMMENT ON TABLE assured_operations IS
+  'D50/D87: exactly four platform-owned assured operations. MCP renders the active canonical versions; customer patterns live in saved_queries. Name/contract/intent/grain tuples are mechanically closed and the registration linter validates each execution plan.';
+CREATE UNIQUE INDEX uq_assured_operation_active
+  ON assured_operations (deployment_id, name) WHERE status = 'active';
 """
 _TABLES = (
     "projection_snapshots",
@@ -377,7 +389,7 @@ _TABLES = (
     "knowledge_compilations",
     "knowledge_artifact_evidence",
     "knowledge_refresh_queue",
-    "retrieval_recipes",
+    "assured_operations",
 )
 
 

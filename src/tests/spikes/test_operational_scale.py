@@ -652,7 +652,7 @@ def _provider_neutral_batching(
         model_provider=FakeModelProvider(),
         embedding_model="scale-embedding",
     )
-    (confirmed, dropped), hydration_ms, hydration_probe = _measure(
+    (confirmed, dropped, _coverage), hydration_ms, hydration_probe = _measure(
         engine=engine,
         operation=lambda: query._confirm_claims(  # pyright: ignore[reportPrivateUsage]
             deployment_id=_DEPLOYMENT_ID, claim_ids=claim_ids

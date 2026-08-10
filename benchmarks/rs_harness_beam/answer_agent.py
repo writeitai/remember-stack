@@ -1,17 +1,14 @@
 """BEAM answer agent that exercises the full RememberStack retrieval plane.
 
-Post queryspace cutover the shipping surface is:
+The shipping surface is:
 
-* **Assured recipes** — ``question_context``, ``current_context``,
-  ``resolve_entity`` (always present after seed)
-* **Historical stock / demoted recipes** — still served by lab deployments that
-  retain the pre-cutover registry (hybrid claims/chunks, graph_*, claims_about,
-  multi_hop_context, …); used when listed by ``GET /recipes``
+* **Assured operations** — ``resolve_entity``, ``testimony_context``,
+  ``fact_context``, and ``answer_context``
 * **Open query** — SQL / Cypher / query-space discovery / saved queries when the
   deployment has them wired
 
-The agent is recipe-first and open-query second so it matches what an MCP agent
-would call. Raw ``/search/claims`` is not the primary path.
+The agent uses the same closed operation catalog as API, CLI, SDK, and MCP, then
+uses open query for additional exploration.
 """
 
 from __future__ import annotations
@@ -28,24 +25,7 @@ import urllib.request
 _DEFAULT_ANSWER_MODEL: Final = "openai/gpt-5.6-luna"
 _OPENROUTER_URL: Final = "https://openrouter.ai/api/v1/chat/completions"
 
-# Always attempt these when present; query is filled at call time.
-# Note: include_facts / current_context can hang on large BEAM deploys when
-# fact hydration SQL is pathological — keep them opt-in via a second phase
-# with a short timeout rather than blocking the P1 evidence plane.
-_ALWAYS_RECIPES: Final[tuple[tuple[str, dict[str, Any]], ...]] = (
-    (
-        "question_context",
-        {"k": 40, "candidate_k": 120, "include_facts": False, "include_entities": True},
-    ),
-    ("claims_hybrid_rrf", {"k": 30, "candidate_k": 100}),
-    ("claims_verbatim", {"k": 15}),
-    ("chunks_hybrid_rrf", {"k": 15, "candidate_k": 60}),
-)
-
-# Fact-layer recipes: short timeout, non-fatal.
-_FACT_RECIPES: Final[tuple[tuple[str, dict[str, Any]], ...]] = (
-    ("current_context", {"k": 10, "evidence_per_fact": 2}),
-)
+_PRIMARY_OPERATION: Final = "answer_context"
 
 # Ability-specific secondary claim/chunk queries to widen recall.
 _ABILITY_QUERIES: Final[dict[str, tuple[str, ...]]] = {
@@ -97,7 +77,7 @@ class AnswerAgentError(RuntimeError):
 class RetrievalBundle:
     """Structured retrieval payload passed to the answer LLM."""
 
-    recipe_calls: list[dict[str, Any]] = field(default_factory=list)
+    operation_calls: list[dict[str, Any]] = field(default_factory=list)
     open_query_calls: list[dict[str, Any]] = field(default_factory=list)
     claims: list[str] = field(default_factory=list)
     chunks: list[str] = field(default_factory=list)
@@ -187,20 +167,20 @@ class RememberStackClient:
             method="POST", path=path, body=body or {}, timeout_s=timeout_s
         )
 
-    def recipe(
+    def operation(
         self, name: str, arguments: dict[str, Any], *, timeout_s: float | None = None
     ) -> dict[str, Any]:
-        """Run one registry recipe by name."""
-        result = self.post_json(f"/recipe/{name}", arguments, timeout_s=timeout_s)
+        """Run one registry operation by name."""
+        result = self.post_json(f"/operations/{name}", arguments, timeout_s=timeout_s)
         if not isinstance(result, dict):
-            raise AnswerAgentError(f"recipe {name} returned non-object")
+            raise AnswerAgentError(f"operation {name} returned non-object")
         return result
 
-    def list_recipes(self) -> list[dict[str, Any]]:
-        """Active recipe descriptors."""
-        result = self.get_json("/recipes", timeout_s=15.0)
+    def list_operations(self) -> list[dict[str, Any]]:
+        """Active operation descriptors."""
+        result = self.get_json("/operations", timeout_s=15.0)
         if not isinstance(result, list):
-            raise AnswerAgentError("GET /recipes did not return a list")
+            raise AnswerAgentError("GET /operations did not return a list")
         return result
 
     def query_sql(
@@ -267,11 +247,15 @@ def _append_unique(target: list[str], text: str, *, limit: int = 80) -> None:
 
 
 def _ingest_envelope(
-    bundle: RetrievalBundle, *, recipe: str, envelope: dict[str, Any]
+    bundle: RetrievalBundle,
+    *,
+    operation: str,
+    envelope: dict[str, Any],
+    record_call: bool = True,
 ) -> None:
-    """Fold one recipe Envelope into the retrieval bundle."""
+    """Fold one operation Envelope into the retrieval bundle."""
     call: dict[str, Any] = {
-        "recipe": recipe,
+        "operation": operation,
         "grain": envelope.get("grain"),
         "negative": envelope.get("negative"),
         "n_evidence": len(envelope.get("evidence") or []),
@@ -279,11 +263,12 @@ def _ingest_envelope(
         "n_chunks": len(envelope.get("chunks") or []),
         "n_entities": len(envelope.get("entities") or []),
     }
-    bundle.recipe_calls.append(call)
+    if record_call:
+        bundle.operation_calls.append(call)
     neg = envelope.get("negative")
     if isinstance(neg, dict) and neg.get("kind"):
         bundle.negatives.append(
-            f"{recipe}: {neg.get('kind')} — {neg.get('explanation') or ''}".strip()
+            f"{operation}: {neg.get('kind')} — {neg.get('explanation') or ''}".strip()
         )
 
     for evidence in envelope.get("evidence") or []:
@@ -315,7 +300,7 @@ def _ingest_envelope(
             ):
                 bundle.entities.append(entity)
 
-    # Ranking may carry entity candidates from resolve / question_context.
+    # Ranking may carry entity candidates from resolve / testimony_context.
     for rank in envelope.get("ranking") or []:
         if not isinstance(rank, dict):
             continue
@@ -372,6 +357,31 @@ def _ingest_envelope(
                     or ""
                 ),
                 limit=40,
+            )
+
+
+def _ingest_operation_response(
+    bundle: RetrievalBundle, *, operation: str, response: dict[str, Any]
+) -> None:
+    """Ingest one Envelope or both explicit ContextBundle/v1 authorities."""
+    if response.get("contract") != "ContextBundle/v1":
+        _ingest_envelope(bundle, operation=operation, envelope=response)
+        return
+    bundle.operation_calls.append(
+        {
+            "operation": operation,
+            "contract": "ContextBundle/v1",
+            "authorities": ["testimony", "facts"],
+        }
+    )
+    for authority in ("testimony", "facts"):
+        child = response.get(authority)
+        if isinstance(child, dict):
+            _ingest_envelope(
+                bundle,
+                operation=f"{operation}.{authority}",
+                envelope=child,
+                record_call=False,
             )
 
 
@@ -442,62 +452,37 @@ def retrieve_full_plane(
 ) -> RetrievalBundle:
     """Run the full retrieval suite relevant to one BEAM probe."""
     bundle = RetrievalBundle()
-    available = {str(r.get("name")) for r in client.list_recipes()}
+    available = {str(r.get("name")) for r in client.list_operations()}
 
     def run(name: str, arguments: dict[str, Any], *, timeout_s: float = 45.0) -> None:
         if name not in available:
             # Only record once per missing name to keep the error list small.
-            marker = f"recipe {name} not in registry"
+            marker = f"operation {name} not in registry"
             if marker not in bundle.errors:
                 bundle.errors.append(marker)
             return
         try:
-            envelope = client.recipe(name, arguments, timeout_s=timeout_s)
-            _ingest_envelope(bundle, recipe=name, envelope=envelope)
+            response = client.operation(name, arguments, timeout_s=timeout_s)
+            _ingest_operation_response(bundle, operation=name, response=response)
         except AnswerAgentError as error:
             bundle.errors.append(str(error))
 
-    # Phase 1 — assured + high-recall P1 evidence plane.
-    for name, base_args in _ALWAYS_RECIPES:
-        args = dict(base_args)
-        args["query"] = question
-        run(name, args, timeout_s=60.0)
+    # Phase 1 — both explicit authorities, without blending them.
+    run(_PRIMARY_OPERATION, {"query": question}, timeout_s=60.0)
 
     # Ability-specific secondary queries (claims/chunks only; keep light).
     for extra_q in _ABILITY_QUERIES.get(ability, ()):
-        if "claims_hybrid_rrf" in available:
+        if "testimony_context" in available:
             run(
-                "claims_hybrid_rrf",
+                "testimony_context",
                 {"query": extra_q, "k": 20, "candidate_k": 80},
-                timeout_s=45.0,
-            )
-        if "chunks_hybrid_rrf" in available:
-            run(
-                "chunks_hybrid_rrf",
-                {"query": extra_q, "k": 8, "candidate_k": 40},
-                timeout_s=45.0,
-            )
-        if "question_context" in available:
-            run(
-                "question_context",
-                {
-                    "query": extra_q,
-                    "k": 20,
-                    "candidate_k": 80,
-                    "include_facts": False,
-                    "include_entities": True,
-                },
                 timeout_s=60.0,
             )
 
-    # Phase 2 — entity resolve and name-anchored testimony.
+    # Phase 2 — optional identity resolution, then entity-anchored context.
     names = _name_candidates(question)
     for name in names:
         run("resolve_entity", {"name": name}, timeout_s=20.0)
-        run("documents_about", {"entity": name, "k": 8}, timeout_s=25.0)
-        run(
-            "claims_about", {"entity": name, "query": question, "k": 12}, timeout_s=30.0
-        )
 
     entity_ids: list[str] = []
     for entity in bundle.entities:
@@ -505,45 +490,24 @@ def retrieve_full_plane(
         if eid and str(eid) not in entity_ids:
             entity_ids.append(str(eid))
 
-    # Phase 3 — fact/graph tools only for resolved UUIDs (short timeouts).
-    for eid in entity_ids[:4]:
-        run("relation_current", {"subject_entity_id": eid}, timeout_s=20.0)
-        run("observation_current", {"entity_id": eid}, timeout_s=20.0)
-        run("entity_timeline", {"entity_id": eid}, timeout_s=20.0)
+    if entity_ids:
         run(
-            "graph_neighborhood",
-            {"entity_id": eid, "hops": 1, "limit": 15},
-            timeout_s=25.0,
+            _PRIMARY_OPERATION,
+            {"query": question, "entity_ids": entity_ids[:20]},
+            timeout_s=60.0,
         )
-        run("pages_about", {"entity_id": eid}, timeout_s=20.0)
 
-    for name, base_args in _FACT_RECIPES:
-        args = dict(base_args)
-        args["query"] = question
-        run(name, args, timeout_s=25.0)
-
-    # multi_hop_context takes entity *names*, not UUIDs.
-    if "multi_hop_context" in available and names:
-        args: dict[str, Any] = {
+    # Event-ordering questions explicitly inspect historical fact intervals.
+    if ability == "event_ordering":
+        history_arguments: dict[str, Any] = {
             "query": question,
-            "entity_a": names[0],
-            "hops": 2,
-            "k": 10,
+            "time": {"mode": "history"},
+            "k": 20,
+            "evidence_per_fact": 3,
         }
-        if len(names) >= 2:
-            args["entity_b"] = names[1]
-        run("multi_hop_context", args, timeout_s=30.0)
-
-    if len(entity_ids) >= 2 and "graph_path" in available:
-        run(
-            "graph_path",
-            {
-                "from_entity_id": entity_ids[0],
-                "to_entity_id": entity_ids[1],
-                "max_hops": 3,
-            },
-            timeout_s=25.0,
-        )
+        if entity_ids:
+            history_arguments["entity_ids"] = entity_ids[:20]
+        run("fact_context", history_arguments, timeout_s=30.0)
 
     # Phase 4 — open-query plane (non-fatal if unavailable).
     try:
@@ -605,7 +569,9 @@ def synthesize_answer(
 ) -> tuple[str, str]:
     """Call OpenRouter to produce (final_answer, raw_completion)."""
     hint = _ABILITY_HINTS.get(ability, "")
-    recipes_used = ", ".join(sorted({c["recipe"] for c in bundle.recipe_calls}))
+    operations_used = ", ".join(
+        sorted({c["operation"] for c in bundle.operation_calls})
+    )
     open_used = ", ".join(
         sorted({str(c.get("tool") or c.get("label")) for c in bundle.open_query_calls})
     )
@@ -613,7 +579,7 @@ def synthesize_answer(
         f"{hint}\n\n"
         f"## Question\n{question}\n\n"
         f"## Retrieval plane used\n"
-        f"Recipes called: {recipes_used or '(none)'}\n"
+        f"Operations called: {operations_used or '(none)'}\n"
         f"Open-query tools: {open_used or '(none)'}\n\n"
         f"{bundle.as_prompt_block()}\n\n"
         "Answer using ONLY the retrieval plane evidence above.\n"
@@ -742,8 +708,8 @@ def answer_question(
         "answer": answer,
         "raw": raw,
         "model": model,
-        "method": "full_retrieval_plane_recipes+openquery+openrouter",
-        "recipes_called": [c["recipe"] for c in bundle.recipe_calls],
+        "method": "full_retrieval_plane_operations+openquery+openrouter",
+        "operations_called": [c["operation"] for c in bundle.operation_calls],
         "open_query_calls": bundle.open_query_calls,
         "claims": bundle.claims[:50],
         "facts": bundle.facts[:40],

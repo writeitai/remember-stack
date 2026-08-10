@@ -1,5 +1,7 @@
 """Pure domain logic package."""
 
+from rememberstack.core.assured_operation_linter import AssuredOperationLintError
+from rememberstack.core.assured_operation_linter import lint_assured_operation
 from rememberstack.core.blockizer import block_hash
 from rememberstack.core.blockizer import blockize
 from rememberstack.core.blockizer import BLOCKIZER_VERSION
@@ -58,9 +60,6 @@ from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
-from rememberstack.core.recipe_linter import KNOWN_OPS
-from rememberstack.core.recipe_linter import lint_recipe
-from rememberstack.core.recipe_linter import RecipeLintError
 from rememberstack.core.section_snap import SECTION_ROLES
 from rememberstack.core.section_snap import snap_sections
 from rememberstack.core.storage_routing import HOT_MIME_PREFIXES
@@ -129,7 +128,6 @@ __all__ = (
     "DEFAULT_EVIDENCE_COUNT_WEIGHT",
     "DEFAULT_GRAPH_DISTANCE_WEIGHT",
     "DEFAULT_RRF_K",
-    "KNOWN_OPS",
     "KnowledgeCompileGraphError",
     "KnowledgeAuthoredDeclarationError",
     "KnowledgeFactLifecycle",
@@ -143,8 +141,8 @@ __all__ = (
     "primary_knowledge_plan_trigger",
     "parse_knowledge_authored_frontmatter",
     "compose_knowledge_page",
-    "RecipeLintError",
-    "lint_recipe",
+    "AssuredOperationLintError",
+    "lint_assured_operation",
     "reciprocal_rank_fusion",
     "render_consumption_skill",
     "render_knowledge_fact_sheet",
