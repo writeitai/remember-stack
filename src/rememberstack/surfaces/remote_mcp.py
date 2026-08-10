@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import re
 import sys
+from typing import Literal
 from typing import TextIO
+from uuid import UUID
 
 from rememberstack import __version__
+from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.documents import IngestedVersion
+from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
+from rememberstack.surfaces.mcp_memory_tools import memory_write_tool_descriptors
+from rememberstack.surfaces.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
 from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
@@ -24,27 +32,80 @@ _OPEN_QUERY_SCHEMA_MAJOR = 1
 _SURFACE_MANIFEST_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-class RemoteRecipeMcpServer:
-    """Render remote recipes and open-query tools; proxy calls to the API."""
+class _RemoteMemoryWriteBackend:
+    """Adapt ``MemoryClient`` to the shared memory-write tool backend protocol.
+
+    Body-size preflight is skipped until a served capability document is
+    available on the client (O1): the deployment rejects oversized bodies and
+    the tool maps the structured error.
+    """
 
     def __init__(self, *, client: MemoryClient) -> None:
         self._client = client
 
-    def list_tools(self) -> dict[str, object]:
-        """The MCP ``tools/list`` result: recipes plus open-query tools when composed.
+    def ingest(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        mime: str,
+        title: str | None,
+        source_kind: str | None,
+        source_ref: str | None,
+        source_modified_at: datetime | None,
+        versioning_mode: Literal["snapshot", "living"],
+        source_version_ref: str | None,
+    ) -> IngestedVersion:
+        """Proxy one ingest through the typed HTTP SDK."""
+        return self._client.ingest(
+            content,
+            filename=filename,
+            mime=mime,
+            title=title,
+            source_kind=source_kind,
+            source_ref=source_ref,
+            source_modified_at=source_modified_at,
+            versioning_mode=versioning_mode,
+            source_version_ref=source_version_ref,
+        )
 
-        Recipe tools come from ``GET /recipes``. The nine static open-query
-        tools are advertised only when the remote deployment mounts the open
-        facade (same composition gate as local MCP and HTTP).
+    def pipeline_readiness(
+        self, *, version_ids: tuple[UUID, ...], require_projections: bool
+    ) -> PipelineReadinessReport:
+        """Proxy readiness inspection through the typed HTTP SDK."""
+        return self._client.pipeline_readiness(
+            version_ids=version_ids, require_projections=require_projections
+        )
+
+    def max_ingest_body_bytes(self) -> int | None:
+        """No capability document is served yet — do not invent a client ceiling."""
+        return None
+
+
+class RemoteRecipeMcpServer:
+    """Render remote recipes, write tools, and open-query tools; proxy to the API."""
+
+    def __init__(self, *, client: MemoryClient) -> None:
+        self._client = client
+        self._write_backend = _RemoteMemoryWriteBackend(client=client)
+
+    def list_tools(self) -> dict[str, object]:
+        """The MCP ``tools/list`` result for this remote deployment.
+
+        Order is stable: write/readiness static tools, then recipes from
+        ``GET /recipes``, then the nine open-query tools when the remote
+        deployment mounts the open facade (same composition gate as local MCP
+        and HTTP).
         """
-        tools: list[dict[str, object]] = [
+        tools: list[dict[str, object]] = list(memory_write_tool_descriptors())
+        tools.extend(
             {
                 "name": descriptor.name,
                 "description": descriptor.description,
                 "inputSchema": descriptor.input_schema,
             }
             for descriptor in self._client.recipes()
-        ]
+        )
         if self._remote_open_query_is_composed():
             tools.extend(open_query_tool_descriptors())
         return {"tools": tools}
@@ -53,6 +114,10 @@ class RemoteRecipeMcpServer:
         self, *, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
         """The MCP ``tools/call`` result containing one JSON text block."""
+        if name in MEMORY_WRITE_TOOL_NAMES:
+            return handle_memory_write_tool(
+                name=name, arguments=arguments, backend=self._write_backend
+            )
         if name in OPEN_QUERY_TOOL_NAMES:
             try:
                 payload = self._client.call_open_query(name=name, arguments=arguments)

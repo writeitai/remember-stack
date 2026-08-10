@@ -324,17 +324,21 @@ jobs:
               docker compose --env-file .env.example exec -T api \
                 python -c 'import json, sys; print(json.load(sys.stdin)["version_id"])'
           )"
+          # D84: extract_claims is chunk-scoped, so the version-level ledger has
+          # nine stages (convert→structure→chunk→embed_chunk→normalize→
+          # adjudicate→embed_claim→label→reconcile). Empty input may skip
+          # extract entirely when there are no chunks.
           observed=''
           for attempt in {1..60}; do
             observed="$(docker compose --env-file .env.example exec -T postgres \
               psql -U rememberstack -d rememberstack -Atc \
               "SELECT count(*), count(*) FILTER (WHERE status='succeeded'), count(DISTINCT stage) FROM processing_state WHERE target_id='$version_id'")"
-            if [ "$observed" = '10|10|10' ]; then
+            if [ "$observed" = '9|9|9' ]; then
               break
             fi
             sleep 1
           done
-          test "$observed" = '10|10|10'
+          test "$observed" = '9|9|9'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM cost_ledger')" = '0'
@@ -407,7 +411,7 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_06_0027'
+            'SELECT version_num FROM alembic_version')" = 'p9_07_0028'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

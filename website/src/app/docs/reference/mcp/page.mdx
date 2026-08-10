@@ -1,7 +1,7 @@
 export const metadata = {
   title: "MCP Reference",
   description:
-    "The MCP surface: recipe tools from the registry plus nine static open-query infrastructure tools. examples.* are never top-level tools.",
+    "The MCP surface: memory write tools (ingest, pipeline_readiness), recipe tools from the registry, and nine static open-query infrastructure tools. examples.* are never top-level tools.",
 };
 
 # MCP Reference
@@ -19,12 +19,19 @@ contradict each fact. Query claims to inspect testimony; query facts to
 answer current-truth questions, then follow the bridge to see why the
 system believes the fact.
 
+(Internally these guarantees are decisions D41 and D54.)
 
-The MCP surface exposes the deployment's three assured-operation registry rows
-as MCP tools. That namespace is closed: adding a query pattern means adding an
-`examples.*` saved query, not another tool. MCP, the API's `/recipes`, and the
-CLI's `remember query list` all render the same three registry-backed
-operations.
+## Tool surface
+
+| Goal | Tool |
+| --- | --- |
+| **Store** memory | `ingest`, then poll `pipeline_readiness` |
+| **Recall** evidence / current facts | Recipe tools from the registry (for example `question_context`, `current_context`, or the live deployment’s recipe list) |
+| **Explore** SQL/Cypher / saved queries | Nine open-query infrastructure tools when composed |
+
+There is **no** generic `recall` or `search` MCP alias: recipe tools are the
+agent-first retrieval surface and already carry purpose-shaped descriptions.
+Low-level `search_claims` / `search_chunks` remain HTTP/SDK-only.
 
 When the open-query facade is composed, **nine static open-query
 infrastructure tools** are listed alongside recipe tools. Local and remote
@@ -32,17 +39,23 @@ MCP share the same schemas and strict argument validation. Shipped
 `examples.*` saved queries are **never** top-level tools — they run only
 through `run_saved_query`.
 
-The recipe registry contains exactly the three assured operations:
-`resolve_entity`, `question_context`, and `current_context`. The seventeen
-demoted patterns are discoverable `examples.*` saved queries, not tools.
+Write tools (`ingest`, `pipeline_readiness`) are always present on the remote
+stdio server (`remember mcp`). The in-process `RecipeMcpServer` advertises them
+only when both ingest and pipeline-readiness ports are composed; recipe-only
+compositions omit them rather than advertising tools that cannot run.
 
 ## `tools/list`
 
-Returns the three assured-operation tools **plus** the nine open-query tools
-when composed:
+Stable order:
+
+1. **Static write tools** (when composed): `ingest`, `pipeline_readiness`
+2. **Recipe tools** from the registry (`GET /recipes` / in-process registry)
+3. **Open-query tools** when the open facade is composed
 
 | Infrastructure tool | Purpose |
 | --- | --- |
+| `ingest` | E0 write — store a document; returns `version_id` immediately |
+| `pipeline_readiness` | Whether version(s) finished the continuous pipeline / projections |
 | `query_sql` | Sandboxed SQL → `QueryResult/v1` |
 | `explain_sql` | EXPLAIN without execution |
 | `query_cypher` | Read-only snapshot Cypher |
@@ -52,6 +65,84 @@ when composed:
 | `list_saved_queries` | Registry metadata |
 | `describe_saved_query` | One immutable version |
 | `run_saved_query` | Execute active saved SQL |
+
+### `ingest`
+
+Exactly one body source:
+
+| Mode | When | Notes |
+| --- | --- | --- |
+| `path` | File on the **MCP host** filesystem | **Only** when `REMEMBERSTACK_MCP_INGEST_ROOTS` is set (JSON array of absolute roots). Fully resolved; must stay inside a root after symlink resolution; regular file only; size-checked before read. Filename defaults to basename; **mime is guessed from the real path name** unless `mime` is set (SDK parity). With no roots configured, `path` is rejected — use `text` / `content_base64` or ask the operator to configure roots. |
+| `text` | UTF-8 already in agent context | Requires `filename` |
+| `content_base64` | Binary / non-UTF-8 | Requires `filename`; standard base64 only (no `data:` URL) |
+
+Prefer `source_kind` + a stable `source_ref` for durable agent memory so later
+writes version the same document. Omit both only for intentionally anonymous
+one-shot ingest.
+
+Optional: `mime`, `title`, `source_kind` + `source_ref` (must be paired),
+`versioning_mode` (`snapshot` \| `living`), `source_modified_at` (timezone-aware
+UTC ISO-8601), `source_version_ref`. Lineage fields require the
+`source_kind`/`source_ref` pair (same contract as the SDK and HTTP API).
+
+**Success** includes the engine `IngestedVersion` fields plus async guidance:
+
+```json
+{
+  "deployment_id": "…",
+  "doc_id": "…",
+  "version_id": "…",
+  "content_hash": "…",
+  "created": true,
+  "pipeline": {
+    "status": "accepted_not_ready",
+    "next_tool": "pipeline_readiness",
+    "poll_with": { "version_ids": ["…"], "require_projections": false },
+    "guidance": "Ingest accepted. Wait until pipeline_readiness.ready is true …"
+  }
+}
+```
+
+Ingest is **asynchronous**. Structure alone has been measured at many minutes;
+the tool does **not** block until ready. When `created=false` the content-hash
+no-op applied — call `pipeline_readiness` once rather than assuming work is in
+flight.
+
+Body size limits are enforced by the **deployment**. Client preflight applies
+only when a served capability document supplies a max body size; otherwise the
+server rejects and the tool maps `body_too_large` / `empty_body`. Path reads
+additionally apply a **local resource guard**
+(`REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES`, default 256 MiB) when no capability
+limit is served — process safety on the MCP host, not a cloud ceiling (O1).
+
+### `pipeline_readiness`
+
+| Argument | Required | Notes |
+| --- | --- | --- |
+| `version_ids` | yes | 1–1000 UUID strings from `ingest` |
+| `require_projections` | no | Engine default `true`. For “can I recall this yet?” after ingest, prefer **`false`** (continuous stages only). `true` also requires published projections (locally: the operations profile with projection workers). Default OSS Compose does **not** run projections — polling with `true` can wait forever while E/P1 stages are green. |
+
+Success content is the engine `PipelineReadinessReport` JSON (no second
+envelope).
+
+**Agent poll algorithm:**
+
+1. `ingest` → read `version_id`, `created`.
+2. If `created=false`, call `pipeline_readiness` once with
+   `require_projections: false`; if `ready`, recall; else poll.
+3. If `created=true`, wait ~30s, then poll with
+   `require_projections: false` (unless you specifically need published
+   projections and are on a profile that runs them).
+4. While `ready=false` and no stage is `failed` / `dead_letter`: wait 30–60s
+   (back-off, floor ~15s), poll again.
+5. On `ready=true`: call recipe tools (for example `question_context`).
+6. On `failed` / `dead_letter`: **STOP** polling and report the stage to the
+   user — do not keep polling.
+7. After ~20–30 minutes without `ready=true` and without a terminal stage
+   failure: stop and escalate to the operator (include `version_id` and last
+   `stages[]`).
+
+### Recipe tools
 
 Recipe tools still render from the registry:
 
@@ -76,12 +167,15 @@ Recipe tools still render from the registry:
 
 The `inputSchema` is the contract an MCP client validates arguments against
 before calling — the same schema the API advertises at `/recipes` for recipe
-tools, and the static schemas above for open-query tools. Open-query dispatch
-rejects wrong types, bool-as-int, missing required fields, and unknown keys
+tools, and the static schemas above for write and open-query tools. Open-query
+and write dispatch reject wrong types, missing required fields, and unknown keys
 rather than coercing them.
 
 ## `tools/call`
 
+- **`ingest` / `pipeline_readiness`** return JSON text; failures use a
+  **structured** error object (`code`, `message`, `http_status`, `retryable`,
+  `agent_action`, optional `reason_code`).
 - **Recipe tools** run the named recipe and return the **envelope** serialized
   to JSON in one text content block.
 - **Open-query tools** return `QueryResult/v1` or discovery/metadata JSON in
@@ -91,6 +185,18 @@ rather than coercing them.
 {
   "content": [{ "type": "text", "text": "{ \"grain\": \"fact\", \"facts\": [ … ] }" }],
   "isError": false
+}
+```
+
+Structured write-tool error example:
+
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"code\":\"body_too_large\",\"message\":\"…\",\"http_status\":413,\"retryable\":false,\"agent_action\":\"…\"}"
+  }],
+  "isError": true
 }
 ```
 
@@ -116,11 +222,16 @@ and snapshot provenance are part of the contract.
 
 Run `remember mcp` to start the dependency-light stdio JSON-RPC server. It reaches
 the deployment at `REMEMBERSTACK_API_URL`, uses `REMEMBERSTACK_API_AUTHORIZATION` when set, renders
-`tools/list` from `GET /recipes` plus the nine open-query tools when composed,
-and proxies `tools/call` to `POST /recipe/{name}` or the matching `/query/…`
-route. The server supports the MCP `initialize`, `tools/list`, and
-`tools/call` lifecycle; notifications produce no response.
+`tools/list` as write tools + `GET /recipes` + the nine open-query tools when
+composed, and proxies `tools/call` to `POST /ingest`, `POST /readiness`,
+`POST /recipe/{name}`, or the matching `/query/…` route. The server supports
+the MCP `initialize`, `tools/list`, and `tools/call` lifecycle; notifications
+produce no response.
 
 The recipe registry and execution remain deployment-side. The MCP process is
 therefore a client transport, not another server composition and not a second
 tool registry.
+
+**Release note:** MCP write tools ship in `rememberstack>=0.3.0`. Installs pinned
+to `0.2.0` expose recipe (and, on older clouds, only recipe) tools without
+`ingest` / `pipeline_readiness`.

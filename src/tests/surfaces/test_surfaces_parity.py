@@ -222,8 +222,12 @@ def _payload(envelope: dict[str, object]) -> dict[str, object]:
 
 
 def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
-    """The MCP tool list, the API /recipes, and the registry's active rows are
-    the same set (D50: the tool list IS the registry)."""
+    """Recipe tools on MCP match the registry and API (D50); write tools omitted.
+
+    This composition is recipe-only (no ingest/readiness ports), so Layer 1
+    write tools are correctly absent. When those ports are composed, static
+    write tools lead the list — covered in test_mcp_memory_tools.
+    """
     registry_names = {
         recipe.name
         for recipe in deployment.registry.active(deployment_id=_DEPLOYMENT_ID)
