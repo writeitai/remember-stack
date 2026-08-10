@@ -11,7 +11,8 @@ prompts, budgets, fingerprints) is defined in code at
 | --- | --- |
 | [`runbook.md`](runbook.md) | How to actually run a smoke or a full publication run: hosts, commands, failure modes and their recoveries, sharding, merging, costs, timings. Binding operational procedure. |
 | [`findings-2026-07-31.md`](findings-2026-07-31.md) | Historical pre-v10 findings (517/1540, F1 0.305). They describe a retired protocol and are not evidence about the current system. |
-| [`next-steps.md`](next-steps.md) | The deliberately small v10 work queue, reset pending the fresh current-system score. |
+| [`../../plan/analysis/locomo_v11_score_regression_analysis.md`](../../plan/analysis/locomo_v11_score_regression_analysis.md) | V11 result (979/1540, F1 0.5417), observational route-partitioned analysis, and proposed improvement ladder. Analysis, not binding design. |
+| [`next-steps.md`](next-steps.md) | The deliberately small post-V11 work queue: fix retrieval routing, replay cheaply, then decide whether another full run is warranted. |
 | [`review-pr193-risks.md`](review-pr193-risks.md) | Post-merge review of the hybrid-retrieval PR (#193): no correctness holes; six ranked operational risks and the re-scoring measurement plan. |
 | [`../proposals/observation-adjudication-efficiency.md`](../proposals/observation-adjudication-efficiency.md) | Unchosen E3 observation-adjudication efficiency options (embed cache, verdict batching, stage split, …). Proposal only — not binding. |
 
