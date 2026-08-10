@@ -4,7 +4,9 @@
 > records Batch F as built. D83 and
 > `plan/designs/open_query_space_design.md` §8 remove the 17 compatibility
 > adapters, their telemetry, and the noninferiority removal gate because no
-> consumer exists to migrate. The nine open-query entry points, three assured
+> consumer exists to migrate. D87 subsequently replaces the three-operation
+> context catalog with exactly four authority-aligned assured operations. The
+> nine open-query entry points, four assured
 > operations, and 17 `examples.*` queries remain.
 
 Batch F integrates the open query space as the dual surface alongside the

@@ -236,9 +236,13 @@ CREATE TYPE subscription_status    AS ENUM ('active','paused','retired');  -- di
 CREATE TYPE knowledge_trigger      AS ENUM ('evidence_changed','community_changed','debounce_timer','manual','tombstone','authored_review');
 CREATE TYPE refresh_status         AS ENUM ('pending','running','done','failed');
 
--- D50 retrieval recipe registry (§11.A) — the two enums the grain linter checks mechanically:
-CREATE TYPE recipe_output_grain    AS ENUM ('fact','evidence','compiled','composite');
-CREATE TYPE recipe_answer_intent   AS ENUM ('current_facts','assertion_history','orientation','audit','change_feed');
+-- D50/D87 closed assured-operation registry (§11.A):
+CREATE TYPE assured_operation_name AS ENUM
+  ('resolve_entity','testimony_context','fact_context','answer_context');
+CREATE TYPE assured_result_contract AS ENUM ('envelope','context_bundle_v1');
+CREATE TYPE assured_output_grain AS ENUM ('fact','evidence');
+CREATE TYPE assured_answer_intent AS ENUM
+  ('identity','testimony','facts','combined_context');
 ```
 
 `novelty_gate` (in `adjudication_method`) is the deterministic short-circuit at the front of the
@@ -2352,39 +2356,62 @@ CREATE INDEX ix_krefresh_runnable ON knowledge_refresh_queue (deployment_id, sta
 
 ---
 
-## 11.A Retrieval recipe registry (D50)
+## 11.A Closed assured-operation registry (D50/D87)
 
-Recipes — named, versioned compositions of the zero-LLM query primitives — are **registry
-rows, not code** (`retrieval_design.md` §4): the MCP tool list renders from this table, the
-eval harness measures recall@k per recipe version, and the D41 bar ("claims never answer *is
-it true now*") is enforced by a **mechanical constraint on the enums**, not by prose review.
-Chain-level validation (a `current_facts` chain may compose only validity-filtered
-relation/observation primitives) runs in the registration linter; the DB carries the enum
-invariant.
+The four platform operations are named, versioned compositions of zero-LLM query
+authorities and remain **registry rows, not independent code**
+(`retrieval_design.md` §4). The registry is closed: customer behavior belongs in
+the saved-query registry, and inserting a row cannot mint a fifth MCP tool. D87
+replaces the pre-release `retrieval_recipes` target table outright; no
+compatibility view or old-name rows remain. Bootstrap owns the rows and exposes
+exactly one active canonical version of each enum member per deployment.
+
+The result-contract field keeps D49 honest: three operations return one complete
+`Envelope`; `answer_context` returns `ContextBundle/v1` and therefore has no
+single output grain. `result_schema` stores the exact closed wire schema; for
+`fact_context` it requires D87's discriminated `temporal_scope` union. The
+database constrains the four name/contract/intent/grain tuples, while the
+registration linter proves the canonical result schema and execution-plan
+properties—for example, `fact_context` uses validity-filtered
+relation/observation authorities and `answer_context` contains only the two
+canonical child operations. `resolve_entity` retains its v1 fact grain: the
+identity registry is an authority, not source testimony.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- retrieval_recipes — frozen query plans as registry data (D50). One row per recipe version;
--- surfaces (API/CLI/MCP) render from status='active' rows. The CHECK is the mechanical half
--- of the grain linter (D41/D49); the registration linter validates the chain itself.
+-- assured_operations — the four frozen platform plans as registry data (D50/D87).
+-- Surfaces render the one active canonical version of each name.
 -- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE retrieval_recipes (
-  recipe_id       uuid PRIMARY KEY,
+CREATE TABLE assured_operations (
+  operation_id    uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  name            text NOT NULL,               -- e.g. 'relation_hybrid_rrf', 'claims_as_of', 'identity_as_of'
+  name            assured_operation_name NOT NULL,
   description     text NOT NULL,               -- rendered into the MCP tool description (D50)
   parameters      jsonb NOT NULL,              -- typed parameter schema (JSON-Schema form)
-  chain           jsonb NOT NULL,              -- the typed primitive composition: ordered ops + fixed settings (channel sets, RRF constants, rerank weights)
-  output_grain    recipe_output_grain NOT NULL, -- fact | evidence | compiled | composite (the D49 envelope grain)
-  answer_intent   recipe_answer_intent NOT NULL, -- current_facts | assertion_history | orientation | audit | change_feed
+  result_schema   jsonb NOT NULL,              -- exact closed wire schema; includes fact_context temporal_scope
+  execution_plan  jsonb NOT NULL,              -- closed union: primitive_chain, or answer_context's exact two-child operation_bundle
+  result_contract assured_result_contract NOT NULL,
+  output_grain    assured_output_grain,        -- null only for ContextBundle/v1
+  answer_intent   assured_answer_intent NOT NULL,
   version         integer NOT NULL DEFAULT 1,  -- recall@k measured per (name, version) — regressions attributable (D22)
   status          ontology_status NOT NULL DEFAULT 'active',
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (deployment_id, name, version),
-  CHECK (answer_intent <> 'current_facts' OR output_grain = 'fact')  -- the D41 bar, mechanical
+  CHECK (
+    (name = 'resolve_entity' AND result_contract = 'envelope'
+      AND output_grain = 'fact' AND answer_intent = 'identity') OR
+    (name = 'testimony_context' AND result_contract = 'envelope'
+      AND output_grain = 'evidence' AND answer_intent = 'testimony') OR
+    (name = 'fact_context' AND result_contract = 'envelope'
+      AND output_grain = 'fact' AND answer_intent = 'facts') OR
+    (name = 'answer_context' AND result_contract = 'context_bundle_v1'
+      AND output_grain IS NULL AND answer_intent = 'combined_context')
+  )
 );
-COMMENT ON TABLE retrieval_recipes IS
-  'D50: recipes as registry rows. MCP tools render from here; the eval harness measures per (name, version); the CHECK enforces the D41 grain bar mechanically (current_facts ⇒ fact grain), with chain-level validation in the registration linter. Adding a query pattern = inserting a row.';
+COMMENT ON TABLE assured_operations IS
+  'D50/D87: exactly four platform-owned assured operations. MCP renders the active canonical versions; customer patterns live in saved_queries. Name/contract/intent/grain tuples are mechanically closed and the registration linter validates each execution plan.';
+CREATE UNIQUE INDEX uq_assured_operation_active
+  ON assured_operations (deployment_id, name) WHERE status = 'active';
 ```
 
 ---
@@ -2638,7 +2665,7 @@ Labs."*
 | E→K trigger surface (k_layers §5; the signal channel D42 deferred) | `knowledge_subscriptions`, `knowledge_page_watches`, `knowledge_dispatches`; rules owned by page XOR subscription; D42 `origin` guards re-ingested plans |
 | D48 propose/dispose hydration | no tables — an API-layer contract over existing spine reads (by-ID re-verification; drop counts in the envelope) |
 | D49 response envelope (grain / contradictions / freshness / negatives) | wire contract, not schema; the K freshness block reads `knowledge_artifacts` + `knowledge_compilations`; horizons read `projection_snapshots` |
-| D50 zero-LLM primitives; recipes as registry data | `retrieval_recipes` (§11.A) + `recipe_output_grain`/`recipe_answer_intent` enums; the grain-bar CHECK |
+| D50/D87 zero-LLM primitives; four closed assured operations | `assured_operations` (§11.A) + `assured_operation_name`/`assured_result_contract`/grain/intent enums; the canonical tuple CHECK |
 | D51 filesystem-first mounts + consumption skill | `deployments.raw_bucket`/`content_objects.raw_uri` comments (raw mounted off-path, D37 refined); the skill is a shipped versioned artifact, not schema |
 | D54 testimony currency + counting rule | `testimony_currency_events` (partitioned ledger + reconciliation idempotency key) + `claims.is_current_testimony` (cache); `evidence_count`/`contradict_count` redefined (distinct current lineages — write-once `doc_id` on evidence rows makes the recount single-table); `review_item_kind = 'support_withdrawn'` |
 | D55 document lineages + versions | `documents` (lineage: `source_kind/source_ref`, `versioning_mode`, three-column current-version FK), `document_versions` (append-only; `source_modified_at` → `asserted_at`; `sync_cycle_id`), `content_objects`; `connector_sync_cycles` (the retract barrier); `adjudication_outcome='retracted_source_removal'` (living removal retracts — no review softener) |

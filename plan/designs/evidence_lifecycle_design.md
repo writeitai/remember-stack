@@ -352,10 +352,11 @@ map (schema §7).
 
 ## 7. Retrieval and P1 touches
 
-- Claim-grain primitives and recipes default to **current testimony**;
-  `include_superseded_testimony` is the audit opt-in; the envelope's evidence-grain answers
-  disclose which regime answered (extends D49's regime disclosure).
-- `claims_as_of` is historical by definition and runs over **all** testimony — versions
+- Claim-grain default search and `testimony_context` return **current
+  testimony**. Historical testimony is reached explicitly through
+  `claims_visible_history`, direct audit queries, or `examples.claims_as_of`;
+  `testimony_context` has no history flag.
+- `examples.claims_as_of` is historical by definition and runs over **all** testimony — versions
   finally give it a real corpus (per-version assertion times via chunk membership, §6).
 - **P1 claim search** indexes current testimony into the default channel — one current claim
   per assertion (re-extraction *replaces* the searchable claim rather than accumulating

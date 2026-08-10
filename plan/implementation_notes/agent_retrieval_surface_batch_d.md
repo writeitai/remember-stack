@@ -1,5 +1,10 @@
 # Agent retrieval surface — Batch D implementation note
 
+> **Historical implementation note.** D83 demotes `multi_hop_context` to an
+> `examples.*` saved query and D87 closes the active assured catalog at four
+> authority-aligned operations. The sections below do not define a current MCP
+> tool.
+
 **Date:** 2026-08-03
 **Binding design:** [`agent_retrieval_surface_design.md` §3.3](../designs/agent_retrieval_surface_design.md)
 

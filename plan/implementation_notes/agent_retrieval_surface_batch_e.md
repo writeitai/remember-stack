@@ -1,5 +1,9 @@
 # Agent retrieval surface — Batch E implementation note
 
+> **Historical implementation note.** D87 removes `question_context`; the
+> candidate-tail mechanics below remain implementation history, not a current
+> public descriptor. `open_query_space_design.md` §3.1 is binding.
+
 **Date:** 2026-08-03
 **Binding design:** [`agent_retrieval_surface_design.md` §3.4](../designs/agent_retrieval_surface_design.md)
 

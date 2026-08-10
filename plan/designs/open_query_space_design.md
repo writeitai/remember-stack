@@ -1,27 +1,30 @@
 # Open query space — binding design
 
-*2026-08-04. Binding once accepted. Replaces the growing default recipe
-catalog with a versioned, invariant-compiled PostgreSQL query space, a full
-read-only native P2 graph surface, and three platform-assured one-call
-operations. Rationale:
+*2026-08-04; context-operation amendment 2026-08-10. Binding once accepted.
+Replaces the growing default recipe catalog with a versioned,
+invariant-compiled PostgreSQL query space, a full read-only native P2 graph
+surface, and four platform-assured operations aligned to identity, testimony,
+facts, and their explicit composition. Rationale:
 `plan/analysis/open_query_space_codex.md` and
 `plan/analysis/open_query_space_grok.md`, with the pre-release cut analyzed in
-`plan/analysis/open_query_space_clean_cutover.md`. This design refines the public
-surface bound by `agent_retrieval_surface_design.md`; D41, D48, D49, D54,
-and D80 remain controlling.*
+`plan/analysis/open_query_space_clean_cutover.md` and the context model analyzed
+in `plan/analysis/context_operation_model_analysis.md`. This design supersedes
+the public catalog bound by `agent_retrieval_surface_design.md`; D41, D48, D49,
+D54, D80, and D87 remain controlling.*
 
 **Bound two-layer retrieval headline (reused verbatim):**
 
 > RememberStack has two deliberately separate truth layers. Claims are
 > immutable source testimony (“what was asserted, by whom, when”);
-> facts—relations and observations—are the adjudicated current worldview (“what
-> the system currently holds true”): supersession-adjudicated, clocked on two
+> facts—relations and observations—are the adjudicated worldview (“what the
+> system holds or held true”): supersession-adjudicated, clocked on two
 > time axes (when a fact held in the world, and when the system learned it),
 > evidence-counted per distinct source—repetition is not corroboration—and
 > contradiction-tracked. The `fact_claim_evidence` association is the auditable
 > bridge between the layers, recording which claims support or contradict each
-> fact. Query claims to inspect testimony; query facts to answer current-truth
-> questions, then follow the bridge to see why the system believes the fact.
+> fact. Query claims to inspect testimony; query facts to answer current or
+> historical truth questions, then follow the bridge to see why the system
+> believes or believed the fact.
 >
 > (Internally these guarantees are decisions D41 and D54.)
 
@@ -34,10 +37,12 @@ and D80 remain controlling.*
    promoted to live or evidence-grade output receive PostgreSQL confirmation.
    Full read-only Cypher over P2 is separately public as a disclosed
    point-in-time snapshot surface.
-2. **The default assured surface has exactly three intent operations.**
-   `resolve_entity`, `question_context`, and `current_context` are the complete
-   shipped platform-operation set. They retain their full D49 `Envelope`
-   contracts. SQL/Cypher execution, discovery, saved-query execution, and the
+2. **The assured surface mirrors the authority layers.** `resolve_entity`,
+   `testimony_context`, `fact_context`, and `answer_context` are the complete
+   shipped platform-operation set. `testimony_context` returns source testimony,
+   `fact_context` returns temporally selected adjudicated facts, and
+   `answer_context` composes their complete responses without flattening the two
+   grains. SQL/Cypher execution, discovery, saved-query execution, and the
    allowlisted SQL functions are query infrastructure, not additional intent
    operations.
 3. **Open computation is graded by contract.** Every ad-hoc or saved SQL
@@ -95,12 +100,17 @@ and D80 remain controlling.*
     owns SQL view/function and P2 graph-type/property comments, grains, keys,
     examples, and `surface_manifest_hash`. Raw `pg_catalog`
     discovery is not exposed.
-12. **No benchmark-specific product behavior exists.** A future v10 protocol
-    consumes the customer surface unchanged. Dataset names, question classes,
+12. **No benchmark-specific product behavior exists.** The separately
+    fingerprinted v12 protocol consumes the customer surface unchanged.
+    Dataset names, question classes,
     benchmark-only views, prompts, functions, branches, or limits are forbidden
     in product code.
-13. **Accretion requires evidence.** A fourth platform intent operation can be
-    proposed only when all of these gates pass:
+13. **Accretion requires evidence.** D87 admits `answer_context` as one narrow
+    exception because it is a typed transport bundle of two complete existing
+    operations and adds no retrieval, ranking, hydration, or transformation.
+    That exception does not generalize: a fifth assured operation, another
+    bundle, or any composition that changes a child can be proposed only when
+    all of these gates pass:
     - the intent is at least 5% of retrieval-bearing requests across at least
       10,000 requests and three independent deployments, or at least 500 blind
       questions across two non-benchmark-specific corpora;
@@ -122,28 +132,37 @@ and D80 remain controlling.*
 
 ## 2. Naming alignment with the existing corpus
 
-The shipping surface contains the three retained names below. The other 17
-names are not recipe adapters or top-level tools; each is a discoverable,
-non-default saved query in the `examples` namespace. An `examples.*` query returns
-`QueryResult/v1`, carries customer-space semantics, is editable only by
-copying it to a customer namespace, and is not a platform contract or a
-top-level MCP tool.
+The shipping intent surface contains `resolve_entity`, `testimony_context`,
+`fact_context`, and `answer_context`. The first is retained; the other three
+replace the mixed-grain `question_context` and current-only `current_context`
+contracts. There are no compatibility aliases.
+
+The 17 previously demoted recipe names remain discoverable, non-default saved
+queries in the `examples` namespace. An `examples.*` query returns
+`QueryResult/v1`, carries customer-space semantics, is editable only by copying
+it to a customer namespace, and is not a platform contract or a top-level MCP
+tool. The two removed context names do not become saved-query tools:
+`question_context` decomposes into testimony plus facts, and the existing
+current-fact examples already cover `current_context`'s SQL pattern.
 
 | Existing recipe | Target disposition | Example implementation after demotion |
 |---|---|---|
 | `resolve_entity` | **Retained platform operation** | Full D49 `Envelope`; no saved-query substitute |
+| `testimony_context` | **Platform operation** | Full D49 evidence `Envelope`; claims and source passages only |
+| `fact_context` | **Platform operation** | Full D49 fact `Envelope`; current, valid-at, overlap, or historical facts with both time axes and explicit evidence associations |
+| `answer_context` | **Platform composition** | `ContextBundle/v1` containing the complete testimony and fact envelopes |
 | `relation_current` | `examples.relation_current` | Filter `facts_current` to `fact_kind = 'relation'` |
 | `observation_current` | `examples.observation_current` | Filter `facts_current` to `fact_kind = 'observation'` |
 | `entity_timeline` | `examples.entity_timeline` | Group `facts_visible_history` by disclosed time bucket |
 | `claims_verbatim` | `examples.claims_verbatim` | `semantic_claims` joined to `claims_live` |
 | `claims_hybrid_rrf` | `examples.claims_hybrid_rrf` | `semantic_claims` + `lexical_claims` with documented SQL RRF; no parity claim with the former recipe implementation |
 | `chunks_hybrid_rrf` | `examples.chunks_hybrid_rrf` | `semantic_chunks` + `lexical_chunks` with documented SQL RRF; no parity claim with the former recipe implementation |
-| `question_context` | **Retained platform operation** | Full D49 evidence `Envelope` |
+| `question_context` | **Removed** | Replaced by `testimony_context`; facts and entities are no longer optional flags on testimony retrieval |
 | `documents_about` | `examples.documents_about` | `entity_document_mentions` joined to `documents_live` |
 | `claims_about` | `examples.claims_about` | `mentions_live` joined through `claim_occurrences_live` to `claims_live` |
 | `claims_as_of` | `examples.claims_as_of` | Inclusive claim-evidence overlap over `claims_visible_history`; unknown precision excluded and counted |
 | `chunk_neighbors` | `examples.chunk_neighbors` | Current-section ordinal neighbors from `chunks_live`; bodies use the confirmed body-fetch path |
-| `current_context` | **Retained platform operation** | Full D49 fact `Envelope` with explicit fact/evidence associations |
+| `current_context` | **Removed** | Replaced by the default-current mode of `fact_context` |
 | `explain` | `examples.explain` | `facts_visible_history`, `fact_claim_evidence_live`, `evidence_lineage`, and sources |
 | `identity_as_of` | `examples.identity_as_of` | Bounded `identity_events_visible` transcript; interpretation remains customer-owned |
 | `changed_since` | `examples.changed_since` | Bounded `changes_visible` query |
@@ -181,7 +200,7 @@ The protocol entry points are:
 | `run_saved_query(namespace, name, version, parameters)` | Same executor and `QueryResult/v1` as `query_sql` |
 
 The public SRFs are reached only as allowlisted SQL calls through `query_sql`,
-`explain_sql`, or saved SQL; none is a fourth assured operation or a top-level
+`explain_sql`, or saved SQL; none is a platform intent operation or a top-level
 intent tool:
 
 | SRF family | Members |
@@ -192,58 +211,186 @@ intent tool:
 | Confirmed body fetch | `fetch_chunk_bodies` |
 | Live PG graph | `graph_neighborhood`, `graph_path` |
 
-The three assured operations are pinned in the manifest as:
+The four assured operations are pinned in the manifest as:
 
-| Operation | Initial retained version | Contract |
+| Operation | Version | Contract |
 |---|---:|---|
-| `resolve_entity` | 1 | D49 `Envelope`; ranked survivor candidates, `unknown_entity`/`boundary`, current identity regime |
-| `question_context` | 4 | D49 recall `Envelope`; separately typed claims/chunks and opt-in facts/evidence/entities channels, D48 drops, freshness, bounds |
-| `current_context` | 1 | D49 fact `Envelope`; current facts, both evidence stances, explicit associations/totals, support state |
+| `resolve_entity` | 1 | D49 fact `Envelope`; ranked survivor candidates, `unknown_entity`/`boundary`, current identity regime |
+| `testimony_context` | 1 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates |
+| `fact_context` | 1 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals |
+| `answer_context` | 1 | `ContextBundle/v1`; the complete `testimony_context` and `fact_context` responses in separately named fields, never one mixed result list |
 
-`question_context` v4 retains its existing `query`, `k`, and `candidate_k`
-inputs and adds the optional `include_facts: boolean = false` and
-`include_entities: boolean = false`. With `include_facts=true`, the operation
-uses semantic P1 facts nomination, confirms current relations and observations
-in PostgreSQL, and applies the same source-diverse, both-stance backing
-machinery as `current_context`, with `evidence_per_fact` fixed to that
-operation's default of 3. The channel returns at most `min(k, 30)` facts, and
-its fact associations share `current_context`'s existing 60-record evidence
-budget; the optional channel does not multiply that budget. Because P1 does
-not yet expose lexical fact
-nomination, v4 is semantic-only for facts; satisfying the §10 trigger adds the
-lexical channel through a later versioned descriptor change. With
-`include_entities=true`, exact name/alias resolution and semantic description
-nomination both contribute survivor candidates: resolved candidates precede
-semantic-only candidates, each channel retains its native rank, duplicates
-collapse on survivor `entity_id` before PostgreSQL confirmation, and the full
-bounded combined pool is confirmed once before its live survivors are cut to
-at most 20 candidates (resolution first, then semantic by rank). The channels
-join the existing typed `facts[]`, `fact_evidence[]`, `evidence_totals[]`, and
-`entities[]` fields, with backing claims deduplicated into the existing
-`evidence[]` field. Claims, chunks, facts, fact-evidence associations, and
-entity candidates remain separately grain-labeled and are never flattened into
-one generic result list.
+The exact public input schemas are below. Their numeric defaults and hard caps
+are the starting contract carried from the measured predecessor paths; changing
+one after measurement requires an operation-version and manifest roll.
 
-This is an evolution of `question_context`, with a version bump plus atomic
-tool-catalog and `surface_manifest_hash` rolls; it is not a fourth operation
-and does not enter the §1.13 anti-accretion gate. The decision follows measured
-one-call ergonomics of approximately 2.2 calls per question and observed agent
-routing through the default operation: the recall endpoint is maximally
-complete when opted in. `current_context` remains the unchanged dedicated
-current-facts operation. In descriptors and discovery, `resolve_entity` means
-assured name/alias resolution with D49 negatives, while
-`semantic_entities` means exploratory description-similarity nomination.
+| Operation | Inputs |
+|---|---|
+| `resolve_entity` | Existing v1 schema, unchanged |
+| `testimony_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: integer 1–400, default 200 |
+| `fact_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–30, default 15; `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
+| `answer_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `time`: the same closed fact-time union, default `{"mode":"current"}` |
+
+All objects forbid unknown fields. A present `entity_ids` array cannot be empty
+or contain duplicates, and `testimony_context.candidate_k` cannot be smaller
+than its `k`. Malformed UUIDs, unknown fields, invalid bounds, an invalid time
+shape, or `time.to < time.from` for overlap mode fail `invalid_parameter`
+before retrieval. PostgreSQL then confirms every supplied ID as a current
+survivor in the deployment. If any ID
+is absent, retired, forgotten, or belongs to another deployment, the operation
+returns no results and a D49 `unknown_entity` negative whose explanation does
+not disclose which case occurred and whose workaround says to call
+`resolve_entity` and retry. It never drops only the bad IDs or silently
+re-resolves names.
+
+`testimony_context` independently fuses semantic and lexical claim nominations
+and semantic and lexical current-source chunk nominations, then confirms each
+final list through PostgreSQL. It returns only `evidence[]` and `chunks[]`.
+`candidate_k` applies to each of the four nomination channels and `k` applies
+separately to the final claim and chunk lists; the maximum payload is therefore
+`k` claims plus `k` chunks, never an ambiguously shared cut.
+Omitting IDs preserves deployment-wide semantic retrieval. The operation never
+returns entity candidates.
+
+`fact_context` uses the discriminated `time` object below. Each variant forbids
+fields belonging to another variant:
+
+| Mode | Additional fields | World-time membership; system belief |
+|---|---|---|
+| `current` | none | Window covers the operation's disclosed evaluation instant; current system belief |
+| `at` | `at: timestamptz` | Window covers `at`; current system belief |
+| `overlap` | `from: timestamptz`, `to: timestamptz` with `to >= from` | Window overlaps the inclusive request bounds; current system belief |
+| `history` | none | Every interval that began on or before the disclosed evaluation instant and the system still believes, whether ended or open; future-starting and retracted facts are absent |
+
+For `at`, the half-open fact window applies
+`valid_from IS NULL OR valid_from <= at` and
+`valid_until IS NULL OR valid_until > at`. For `overlap`, membership is
+`valid_from IS NULL OR valid_from <= to` and
+`valid_until IS NULL OR valid_until > from`. Every non-current mode also
+requires `ingested_at <= evaluated_at AND invalidated_at IS NULL` at the
+operation's disclosed evaluation instant; an ended `valid_until` is history,
+while an `invalidated_at` value is a retracted belief. D48
+survivor/provenance conditions apply in every mode.
+`history` additionally applies `valid_from IS NULL OR valid_from <=
+evaluated_at`; callers use `at` or `overlap` explicitly for future world-time
+windows rather than receiving scheduled facts in an operation named history.
+
+Every `fact_context` result envelope carries a required `temporal_scope` block.
+Its result schema is the following closed union; unknown fields are forbidden:
+
+```text
+{mode: "current", evaluated_at, believed_at, identity_regime}
+{mode: "at", at, evaluated_at, believed_at, identity_regime}
+{mode: "overlap", from, to, evaluated_at, believed_at, identity_regime}
+{mode: "history", evaluated_at, believed_at, identity_regime}
+```
+
+All timestamps are `timestamptz`. `identity_regime` is the D49 value `current`
+for these operations. `evaluated_at` is the shared statement/evaluation cut;
+because these modes ask what the system believes now, `believed_at` is that
+same instant. `at` or `from`/`to` echo the request after validation. The mode
+and its required fields are never inferred from null timestamps.
+
+These modes deliberately do not overload the separate audit question “what
+did the system believe at T?” That two-axis reconstruction remains the
+`facts_as_of(valid_at, believed_at, ...)`/open-SQL contract. Every returned fact
+still discloses `valid_from`, `valid_until`, `ingested_at`, and
+`invalidated_at`. `current` confirms against `facts_current`; `at`, `overlap`,
+and `history` confirm against `facts_visible_history` with the predicates above,
+the current-system-belief predicate, and the same D48 survivor/provenance conditions. They
+do not call the current-only public `semantic_facts` SRF and do not reuse
+`facts_as_of` accidentally. The operation returns supporting and contradicting
+current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
+contradiction co-members, support state, and the same 60-record evidence budget
+for every mode.
+
+#### Eligibility precedes bounded ranking
+
+For every testimony target and fact-time mode, scope is a nomination input,
+not a hydration-only filter. Candidate depth is applied *within* the eligible
+set:
+
+- testimony claims and chunks are eligible when their current, confirmed
+  mention/occurrence associations contain any supplied survivor ID;
+- observations are eligible when their subject is anchored; relations are
+  eligible when either endpoint is anchored; and
+- fact world-time membership is the selected mode above.
+
+The P1 projections therefore carry rebuildable nomination metadata for current
+survivor entity associations and, for fact labels, kind, endpoints,
+`valid_from`, `valid_until`, `ingested_at`, and active/invalidated status. A backend may instead
+have PostgreSQL enumerate the exact eligible composite IDs and ask P1 to score
+only those IDs. In either implementation, a globally bounded P1 result followed
+by entity or time filtering is forbidden. P1 metadata remains a proposal: live
+PostgreSQL repeats every selector before returning data, so stale metadata can
+cost disclosed recall but never correctness. `testimony_context` applies its
+public `candidate_k` inside this scope. `fact_context` uses a descriptor-pinned
+internal candidate depth of 200 with a hard ceiling of 400; it is not another
+public planning knob.
+
+Ending a fact's world-valid interval does not delete its label from P1: an
+ended-but-still-believed fact remains searchable for `at`, `overlap`, and
+`history`. Invalidation updates the proposal status so ordinary nomination can
+avoid it, while PostgreSQL still makes the authoritative decision. D74 hard
+forget purges the row rather than relying on that status filter.
+
+Coverage count is also a pre-depth ranking key, not merely a final reranker:
+the scoped nomination orders higher coverage before relevance and applies
+candidate depth only afterward. PostgreSQL recomputes coverage during
+confirmation; final ordering is confirmed coverage, retrieval score, then
+stable composite ID. A claim or chunk mentioning both anchors therefore
+ranks ahead of an otherwise comparable one-anchor result; a direct A–B
+relation ranks ahead of an otherwise comparable A-only fact. Association with
+any supplied ID remains sufficient—there is no public any/all switch. With no
+IDs, deployment-wide nomination is unchanged.
+
+`answer_context` passes the confirmed IDs unchanged to both children and the
+time selector to `fact_context`. It deliberately exposes no child depth knobs:
+`testimony_context` runs with `k=50, candidate_k=200`; `fact_context` runs with
+`k=15, evidence_per_fact=3`. Call a single-layer operation directly to tune its
+depth. The exact response is:
+
+```text
+ContextBundleV1 {
+  contract:  literal("ContextBundle/v1")
+  testimony: Envelope  // evidence grain; complete testimony_context result
+  facts:     Envelope  // fact grain; complete fact_context result
+}
+```
+
+The wrapper forbids extra fields. D87 refines D49: `Envelope.parts` and
+`EnvelopePart` are removed, and this is the sole envelope-of-envelopes contract.
+The `composite` grain may still describe one operation's cohesive typed result;
+it cannot contain whole child responses. The bundle does not claim one atomic
+cross-projection snapshot: each child retains its own freshness, truncation,
+negative, drop disclosure, and `temporal_scope`. A typed child negative is a
+complete child response and remains in the bundle. If entity validation fails, both children
+contain the same opaque `unknown_entity` result. A schema, timeout, cancellation,
+or store/execution failure in either child fails the entire request with no
+half-bundle.
+
+The bundle layer adds no nomination, ranking, hydration, or entity-resolution
+implementation and does not rebuild either response. Under a frozen store,
+projection generations, and evaluation clock, each member is field-for-field
+equal to its direct child call; no child field is exempt or regenerated at the
+bundle layer. This pure composition is the only reason the fourth operation
+exists and is the sole D87 exception to §1.13.
+
+`question_context`, `current_context`, `include_facts`, and `include_entities`
+are absent from the catalog, registry, manifest, API/SDK/CLI/MCP descriptors,
+consumption skill, and benchmark prompt. No aliases or compatibility versions
+remain. `resolve_entity` is the sole assured name/alias authority, while
+`semantic_entities` remains exploratory description-similarity nomination.
 
 An implementation change that alters any descriptor, selection semantics,
 bound, field, negative, or association increments that operation's version and
 rolls `surface_manifest_hash`. P2 use inside an assured operation would be an
 internal implementation path distinct from the public Cypher contract, but
-neither `question_context` nor `current_context` has an input that requests
-graph expansion. They therefore continue to use their P1 nominations and
-PostgreSQL confirmation authorities. Explicit graph expansion uses native
-Cypher, live SQL helpers, or `examples.multi_hop_context`; a later measured
-descriptor may add an explicit graph option without silently changing either
-retained operation's answers.
+none of the three context operations requests graph expansion. They use P1
+nominations and PostgreSQL confirmation authorities. Explicit graph expansion
+uses native Cypher, live SQL helpers, or `examples.multi_hop_context`; a later
+measured descriptor may add an explicit graph option only through the §1.13
+gate and never by silently changing these operations' answers.
 
 ### 3.2 `memory_v1` view catalog
 
@@ -453,6 +600,14 @@ or `contradicts`. Lance applies eligible filters before top-k and PG repeats
 every authorization-relevant filter. In v1 `source_shape` is a Lance-side D80
 location-fact filter only: it is not authorization-relevant, PG does not repeat
 it, and no `source_shape` column exists in the PG spine.
+
+This table is the public SRF filter allowlist, not the assured-operation
+nomination contract. The §3.1 context operations additionally use their
+descriptor-pinned entity/time scope metadata inside the shared P1 adapter; that
+metadata does not become a caller-authored filter language. In particular,
+`fact_context` non-current modes do not call the current-confirmed
+`semantic_facts` SRF, and entity-scoped chunk retrieval does not manufacture a
+public `semantic_chunks` filter absent from this allowlist.
 
 `lexical_claims` and `lexical_chunks` perform BM25/exact-term nomination through
 the same P1 lexical port and Lance FTS/BM25 adapter path used by the internal
@@ -984,14 +1139,15 @@ null and uses `p2_snapshot.built_at` as its sole authority instant. A
   or interpretation errors.
 
 Live completeness and live evidence grade require the SQL surface or one of the
-three assured operations. Snapshot aggregates and absence claims remain
+four assured operations. Snapshot aggregates and absence claims remain
 snapshot-scoped under `confirm=true`; confirmation does not re-ground them.
 
-The three §3.1 core operations continue to return full D49 `Envelope`s with
-typed grain, negatives, contradiction handling, freshness, truncation,
-hydration drops, and explicit associations. A generic QueryResult-to-Envelope
-adapter is forbidden for either grade; in particular, there is no generic
-Cypher-result-to-Envelope adapter.
+The three single-layer §3.1 operations return full D49 `Envelope`s with typed
+grain, negatives, contradiction handling, freshness, truncation, hydration
+drops, and explicit associations. `answer_context` returns their complete
+testimony and fact envelopes in `ContextBundle/v1`. A generic
+QueryResult-to-Envelope adapter is forbidden for either grade; in particular,
+there is no generic Cypher-result-to-Envelope adapter.
 
 ## 5. Saved-query registry
 
@@ -1089,7 +1245,8 @@ presents the three choices without a preferred language hidden in prose:
 - Cypher gives native graph power over a complete, point-in-time P2 snapshot
   with mandatory `built_at` and age;
 - SQL gives live PostgreSQL state and direct evidence composition;
-- the three assured operations give one-call typed answers with D49 guarantees.
+- the four assured operations give one-call typed answers with D49 guarantees
+  per authority layer and an explicit two-envelope bundle for the composite.
 
 It includes the query-space hash, hard limits, and worked examples for the two
 truth layers, current facts, testimony, aggregation, native Cypher
@@ -1220,14 +1377,17 @@ canonical JSON with exactly these top-level members:
    comments; the two graph helpers and two Cypher entry points also carry valid
    examples, and the graph-helper comments state the both-or-neither clock rule
    and `invalid_parameter_value` failure;
-3. `core_operation_descriptors`: the three sorted descriptors with name,
-   version, input schema, Envelope version, grain/intent, bounds, and
-   implementation-chain hash. `question_context` is v4, its input schema
-   contains both default-false booleans, and its descriptor names the opt-in
-   fact/evidence/entity channels, channel grains, 60-record fact-evidence
-   budget, semantic-only fact nomination until §10 is resolved, resolution
-   precedence, and PG confirmation. The v4 descriptor change rolls the public
-   tool catalog and this manifest atomically;
+3. `core_operation_descriptors`: the four sorted descriptors with name,
+   version, input schema, closed result schema, result contract, grain/intent,
+   bounds, and
+   `implementation_plan_hash`. The testimony descriptor names only its claim
+   and source-passage channels; the fact descriptor contains the discriminated
+   time selector, matching required `temporal_scope` result union, both-stance
+   evidence budget, and optional confirmed entity anchors; the answer
+   descriptor pins the exact two child descriptors and
+   `ContextBundle/v1`; its plan hash incorporates the ordered child descriptor
+   hashes, so a child roll necessarily rolls the bundle descriptor. The catalog replacement rolls the public tool catalog
+   and this manifest atomically;
 4. `limits`: the exact SQL grammar/operator/function allowlists; the exact
    Cypher allowed-clause and rejected-clause enumeration; the P2 projection
    contract version and exhaustive node/edge property schema from §3.5; and all
@@ -1251,15 +1411,15 @@ signature, confirmation option, allowed/rejected construct, cap, P2 graph type,
 or exposed property-set change changes the hash; a property-set change also
 increments the P2 projection contract version.
 
-A future v10 protocol MUST pin `surface_manifest_hash` in place of the tool-
-catalog hash. v9 catalog-hash runs and v10 surface-manifest runs are explicitly
-noncomparable. Full v10 protocol design is outside this document. The migration
-measurements in §8 require legacy, hybrid-three-core, and open-only arms on the
-same store, model, prompt budget, time anchor, and resource budget; traces
-record manifest hash, core calls, SQL/Cypher hashes, P2 snapshot provenance,
-errors, caps, latency/cost, and projection-confirmation statistics. Raw
-SQL/Cypher and parameters follow §7 retention. No arm receives product behavior
-unavailable to customers.
+`RS-LoCoMo-Full-v12` pins `surface_manifest_hash`, the four assured-operation
+descriptors, and the complete 23-tool answer catalog. V9–v11 runs remain
+self-describing historical evidence and are explicitly noncomparable to v12;
+there is no compatibility or migration arm. V12 traces record manifest hash,
+assured-operation calls, SQL/Cypher hashes, P2 snapshot provenance, errors,
+caps, latency/cost, and projection-confirmation statistics. Raw SQL/Cypher and
+parameters follow §7 retention. The answer agent receives only product behavior
+available to customers, and accepting this design does not authorize a paid
+run.
 
 ## 7. Observability, retention, and failure behavior
 
@@ -1309,6 +1469,8 @@ provenance, or returns partial confirmation output.
 |---|---|
 | PostgreSQL unavailable | SQL, saved-query, and core paths fail `pg_unavailable`; unconfirmed Cypher remains available at grade `snapshot_graph`; `confirm=true` fails the entire request `pg_unavailable` with no rows |
 | Lance unavailable | Plain PG SQL/graph remains available; semantic and lexical SRFs and P1-backed body fetch fail `lance_unavailable`; a core operation can return only a descriptor-permitted PG channel with a D49 `boundary`, otherwise it fails |
+| One `answer_context` child returns a typed D49 negative | The request succeeds with both complete child envelopes; the other child is neither suppressed nor relabeled |
+| One `answer_context` child has a schema, timeout, cancellation, or store/execution failure | The entire request fails with that typed transport error and returns no `ContextBundle/v1`; half-bundles are forbidden |
 | P2 absent/quarantined | `query_cypher` and `explain_cypher` fail `p2_unavailable` with no partial results; SQL and assured operations remain available |
 | Cypher execution times out or the engine faults | The request fails `statement_timeout` or `execution_error` respectively, with no partial rows; SQL and assured operations remain available |
 | P2 age exceeds target or alert threshold | Cypher remains available with exact `built_at`, `age_seconds`, and a freshness warning; live SQL remains authoritative; the request never triggers a rebuild |
@@ -1316,7 +1478,7 @@ provenance, or returns partial confirmation output.
 | PG and Lance disagree | PG wins; stale candidates drop; mixed generation or authorization uncertainty fails the semantic invocation |
 | PG and P2 differ after `built_at` | Unconfirmed Cypher remains the correct snapshot result; `confirm=true` drops failing projected ID rows and counts them, while paths, aggregates, existence, and absence remain snapshot-scoped; live SQL and assured-operation output follow PG |
 | Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch quarantines the projection generation |
-| Runtime interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`; confirmed Cypher fails the same code before reading `memory_v1`. Unconfirmed Cypher independently verifies its P2 snapshot contract. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison rather than adding a deparser-dependent per-request hash. The three core operations remain available only if their own descriptors/invariants verify |
+| Runtime interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`; confirmed Cypher fails the same code before reading `memory_v1`. Unconfirmed Cypher independently verifies its P2 snapshot contract. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison rather than adding a deparser-dependent per-request hash. The four core operations remain available only if their own descriptors/invariants verify |
 | Forget is pending or incomplete | Live SQL/core lineage paths fail closed under D48/D74; an older P2 generation can reflect the lineage only as of its disclosed pre-forget `built_at`, and the first post-forget rebuild removes it from all later generations |
 
 ## 8. Pre-release surface cut and terminal criteria
@@ -1327,25 +1489,31 @@ protect nobody while preserving duplicate invariant logic.
 
 1. Ship `memory_v1`, `QueryResult/v1`, both read-only query languages,
    discovery, allowlisted functions, saved-query governance, all 17
-   `examples.*` queries, and exactly three assured operations.
-2. Seed and expose only `resolve_entity`, `question_context`, and
-   `current_context`. Bootstrap atomically replaces the deployment catalog with
-   those canonical descriptors, and registry reads pin their canonical
+   `examples.*` queries, and exactly four assured operations.
+2. Seed and expose only `resolve_entity`, `testimony_context`, `fact_context`,
+   and `answer_context`. Bootstrap atomically replaces the deployment catalog
+   with those canonical descriptors, and registry reads pin their canonical
    versions, so neither an old row nor a same-name custom version can replace
-   or add a tool.
-3. Keep the current HTTP, SDK, CLI, and MCP recipe transports for the three
-   assured operations. A transport rename is not an authorization or
-   simplicity requirement and is outside this cut.
+   or add a tool. `question_context` and `current_context` are deleted rather
+   than retained as aliases.
+3. Remove the recipe-era intent transport names with the old catalog. HTTP uses
+   `GET /operations` and `POST /operations/{name}`; the SDK uses
+   `list_operations`/`run_operation`; the CLI uses `remember operations
+   list|run`; MCP renders the four operation names directly. `/recipes`,
+   `/recipe/{name}`, recipe-named SDK/CLI methods, and transport aliases are
+   absent. Saved-query endpoints keep their own names because they represent a
+   different customer-owned registry.
 4. Do not ship deprecation headers, adapter warnings, compatibility-call
    counters, removal-denominator telemetry, or a product gate whose only
    purpose is preserving/removing the 17 adapters.
-5. The paid benchmark remains operator-invoked. Full-v9 is immutable historical
-   evidence over its old catalog; any measurement of the shipping surface gets
-   a new protocol identity and informs quality, not compatibility permission.
+5. The paid benchmark remains operator-invoked. Full-v9 through v11 are
+   immutable historical evidence over their pinned catalogs; v12 is the D87
+   protocol identity but this design does not authorize running it. Any result
+   informs quality, not compatibility permission.
 
-Exactly three platform operations remain. Removing those intentional one-call
+Exactly four platform operations remain. Removing those intentional one-call
 contracts is not decided here; it remains the explicit product-quality
-deferral in §10.
+alternative in §10.
 
 ## 9. Validation gates
 
@@ -1459,9 +1627,10 @@ for the shipping surface pass before release.
 10. **Result contracts.** Every success, empty, truncation, rejection, timeout,
    cancellation, and store failure contains the complete QueryResult header and
    correct grade, snapshot provenance, confirmation block, and non-guarantee
-   state. The three core operations pass the existing D49 Envelope suite without
-   weakened grain, negative, contradiction, freshness, or association
-   guarantees. Named honesty fixtures reproduce the reviewer's queries (b) and
+   state. The three single-layer operations pass the existing D49 Envelope
+   suite without weakened grain, negative, contradiction, freshness, or
+   association guarantees; `answer_context` passes the `ContextBundle/v1`
+   composition contract. Named honesty fixtures reproduce the reviewer's queries (b) and
    (d) across `facts_visible_history`, `facts_as_of`, and
    `graph_edges_visible_history`: after current testimony changes, historical/
    as-of membership stays correct while `evidence_count_current`,
@@ -1472,17 +1641,32 @@ for the shipping surface pass before release.
    its correct `facts_current` replacement, predicate-vocabulary discovery,
    full fact → `fact_claim_evidence_live` → `claims_live` → `documents_live`
    source audit, latest-contradicting-testimony divergence, and a
-   snapshot-ID-to-live-SQL composition. `question_context` v4 fixtures prove
-   both flags default false; each flag works independently and together;
-   facts match `current_context`'s current-membership, both-stance,
-   source-diverse association/total machinery within the existing 60-record
-   fact-evidence budget, fixed evidence-per-fact default, and 30-fact ceiling;
-   entity candidates combine resolution and semantic
-   nomination with survivor deduplication and PG confirmation; and claims,
-   chunks, facts, associations, totals, and entities remain in their existing
-   typed fields without grain flattening. The same fixtures prove the catalog
-   and manifest roll to v4 while the operation count remains three and
-   `current_context` v1 output is unchanged.
+   snapshot-ID-to-live-SQL composition. Context-operation fixtures prove:
+   `testimony_context` returns claims/chunks and never facts/entities;
+   `fact_context` default-current membership equals `facts_current`; each result
+   carries the exact required `temporal_scope` variant and applied timestamps;
+   its `at`,
+   `overlap`, and `history` modes include the correct ended intervals without
+   returning currently retracted facts; a future-starting fact is absent from
+   `history` and present in the matching explicit `at`/`overlap` request. All modes retain both-stance,
+   source-diverse associations/totals, contradiction co-members, the
+   60-record fact-evidence budget, and the 30-fact ceiling. With no entity IDs,
+   both operations preserve deployment-wide retrieval. With confirmed IDs,
+   scoped P1 ranking returns a relevant anchor result deliberately placed below
+   the unscoped global candidate depth; the same fixture covers chunks, claims,
+   current facts, and a narrow historical fact window. An unknown, retired,
+   forgotten, or foreign ID returns the same opaque `unknown_entity` shape with
+   no partial results; malformed, duplicate, empty, or over-cap arrays fail
+   `invalid_parameter`; aliases never get silently re-resolved. Multi-anchor
+   coverage orders a two-anchor claim/chunk and a direct relation ahead of
+   otherwise equivalent one-anchor results without excluding the latter.
+   `answer_context`'s literal child envelopes, including `temporal_scope`, are
+   field-for-field equivalent to
+   direct default child calls under a frozen store, generations, and clock; typed
+   child negatives remain independent, while an execution failure proves that
+   no half-bundle returns. The same fixtures prove the catalog
+   and manifest roll atomically to four operations and contain no removed name
+   or flag.
 11. **Registry/governance.** Mutation attempts cannot alter versions; agents
     cannot activate drafts; quota boundaries return `quota_exceeded`; deletion
     disables admission immediately; every `examples.*` query parses, executes
@@ -1496,11 +1680,13 @@ for the shipping surface pass before release.
     stale compare-and-swap cannot activate the version; it remains pending until
     validation against the new hash succeeds.
 12. **Clean-cut catalog.** Fresh and previously seeded fixture databases expose
-    exactly the three assured operation descriptors plus the nine open-query
-    tools. The 17 demoted names exist only under `examples.*`; no public tool,
-    deprecation metadata, compatibility counter, or stale active stock row
-    survives. The three operations pass their D49 and `memory_v1` membership
-    equivalence suites.
+    exactly the four assured operation descriptors plus the nine open-query
+    tools. The 17 demoted names exist only under `examples.*`;
+    `question_context` and `current_context` exist nowhere in the active
+    catalog. No public alias, deprecated descriptor, compatibility counter, or
+    stale active stock row survives. The single-layer operations pass their
+    D49 and `memory_v1` membership-equivalence suites, and the composite passes
+    exact child equivalence.
 13. **Telemetry/retention.** Cost totals reconcile to PG/Lance/graph-engine
     counters within
     1%; kill switches stop new work within five seconds; default logs contain
@@ -1512,8 +1698,8 @@ for the shipping surface pass before release.
 
 | Deferred | Bound reason | Adoption trigger and required decision gate |
 |---|---|---|
-| `lexical_facts(query, k, filters)` | The audited P1 contract and store do not provide it: `P1FactRow` stores `label`, but `P1SearchPort` exposes only vector `search_facts`; the Lance facts table builds vector and scalar indexes, no label FTS index or lexical-search adapter method, and the E-wave added lexical reads only for claims and chunks. A public function cannot manufacture a PostgreSQL substitute and call it the P1 facts channel. | Trigger: **fact-label lexical index lands in P1**. Adoption in the same change requires a scored lexical-facts method on the shared P1 port, Lance FTS over `facts.label`, parity with the claims/chunks lexical contract (same P1 port and FTS analyzer, same rank/score semantics, same executor-side per-invocation confirmation) on frozen exact-term fixtures — there is no internal facts hybrid today, so the lexical-facts channel and any internal fusion are introduced in that same change, never cited as pre-existing — `facts_current` confirmation equivalence, the facts-filter allowlist and lexical rank/score contract from §3.4, addition to the §3.2 complete facts-layer enumeration and manifest, a `question_context` descriptor/version roll adding lexical fact fusion, and same-change OSS docs. |
-| Complete removal of the three-operation recipe layer | One-call typed defaults remain product value; this design does not decide their deletion | A future open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
+| `lexical_facts(query, k, filters)` | The audited P1 contract and store do not provide it: `P1FactRow` stores `label`, but `P1SearchPort` exposes only vector `search_facts`; the Lance facts table builds vector and scalar indexes, no label FTS index or lexical-search adapter method, and the E-wave added lexical reads only for claims and chunks. A public function cannot manufacture a PostgreSQL substitute and call it the P1 facts channel. | Trigger: **fact-label lexical index lands in P1**. Adoption in the same change requires a scored lexical-facts method on the shared P1 port, Lance FTS over `facts.label`, parity with the claims/chunks lexical contract (same P1 port and FTS analyzer, same rank/score semantics, same executor-side per-invocation confirmation) on frozen exact-term fixtures — there is no internal facts hybrid today, so the lexical-facts channel and any internal fusion are introduced in that same change, never cited as pre-existing — current/at/overlap/history confirmation equivalence, the facts-filter allowlist and lexical rank/score contract from §3.4, addition to the §3.2 complete facts-layer enumeration and manifest, a `fact_context` descriptor/version roll adding lexical fact fusion, and same-change OSS docs. |
+| Complete removal of the assured-operation layer | One-call typed defaults remain product value; this design does not decide their deletion | An open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
 | Automatic P2 rebuild/refresh on query-time staleness | Query latency and admission are not rebuild-control-plane authority; v1 serves the pinned snapshot with exact age and never starts or waits for a rebuild on a query | Reconsider only after at least 1% of Cypher requests across three deployments observe `p2_snapshot_age_seconds > 5,400` for 30 consecutive days despite the scheduled rebuild service meeting its assigned resources. Adoption requires a separate design for authenticated trigger authority, per-deployment deduplication, backpressure, budget isolation, failure storms, no query waiting, and proof that query-triggered work cannot replace or starve the scheduled rebuild path. |
 | Cypher adversarial hardening suite (large fuzz corpora, overflow-class traversal fuzz against the real engine, automatic generation-quarantine state machine, engine-specific abuse caps) | Operator measure-first directive (2026-08-04): no speculative constraints on graph queries or the engine; benchmarking and production telemetry locate real issues first, and an unusable engine is replaced rather than hardened around | Adopt (or replace the engine instead) when telemetry shows engine faults/timeouts on >0.1% of Cypher requests over any 7-day window, any single fault class recurs across three deployments, or a benchmarking campaign reproduces a fault; the §7 fault telemetry and kill switches ship in v1 either way, so the evidence arrives without the machinery |
 | Migration from Lance to pgvector | SQL ergonomics alone does not justify vector relocation or dual-write risk | Evaluate when bridge-caused semantic p95 exceeds 750 ms or availability falls below 99.9% for three consecutive 30-day windows, or measured total bridge operations cost exceeds a pgvector projection by 2× at representative scale. Adopt only with recall@k loss ≤1 point, p95 ≤80% of the bridge, ingest p95 ≤120% of current, storage ≤150%, full multi-target/generation/D80-filter support, equivalent RPO/RTO and tenancy, and zero D48 failures. The required cutover is per-generation hash-verified backfill → idempotent outbox dual-write → 30-day shadow-read parity → reversible read switch → 30-day rollback window → Lance retirement after audit. |
@@ -1533,23 +1719,19 @@ for the shipping surface pass before release.
    paths, D80 generation pinning, executor-side PG confirmation, body
    verification, rank/score and drop disclosure, caps, cancellation/telemetry,
    manifest signatures, and per-surface OSS pages. `lexical_facts` remains only
-   the §10 deferral.
+   the §10 recorded alternative.
 4. **Batch D — graph: PG views + helpers + full Cypher read surface:** PG edge
    views, bounded helpers, recursive-CTE linter, both Cypher entry points, pinned
    dialect gate, snapshot schema/provenance, shared caps/quotas, optional
    confirmation, and observability. A nominal subprocess without filesystem and
    network confinement is deliberately absent; P1/PostgreSQL remain the
-   authorities inside `question_context` and `current_context`.
-   This batch also evolves `question_context` to v4 with both default-false
-   flags, fact backing and entity-candidate channels, the atomic catalog/
-   manifest roll, channel fixtures, and its same-change OSS operation page;
-   `current_context` remains v1.
+   authorities inside `testimony_context` and `fact_context`.
    Its merge gates are §9.1–§9.10, including the
    dialect/read-only, snapshot-consistency, confirmation-equivalence, tenancy,
    fault-containment, and cap proofs.
 5. **Batch E — customer space:** immutable registry, governance, all 17
    `examples.*` mappings, drift and deletion behavior.
-6. **Batch F — integrated surface:** API/SDK/CLI/MCP additions, exactly three
+6. **Batch F — integrated surface:** API/SDK/CLI/MCP additions, exactly four
    assured operation descriptors, consumption-skill/docs rewrite led by the
    verbatim two-layer headline and all four bound facts-layer examples. The 17
    demoted patterns ship only as `examples.*`; no automatic paid run or
@@ -1561,7 +1743,7 @@ the relevant §9 evidence. Batch F integrates and leads with the rewrite; it
 does not substitute for the per-surface documentation in earlier batches.
 
 Batch D's unconfirmed Cypher path depends on Batches A and B and has no Batch C
-dependency. Its `confirm=true` slice and `question_context` v4 channels depend
+dependency. Its `confirm=true` slice and the assured context operations depend
 on Batch C because they reuse the shared PostgreSQL D48/D41 confirmation and P1
 nomination/body machinery; neither slice can merge around a failed Batch C
 confirmation gate.

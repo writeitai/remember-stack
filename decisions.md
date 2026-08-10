@@ -222,6 +222,12 @@ API/worker volume. Design and rationale:
 [`plan/designs/retrieval_design.md` §§3–5](plan/designs/retrieval_design.md) and
 [`plan/analysis/retrieval_default_path.md`](plan/analysis/retrieval_default_path.md).
 
+> **Refined by D87 (2026-08-10).** The hybrid nomination mechanics remain
+> binding, but `question_context` is no longer the ordinary public operation.
+> `testimony_context` owns the evidence-only form; `fact_context` owns
+> adjudicated fact retrieval; `answer_context` is their pure two-envelope
+> composition. There is no compatibility alias.
+
 ---
 
 ## D10. As-of traversal via projected graphs
@@ -1345,8 +1351,9 @@ horizon: it keeps all invalidated relations whose survivor-redirected endpoints 
 active nodes. A channel with a real age boundary still returns a typed `boundary` naming its
 fallback rather than silently truncating history;
 **explicit truncation markers** with continuations (no silent caps — hub answers are ranked
-pages, never a quiet top-k, never a timeout); the applied temporal parameters echoed in
-composition-ready form (`valid_at` / `believed_at` + the **identity regime** — resolution
+pages, never a quiet top-k, never a timeout); the applied temporal scope echoed in
+composition-ready, discriminated form (`mode`, `evaluated_at`, `believed_at`,
+mode-specific world-time fields, and the **identity regime** — resolution
 follows *current* aliases/merge-redirects by default; pre-merge identity reconstruction is the
 explicit transcript-based `identity_as_of` recipe over D21's `resolution_decisions` /
 `merge_events`, and the envelope states which regime answered); and a **typed negative
@@ -1373,6 +1380,21 @@ locators** (deep links to the exact page/region/time interval of the raw origina
 evidence; a deployment without a configured media embedder reports the missing
 `media_segments` search channel as the existing typed `boundary` negative — configuration
 absence, never design absence. `plan/designs/media_design.md` §4/§5/§7.
+
+> **Refined by D87 (2026-08-10).** A D49 `Envelope` remains the complete
+> response contract for one retrieval authority. `Envelope.parts` and
+> `EnvelopePart` are removed; the `composite` grain remains available only for
+> one operation's cohesive typed result, not as an envelope-of-envelopes.
+> The sole cross-authority composition is `ContextBundle/v1`, exactly
+> `{contract: "ContextBundle/v1", testimony: Envelope,
+> facts: Envelope}` with extra fields forbidden. It preserves the two complete
+> child envelopes instead of flattening or partially copying them. Thus
+> `answer_context` is an explicit, narrow exception to the opening sentence's
+> “every response is an envelope” wording, not a competing second way to
+> represent the same composition. D87 additionally binds `fact_context` to the
+> required closed `temporal_scope` result union in
+> `open_query_space_design.md` §3.1; `answer_context` preserves that child block
+> unchanged.
 
 ## D50. Query capability = composable zero-LLM primitives; recipes are registry data
 
@@ -1413,6 +1435,12 @@ query-time-filter, so it degenerates to a deployment inside a deployment). Perim
 (who reaches the API/mounts) is deployment infrastructure. D16's filtered snapshots remain a
 scope-view/performance tool, no longer carried as access control. (Refines D16's
 access-isolation arm; `retrieval_design.md` §9.)
+
+> **Refined by D83 and D87.** The registry-backed and zero-LLM mechanics stand,
+> but the public assured-operation registry is closed to exactly the four
+> platform-owned D87 descriptors. Adding a customer query pattern means adding
+> a saved query, not minting a top-level MCP tool. A fifth assured operation
+> requires the evidence gate in `open_query_space_design.md` §1.13.
 
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
 
@@ -2222,7 +2250,7 @@ same-PR rule; eval check `delivery_docs_site` guards the contract. One-time ops 
 recorded (Pages source + custom domain + DNS) — until bound, the site serves under
 `writeitai.github.io/rememberstack/` where root-relative assets do not resolve.
 Non-goals: versioned docs, docs SaaS/external search, server-rendered features;
-API-reference pages render from the recipe registry when retrieval ships (D50) rather than
+API-reference pages render from the assured-operation registry when retrieval ships (D50) rather than
 being hand-maintained.
 
 > **Reconciled 2026-07-30 with the managed-cloud D14/D22 domain allocation.**
@@ -2753,6 +2781,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
+> **Refined by D85 and D87.** V10 and v11 remain historical protocol records.
+> The D87 assured catalog requires the separately fingerprinted v12 contract in
+> `plan/designs/locomo_benchmark_design.md`; removed operation names are not
+> restored as compatibility tools.
+
 > **Amended 2026-08-07 (v10 — measure the shipping clean-cutover surface):**
 > the only executable protocol is **`RS-LoCoMo-Full-v10`**. It uses
 > `openai/gpt-5.6-luna` for both answering and judging and exposes exactly the
@@ -3143,6 +3176,10 @@ roll `surface_manifest_hash` through the existing manifest generator.
 
 ## D82. The Cypher boundary stays lexical/read-only; unavailable graph metadata is null; question context v4 reuses existing authorities
 
+**Context-operation portion superseded by D87.** The Cypher, graph, and
+authority decisions below remain binding. D87 removes `question_context` v4,
+its optional channels, and `current_context` from the target public catalog.
+
 **Decision (2026-08-05).** The Cypher pre-engine gate remains a conservative token scanner,
 not a handwritten parser: it default-denies statement openings and rejects the pinned
 external-action/session/maintenance family anywhere outside quotes and real engine comments.
@@ -3201,6 +3238,12 @@ unavailable dependency metadata; a confinement-free subprocess described as a sa
 implicit P2 neighbors in context operations with no caller-visible graph request.
 
 ## D83. Open query makes a clean pre-release cut; retained operations consume `memory_v1`
+
+**Refined by D87.** The clean-cut/no-compatibility decision remains binding;
+the retained operation set is replaced by the four authority-aligned
+operations in D87. D87 also supersedes the legacy transport-name exception:
+the target uses operation terminology and carries no `/recipes` or recipe-named
+SDK/CLI alias.
 
 **Decision (2026-08-06).** RememberStack has no users or integrations that
 require compatibility with the 17 demoted recipe adapters. They are removed
@@ -3279,6 +3322,11 @@ same change; automatic skip of dead-lettered chunks for the barrier in v1.
 
 ## D85. The full-system LoCoMo answer seat gets the complete shipped read plane
 
+**Refined for the next current-system protocol by D87.** V11 remains
+self-describing evidence for the surface it measured. Implementing D87 changes
+the assured catalog and therefore requires a new benchmark protocol identity;
+no existing artifact is silently reinterpreted.
+
 **Decision (2026-08-07).** `RS-LoCoMo-Full-v11` replaces v10 as the sole
 executable current-system protocol. Its Luna answer agent can choose among all
 shipped read-only retrieval paths: the three assured operations, seven direct
@@ -3339,3 +3387,97 @@ version normalize completes so later stages and scoring can run. Bumps
 **Design.** `plan/designs/e3_unknown_entity_type_gate_design.md`  
 **Analysis.** `plan/analysis/e3_unknown_entity_type_gate_analysis.md`
 
+## D87. Context operations mirror identity, testimony, and fact authorities
+
+**Decision (2026-08-10).** The assured retrieval catalog contains exactly four
+operations:
+
+- `resolve_entity` determines ranked current survivor identities;
+- `testimony_context` returns high-recall claims and source passages only;
+- `fact_context` returns semantically relevant relations and observations under
+  an explicit world-time scope; and
+- `answer_context` returns the complete testimony and fact responses as two
+  named members of `ContextBundle/v1`, without flattening their grains.
+
+`question_context`, `current_context`, `include_facts`, and `include_entities`
+are removed. There are no aliases, deprecation rows, or compatibility paths.
+The library has no consumers requiring them.
+
+All three context operations require a query and accept optional confirmed
+`entity_ids` (one to twenty unique UUIDs when present). Omitting IDs preserves
+deployment-wide semantic retrieval. When IDs are supplied, PostgreSQL confirms
+every ID as a current survivor in the deployment before nomination. Any absent,
+retired, forgotten, or foreign ID returns an opaque `unknown_entity` D49
+negative with no results; malformed or out-of-bounds input is
+`invalid_parameter`. No operation drops only the bad IDs or silently resolves
+names. Entity and fact-time eligibility constrain the candidate set before
+bounded relevance ranking; a global top-k followed by scope filtering is
+forbidden. For multiple anchors, candidates associated with any anchor are
+eligible and candidates covering more anchors rank first without an any/all
+public switch.
+
+`fact_context` defaults to current facts and also supports one valid-time
+instant, overlap with a valid-time interval, and the complete past-through-now
+historical set the system still believes. Future-starting facts remain
+reachable through explicit `at`/`overlap` modes. A boolean `only_current` is forbidden because its
+false case cannot distinguish those intents. These modes use current system
+belief and return both stored clocks. Historical system-belief reconstruction
+remains the explicit `facts_as_of(valid_at, believed_at, ...)`/open-SQL audit
+path.
+
+Every `fact_context` envelope discloses the applied selection through D49's
+required, discriminated `temporal_scope`: `current` and `history` carry the
+evaluation/belief instant, `at` additionally carries `at`, and `overlap`
+additionally carries `from` and `to`. `answer_context` preserves that complete
+child field unchanged.
+
+`ContextBundle/v1` is the D49 refinement bound above. `answer_context` exposes
+only the shared query, optional entity IDs, and fact-time selector; each child
+runs with its canonical defaults. A completed bundle always contains both
+literal child envelopes, including their independent negatives, freshness,
+truncation, and hydration-drop disclosure. A schema or execution failure in
+either child fails the whole request with no half-bundle. Under a frozen store,
+projection generations, and evaluation clock, the children are field-for-field
+equal to direct child calls; the bundle layer may add or alter no child field.
+
+**Context.** The former three-operation catalog was small but conceptually
+mixed. `question_context` described its input, not its output authority, and
+optional flags added facts and entities to testimony retrieval. Meanwhile
+`current_context` confirmed only `facts_current`, putting the bi-temporal fact
+history behind a harder SQL/planning path. The public operations did not match
+RememberStack's defining separation between source testimony and adjudicated
+facts.
+
+**Rejected alternatives.** Keep `question_context` and add more flags; rename
+it `all_sources_context` (bounded results are not all sources, and facts are not
+sources); add `only_current`; require entity IDs; let every context operation
+resolve names independently; expose only the two layer operations and make
+every agent compose them; flatten testimony and facts into one ranked envelope.
+
+**Consequences.** Humans and agents get one routing rule: what was said →
+testimony; what is or was true → facts; both → answer; ambiguous identity →
+resolve. `answer_context` is pure composition and must be membership- and
+order-equivalent—and, under frozen inputs, field-for-field equivalent—to direct
+child calls. The operation registry, manifest hash,
+API/SDK/CLI/MCP descriptors, consumption skill, public docs, and LoCoMo protocol
+identity roll atomically in the same delivery. Open SQL/Cypher, saved queries,
+direct primitives, and P3 remain independent read infrastructure rather than
+being hidden or removed.
+
+The intent transports use operation terminology as part of the same clean cut:
+`GET /operations`, `POST /operations/{name}`, SDK
+`list_operations`/`run_operation`, and CLI `remember operations list|run`.
+Recipe-era transport names are not retained as aliases; the saved-query
+registry remains separately named.
+
+This decision is a narrow amendment to the prior anti-accretion gate.
+`answer_context` is admitted without frequency evidence because it adds no
+retrieval authority, ranking, hydration, parameter-specific behavior, or
+result transformation: it is exactly the two existing complete operations in
+one typed transport response. That exception applies only to this named
+composition. A fifth assured operation, another bundle, or any composition that
+changes either child still must pass the ordinary evidence gate.
+
+**Design.** `plan/designs/open_query_space_design.md` §3.1
+
+**Analysis.** `plan/analysis/context_operation_model_analysis.md`
