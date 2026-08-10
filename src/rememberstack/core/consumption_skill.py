@@ -180,8 +180,9 @@ def _grains() -> str:
         "- A **core belief** is a stricter configured K tier, not a new source of "
         "truth.\n\n"
         "Never blend evidence and facts into one unlabeled answer. If a task asks "
-        "both what someone said and what the system believes, return separate "
-        "evidence-grain and fact-grain parts."
+        "both what someone said and what the system believes, use "
+        "`answer_context` and keep its complete `testimony` and `facts` child "
+        "envelopes separate."
     )
 
 
@@ -227,8 +228,8 @@ def _envelope() -> str:
     """Teach response honesty fields for both Envelope and QueryResult."""
     return (
         "## Read the whole response\n\n"
-        "For assured operations, check Envelope `grain`, applied "
-        "`valid_at`/`believed_at`, identity regime, per-store freshness, "
+        "For assured operations, check Envelope `grain`, required "
+        "`temporal_scope`, identity regime, per-store freshness, "
         "truncation/continuation, and `dropped_by_hydration`. A result inside a "
         "live contradiction group must include or point to its co-members; "
         "report the competing sides instead of silently picking one.\n\n"

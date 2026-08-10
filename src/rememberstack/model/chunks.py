@@ -214,7 +214,8 @@ class P1ClaimRow(BaseModel):
     """One row of the P1 claims channel: the needle index (D8/D58).
 
     `is_current_testimony` is the scalar the DEFAULT claims channel filters
-    on (retrieval §5): current-testimony-only unless a recipe asks otherwise.
+    on (retrieval §5): current-testimony-only unless an explicit historical
+    query asks otherwise.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

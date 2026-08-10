@@ -205,7 +205,7 @@ def test_supersession_closes_the_window_and_kills_the_zombie(
         valid_at=datetime.now(tz=UTC) - timedelta(days=365),
     )
     assert old in {fact.fact_id for fact in era.facts}  # history intact
-    assert era.as_of_valid_at is not None
+    assert era.temporal_scope.mode == "at"
 
     transcript = engine.transcript_relation(
         deployment_id=_DEPLOYMENT_ID, relation_id=old

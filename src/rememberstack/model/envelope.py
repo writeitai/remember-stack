@@ -53,7 +53,7 @@ class IdentityRegime(StrEnum):
     `current` (the default) follows today's aliases and merge redirects even
     under a past `believed_at`; `as_of` means the identity boundary was
     reconstructed as it stood at the queried instant (the transcript-based
-    `identity_as_of` recipe). The envelope always states which, so an audit
+    `examples.identity_as_of` saved query). The envelope always states which, so an audit
     read can never silently mix today's identities with yesterday's beliefs.
     """
 

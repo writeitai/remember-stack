@@ -38,7 +38,7 @@ class ToolDescriptor(BaseModel):
     description: str
     input_schema: dict[str, object]
     result_schema: dict[str, object]
-    result_contract: Literal["envelope", "context_bundle_v1"]
+    result_contract: str = Field(min_length=1)
     output_grain: str | None
     answer_intent: str
     version: int | None = Field(default=None, ge=1)

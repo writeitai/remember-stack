@@ -192,10 +192,9 @@ class MemoryClient:
         self, *, name: str, arguments: Mapping[str, object] | None = None
     ) -> Envelope | ContextBundleV1:
         """Run one assured operation and validate its exact wire contract."""
-        endpoint = f"POST /operations/{name}"
-        payload = self._json(
-            "POST", endpoint, json_body=dict(arguments or {})
-        )
+        path = f"/operations/{quote(name, safe='')}"
+        endpoint = f"POST {path}"
+        payload = self._json("POST", path, json_body=dict(arguments or {}))
         if isinstance(payload, dict) and payload.get("contract") == "ContextBundle/v1":
             return _validated(ContextBundleV1, payload, endpoint=endpoint)
         return _validated(Envelope, payload, endpoint=endpoint)

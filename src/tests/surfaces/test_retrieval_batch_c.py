@@ -476,13 +476,13 @@ def corpus(database_engine: Engine) -> _Corpus:
     return _Corpus(engine=database_engine)
 
 
-def test_current_context_returns_both_fact_kinds_with_both_stances(
+def test_fact_context_returns_both_fact_kinds_with_both_stances(
     corpus: _Corpus,
 ) -> None:
     engine, index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Where does Alice work and what does she prefer?",
         k=2,
@@ -504,7 +504,7 @@ def test_current_context_returns_both_fact_kinds_with_both_stances(
     assert corpus.claims["support-old-same-lineage"] not in selected_support
 
 
-def test_current_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -> None:
+def test_fact_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -> None:
     """A P1 UUID that names two fact kinds is incomplete and fails closed."""
     with corpus.engine.begin() as connection:
         connection.execute(
@@ -523,7 +523,7 @@ def test_current_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -
         )
     try:
         engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
-        answer = engine.current_context(
+        answer = engine.fact_context(
             deployment_id=_DEPLOYMENT_ID,
             query="ambiguous fact identity",
             k=1,
@@ -551,12 +551,12 @@ def test_current_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -
         (1, 6, "evidence_per_fact"),
     ),
 )
-def test_current_context_enforces_public_bounds(
+def test_fact_context_enforces_public_bounds(
     corpus: _Corpus, k: int, evidence_per_fact: int, message: str
 ) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     with pytest.raises(ValueError, match=message):
-        engine.current_context(
+        engine.fact_context(
             deployment_id=_DEPLOYMENT_ID,
             query="Alice",
             k=k,
@@ -564,9 +564,9 @@ def test_current_context_enforces_public_bounds(
         )
 
 
-def test_current_context_respects_the_60_record_budget(corpus: _Corpus) -> None:
+def test_fact_context_respects_the_60_record_budget(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=tuple(corpus.budget_fact_ids))
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID,
         query="all budget facts",
         k=30,
@@ -587,7 +587,7 @@ def test_current_context_respects_the_60_record_budget(corpus: _Corpus) -> None:
 
 def test_evidence_totals_are_exact_under_per_stance_truncation(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice employment", k=1, evidence_per_fact=1
     )
     totals = {
@@ -599,7 +599,7 @@ def test_evidence_totals_are_exact_under_per_stance_truncation(corpus: _Corpus) 
 
 def test_tombstoned_and_noncurrent_evidence_is_excluded(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice employment", k=1, evidence_per_fact=5
     )
     returned = {claim.claim_id for claim in answer.evidence}
@@ -616,7 +616,7 @@ def test_unbacked_fact_is_dropped_and_never_returned_without_evidence(
     corpus: _Corpus,
 ) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.unbacked_id,))
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID, query="unbacked relationship"
     )
 
@@ -631,7 +631,7 @@ def test_no_results_uses_the_query_driven_known_empty_convention(
     corpus: _Corpus,
 ) -> None:
     engine, _index = corpus.query_engine(fact_ids=())
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID, query="nothing resembles this"
     )
 
@@ -650,7 +650,7 @@ def test_envelope_associations_are_explicit_and_never_order_based(
     engine, _index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice context", k=2, evidence_per_fact=1
     )
     evidence_ids = {claim.claim_id for claim in answer.evidence}
@@ -659,14 +659,13 @@ def test_envelope_associations_are_explicit_and_never_order_based(
     assert all(link.claim_id in evidence_ids for link in answer.fact_evidence)
     assert all(link.fact_id in fact_ids for link in answer.fact_evidence)
     assert len(answer.evidence_totals) == 2 * len(answer.facts)
-    assert not answer.parts
 
 
 def test_fact_nomination_k_probe_discloses_truncation(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
-    answer = engine.current_context(
+    answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice", k=1, evidence_per_fact=1
     )
 

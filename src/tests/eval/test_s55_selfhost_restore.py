@@ -15,6 +15,7 @@ from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import ObjectAlreadyExistsError
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetManifest
 from rememberstack.model import Freshness
@@ -249,6 +250,7 @@ def _negative(*, token: str) -> Envelope:
     del token  # S55: the absent lookup value must not alter the public response.
     return Envelope(
         grain=Grain.EVIDENCE,
+        temporal_scope=current_temporal_scope(evaluated_at=_NOW),
         freshness=Freshness(pg_live_ts=_NOW),
         negative=Negative(
             kind=NegativeKind.UNKNOWN_ENTITY, explanation="No matching memory exists."

@@ -425,7 +425,8 @@ def test_s21_multi_hop_as_of(graph: GraphQueries) -> None:
     current = graph.neighborhood(entity_id=ids["Acme"], hops=1, valid_at=_JAN_2026)
     assert "Carol" not in _names(current)  # closed in June 2024
     assert {"Alice", "Bob"} <= _names(current)  # open-ended edges persist
-    assert current.as_of_valid_at == _JAN_2026  # the echo (S15/S16)
+    assert current.temporal_scope.mode == "at"
+    assert current.temporal_scope.at == _JAN_2026  # the echo (S15/S16)
 
 
 def test_s22_document_citation_chain(graph: GraphQueries) -> None:
@@ -618,7 +619,7 @@ def test_current_means_currently_valid(graph: GraphQueries) -> None:
     default = graph.neighborhood(entity_id=ids["Acme"], hops=1)
     assert "Carol" not in _names(default)  # her spell closed in June 2024
     assert {"Alice", "Bob"} <= _names(default)
-    assert default.as_of_valid_at is not None  # echoed, never silent
+    assert default.temporal_scope.mode == "current"  # echoed, never silent
 
 
 def test_edge_direction_survives_reverse_traversal(graph: GraphQueries) -> None:
@@ -660,13 +661,15 @@ def test_believed_at_is_applied_and_echoed(graph: GraphQueries) -> None:
         entity_id=ids["Acme"], hops=1, believed_at=datetime(2020, 1, 1, tzinfo=UTC)
     )
     assert before_ingest.negative is not None  # nothing was believed yet
-    assert before_ingest.as_of_believed_at == datetime(2020, 1, 1, tzinfo=UTC)
+    assert before_ingest.temporal_scope.believed_at == datetime(
+        2020, 1, 1, tzinfo=UTC
+    )
 
     now = graph.neighborhood(
         entity_id=ids["Acme"], hops=1, believed_at=datetime(2026, 12, 1, tzinfo=UTC)
     )
     assert {"Alice", "Bob"} <= _names(now)
-    assert now.as_of_believed_at == datetime(2026, 12, 1, tzinfo=UTC)
+    assert now.temporal_scope.believed_at == datetime(2026, 12, 1, tzinfo=UTC)
 
 
 def test_freshness_carries_the_snapshot_stamp(graph: GraphQueries) -> None:

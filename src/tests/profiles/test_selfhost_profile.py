@@ -22,7 +22,7 @@ def test_selfhost_setup_seeds_shipped_examples() -> None:
 
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "seed_shipped_examples" in source
-    assert "seed_canonical_recipes" in source
+    assert "seed_canonical_operations" in source
 
 
 def test_selfhost_composes_every_implemented_continuous_route() -> None:

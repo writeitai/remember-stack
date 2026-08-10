@@ -1,5 +1,4 @@
 """Batch E proofs for deterministic hybrid refill and claim grouping."""
-
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
@@ -21,14 +20,8 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import P1ChunkText
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine.recipes import (
-    _DEMOTED_GRAPH_RECIPE_DEFINITIONS as GRAPH_RECIPES,
-)
-from rememberstack.spine.recipes import _STOCK_RECIPE_DEFINITIONS as CANONICAL_RECIPES
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
-from rememberstack.surfaces import RecipeExecutor
-from rememberstack.surfaces.recipe_surface import recipe_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5c000000-0000-0000-0000-000000000001")
@@ -209,13 +202,12 @@ class _Corpus:
             model_provider=FakeModelProvider(generate_payloads={}),
             embedding_model="batch-e",
         )
-        recipe = next(
-            recipe for recipe in CANONICAL_RECIPES if recipe.name == "claims_hybrid_rrf"
-        )
-        answer = RecipeExecutor(query_engine=engine).execute(
+        answer = engine.testimony_context(
             deployment_id=_DEPLOYMENT_ID,
-            recipe=recipe,
-            arguments={"query": "launch", "k": k, "candidate_k": len(claim_ids)},
+            query="launch",
+            k=k,
+            candidate_k=len(claim_ids),
+            evaluated_at=_NOW,
         )
         return answer, index
 
@@ -315,40 +307,3 @@ def test_exact_normalizer_groups_only_equal_confirmed_claims(corpus: _Corpus) ->
             ).scalars()
         )
     assert confirmed_ids == set(representative.grouped_claim_ids)
-
-
-def test_affected_recipe_versions_and_disclosures_are_visible_in_catalog() -> None:
-    recipes = {recipe.name: recipe for recipe in (*CANONICAL_RECIPES, *GRAPH_RECIPES)}
-    descriptors = {
-        descriptor.name: descriptor
-        for descriptor in recipe_descriptors(
-            recipes=tuple(sorted(recipes.values(), key=lambda recipe: recipe.name))
-        )
-    }
-
-    assert {
-        name: recipes[name].version
-        for name in (
-            "claims_hybrid_rrf",
-            "chunks_hybrid_rrf",
-            "question_context",
-            "multi_hop_context",
-        )
-    } == {
-        "claims_hybrid_rrf": 6,
-        "chunks_hybrid_rrf": 3,
-        "question_context": 4,
-        "multi_hop_context": 2,
-    }
-    assert all(
-        descriptors[name].version == recipes[name].version
-        for name in (
-            "claims_hybrid_rrf",
-            "chunks_hybrid_rrf",
-            "question_context",
-            "multi_hop_context",
-        )
-    )
-    assert "corroboration" in descriptors["claims_hybrid_rrf"].description
-    assert "corroboration" in descriptors["question_context"].description
-    assert "corroboration" in descriptors["multi_hop_context"].description

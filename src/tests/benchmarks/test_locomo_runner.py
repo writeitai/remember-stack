@@ -59,6 +59,7 @@ from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import ChunkEvidenceResult
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
 from rememberstack.model import Envelope
@@ -118,7 +119,7 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert answer.generated_answer == "Prague"
     assert answer.agent_call_count == 2
     assert answer.first_step_retries == 0
-    assert [call.name for call in answer.tool_calls] == ["question_context"]
+    assert [call.name for call in answer.tool_calls] == ["testimony_context"]
     assert len(provider.generated_prompts) == 2
 
 
@@ -180,6 +181,8 @@ def test_agent_can_recover_from_rejected_sql_and_answer_from_open_query() -> Non
         name="query_sql",
         description="Run SQL",
         input_schema={"type": "object"},
+        result_schema={"type": "object"},
+        result_contract="QueryResult/v1",
         output_grain="exploratory_tabular",
         answer_intent="query_infrastructure",
     )
@@ -259,6 +262,8 @@ def test_query_transport_and_quota_failures_are_terminal(
                     name="query_sql",
                     description="Run SQL",
                     input_schema={"type": "object"},
+                    result_schema={"type": "object"},
+                    result_contract="QueryResult/v1",
                     output_grain="exploratory_tabular",
                     answer_intent="query_infrastructure",
                 ),
@@ -788,7 +793,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v11", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v12", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1264,7 +1269,7 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
 
 @pytest.mark.parametrize(
     ("drift_kind", "message"),
-    (("manifest", "query surface"), ("recipes", "canonical three-operation surface")),
+    (("manifest", "query surface"), ("operations", "canonical four-operation surface")),
 )
 def test_answer_refuses_non_current_query_surface_before_model_calls(
     drift_kind: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1285,8 +1290,8 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
             return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
         if (
             not clean_surface
-            and drift_kind == "recipes"
-            and request.url.path == "/recipes"
+            and drift_kind == "operations"
+            and request.url.path == "/operations"
         ):
             return httpx.Response(200, json=[])
         return _run_transport(request)
@@ -1328,7 +1333,7 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
 
 @pytest.mark.parametrize(
     ("drift_kind", "message"),
-    (("manifest", "query surface"), ("recipes", "canonical three-operation surface")),
+    (("manifest", "query surface"), ("operations", "canonical four-operation surface")),
 )
 def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
     drift_kind: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1345,7 +1350,7 @@ def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
             uploads += 1
         if drift_kind == "manifest" and request.url.path == "/query/space":
             return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
-        if drift_kind == "recipes" and request.url.path == "/recipes":
+        if drift_kind == "operations" and request.url.path == "/operations":
             return httpx.Response(200, json=[])
         return _run_transport(request)
 
@@ -1563,8 +1568,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v11","protocol_fingerprint":'
-        '"db4daf31003ac5e0252cd7dd6e8100817960098c6dce18cc122a0597ab33f4a3",'
+        '{"protocol_name":"RS-LoCoMo-Full-v12","protocol_fingerprint":'
+        '"12e32b69d86e07ea59c4d20082a780cd921c64ca14311123de1fbaff3e0ad23c",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1682,11 +1687,14 @@ def test_merge_preserves_ingests_for_chunk_session_diagnostics(
         update={
             "tool_calls": (
                 ToolCallRecord(
-                    name="question_context",
+                    name="testimony_context",
                     arguments={"query": "Where?"},
                     latency_ms=1,
                     response=Envelope(
                         grain=Grain.EVIDENCE,
+                        temporal_scope=current_temporal_scope(
+                            evaluated_at=source_time
+                        ),
                         chunks=(
                             ChunkEvidenceResult(
                                 chunk_id=UUID("57000000-0000-0000-0000-000000000012"),
@@ -1747,7 +1755,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v11"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v12"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -1820,7 +1828,7 @@ def _memory_client() -> tuple[MemoryClient, httpx.Client]:
         transport=httpx.MockTransport(
             lambda request: (
                 httpx.Response(200, json=_empty_envelope().model_dump(mode="json"))
-                if request.url.path.startswith("/recipe/")
+                if request.url.path.startswith("/operations/")
                 else httpx.Response(404, text="unexpected")
             )
         ),
@@ -1829,17 +1837,21 @@ def _memory_client() -> tuple[MemoryClient, httpx.Client]:
 
 
 def _empty_envelope() -> Envelope:
+    evaluated_at = datetime(2026, 7, 23, tzinfo=timezone.utc)
     return Envelope(
         grain=Grain.EVIDENCE,
-        freshness=Freshness(pg_live_ts=datetime(2026, 7, 23, tzinfo=timezone.utc)),
+        temporal_scope=current_temporal_scope(evaluated_at=evaluated_at),
+        freshness=Freshness(pg_live_ts=evaluated_at),
     )
 
 
 def _tool() -> ToolDescriptor:
     return ToolDescriptor(
-        name="question_context",
+        name="testimony_context",
         description="What sources asserted",
         input_schema={"type": "object"},
+        result_schema={"type": "object"},
+        result_contract="envelope",
         output_grain="evidence",
         answer_intent="assertion_history",
     )
@@ -1850,7 +1862,7 @@ def _tool_then_answer(prompt: str, type_name: str) -> dict[str, object]:
     if "TOOL TRACE SO FAR:\n[]" in prompt:
         return {
             "action": "tool",
-            "tool_name": "question_context",
+            "tool_name": "testimony_context",
             "arguments_json": '{"query": "Where?"}',
             "answer": None,
         }
@@ -1875,7 +1887,7 @@ def _private_tool_answer_and_judge(prompt: str, type_name: str) -> dict[str, obj
     if "TOOL TRACE SO FAR:\n[]" in prompt:
         return {
             "action": "tool",
-            "tool_name": "question_context",
+            "tool_name": "testimony_context",
             "arguments_json": '{"query": "PRIVATE_TOOL_ARGUMENT_BODY"}',
             "answer": None,
         }
@@ -2013,7 +2025,7 @@ class _CostProvider:
             payload = (
                 {
                     "action": "tool",
-                    "tool_name": "question_context",
+                    "tool_name": "testimony_context",
                     "arguments_json": '{"query": "Where?"}',
                     "answer": None,
                 }
@@ -2240,7 +2252,7 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
         )
     if request.method == "POST" and request.url.path == "/readiness":
         return httpx.Response(200, json=_complete_readiness_payload())
-    if request.method == "GET" and request.url.path == "/recipes":
+    if request.method == "GET" and request.url.path == "/operations":
         return httpx.Response(
             200, json=[tool.model_dump(mode="json") for tool in _stock_tools()]
         )
@@ -2263,7 +2275,7 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
             ]
         )
         return httpx.Response(200, json=_query_result_payload(rows=rows))
-    if request.method == "POST" and request.url.path.startswith("/recipe/"):
+    if request.method == "POST" and request.url.path.startswith("/operations/"):
         return httpx.Response(200, json=_empty_envelope().model_dump(mode="json"))
     return httpx.Response(404, text="unexpected synthetic request")
 

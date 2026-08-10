@@ -115,13 +115,14 @@ Deep dive: [Ingestion](https://docs.remember.dev/docs/ingestion)
 
 **Projections nominate. The spine confirms. The envelope accounts.**
 
-Exactly **three** top-level assured operations (API / CLI / MCP):
+Exactly **four** top-level assured operations (API / CLI / MCP):
 
 | Operation | Use for |
 | --- | --- |
 | `resolve_entity` | Name → ranked entity candidates |
-| `question_context` | High-recall **evidence** for a question |
-| `current_context` | **Current-fact** context with live testimony |
+| `testimony_context` | High-recall **evidence** for a question |
+| `fact_context` | **Current or historical fact** context with live testimony |
+| `answer_context` | Both complete authority views in `ContextBundle/v1` |
 
 Plus open SQL, read-only Cypher, saved examples, and schema discovery.
 
@@ -152,7 +153,7 @@ cp .env.example .env   # set your OpenRouter (or provider) key
 docker compose up --build --detach --wait
 
 curl --fail http://localhost:8000/healthz
-curl --fail http://localhost:8000/recipes
+curl --fail http://localhost:8000/operations
 ```
 
 Ingest Markdown, wait for readiness, then call the assured ops — full walkthrough:

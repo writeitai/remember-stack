@@ -1,42 +1,47 @@
 export const metadata = {
   title: "API Reference",
   description:
-    "The HTTP query API: open query space entry points, zero-LLM primitives, and registry-rendered recipes — each returning a typed result behind one auth perimeter.",
+    "The HTTP query API: open query space entry points, zero-LLM primitives, and registry-rendered operations — each returning a typed result behind one auth perimeter.",
 };
 
 # API Reference
 
-> **Query contract.** RememberStack exposes exactly three top-level assured
-> operations: `resolve_entity`, `question_context`, and `current_context`. The
+> **Query contract.** RememberStack exposes exactly four top-level assured
+> operations: `resolve_entity`, `testimony_context`, `fact_context`, and
+> `answer_context`. The
 > 17 former stock query patterns are discoverable `examples.*` saved queries
 > only. There is no legacy compatibility layer or deprecation window.
 
 RememberStack has two deliberately separate truth layers. Claims are
 immutable source testimony (“what was asserted, by whom, when”);
-facts—relations and observations—are the adjudicated current
-worldview (“what the system currently holds true”):
+facts—relations and observations—are the adjudicated worldview (“what the
+system holds or held true”):
 supersession-adjudicated, clocked on two time axes (when a fact held in
 the world, and when the system learned it), evidence-counted per
 distinct source—repetition is not corroboration—and
 contradiction-tracked. The `fact_claim_evidence` association is the
 auditable bridge between the layers, recording which claims support or
 contradict each fact. Query claims to inspect testimony; query facts to
-answer current-truth questions, then follow the bridge to see why the
-system believes the fact.
+answer current or historical truth questions, then follow the bridge to see
+why the system believes or believed the fact.
+
+(Internally these guarantees are decisions D41 and D54.)
 
 The HTTP API is a thin, typed veneer over one deployment. Open SQL and
-Cypher return **`QueryResult/v1`**. The three assured operations return the
-**response envelope**. No query endpoint calls an LLM completion, and
+Cypher return **`QueryResult/v1`**. The first three assured operations return a
+typed **response envelope**; `answer_context` returns `ContextBundle/v1` with
+the complete testimony and fact envelopes kept separate. No query endpoint
+calls an LLM completion, and
 reads never trigger writes. An explicitly composed ingest capability is the
 sole client write path and always enters E0.
 
 Four things are true of every deployment's API:
 
 - **The shipping query surface is deliberate.** Nine open-query entry points
-  mount under `/query/…`; `/recipes` and `/recipe/{name}` expose exactly
-  `resolve_entity`, `question_context`, and `current_context`.
-- **The recipe endpoints render from the registry.** `GET /recipes` _is_ the
-  deployment's active recipe rows; the CLI and MCP surfaces render the same
+  mount under `/query/…`; `/operations` and `/operations/{name}` expose exactly
+  `resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`.
+- **The operation endpoints render from the registry.** `GET /operations` _is_ the
+  deployment's active operation rows; the CLI and MCP surfaces render the same
   set, so the three surfaces are always in lockstep.
 - **The API is the one enforcement point.** When a deployment configures an
   auth perimeter, every endpoint is gated on a valid credential for _that_
@@ -49,8 +54,9 @@ Four things are true of every deployment's API:
 ## Open query space
 
 Choose among three neutral surfaces: native snapshot Cypher with
-`built_at`/age, live/evidence-composable SQL, and the three assured typed
-operations (`resolve_entity`, `question_context`, `current_context`).
+`built_at`/age, live/evidence-composable SQL, and the four assured typed
+operations (`resolve_entity`, `testimony_context`, `fact_context`,
+`answer_context`).
 
 | Method | Path | Contract |
 | --- | --- | --- |
@@ -149,15 +155,15 @@ WHERE r.testimony_rank = 1
 Shipped `examples.*` identities run only through
 `POST /query/saved/examples/{name}/run` — never as top-level tools.
 
-## Recipes — the registry, rendered
+## Operations — the registry, rendered
 
-The registry contains exactly three assured, named operations. They keep the
+The registry contains exactly four assured, named operations. They keep the
 typed response envelope where that contract adds value; reusable query patterns
 belong under `examples.*`, not in a second compatibility catalog.
 
-### `GET /recipes`
+### `GET /operations`
 
-Returns the deployment's active recipes as tool descriptors — the same list an
+Returns the deployment's active operations as tool descriptors — the same list an
 MCP client discovers:
 
 ```json
@@ -179,33 +185,49 @@ MCP client discovers:
 ]
 ```
 
-`output_grain` and `answer_intent` travel with each descriptor, so a caller
-knows what _kind_ of answer a recipe returns before calling it.
+`result_schema`, `result_contract`, `output_grain`, and `answer_intent` travel
+with each descriptor. `output_grain` is null only for `answer_context`, whose
+contract is the explicitly two-grain `ContextBundle/v1`.
 
-### `POST /recipe/{name}`
+### `POST /operations/{name}`
 
-Runs one recipe by name over a JSON body of arguments and returns the
-envelope. Arguments are coerced to the types the primitives need (a uuid
-string to a UUID, an ISO-8601 string to an instant):
+Runs one operation by name over a JSON body of arguments and returns its
+declared result contract. Arguments are coerced to the types the primitives
+need (a UUID string to a UUID, an ISO-8601 string to an instant):
 
 ```bash
-curl -X POST "$REMEMBERSTACK_API_URL/recipe/resolve_entity" \
+curl -X POST "$REMEMBERSTACK_API_URL/operations/resolve_entity" \
   -H "content-type: application/json" \
   -d '{"name": "Alice", "entity_type": "person"}'
 ```
 
-An unknown recipe is **404**; a missing required argument is **422**.
+An unknown operation is **404**; a missing required argument is **422**.
 
 The complete operation catalog is:
 
 | Operation | Arguments | What it returns |
 | --- | --- | --- |
 | `resolve_entity` | `name`, optional `entity_type` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
-| `question_context` | `query`, optional `k` (1–100, default 50), optional `candidate_k` (1–400, default 200), optional `include_facts=false`, optional `include_entities=false` | hybrid live claims and source chunks by default; optional PostgreSQL-confirmed current facts and entities |
-| `current_context` | `query`, optional `k` (1–30, default 15), optional `evidence_per_fact` (1–5, default 3) | current relations and observations nominated semantically for the question, with live supporting and contradicting claims; evidence is capped at 60 records per envelope |
+| `testimony_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
+| `fact_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | relations and observations for `current`, `at`, `overlap`, or `history`, with supporting and contradicting testimony and exact association totals |
+| `answer_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `time` | `ContextBundle/v1`: complete `testimony_context` and `fact_context` child envelopes, never a blended result list |
+
+`entity_ids` is optional. Omit it for deployment-wide semantic retrieval; pass
+confirmed survivor IDs when identity materially narrows the question. Supplying
+any unknown, retired, forgotten, or foreign ID yields one opaque
+`unknown_entity` result with no partial answer. Use `resolve_entity` first when
+a name is ambiguous. Entity and fact-time eligibility are applied before the
+bounded ranking cut.
+
+The `time` object is a closed union: `{"mode":"current"}` (default),
+`{"mode":"at","at":"…"}`, `{"mode":"overlap","from":"…","to":"…"}`,
+or `{"mode":"history"}`. These modes select world time under current system
+belief; the separate two-axis `facts_as_of`/open-SQL path answers what the
+system believed at a past instant. Every fact envelope echoes the applied mode
+in its required `temporal_scope`.
 
 The 17 former stock query patterns are shipped only as discoverable
-`examples.*` saved queries. They are not recipe tools and have no deprecation
+`examples.*` saved queries. They are not operation tools and have no deprecation
 or migration surface.
 
 ## Client writes
@@ -260,9 +282,9 @@ from pathlib import Path
 from rememberstack.client import MemoryClient
 
 with MemoryClient.from_settings() as memory:
-    tools = memory.recipes()
-    answer = memory.run_recipe(
-        name="question_context",
+    tools = memory.list_operations()
+    answer = memory.run_operation(
+        name="testimony_context",
         arguments={"query": "What did Alice say about the launch?"},
     )
     landed = memory.ingest(
@@ -304,21 +326,18 @@ verdict. Chunk results disclose an optional deterministic `context_prefix`
 (location header under the embedding-input policy) separately from body-only
 `chunk_text` and carry the current document, version,
 representation, offsets, and source timestamps confirmed by the live spine.
-`current_context` is a flat fact-grain envelope: `facts[]` contains the current
+`fact_context` is a flat fact-grain envelope: `facts[]` contains the selected
 verdicts, `evidence[]` contains the backing testimony, `fact_evidence[]`
 explicitly maps each fact to each claim and stance, and `evidence_totals[]`
-reports exact returned/total counts for both stances. It has no `entity`
-argument or resolution step; facts with no live evidence are never returned.
+reports exact returned/total counts for both stances. It accepts only explicit
+entity IDs, not names or a hidden resolution step; facts with no live evidence
+are never returned.
 
-For ordinary question answering, prefer the public `question_context` recipe.
-Version 4 keeps `include_facts` and `include_entities` false by default. The
-fact flag reuses `current_context` with fixed evidence depth 3, at most 30
-facts, and at most 60 fact/evidence associations. The entity flag returns exact
-resolution candidates before semantic candidates, deduplicates by survivor ID,
-confirms the full bounded pool through `memory_v1.entities_current`, and then
-returns at most 20 live survivors. Neither
-flag silently adds graph neighbors; use `query_cypher`, live SQL graph helpers,
-or the saved `examples.multi_hop_context` pattern for an explicit graph request.
+Choose the authority explicitly: `testimony_context` for what sources said,
+`fact_context` for what the system holds or held true, and `answer_context` when
+the answer-producing agent needs both complete views. None silently adds graph
+neighbors; use `query_cypher`, live SQL graph helpers, or the saved
+`examples.multi_hop_context` pattern for explicit graph expansion.
 
 The default question channel independently fuses semantic and BM25 claim nominations and source-chunk
 nominations, confirms the complete already-fetched pools, and takes the final
@@ -332,8 +351,8 @@ The result keeps those atomic claims in `evidence[]` and verbatim source
 passages in `chunks[]`; neither payload is promoted to current-fact truth.
 The saved `examples.claims_hybrid_rrf` and `examples.chunks_hybrid_rrf`
 patterns expose either half when a caller needs only one evidence type; they
-run through `/query/saved/examples/{name}/run` and are not recipe operations.
-The three operation descriptors expose their integer `version`, so clients can
+run through `/query/saved/examples/{name}/run` and are not assured operations.
+The four operation descriptors expose their integer `version`, so clients can
 pin the behavior that produced an answer.
 
 `resolve` always returns every exact-name candidate. Supplying focal entities only

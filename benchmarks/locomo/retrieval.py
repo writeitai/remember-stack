@@ -1,4 +1,4 @@
-"""Complete public-read catalog and bounded P3 adapter for LoCoMo v11."""
+"""Complete public-read catalog and bounded P3 adapter for LoCoMo v12."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
+from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -84,17 +85,19 @@ class _P3ReadLimitExceeded(RuntimeError):
 
 
 def assured_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact three canonical assured-operation descriptors."""
-    from rememberstack.spine.recipes import CANONICAL_RECIPES
-    from rememberstack.surfaces.recipe_surface import recipe_descriptors
+    """Return the exact four canonical assured-operation descriptors."""
+    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
+    from rememberstack.surfaces.operation_surface import operation_descriptors
 
-    return recipe_descriptors(
-        recipes=tuple(sorted(CANONICAL_RECIPES, key=lambda recipe: recipe.name))
+    return operation_descriptors(
+        operations=tuple(
+            sorted(CANONICAL_OPERATIONS, key=lambda operation: operation.name.value)
+        )
     )
 
 
 def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact 22-tool read catalog exposed to the v11 answer seat."""
+    """Return the exact 23-tool read catalog exposed to the v12 answer seat."""
     tools = (
         *assured_tool_catalog(),
         *_primitive_tool_descriptors(),
@@ -127,7 +130,9 @@ def is_correctable_query_error(*, code: str | None) -> bool:
     return typed in CORRECTABLE_QUERY_ERROR_CODES
 
 
-def query_result_failure(response: Envelope | JsonValue) -> tuple[str, str] | None:
+def query_result_failure(
+    response: Envelope | ContextBundleV1 | JsonValue,
+) -> tuple[str, str] | None:
     """Extract a typed failure from an HTTP-200 QueryResult payload."""
     if not isinstance(response, dict) or response.get("contract") != "QueryResult/v1":
         return None
@@ -151,10 +156,10 @@ def dispatch_answer_tool(
     p3: P3Mount | None,
     name: str,
     arguments: Mapping[str, object],
-) -> Envelope | JsonValue:
+) -> Envelope | ContextBundleV1 | JsonValue:
     """Dispatch one catalogued read through the public SDK or P3 mount."""
     if name in {tool.name for tool in assured_tool_catalog()}:
-        return client.run_recipe(name=name, arguments=arguments)
+        return client.run_operation(name=name, arguments=arguments)
     if name in PRIMITIVE_TOOL_NAMES:
         return _dispatch_primitive(client=client, name=name, arguments=arguments)
     if name in OPEN_QUERY_TOOL_NAMES:
@@ -805,6 +810,8 @@ def _open_query_descriptors() -> tuple[ToolDescriptor, ...]:
                 name=str(descriptor["name"]),
                 description=str(descriptor["description"]),
                 input_schema=input_schema,
+                result_schema={"type": "object"},
+                result_contract="QueryResult/v1-or-discovery",
                 output_grain=(
                     "discovery"
                     if descriptor["name"]
@@ -908,6 +915,8 @@ def _descriptor(
         name=name,
         description=description,
         input_schema=input_schema,
+        result_schema={"type": "object"},
+        result_contract="envelope" if output_grain in {"fact", "evidence", "composite"} else "bounded_snapshot_result",
         output_grain=output_grain,
         answer_intent=answer_intent,
     )

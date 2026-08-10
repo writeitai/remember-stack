@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Getting started",
   description:
-    "Install RememberStack, stand up a single-deployment Compose stack, ingest a Markdown document, and run the three assured queries.",
+    "Install RememberStack, stand up a single-deployment Compose stack, ingest a Markdown document, and run the four assured queries.",
 };
 
 # Getting started
@@ -40,10 +40,11 @@ Health:
 
 ```bash
 curl --fail http://localhost:8000/healthz
-curl --fail http://localhost:8000/recipes
+curl --fail http://localhost:8000/operations
 ```
 
-You should see the three assured operations: `resolve_entity`, `question_context`, `current_context`.
+You should see the four assured operations: `resolve_entity`,
+`testimony_context`, `fact_context`, and `answer_context`.
 
 ## 2. Ingest a document
 
@@ -98,14 +99,14 @@ P2 (graph) and P3 (corpus filesystem) rebuild whole-corpus, not per document:
 docker compose --profile operations run --rm projections
 ```
 
-## 5. First retrieval — three assured ops
+## 5. First retrieval — four assured ops
 
-Argument names match the recipe registry and [API reference](/docs/reference/api).
+Argument names match the operation registry and [API reference](/docs/reference/api).
 
 ### Resolve an entity
 
 ```bash
-curl --fail -X POST http://localhost:8000/recipe/resolve_entity \
+curl --fail -X POST http://localhost:8000/operations/resolve_entity \
   -H 'content-type: application/json' \
   -d '{"name":"Alice","entity_type":"person"}'
 ```
@@ -115,7 +116,7 @@ Query-time resolve is **exact-name (T0)** in the current surface: ambiguity amon
 ### Evidence context for a question
 
 ```bash
-curl --fail -X POST http://localhost:8000/recipe/question_context \
+curl --fail -X POST http://localhost:8000/operations/testimony_context \
   -H 'content-type: application/json' \
   -d '{"query":"Who is the CFO of Acme?"}'
 ```
@@ -125,20 +126,41 @@ Returns **evidence grain** (claims + chunks) — testimony, not the adjudicated 
 ### Current-fact context
 
 ```bash
-curl --fail -X POST http://localhost:8000/recipe/current_context \
+curl --fail -X POST http://localhost:8000/operations/fact_context \
+  -H 'content-type: application/json' \
+  -d '{"query":"Who is the CFO of Acme?","time":{"mode":"current"}}'
+```
+
+Returns **fact grain** with live testimony under a hard evidence budget. Use
+`at`, `overlap`, or `history` time mode when the question is about past
+world-valid state; omit `entity_ids` for deployment-wide retrieval or pass
+confirmed IDs to narrow the eligible set before ranking.
+
+### Both authority views
+
+```bash
+curl --fail -X POST http://localhost:8000/operations/answer_context \
   -H 'content-type: application/json' \
   -d '{"query":"Who is the CFO of Acme?"}'
 ```
 
-Returns **fact grain** with live testimony under a hard evidence budget.
+Returns `ContextBundle/v1` with the complete evidence-grain response under
+`testimony` and the complete fact-grain response under `facts`. The two are not
+flattened or re-ranked together.
 
 ### What to read on the envelope first
 
-Single-grain answers are **flat** (not nested under `parts[].results`):
+Single-grain `Envelope` answers are flat:
 
 ```json
 {
   "grain": "fact",
+  "temporal_scope": {
+    "mode": "current",
+    "evaluated_at": "…",
+    "believed_at": "…",
+    "identity_regime": "current"
+  },
   "facts": [{ "fact_id": "…", "kind": "relation", "label": "…", "evidence_count": 1, "support": "current" }],
   "fact_evidence": [{ "fact_id": "…", "claim_id": "…", "stance": "supports" }],
   "evidence": [{ "claim_id": "…", "claim_text": "…", "is_current_testimony": true }],
@@ -154,6 +176,7 @@ Agent checklist:
 2. If `negative` is set — branch on `kind` (`unknown_entity` | `known_empty` | `boundary`)
 3. Prefer `facts` + `fact_evidence` for present-tense belief
 4. Drill `evidence` / sources before irreversible action
+5. For `ContextBundle/v1`, inspect `testimony` and `facts` as separate complete envelopes
 
 Full contract: [Response envelope](/docs/retrieval/envelope).
 
@@ -175,7 +198,7 @@ curl --fail -X POST http://localhost:8000/query/sql \
 
 ## 7. Agent path
 
-Surfaces available immediately without mounts: **API / CLI / MCP** (same three assured ops + open query).
+Surfaces available immediately without mounts: **API / CLI / MCP** (same four assured ops + open query).
 
 Mounts (P3 corpus tree, artifacts, raw, Plane K checkout) are published through the **library mount APIs** for a deployment — not a separate Compose service in the smoke profile. When your harness can mount:
 

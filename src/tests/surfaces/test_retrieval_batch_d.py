@@ -83,11 +83,35 @@ class _QuestionIndex:
     def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
         return (self.claim_id,)
 
+    def search_claims_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the claim only when PostgreSQL declared it eligible."""
+        return self._scored(item_id=self.claim_id, candidate_ids=candidate_ids)
+
+    def search_claims_lexical_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the same eligible claim for the lexical channel."""
+        return self._scored(item_id=self.claim_id, candidate_ids=candidate_ids)
+
     def search_chunks(self, **_: object) -> tuple[str, ...]:
         return (self.chunk_id,)
 
     def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
         return (self.chunk_id,)
+
+    def search_chunks_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the chunk only when PostgreSQL declared it eligible."""
+        return self._scored(item_id=self.chunk_id, candidate_ids=candidate_ids)
+
+    def search_chunks_lexical_scored(
+        self, *, candidate_ids: tuple[str, ...], **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the same eligible chunk for the lexical channel."""
+        return self._scored(item_id=self.chunk_id, candidate_ids=candidate_ids)
 
     def chunk_texts(
         self,
@@ -108,6 +132,17 @@ class _QuestionIndex:
                 item_id=entity_id, rank=rank, score=1.0 / rank, channel="semantic"
             )
             for rank, entity_id in enumerate(self.entity_ids, start=1)
+        )
+
+    @staticmethod
+    def _scored(
+        *, item_id: str, candidate_ids: tuple[str, ...]
+    ) -> tuple[P1Nomination, ...]:
+        """Build one deterministic exact-membership nomination."""
+        if item_id not in candidate_ids:
+            return ()
+        return (
+            P1Nomination(item_id=item_id, rank=1, score=1.0, channel="test"),
         )
 
 
@@ -594,11 +629,11 @@ def _answer(corpus: tuple[_Corpus, GraphQueries], **arguments: Any):  # noqa: AN
     )
 
 
-def test_question_context_v4_flags_default_false(
+def test_testimony_context_v4_flags_default_false(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:
     seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
+    answer = seeded.query_engine().testimony_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice"
     )
 
@@ -608,112 +643,36 @@ def test_question_context_v4_flags_default_false(
     assert answer.entities == ()
 
 
-def test_question_context_v4_fact_channel_reuses_current_context(
+def test_testimony_context_can_be_scoped_to_a_current_entity(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:
     seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
-        deployment_id=_DEPLOYMENT_ID, query="Alice", include_facts=True
-    )
-
-    assert {fact.fact_id for fact in answer.facts} == {seeded.relations["alice_beacon"]}
-    assert answer.fact_evidence
-    assert answer.evidence_totals
-    assert len(answer.fact_evidence) <= 60
-
-
-def test_question_context_v4_entity_channel_is_resolution_first_and_confirmed(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
-        deployment_id=_DEPLOYMENT_ID, query="Alice", include_entities=True
-    )
-
-    assert [candidate.entity_id for candidate in answer.entities] == [
-        seeded.entities["alice"],
-        seeded.entities["acme"],
-    ]
-    assert [candidate.tier for candidate in answer.entities] == ["T0", "semantic"]
-
-
-def test_question_context_confirms_before_cutting_the_entity_cap(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    """A stale semantic head cannot hide the 21st, live ranked nomination."""
-    seeded, _graph = corpus
-    stale_head = tuple(uuid4() for _ in range(20))
-    engine = seeded.query_engine(entity_ids=(*stale_head, seeded.entities["acme"]))
-
-    answer = engine.question_context(
-        deployment_id=_DEPLOYMENT_ID, query="no exact alias", include_entities=True
-    )
-
-    assert [candidate.entity_id for candidate in answer.entities] == [
-        seeded.entities["acme"]
-    ]
-    assert answer.dropped_by_hydration >= len(stale_head)
-
-
-def test_question_context_bounds_exact_alias_fanout_before_confirmation(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    """A common alias cannot create an unbounded confirmation parameter set."""
-    seeded, _graph = corpus
-    with seeded.engine.begin() as connection:
-        for index in range(30):
-            entity_id = uuid4()
-            connection.execute(
-                text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
-                    " canonical_name, normalized_name) VALUES (:entity,"
-                    " :deployment, 'Concept', :name, lower(:name))"
-                ),
-                {
-                    "entity": entity_id,
-                    "deployment": _DEPLOYMENT_ID,
-                    "name": f"Fanout {index:02d}",
-                },
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
-                    " alias_text, normalized_lemma, provenance) VALUES"
-                    " (:alias, :deployment, :entity, 'Fanout', 'fanout',"
-                    " 'llm_canonical')"
-                ),
-                {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
-            )
-
-    engine = seeded.query_engine()
-    resolved = engine.resolve(deployment_id=_DEPLOYMENT_ID, name="Fanout")
-    assert len(resolved.entities) == 30
-
-    answer = engine.question_context(
-        deployment_id=_DEPLOYMENT_ID, query="Fanout", include_entities=True
-    )
-
-    assert [candidate.entity_id for candidate in answer.entities] == [
-        seeded.entities["acme"]
-    ]
-    assert answer.dropped_by_hydration == 21
-
-
-def test_question_context_v4_flags_work_together(
-    corpus: tuple[_Corpus, GraphQueries],
-) -> None:
-    seeded, _graph = corpus
-    answer = seeded.query_engine().question_context(
+    answer = seeded.query_engine().testimony_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Alice",
-        include_facts=True,
-        include_entities=True,
+        entity_ids=(seeded.entities["alice"],),
     )
 
-    assert answer.facts
-    assert answer.entities
     assert answer.evidence
     assert answer.chunks
+    assert answer.facts == ()
+    assert answer.entities == ()
+
+
+def test_testimony_context_rejects_an_unknown_entity_without_partial_results(
+    corpus: tuple[_Corpus, GraphQueries],
+) -> None:
+    seeded, _graph = corpus
+    answer = seeded.query_engine().testimony_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="Alice",
+        entity_ids=(uuid4(),),
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.UNKNOWN_ENTITY
+    assert answer.evidence == ()
+    assert answer.chunks == ()
 
 
 def test_two_entity_path_has_both_stances_and_exact_totals(
@@ -723,7 +682,6 @@ def test_two_entity_path_has_both_stances_and_exact_totals(
     answer = _answer(corpus, entity_b="Acme", hops=2, evidence_per_fact=1)
 
     assert answer.grain is Grain.EVIDENCE
-    assert not answer.parts
     assert answer.negative is None
     assert answer.paths and answer.paths[0].length == 2
     assert {edge.relation_id for edge in answer.edges} == {

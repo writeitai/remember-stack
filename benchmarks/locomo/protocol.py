@@ -25,17 +25,18 @@ from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
+from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v11"
-DEFAULT_PROTOCOL_KEY: Final = "full-v11"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-full-retrieval-v11"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v12"
+DEFAULT_PROTOCOL_KEY: Final = "full-v12"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-authority-context-v12"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "54912e5f1fc16060712d95c7b25304d7debc53c331d212c1dbb20054f66fab91"
+    "0d8e567f5981c09b3003f70d1be557e0cdf8058abb344c484f89b4cbad6dc99d"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -61,8 +62,9 @@ ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinar
 RememberStack deployment. You may call any read tool listed below. Work as a
 normal memory agent and choose the cheapest suitable path:
 
-1. Assured operations: question_context for ordinary high-recall source
-   context, current_context for what holds now, resolve_entity for exact names.
+1. Assured operations: testimony_context for what sources said,
+   fact_context for current or historical adjudicated truth, answer_context
+   when both authorities are useful, and resolve_entity for exact names.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into.
 3. Open query: discover schema/examples before unfamiliar SQL or Cypher; use
@@ -137,8 +139,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V11 = LoCoMoProtocol(
-    key="full-v11",
+_FULL_V12 = LoCoMoProtocol(
+    key="full-v12",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -160,7 +162,7 @@ _FULL_V11 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V11.key: _FULL_V11}
+    {_FULL_V12.key: _FULL_V12}
 )
 
 
@@ -263,11 +265,18 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
     meaningful default values such as a zero hydration-drop count or an
     unknown temporal precision.
     """
-    response = (
-        record.response.model_dump(mode="json", exclude_none=True, exclude={"ranking"})
-        if isinstance(record.response, Envelope)
-        else record.response
-    )
+    if isinstance(record.response, Envelope):
+        response: object = record.response.model_dump(
+            mode="json", exclude_none=True, exclude={"ranking"}
+        )
+    elif isinstance(record.response, ContextBundleV1):
+        response = record.response.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude={"testimony": {"ranking"}, "facts": {"ranking"}},
+        )
+    else:
+        response = record.response
     return {
         "name": record.name,
         "arguments": record.arguments,

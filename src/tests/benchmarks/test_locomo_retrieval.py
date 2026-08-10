@@ -426,6 +426,12 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
             200,
             json={
                 "grain": "composite",
+                "temporal_scope": {
+                    "mode": "current",
+                    "evaluated_at": "2026-08-07T00:00:00Z",
+                    "believed_at": "2026-08-07T00:00:00Z",
+                    "identity_regime": "current",
+                },
                 "freshness": {"pg_live_ts": "2026-08-07T00:00:00Z"},
             },
         )
@@ -473,7 +479,7 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
     assert isinstance(transcript, Envelope)
     assert isinstance(observations, Envelope)
     assert isinstance(relations, Envelope)
-    assert len(answer_tool_catalog()) == 22
+    assert len(answer_tool_catalog()) == 23
     assert observed[0] == (
         "POST",
         "/query/sql",

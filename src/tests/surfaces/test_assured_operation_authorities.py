@@ -1,6 +1,6 @@
 """Pure guards that retained operations consume the accepted query authorities."""
 
-from rememberstack.spine import CANONICAL_RECIPES
+from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CURRENT_FACTS
@@ -11,12 +11,13 @@ from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
 
 
-def test_public_recipe_catalog_is_exactly_the_three_assured_operations() -> None:
+def test_public_catalog_is_exactly_the_four_assured_operations() -> None:
     """Demoted patterns cannot re-enter API, CLI, SDK, or MCP discovery."""
-    assert {recipe.name for recipe in CANONICAL_RECIPES} == {
+    assert {operation.name.value for operation in CANONICAL_OPERATIONS} == {
         "resolve_entity",
-        "question_context",
-        "current_context",
+        "testimony_context",
+        "fact_context",
+        "answer_context",
     }
 
 
@@ -31,7 +32,7 @@ def test_entity_resolution_uses_memory_v1_identity_and_adjacency() -> None:
     assert "FROM relations" not in adjacency_sql
 
 
-def test_current_context_uses_fact_and_contradiction_authorities() -> None:
+def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     """Current membership, D54 state, and co-members come from memory_v1."""
     confirmation_sql = str(_CONFIRM_CURRENT_FACTS)
     assert "memory_v1.facts_current" in confirmation_sql
@@ -55,7 +56,7 @@ def test_current_context_uses_fact_and_contradiction_authorities() -> None:
     assert "FROM observations" not in label_sql
 
 
-def test_question_context_confirms_claims_and_chunks_through_memory_v1() -> None:
+def test_testimony_context_confirms_claims_and_chunks_through_memory_v1() -> None:
     """The retained evidence operation cannot revive orphan or stale content."""
     claim_sql = str(_CONFIRM_CLAIMS_CURRENT)
     chunk_sql = str(_CONFIRM_CHUNKS)

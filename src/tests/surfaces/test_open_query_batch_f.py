@@ -27,18 +27,18 @@ from rememberstack.core.open_query_prose import SNAPSHOT_ID_TO_LIVE_SQL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_FULL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_NOTE
 from rememberstack.core.open_query_prose import WRONG_CLAIM_WINDOW_CURRENT_TRUTH_SQL
+from rememberstack.model import AssuredAnswerIntent
 from rememberstack.model import ConsumptionDeployment
-from rememberstack.model import ConsumptionRecipe
+from rememberstack.model import ConsumptionOperation
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Grain
-from rememberstack.model import RecipeAnswerIntent
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.http_api import build_api
-from rememberstack.surfaces.mcp import RecipeMcpServer
+from rememberstack.surfaces.mcp import OperationMcpServer
 from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -401,17 +401,17 @@ class _NullEngine:
         raise AssertionError("not used")
 
 
-def test_http_open_routes_and_three_assured_operations(migrated: str) -> None:
+def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     engine = create_engine(migrated)
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
     query_engine = QueryEngine(
         engine=engine,
@@ -420,9 +420,9 @@ def test_http_open_routes_and_three_assured_operations(migrated: str) -> None:
         embedding_model="test/embed",
     )
     facade = _facade(migrated)
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(query_engine=query_engine),
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(query_engine=query_engine),
         deployment_id=_DEPLOYMENT,
     )
     app = build_api(
@@ -434,10 +434,10 @@ def test_http_open_routes_and_three_assured_operations(migrated: str) -> None:
         open_query=facade,
     )
     client = TestClient(app)
-    recipes = client.get("/recipes")
-    assert recipes.status_code == 200
-    names = {row["name"] for row in recipes.json()}
-    assert names == {"resolve_entity", "question_context", "current_context"}
+    operations = client.get("/operations")
+    assert operations.status_code == 200
+    names = {row["name"] for row in operations.json()}
+    assert names == {"resolve_entity", "testimony_context", "fact_context"}
     # open routes — full first-call discovery, not a shortened subset
     space = client.get("/query/space")
     assert space.status_code == 200
@@ -499,15 +499,15 @@ class _NullSearch:
 
 def test_mcp_lists_nine_open_tools_not_examples(migrated: str) -> None:
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     engine = create_engine(migrated)
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
     query_engine = QueryEngine(
         engine=engine,
@@ -515,12 +515,12 @@ def test_mcp_lists_nine_open_tools_not_examples(migrated: str) -> None:
         model_provider=FakeModelProvider(),
         embedding_model="test/embed",
     )
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(query_engine=query_engine),
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(query_engine=query_engine),
         deployment_id=_DEPLOYMENT,
     )
-    server = RecipeMcpServer(surface=surface, open_query=_facade(migrated))
+    server = OperationMcpServer(surface=surface, open_query=_facade(migrated))
     tools = server.list_tools()["tools"]
     assert isinstance(tools, list)
     names = {tool["name"] for tool in tools}  # type: ignore[index]
@@ -546,19 +546,19 @@ def test_mcp_lists_nine_open_tools_not_examples(migrated: str) -> None:
 def test_local_mcp_strict_argument_validation(migrated: str) -> None:
     """Local MCP rejects false-string booleans, wrong types, and unknown keys."""
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     engine = create_engine(migrated)
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(
             query_engine=QueryEngine(
                 engine=engine,
                 search_index=_NullSearch(),
@@ -568,7 +568,7 @@ def test_local_mcp_strict_argument_validation(migrated: str) -> None:
         ),
         deployment_id=_DEPLOYMENT,
     )
-    server = RecipeMcpServer(surface=surface, open_query=_facade(migrated))
+    server = OperationMcpServer(surface=surface, open_query=_facade(migrated))
 
     false_string = server.call_tool(
         name="query_cypher",
@@ -638,7 +638,7 @@ def test_remote_mcp_strict_argument_validation() -> None:
     from rememberstack.surfaces.query_sandbox.mcp_tools import (
         validate_open_query_arguments,
     )
-    from rememberstack.surfaces.remote_mcp import RemoteRecipeMcpServer
+    from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
 
     class _StubClient:
         """Minimal client that only exercises open-query argument validation."""
@@ -646,13 +646,13 @@ def test_remote_mcp_strict_argument_validation() -> None:
         def call_open_query(self, *, name: str, arguments: dict[str, object]) -> object:
             return validate_open_query_arguments(name=name, arguments=arguments)
 
-        def recipes(self) -> list:
+        def list_operations(self) -> list:
             return []
 
-        def run_recipe(self, **_: object) -> object:
+        def run_operation(self, **_: object) -> object:
             raise AssertionError("not used")
 
-    server = RemoteRecipeMcpServer(client=_StubClient())  # type: ignore[arg-type]
+    server = RemoteOperationMcpServer(client=_StubClient())  # type: ignore[arg-type]
     false_string = server.call_tool(
         name="describe_query_space", arguments={"include_examples": "false"}
     )
@@ -687,12 +687,12 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
                 scopes=(),
                 knowledge_page_count=0,
             ),
-            recipes=(
-                ConsumptionRecipe(
+            operations=(
+                ConsumptionOperation(
                     name="resolve_entity",
                     description="Resolve a name.",
                     output_grain=Grain.FACT,
-                    answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
+                    answer_intent=AssuredAnswerIntent.IDENTITY,
                 ),
             ),
             mounts=None,
@@ -717,7 +717,7 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
         assert str(example["body"]) in skill.content
         assert str(example["title"]) in skill.content
     assert "Choose how to query" in skill.content
-    assert "recipe-first" not in skill.content.lower()
+    assert "operation-first" not in skill.content.lower()
     assert "Default motion: orient, verify, audit" not in skill.content
 
 
@@ -732,22 +732,22 @@ def test_bound_sql_examples_match_design_strings() -> None:
 
 
 def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -> None:
-    """The catalog exposes exactly the three versioned assured operations."""
+    """The catalog exposes exactly the four versioned assured operations."""
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
-    from rememberstack.spine.recipes import CANONICAL_RECIPES
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     engine = create_engine(migrated)
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(
             query_engine=QueryEngine(
                 engine=engine,
                 search_index=_NullSearch(),
@@ -758,31 +758,34 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
         deployment_id=_DEPLOYMENT,
     )
     descriptors = {item.name: item for item in surface.descriptors()}
-    expected_names = {recipe.name for recipe in CANONICAL_RECIPES}
+    expected_names = {operation.name.value for operation in CANONICAL_OPERATIONS}
     assert (
         set(descriptors)
         == expected_names
-        == {"resolve_entity", "question_context", "current_context"}
+        == {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
     )
-    for recipe in CANONICAL_RECIPES:
-        descriptor = descriptors[recipe.name]
-        assert descriptor.version == recipe.version
-        assert descriptor.input_schema == _expected_input_schema(recipe)
-        assert descriptor.output_grain == recipe.output_grain.value
-        assert descriptor.answer_intent == recipe.answer_intent.value
-    # Pin the three assured versions explicitly
+    for operation in CANONICAL_OPERATIONS:
+        descriptor = descriptors[operation.name.value]
+        assert descriptor.version == operation.version
+        assert descriptor.input_schema == _expected_input_schema(operation)
+        assert descriptor.output_grain == (
+            None if operation.output_grain is None else operation.output_grain.value
+        )
+        assert descriptor.answer_intent == operation.answer_intent.value
+    # Pin the closed surface versions explicitly.
     assert descriptors["resolve_entity"].version == 1
-    assert descriptors["question_context"].version == 4
-    assert descriptors["current_context"].version == 1
+    assert descriptors["testimony_context"].version == 1
+    assert descriptors["fact_context"].version == 1
+    assert descriptors["answer_context"].version == 1
 
 
-def _expected_input_schema(recipe: object) -> dict[str, object]:
-    """Rebuild the public input schema the same way RecipeSurface does."""
-    from rememberstack.model import Recipe
-    from rememberstack.surfaces.recipe_surface import recipe_descriptors
+def _expected_input_schema(operation: object) -> dict[str, object]:
+    """Rebuild the public input schema the same way OperationSurface does."""
+    from rememberstack.model import AssuredOperation
+    from rememberstack.surfaces.operation_surface import operation_descriptors
 
-    assert isinstance(recipe, Recipe)
-    return recipe_descriptors(recipes=(recipe,))[0].input_schema
+    assert isinstance(operation, AssuredOperation)
+    return operation_descriptors(operations=(operation,))[0].input_schema
 
 
 # --- MemoryClient HTTP + CLI parse/dispatch ---------------------------------
@@ -791,15 +794,15 @@ def _expected_input_schema(recipe: object) -> dict[str, object]:
 def _open_api(migrated: str):
     """Compose the HTTP app with open-query for real client method tests."""
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     engine = create_engine(migrated)
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
     query_engine = QueryEngine(
         engine=engine,
@@ -808,9 +811,9 @@ def _open_api(migrated: str):
         embedding_model="test/embed",
     )
     facade = _facade(migrated)
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(query_engine=query_engine),
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(query_engine=query_engine),
         deployment_id=_DEPLOYMENT,
     )
     return build_api(
@@ -949,7 +952,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
     assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "54912e5f1fc16060712d95c7b25304d7debc53c331d212c1dbb20054f66fab91"
+            == "0d8e567f5981c09b3003f70d1be557e0cdf8058abb344c484f89b4cbad6dc99d"
     )
 
 
@@ -1020,22 +1023,22 @@ def test_saved_query_caller_max_rows_zero_override(migrated: str) -> None:
 
 
 def test_mcp_rejects_mixed_deployment_composition(migrated: str) -> None:
-    """Local MCP refuses recipe surface + open-query facade from different deployments."""
+    """Local MCP refuses operation surface + open-query facade from different deployments."""
     from rememberstack.adapters.testing import FakeModelProvider
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     engine = create_engine(migrated)
     other = uuid4()
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(
             query_engine=QueryEngine(
                 engine=engine,
                 search_index=_NullSearch(),
@@ -1046,7 +1049,7 @@ def test_mcp_rejects_mixed_deployment_composition(migrated: str) -> None:
         deployment_id=other,
     )
     with pytest.raises(ValueError, match="different deployment"):
-        RecipeMcpServer(surface=surface, open_query=_facade(migrated))
+        OperationMcpServer(surface=surface, open_query=_facade(migrated))
 
 
 def test_mcp_rejects_explicit_null_for_string_and_integer_fields() -> None:
@@ -1137,11 +1140,11 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
     from rememberstack.adapters.testing import FakeModelProvider
     from rememberstack.model import AuthenticatedContext
     from rememberstack.model import PerimeterCredential
-    from rememberstack.spine import RecipeRegistry
-    from rememberstack.spine import seed_canonical_recipes
+    from rememberstack.spine import AssuredOperationRegistry
+    from rememberstack.spine import seed_canonical_operations
+    from rememberstack.surfaces import OperationExecutor
+    from rememberstack.surfaces import OperationSurface
     from rememberstack.surfaces import QueryEngine
-    from rememberstack.surfaces import RecipeExecutor
-    from rememberstack.surfaces import RecipeSurface
 
     seen: list[str | None] = []
 
@@ -1221,8 +1224,8 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
             raise ValueError("unknown credential")
 
     engine = create_engine(migrated)
-    seed_canonical_recipes(
-        registry=RecipeRegistry(engine=engine), deployment_id=_DEPLOYMENT
+    seed_canonical_operations(
+        registry=AssuredOperationRegistry(engine=engine), deployment_id=_DEPLOYMENT
     )
     query_engine = QueryEngine(
         engine=engine,
@@ -1230,9 +1233,9 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
         model_provider=FakeModelProvider(),
         embedding_model="test/embed",
     )
-    surface = RecipeSurface(
-        registry=RecipeRegistry(engine=engine),
-        executor=RecipeExecutor(query_engine=query_engine),
+    surface = OperationSurface(
+        registry=AssuredOperationRegistry(engine=engine),
+        executor=OperationExecutor(query_engine=query_engine),
         deployment_id=_DEPLOYMENT,
     )
     tracking = _TrackingFacade(_facade(migrated))

@@ -2,7 +2,7 @@
 
 These are the fusion and reranking stages as *pure* functions — no spine, no
 ports, no I/O — so the same code fuses an agent's ad-hoc channel set and a
-recipe's fixed one, and every stage is inspectable rather than a black box.
+operation's fixed one, and every stage is inspectable rather than a black box.
 
 **Reciprocal-rank fusion (RRF).** When several channels each return a ranked
 list — semantic search, BM25, FTS — they cannot be compared by raw score:

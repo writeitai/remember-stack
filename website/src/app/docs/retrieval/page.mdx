@@ -33,8 +33,9 @@ Retrieval is the **read path**. RememberStack does not try to be a clever NL pla
 | Need | Use |
 | --- | --- |
 | Navigate / read / grep | **Mounts** (P3, artifacts, K) when published for the deployment |
-| “What is true now?” with typed envelope | **`current_context`** |
-| High-recall source context for a question | **`question_context`** |
+| “What is true now?” with typed envelope | **`fact_context`** |
+| High-recall source context for a question | **`testimony_context`** |
+| Both complete authority views | **`answer_context`** |
 | Exact name → entity | **`resolve_entity`** (T0 exact) |
 | Ad-hoc analytics / joins / graph patterns | **Open SQL / Cypher / saved queries** |
 | Why do we believe X? | Evidence hydration / audit SQL / transcript endpoints where exposed |
@@ -42,21 +43,27 @@ Retrieval is the **read path**. RememberStack does not try to be a clever NL pla
 
 Wire contracts: [API](/docs/reference/api) · [CLI](/docs/reference/cli) · [MCP](/docs/reference/mcp).
 
-## Assured operations (exactly three)
+## Assured operations (exactly four)
 
 These are the top-level intent tools on API/CLI/MCP. Seventeen older stock patterns ship only as discoverable `examples.*` saved queries — **not** as compatibility aliases.
 
 | Operation | Args (required) | Grain | Intent |
 | --- | --- | --- | --- |
 | `resolve_entity` | `name` (optional `entity_type`) | entity candidates (envelope packaging) | Exact-name disambiguation |
-| `question_context` | `query` (optional `k`, `candidate_k`, flags) | **evidence** | Hybrid claims + chunks |
-| `current_context` | `query` (optional `k`, `evidence_per_fact`) | **fact** | Current facts + live testimony under budget |
+| `testimony_context` | `query` (optional `entity_ids`, `k`, `candidate_k`) | **evidence** | Current claims + source chunks only |
+| `fact_context` | `query` (optional `entity_ids`, `k`, `evidence_per_fact`, `time`) | **fact** | Current or historical facts + associated testimony |
+| `answer_context` | `query` (optional `entity_ids`, `time`) | `ContextBundle/v1` | Complete testimony and fact envelopes, kept separate |
+
+Entity IDs are optional. Omit them for deployment-wide retrieval; supply one to
+twenty confirmed IDs when identity should constrain the candidate set. Resolve
+ambiguous names first. The operations never guess a name or silently drop an
+unknown ID.
 
 ### Anti-patterns
 
 | Don’t | Do |
 | --- | --- |
-| Answer present-tense from `question_context` alone | Verify with `current_context` / facts |
+| Answer present-tense from `testimony_context` alone | Verify with `fact_context` / facts |
 | Filter claim validity windows as “true at T” | Use fact `valid_at` / `facts_current` |
 | Hide one side of a contradiction | Report co-members |
 | Trust a compiled K page as live | Check `freshness.k`; verify facts |
@@ -75,15 +82,18 @@ Discovery: `GET /query/space` opens with the two-layer headline, honesty warning
 
 ## Envelope (assured path)
 
-Single-grain answers are **flat** (`facts`, `evidence`, `fact_evidence`, `freshness.pg_live_ts`, …). Full wire contract: [Response envelope](/docs/retrieval/envelope).
+Single-grain answers are **flat** (`facts`, `evidence`, `fact_evidence`,
+`freshness.pg_live_ts`, …). `answer_context` is the separate
+`ContextBundle/v1` wrapper around two complete envelopes. Full wire contract:
+[Response envelope](/docs/retrieval/envelope).
 
 ## Engine primitives vs public call surface
 
-Assured ops and recipes compose **typed zero-LLM engine primitives** internally (`resolve`, `lookup`, `search`, `hydrate`, …).
+Assured ops and operations compose **typed zero-LLM engine primitives** internally (`resolve`, `lookup`, `search`, `hydrate`, …).
 
 **Agents should not invent HTTP paths for every primitive.** Callable public surfaces are:
 
-- assured ops (`/recipe/…`)
+- assured ops (`/operations/…`)
 - open query (`/query/sql`, `/query/cypher`, saved queries)
 - a smaller set of direct primitive endpoints (see [API reference](/docs/reference/api) and [Primitives](/docs/retrieval/primitives) surface column)
 
@@ -91,10 +101,12 @@ Assured ops and recipes compose **typed zero-LLM engine primitives** internally 
 
 | Param | Meaning |
 | --- | --- |
-| `valid_at` | World-time filter — what held at T |
-| `believed_at` | System-time filter — what we believed at T |
+| `fact_context.time` | World-time selection: `current`, `at`, `overlap`, or `history` under current system belief |
+| `facts_as_of(valid_at, believed_at, …)` | Open-SQL audit of what the system believed about world time at a past system time |
 
-Every envelope echoes the params applied (`as_of_valid_at` / `as_of_believed_at`) and the **identity regime**. Default identity follows today’s merge redirects.
+Every envelope carries a required discriminated `temporal_scope` describing
+the exact selection applied and the identity regime. Default identity follows
+today’s merge redirects.
 
 ## Correctness invariant
 

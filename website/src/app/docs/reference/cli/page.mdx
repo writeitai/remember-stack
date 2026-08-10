@@ -1,23 +1,23 @@
 export const metadata = {
   title: "CLI Reference",
   description:
-    "The client-first remember command line: open query space, recipes, ingest, connectors, ops, budgets, MCP, and review.",
+    "The client-first remember command line: open query space, operations, ingest, connectors, ops, budgets, MCP, and review.",
 };
 
 # CLI Reference
 
 RememberStack has two deliberately separate truth layers. Claims are
 immutable source testimony (“what was asserted, by whom, when”);
-facts—relations and observations—are the adjudicated current
-worldview (“what the system currently holds true”):
+facts—relations and observations—are the adjudicated worldview (“what the
+system holds or held true”):
 supersession-adjudicated, clocked on two time axes (when a fact held in
 the world, and when the system learned it), evidence-counted per
 distinct source—repetition is not corroboration—and
 contradiction-tracked. The `fact_claim_evidence` association is the
 auditable bridge between the layers, recording which claims support or
 contradict each fact. Query claims to inspect testimony; query facts to
-answer current-truth questions, then follow the bridge to see why the
-system believes the fact.
+answer current or historical truth questions, then follow the bridge to see
+why the system believes or believed the fact.
 
 (Internally these guarantees are decisions D41 and D54.)
 
@@ -33,34 +33,44 @@ remember --version
 # RememberStack 0.2.0
 ```
 
-## `remember query`
+## `remember operations`
 
-Choose among native snapshot Cypher, live SQL, and the three assured
-operations. Recipe `list` / `run` expose only those three one-call operations;
-open-query subcommands provide SQL, Cypher, discovery, and saved queries. The
-API and MCP render the same operation rows, so all three stay in lockstep.
+Choose among native snapshot Cypher, live SQL, and the four assured
+operations. `remember operations list|run` exposes only those four one-call
+operations. `remember query` remains the separate SQL, Cypher, discovery, and
+saved-query surface. The API and MCP render the same operation rows, so all
+three transports stay in lockstep.
 
-### `remember query list`
-
-```bash
-remember query list
-```
-
-Prints the deployment's recipe tool list — one JSON object per line, each with
-`name`, `description`, `input_schema`, `output_grain`, and `answer_intent`.
-This is exactly the API's `GET /recipes`.
-
-### `remember query run`
+### `remember operations list`
 
 ```bash
-remember query run current_context \
-  --arg query='Who does Alice work for now?'
+remember operations list
 ```
 
-Runs one recipe by name over `key=value` arguments and prints the envelope as
-JSON. Arguments are coerced by the recipe's declared types. An unknown recipe
+Prints the deployment's operation tool list — one JSON object per line, each with
+`name`, `description`, `input_schema`, `result_schema`, `result_contract`,
+`output_grain`, and `answer_intent`.
+This is exactly the API's `GET /operations`.
+
+### `remember operations run`
+
+```bash
+remember operations run fact_context \
+  --arg query='Who leads the launch now?' \
+  --arg time='{"mode":"current"}'
+```
+
+Runs one operation by name over `key=value` arguments and prints its declared
+result as JSON. The first three operations return an `Envelope`;
+`answer_context` returns `ContextBundle/v1`. Arguments are coerced by the
+operation's declared types. An unknown operation
 or a missing required argument prints the API's error to stderr and exits
 nonzero.
+
+## `remember query`
+
+The `query` command contains only the open retrieval surface described below;
+there are no recipe-era `query list` or `query run` aliases.
 
 ### Open query space
 
@@ -123,13 +133,12 @@ connector manager.
 ## `remember mcp`
 
 Stdio MCP server over the remote client: static write tools (`ingest`,
-`pipeline_readiness`; ships in `rememberstack>=0.3.0`), recipe tools from
-`GET /recipes`, and open-query tools
+`pipeline_readiness`), four assured operations from `GET /operations`, and open-query tools
 when the deployment composes them. See [MCP reference](/docs/reference/mcp).
 
-Runs the base wheel's MCP stdio server. It discovers recipes from the remote
-deployment and proxies `tools/call` to the same HTTP recipe endpoint used by
-`remember query`.
+Runs the base wheel's MCP stdio server. It discovers operations from the remote
+deployment and proxies `tools/call` to the same HTTP operation endpoint used by
+`remember operations run`.
 
 ## `remember budget inspect`
 

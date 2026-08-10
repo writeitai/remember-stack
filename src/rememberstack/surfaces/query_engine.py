@@ -111,8 +111,8 @@ INTERACTIVE_HYDRATION_BATCH_SIZE: Final = 256
 BOUNDED_SEMANTIC_CANDIDATES: Final = 400
 """Maximum Postgres-filtered claim ids read from P1 for a semantic rerank.
 
-This is candidate work, not the returned evidence budget: every new Batch B
-recipe returns at most 50 evidence records. Four hundred matches the existing
+This is candidate work, not the returned evidence budget: every bounded Batch B
+composition returns at most 50 evidence records. Four hundred matches the existing
 interactive nomination ceiling and keeps hub-entity/time-window vector reads
 bounded without ever nominating globally and filtering afterward.
 """
@@ -126,11 +126,11 @@ FACT_CONTEXT_CANDIDATE_K: Final = 200
 MULTI_HOP_CONTEXT_EVIDENCE_BUDGET: Final = 60
 """Hard maximum associations and returned claim/chunk content records."""
 
-MULTI_HOP_QUESTION_CONTEXT_K: Final = 50
-"""The existing question-context recipe's per-grain result cap."""
+MULTI_HOP_TESTIMONY_CONTEXT_K: Final = 50
+"""The multi-hop testimony channel's per-grain result cap."""
 
-MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K: Final = 200
-"""The existing question-context recipe's per-channel nomination cap."""
+MULTI_HOP_TESTIMONY_CONTEXT_CANDIDATE_K: Final = 200
+"""The multi-hop testimony channel's per-channel nomination cap."""
 
 CONTEXT_ENTITY_LIMIT: Final = 20
 """Maximum explicit survivor anchors on a context operation."""
@@ -290,7 +290,7 @@ class QueryEngine:
     ) -> Envelope:
         """List live ingested documents carrying a resolved mention of an entity."""
         _validate_batch_b_k(k=k)
-        entity_id, resolution = self._resolve_recipe_entity(
+        entity_id, resolution = self._resolve_context_entity(
             deployment_id=deployment_id, entity=entity, grain=Grain.EVIDENCE
         )
         if resolution is not None:
@@ -343,7 +343,7 @@ class QueryEngine:
     ) -> Envelope:
         """Return current testimony from chunks mentioning one resolved entity."""
         _validate_batch_b_k(k=k)
-        entity_id, resolution = self._resolve_recipe_entity(
+        entity_id, resolution = self._resolve_context_entity(
             deployment_id=deployment_id, entity=entity, grain=Grain.EVIDENCE
         )
         if resolution is not None:
@@ -756,17 +756,17 @@ class QueryEngine:
     ) -> Envelope:
         """One-call graph connection context with quotable source evidence.
 
-        Entity strings resolve through the uniform T0 recipe helper. P2 then
+        Entity strings resolve through the uniform T0 context helper. P2 then
         supplies either a shortest path or a distance-ranked neighborhood,
         while one batched PostgreSQL statement re-confirms every nominated
-        edge and hydrates both evidence stances. The ordinary question-context
+        edge and hydrates both evidence stances. The ordinary testimony-context
         retrieval runs afterward and its claims/passages are unioned into the
         same flat evidence-grain envelope.
         """
         _validate_multi_hop_context_bounds(
             k=k, hops=hops, evidence_per_fact=evidence_per_fact
         )
-        entity_a_id, resolution = self._resolve_recipe_entity(
+        entity_a_id, resolution = self._resolve_context_entity(
             deployment_id=deployment_id, entity=entity_a, grain=Grain.EVIDENCE
         )
         if resolution is not None:
@@ -775,7 +775,7 @@ class QueryEngine:
 
         entity_b_id: UUID | None = None
         if entity_b is not None:
-            entity_b_id, resolution = self._resolve_recipe_entity(
+            entity_b_id, resolution = self._resolve_context_entity(
                 deployment_id=deployment_id, entity=entity_b, grain=Grain.EVIDENCE
             )
             if resolution is not None:
@@ -911,11 +911,11 @@ class QueryEngine:
             for stance in _EVIDENCE_STANCES
         )
 
-        question_context = self._testimony_context_retrieval(
+        testimony_context = self._testimony_context_retrieval(
             deployment_id=deployment_id, query=query
         )
         evidence_by_id = dict(edge_evidence_by_id)
-        for record in question_context.evidence:
+        for record in testimony_context.evidence:
             existing = evidence_by_id.get(record.claim_id)
             if existing is not None:
                 if record.corroboration_count is not None:
@@ -930,22 +930,22 @@ class QueryEngine:
                 break
             evidence_by_id[record.claim_id] = record
         chunks_by_id: dict[UUID, ChunkEvidenceResult] = {}
-        for record in question_context.chunks:
+        for record in testimony_context.chunks:
             if (
                 len(evidence_by_id) + len(chunks_by_id)
                 == MULTI_HOP_CONTEXT_EVIDENCE_BUDGET
             ):
                 break
             chunks_by_id.setdefault(record.chunk_id, record)
-        question_evidence_by_id = {
-            record.claim_id: record for record in question_context.evidence
+        testimony_evidence_by_id = {
+            record.claim_id: record for record in testimony_context.evidence
         }
-        question_chunks_by_id = {
-            record.chunk_id: record for record in question_context.chunks
+        testimony_chunks_by_id = {
+            record.chunk_id: record for record in testimony_context.chunks
         }
         uncapped_content_total = len(
-            set(edge_evidence_by_id) | set(question_evidence_by_id)
-        ) + len(question_chunks_by_id)
+            set(edge_evidence_by_id) | set(testimony_evidence_by_id)
+        ) + len(testimony_chunks_by_id)
         returned_content_total = len(evidence_by_id) + len(chunks_by_id)
         content_elided = returned_content_total < uncapped_content_total
 
@@ -1017,7 +1017,7 @@ class QueryEngine:
                 len(candidate_edge_ids)
                 - len(retained_edges)
                 + graph.dropped_by_hydration
-                + question_context.dropped_by_hydration
+                + testimony_context.dropped_by_hydration
             ),
             negative=negative,
         )
@@ -1202,7 +1202,7 @@ class QueryEngine:
     ) -> Envelope:
         """Rank claim IDs without returning unconfirmed claim content.
 
-        This is the cheap, projection-only half of D48 for recipe composition:
+        This is the cheap, projection-only half of D48 for operation composition:
         parallel channels can fuse their candidate orderings before one
         `hydrate_claims` confirmation. Candidate UUIDs and ranks are not facts.
         """
@@ -1441,7 +1441,7 @@ class QueryEngine:
         self, *, deployment_id: UUID, relation_id: UUID
     ) -> Envelope:
         """A relation's decision history — the `transcript` primitive, relation
-        arm (kept as the named surface the HTTP API and recipes bind to)."""
+        arm (kept as the named surface the HTTP API and saved queries bind to)."""
         return self.transcript(
             deployment_id=deployment_id, subject_kind="relation", subject_id=relation_id
         )
@@ -1456,7 +1456,7 @@ class QueryEngine:
         """RRF-merge parallel channel rankings into one order (D9/S46).
 
         An operator, not a spine read: the same reciprocal-rank fusion a
-        recipe applies, exposed so an agent's ad-hoc channel set fuses
+        assured operation applies, exposed so an agent's ad-hoc channel set fuses
         identically. The grain is EVIDENCE — a fused order is over
         nominations still to be confirmed by id-hydration (D48), never
         current-fact truth on its own. Call `hydrate_claims` on the ranked
@@ -1495,7 +1495,7 @@ class QueryEngine:
         output of `fuse`/`rerank`): re-reads each claim from the spine and
         drops what no longer confirms. When a ranking is supplied, scores and
         order are preserved on the envelope for the confirmed ids so a fused
-        result is usable without a second tool call. Hybrid recipes pass their
+        result is usable without a second tool call. Hybrid operations pass their
         final ``limit`` only here, after the complete fused candidate pool has
         been confirmed, so a rejected head candidate is deterministically
         replaced from the already-fetched tail. Claim hybrids additionally
@@ -1926,14 +1926,14 @@ class QueryEngine:
         *,
         deployment_id: UUID,
         query: str,
-        k: int = MULTI_HOP_QUESTION_CONTEXT_K,
-        candidate_k: int = MULTI_HOP_QUESTION_CONTEXT_CANDIDATE_K,
+        k: int = MULTI_HOP_TESTIMONY_CONTEXT_K,
+        candidate_k: int = MULTI_HOP_TESTIMONY_CONTEXT_CANDIDATE_K,
         claim_coverage: dict[UUID, int] | None = None,
         chunk_coverage: dict[UUID, int] | None = None,
     ) -> Envelope:
         """Run the testimony hybrid, optionally ranking inside an entity scope.
 
-        This deliberately mirrors the registered recipe's two independent
+        This deliberately mirrors the registered operation's two independent
         semantic/BM25 nominations, RRF, one confirmation per grain, and typed
         claim/chunk union. Keeping it inside ``multi_hop_context`` avoids the
         executor dataflow and ``combine_evidence`` shape conflict that makes a
@@ -2173,13 +2173,13 @@ class QueryEngine:
             )
         )
 
-    def _resolve_recipe_entity(
+    def _resolve_context_entity(
         self, *, deployment_id: UUID, entity: str, grain: Grain
     ) -> tuple[UUID | None, Envelope | None]:
         """Apply principle 9 to one string entity parameter.
 
         The T0 ladder may return no candidate, exactly one, or an ambiguity.
-        Recipes never silently take the first ambiguity: candidates remain in
+        Context retrieval never silently takes the first ambiguity: candidates remain in
         ``entities[]`` and the negative names the boundary.
         """
         resolved = self.resolve(deployment_id=deployment_id, name=entity)
@@ -2642,9 +2642,9 @@ def _validate_nomination_request(*, k: int, channel: str) -> None:
 
 
 def _validate_batch_b_k(*, k: int) -> None:
-    """Enforce the four new recipes' shared public result bound."""
+    """Enforce the bounded legacy query helpers' shared result limit."""
     if not 1 <= k <= 50:
-        raise ValueError("recipe k must be between 1 and 50")
+        raise ValueError("k must be between 1 and 50")
 
 
 def _validate_fact_context_bounds(*, k: int, evidence_per_fact: int) -> None:
@@ -3051,7 +3051,7 @@ def _bounded_truncation(*, returned: int, total: int, k: int) -> Truncation:
 
 
 def _normalize_hybrid_text(*, value: str) -> str:
-    """Batch E's recipe-versioned exact-text grouping normalizer.
+    """Batch E's operation-versioned exact-text grouping normalizer.
 
     The transformation order is binding: NFKC, casefold, whitespace-run
     collapse, then removal of leading and trailing Unicode punctuation. It

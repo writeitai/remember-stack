@@ -1,16 +1,16 @@
 """WP-5.4 acceptance: surface parity (retrieval §7, D50-D51).
 
-The API, CLI, and MCP surfaces render the SAME recipe registry, so parity is a
+The API, CLI, and MCP surfaces render the SAME operation registry, so parity is a
 property, not a promise:
 
-- **The tool list IS the registry.** The MCP `tools/list`, the API `/recipes`,
+- **The tool list IS the registry.** The MCP `tools/list`, the API `/operations`,
   and the registry's active rows are the same set.
-- **One recipe, one answer, every surface.** Running a recipe through the API,
+- **One operation, one answer, every surface.** Running a operation through the API,
   through MCP, and through the CLI (an HTTP client of the API) returns the same
-  envelope — because all three render one `RecipeSurface`.
+  envelope — because all three render one `OperationSurface`.
 - **The API is the enforcement point.** With an auth port, every endpoint is
   gated on a perimeter credential for THIS deployment (retrieval §9).
-- **Failures are typed, not crashes.** An unknown recipe is a 404 / MCP error;
+- **Failures are typed, not crashes.** An unknown operation is a 404 / MCP error;
   a missing required argument is a 422 / MCP error.
 """
 
@@ -32,25 +32,23 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.core import AssuredOperationLintError
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import Grain
 from rememberstack.model import P1ChunkText
 from rememberstack.model import PerimeterCredential
-from rememberstack.model import Recipe
-from rememberstack.model import RecipeAnswerIntent
-from rememberstack.model import RecipeStep
+from rememberstack.spine import AssuredOperationRegistry
+from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine import RecipeRegistry
-from rememberstack.spine import seed_canonical_recipes
+from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import build_api
+from rememberstack.surfaces import OperationExecutor
+from rememberstack.surfaces import OperationMcpServer
+from rememberstack.surfaces import OperationSurface
 from rememberstack.surfaces import QueryEngine
-from rememberstack.surfaces import RecipeExecutor
-from rememberstack.surfaces import RecipeMcpServer
-from rememberstack.surfaces import RecipeSurface
-from rememberstack.surfaces.cli import query_list
-from rememberstack.surfaces.cli import query_run
+from rememberstack.surfaces.cli import operations_list
+from rememberstack.surfaces.cli import operations_run
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("54000000-0000-0000-0000-000000000001")
@@ -139,10 +137,10 @@ def database_engine() -> Iterator[Engine]:
 
 
 class _Deployment:
-    """A seeded deployment: one relation, the canonical recipes, the surfaces."""
+    """A seeded deployment: one relation, the canonical operations, the surfaces."""
 
     def __init__(self, *, engine: Engine) -> None:
-        """Seed a fact, register the recipes, and compose the surfaces."""
+        """Seed a fact, register the operations, and compose the surfaces."""
         self.engine = engine
         self.alice = uuid4()
         acme = uuid4()
@@ -169,20 +167,20 @@ class _Deployment:
                 ),
                 {"r": uuid4(), "d": _DEPLOYMENT_ID, "s": self.alice, "o": acme},
             )
-        self.registry = RecipeRegistry(engine=engine)
-        seed_canonical_recipes(registry=self.registry, deployment_id=_DEPLOYMENT_ID)
+        self.registry = AssuredOperationRegistry(engine=engine)
+        seed_canonical_operations(registry=self.registry, deployment_id=_DEPLOYMENT_ID)
         query_engine = QueryEngine(
             engine=engine,
             search_index=_NullSearchIndex(),
             model_provider=FakeModelProvider(generate_payloads={}),
             embedding_model="toy",
         )
-        self.surface = RecipeSurface(
+        self.surface = OperationSurface(
             registry=self.registry,
-            executor=RecipeExecutor(query_engine=query_engine),
+            executor=OperationExecutor(query_engine=query_engine),
             deployment_id=_DEPLOYMENT_ID,
         )
-        self.mcp = RecipeMcpServer(surface=self.surface)
+        self.mcp = OperationMcpServer(surface=self.surface)
         self.app = build_api(
             engine=query_engine,
             deployment_id=_DEPLOYMENT_ID,
@@ -214,30 +212,34 @@ def deployment(database_engine: Engine) -> _Deployment:
 
 def _payload(envelope: dict[str, object]) -> dict[str, object]:
     """An envelope dict minus the per-call wall-clock stamps."""
-    return {
-        key: value
-        for key, value in envelope.items()
-        if key not in {"freshness", "as_of_valid_at", "as_of_believed_at"}
-    }
+    payload = {key: value for key, value in envelope.items() if key != "freshness"}
+    scope = payload.get("temporal_scope")
+    if isinstance(scope, dict):
+        payload["temporal_scope"] = {
+            key: value
+            for key, value in scope.items()
+            if key not in {"evaluated_at", "believed_at"}
+        }
+    return payload
 
 
 def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
-    """Recipe tools on MCP match the registry and API (D50); write tools omitted.
+    """Operation tools on MCP match the registry and API (D50).
 
-    This composition is recipe-only (no ingest/readiness ports), so Layer 1
+    This composition is operation-only (no ingest/readiness ports), so Layer 1
     write tools are correctly absent. When those ports are composed, static
     write tools lead the list — covered in test_mcp_memory_tools.
     """
     registry_names = {
-        recipe.name
-        for recipe in deployment.registry.active(deployment_id=_DEPLOYMENT_ID)
+        operation.name.value
+        for operation in deployment.registry.active(deployment_id=_DEPLOYMENT_ID)
     }
     tools = cast("list[dict[str, Any]]", deployment.mcp.list_tools()["tools"])
     mcp_names = {tool["name"] for tool in tools}
     api_names = {
-        descriptor["name"] for descriptor in deployment.client.get("/recipes").json()
+        descriptor["name"] for descriptor in deployment.client.get("/operations").json()
     }
-    expected = {"resolve_entity", "question_context", "current_context"}
+    expected = {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
     assert mcp_names == registry_names == expected
     assert api_names == registry_names
     # and the tool carries its JSON-Schema input contract
@@ -248,12 +250,12 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
 def test_all_three_surfaces_return_the_same_envelope(
     deployment: _Deployment, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Running one recipe through API, MCP, and the CLI returns the same
-    envelope — all three render one RecipeSurface (parity is a property)."""
+    """Running one operation through API, MCP, and the CLI returns the same
+    envelope — all three render one OperationSurface (parity is a property)."""
     arguments: dict[str, object] = {"name": "Alice"}
 
     api_envelope = deployment.client.post(
-        "/recipe/resolve_entity", json=arguments
+        "/operations/resolve_entity", json=arguments
     ).json()
 
     mcp_result = deployment.mcp.call_tool(name="resolve_entity", arguments=arguments)
@@ -263,7 +265,7 @@ def test_all_three_surfaces_return_the_same_envelope(
 
     # the CLI is an httpx.Client of the API; the TestClient is exactly that,
     # routed in-process to the ASGI app
-    exit_code = query_run(
+    exit_code = operations_run(
         client=deployment.client, name="resolve_entity", arg_pairs=["name=Alice"]
     )
     assert exit_code == 0
@@ -274,24 +276,26 @@ def test_all_three_surfaces_return_the_same_envelope(
     assert api_envelope["entities"][0]["canonical_name"] == "Alice"
 
 
-def test_the_cli_query_list_matches_the_api(
+def test_the_cli_operations_list_matches_the_api(
     deployment: _Deployment, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`remember query list` prints exactly the API's recipe tool list."""
-    assert query_list(client=deployment.client) == 0
+    """`remember operations list` prints exactly the API operation list."""
+    assert operations_list(client=deployment.client) == 0
     listed = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert {row["name"] for row in listed} == {
-        descriptor["name"] for descriptor in deployment.client.get("/recipes").json()
+        descriptor["name"] for descriptor in deployment.client.get("/operations").json()
     }
 
 
-def test_unknown_recipe_and_missing_argument_are_typed_failures(
+def test_unknown_operation_and_missing_argument_are_typed_failures(
     deployment: _Deployment,
 ) -> None:
-    """An unknown recipe is a 404 / MCP error; a missing required argument is a
+    """An unknown operation is a 404 / MCP error; a missing required argument is a
     422 / MCP error — never a crash across the wire."""
-    assert deployment.client.post("/recipe/teleport", json={}).status_code == 404
-    assert deployment.client.post("/recipe/resolve_entity", json={}).status_code == 422
+    assert deployment.client.post("/operations/teleport", json={}).status_code == 404
+    assert (
+        deployment.client.post("/operations/resolve_entity", json={}).status_code == 422
+    )
 
     unknown = deployment.mcp.call_tool(name="teleport", arguments={})
     assert unknown["isError"] is True
@@ -317,17 +321,17 @@ def test_the_auth_perimeter_gates_every_endpoint(deployment: _Deployment) -> Non
         auth=_FakeAuth(),
     )
     client = TestClient(guarded)
-    assert client.get("/recipes").status_code == 401  # no credential
+    assert client.get("/operations").status_code == 401  # no credential
     assert (
-        client.get("/recipes", headers={"Authorization": "Bearer nope"}).status_code
+        client.get("/operations", headers={"Authorization": "Bearer nope"}).status_code
         == 401  # authentication failed
     )
     assert (
-        client.get("/recipes", headers={"Authorization": "Bearer other"}).status_code
+        client.get("/operations", headers={"Authorization": "Bearer other"}).status_code
         == 403  # a credential for another deployment
     )
     assert (
-        client.get("/recipes", headers={"Authorization": "Bearer good"}).status_code
+        client.get("/operations", headers={"Authorization": "Bearer good"}).status_code
         == 200  # admitted
     )
 
@@ -341,15 +345,15 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
     """A wrong-typed argument or a misspelled parameter is a 422 / MCP error,
     never a 500 or a silently-broadened query (Codex findings)."""
     bad_integer = deployment.client.post(
-        "/recipe/current_context", json={"query": "Alice", "k": "not-an-integer"}
+        "/operations/fact_context", json={"query": "Alice", "k": "not-an-integer"}
     )
     assert bad_integer.status_code == 422
 
-    typo = deployment.client.post("/recipe/resolve_entity", json={"naem": "Alice"})
+    typo = deployment.client.post("/operations/resolve_entity", json={"naem": "Alice"})
     assert typo.status_code == 422  # a typo never silently broadens the query
 
     mcp_bad = deployment.mcp.call_tool(
-        name="current_context", arguments={"query": "Alice", "k": "not-an-integer"}
+        name="fact_context", arguments={"query": "Alice", "k": "not-an-integer"}
     )
     assert mcp_bad["isError"] is True
 
@@ -357,9 +361,9 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
 def test_the_api_and_surface_must_serve_one_deployment(deployment: _Deployment) -> None:
     """Composing an API with a surface bound to a DIFFERENT deployment is
     refused — one deployment is one trust domain (Codex finding)."""
-    mismatched = RecipeSurface(
+    mismatched = OperationSurface(
         registry=deployment.registry,
-        executor=RecipeExecutor(
+        executor=OperationExecutor(
             query_engine=QueryEngine(
                 engine=deployment.engine,
                 search_index=_NullSearchIndex(),
@@ -388,18 +392,11 @@ def test_a_custom_version_cannot_replace_an_assured_operation(
     deployment: _Deployment,
 ) -> None:
     """The closed operation namespace serves only the canonical version."""
-    deployment.registry.register(
-        deployment_id=_DEPLOYMENT_ID,
-        recipe=Recipe(
-            name="resolve_entity",
-            description="v2 — same shape, newer version",
-            parameters={"name": {"type": "string", "required": True}},
-            chain=(RecipeStep(op="resolve", bind={"name": "name"}),),
-            output_grain=Grain.FACT,
-            answer_intent=RecipeAnswerIntent.CURRENT_FACTS,
-            version=2,
-        ),
-    )
+    with pytest.raises(AssuredOperationLintError, match="canonical version 1"):
+        deployment.registry.register(
+            deployment_id=_DEPLOYMENT_ID,
+            operation=CANONICAL_OPERATIONS[0].model_copy(update={"version": 2}),
+        )
     names = [descriptor.name for descriptor in deployment.surface.descriptors()]
     assert names.count("resolve_entity") == 1
     tool = next(
@@ -414,13 +411,15 @@ def test_the_cli_rejects_a_malformed_argument(deployment: _Deployment) -> None:
     """`--arg` without `key=value`, or with an empty key, is a usage error
     (exit 2), not a crash (Codex finding on _split_arg)."""
     assert (
-        query_run(
+        operations_run(
             client=deployment.client, name="resolve_entity", arg_pairs=["novalue"]
         )
         == 2
     )
     assert (
-        query_run(client=deployment.client, name="resolve_entity", arg_pairs=["=v"])
+        operations_run(
+            client=deployment.client, name="resolve_entity", arg_pairs=["=v"]
+        )
         == 2
     )
 
@@ -435,4 +434,4 @@ def test_the_cli_reports_an_unreachable_api_as_an_exit_code(
     monkeypatch.setenv(
         "REMEMBERSTACK_API_URL", "http://127.0.0.1:9"
     )  # nothing listening
-    assert cli.main(["query", "list"]) == 1
+    assert cli.main(["operations", "list"]) == 1

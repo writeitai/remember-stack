@@ -6,6 +6,7 @@ from datetime import timezone
 from typing import cast
 from uuid import UUID
 
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetManifest
 from rememberstack.model import Freshness
@@ -78,6 +79,7 @@ class _ServingState:
         assert not any(token in values for values in self.channels.values())
         return Envelope(
             grain=Grain.EVIDENCE,
+            temporal_scope=current_temporal_scope(evaluated_at=_NOW),
             freshness=Freshness(pg_live_ts=_NOW),
             negative=Negative(
                 kind=NegativeKind.UNKNOWN_ENTITY,

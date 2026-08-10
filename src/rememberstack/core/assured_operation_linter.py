@@ -39,6 +39,10 @@ _CONTRACTS = {
 
 def lint_assured_operation(operation: AssuredOperation) -> None:
     """Reject any descriptor that diverges from the four canonical tuples."""
+    if operation.version != 1:
+        raise AssuredOperationLintError(
+            f"operation {operation.name.value!r} must use canonical version 1"
+        )
     expected = _CONTRACTS[operation.name]
     actual = (
         operation.result_contract,

@@ -117,7 +117,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v11: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v12: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )
@@ -170,7 +170,7 @@ def _parser() -> argparse.ArgumentParser:
         "--max-agent-calls",
         type=int,
         required=True,
-        help="run-absolute ceiling over answer-agent model calls; recipe calls"
+        help="run-absolute ceiling over answer-agent model calls; operation calls"
         " have a separate per-question cap",
     )
     answer.add_argument(

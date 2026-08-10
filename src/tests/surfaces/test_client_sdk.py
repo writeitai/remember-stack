@@ -27,7 +27,7 @@ from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
-from rememberstack.surfaces.remote_mcp import RemoteRecipeMcpServer
+from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
 from rememberstack.surfaces.remote_mcp import serve_mcp_stdio
 
 _DEPLOYMENT_ID = UUID("57000000-0000-0000-0000-000000000001")
@@ -252,7 +252,7 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
         ),
     )
     with pytest.raises(MemoryApiError, match="not composed"):
-        MemoryClient(client=response_client).recipes()
+        MemoryClient(client=response_client).list_operations()
 
     typed_error_client = httpx.Client(
         base_url="http://memory.test",
@@ -330,7 +330,7 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
         transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={})),
     )
     with pytest.raises(MemoryApiError, match="invalid response body"):
-        MemoryClient(client=invalid_client).run_recipe(name="broken")
+        MemoryClient(client=invalid_client).run_operation(name="broken")
 
 
 def test_sdk_saved_query_paths_cannot_escape_into_control_routes() -> None:
@@ -462,20 +462,31 @@ def test_sdk_rejects_partial_query_result_contracts(
 
 
 def test_remote_mcp_proxies_the_deployment_registry() -> None:
-    """The base-wheel MCP transport lists and invokes remote recipe tools."""
-    envelope = {"grain": "fact", "freshness": {"pg_live_ts": "2026-07-20T10:30:00Z"}}
+    """The base-wheel MCP transport lists and invokes assured operations."""
+    envelope = {
+        "grain": "fact",
+        "temporal_scope": {
+            "mode": "current",
+            "evaluated_at": "2026-07-20T10:30:00Z",
+            "believed_at": "2026-07-20T10:30:00Z",
+            "identity_regime": "current",
+        },
+        "freshness": {"pg_live_ts": "2026-07-20T10:30:00Z"},
+    }
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/recipes":
+        if request.url.path == "/operations":
             return httpx.Response(
                 200,
                 json=[
                     {
-                        "name": "entity_resolve",
+                        "name": "resolve_entity",
                         "description": "Resolve an entity.",
                         "input_schema": {"type": "object"},
+                        "result_schema": {"type": "object"},
+                        "result_contract": "envelope",
                         "output_grain": "fact",
-                        "answer_intent": "current_facts",
+                        "answer_intent": "identity",
                     }
                 ],
             )
@@ -487,7 +498,7 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     requests = StringIO(
         "\n".join(
             json.dumps(value)
@@ -508,7 +519,7 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
                     "id": 3,
                     "method": "tools/call",
                     "params": {
-                        "name": "entity_resolve",
+                        "name": "resolve_entity",
                         "arguments": {"name": "Alice"},
                     },
                 },
@@ -525,7 +536,7 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
     assert len(responses) == 3
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
     tool_names = [tool["name"] for tool in responses[1]["result"]["tools"]]
-    assert tool_names == ["ingest", "pipeline_readiness", "entity_resolve"]
+    assert tool_names == ["ingest", "pipeline_readiness", "resolve_entity"]
     assert responses[2]["result"]["isError"] is False
 
 
@@ -542,7 +553,7 @@ def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
     }
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/recipes":
+        if request.url.path == "/operations":
             return httpx.Response(200, json=[])
         if request.url.path == "/query/space":
             return httpx.Response(200, json=valid_identity)
@@ -551,7 +562,7 @@ def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     listed = server.list_tools()
     names = [tool["name"] for tool in listed["tools"]]  # type: ignore[index]
     assert names == ["ingest", "pipeline_readiness", *OPEN_QUERY_TOOL_NAMES]
@@ -561,12 +572,14 @@ def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> N
     """Empty, wrong-schema, wrong-major, and malformed-hash discovery fail closed."""
     from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 
-    recipe = {
-        "name": "entity_resolve",
+    operation = {
+        "name": "resolve_entity",
         "description": "Resolve an entity.",
         "input_schema": {"type": "object"},
+        "result_schema": {"type": "object"},
+        "result_contract": "envelope",
         "output_grain": "fact",
-        "answer_intent": "current_facts",
+        "answer_intent": "identity",
     }
     # Compact coverage of the fail-closed cases; not a full matrix.
     non_authoritative_payloads: list[object] = [
@@ -595,8 +608,8 @@ def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> N
         def respond(
             request: httpx.Request, *, body: object = payload
         ) -> httpx.Response:
-            if request.url.path == "/recipes":
-                return httpx.Response(200, json=[recipe])
+            if request.url.path == "/operations":
+                return httpx.Response(200, json=[operation])
             if request.url.path == "/query/space":
                 return httpx.Response(200, json=body)
             return httpx.Response(404, json={"detail": "Not Found"})
@@ -604,9 +617,9 @@ def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> N
         transport = httpx.Client(
             base_url="http://memory.test", transport=httpx.MockTransport(respond)
         )
-        server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+        server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
         names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-        assert names == ["ingest", "pipeline_readiness", "entity_resolve"], (
+        assert names == ["ingest", "pipeline_readiness", "resolve_entity"], (
             f"unexpected tools for payload {payload!r}"
         )
         assert not any(name in OPEN_QUERY_TOOL_NAMES for name in names)
@@ -616,14 +629,14 @@ def test_remote_mcp_survives_an_invalid_deployment_response() -> None:
     """One malformed success body is an error result, not a dead stdio loop."""
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path.startswith("/recipe/"):
+        if request.url.path.startswith("/operations/"):
             return httpx.Response(200, json={"not": "an envelope"})
         return httpx.Response(200, json=[])
 
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteRecipeMcpServer(client=MemoryClient(client=transport))
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     requests = StringIO(
         "\n".join(
             (

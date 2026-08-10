@@ -27,16 +27,16 @@ from typing import Final
 TWO_LAYER_HEADLINE: Final = (
     "RememberStack has two deliberately separate truth layers. Claims are"
     " immutable source testimony (“what was asserted, by whom, when”);"
-    " facts—relations and observations—are the adjudicated current"
-    " worldview (“what the system currently holds true”):"
+    " facts—relations and observations—are the adjudicated worldview (“what the"
+    " system holds or held true”):"
     " supersession-adjudicated, clocked on two time axes (when a fact held in"
     " the world, and when the system learned it), evidence-counted per"
     " distinct source—repetition is not corroboration—and"
     " contradiction-tracked. The `fact_claim_evidence` association is the"
     " auditable bridge between the layers, recording which claims support or"
     " contradict each fact. Query claims to inspect testimony; query facts to"
-    " answer current-truth questions, then follow the bridge to see why the"
-    " system believes the fact."
+    " answer current or historical truth questions, then follow the bridge to"
+    " see why the system believes or believed the fact."
 )
 
 #: The design's separate final parenthetical under the bound headline block.
