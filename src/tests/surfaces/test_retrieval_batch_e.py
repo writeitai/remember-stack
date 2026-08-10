@@ -23,6 +23,7 @@ from rememberstack.model import P1ChunkText
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5c000000-0000-0000-0000-000000000001")
@@ -92,6 +93,7 @@ class _Corpus:
         self.engine = engine
         self.claims: dict[str, UUID] = {}
         self.docs: dict[str, UUID] = {}
+        self.doc_chunks: dict[UUID, UUID] = {}
         self.stale_claim_id = uuid4()
         with engine.begin() as connection:
             self._seed_claims(connection)
@@ -102,19 +104,16 @@ class _Corpus:
             return existing
         doc_id = uuid4()
         self.docs[key] = doc_id
-        connection.execute(
-            text(
-                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
-                " source_ref, title) VALUES (:doc, :deployment, 'upload', :ref,"
-                " :title)"
-            ),
-            {
-                "doc": doc_id,
-                "deployment": _DEPLOYMENT_ID,
-                "ref": f"batch-e-{key}",
-                "title": f"Batch E {key}",
-            },
+        lineage = seed_live_document_lineage(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            doc_id=doc_id,
+            label=f"batch-e-{key}",
+            title=f"Batch E {key}",
+            source_ref=f"batch-e-{key}",
+            at=_NOW,
         )
+        self.doc_chunks[doc_id] = lineage.chunk_id
         return doc_id
 
     def _claim(
@@ -135,7 +134,7 @@ class _Corpus:
                 "claim": claim_id,
                 "deployment": _DEPLOYMENT_ID,
                 "doc": doc_id,
-                "chunk": uuid4(),
+                "chunk": self.doc_chunks[doc_id],
                 "body": claim_text,
                 "end": len(claim_text),
                 "at": _NOW,
