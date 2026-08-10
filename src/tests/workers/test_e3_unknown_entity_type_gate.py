@@ -112,6 +112,11 @@ def _claim() -> ClaimForNormalization:
     )
 
 
+def _payload(data: dict[str, Any]) -> dict[str, object]:
+    """Widen nested canned dicts for FakeModelProvider typing."""
+    return data
+
+
 def _handler(
     *,
     provider: FakeModelProvider,
@@ -174,7 +179,7 @@ def test_generate_retries_then_returns_legal_response() -> None:
     def router(prompt: str, type_name: str) -> dict[str, object]:
         del prompt, type_name
         n["i"] += 1
-        return illegal if n["i"] == 1 else legal
+        return _payload(illegal if n["i"] == 1 else legal)
 
     provider = FakeModelProvider(generate_router=router)
     handler = _handler(provider=provider)
@@ -187,6 +192,7 @@ def test_generate_retries_then_returns_legal_response() -> None:
         types_csv="Concept, Person",
         meter=meter,
     )
+    assert out is not None
     assert out.observations[0].subject.type == "Concept"
     assert len(provider.generated_prompts) == 2
     assert "TYPE GATE RETRY" in provider.generated_prompts[1]
@@ -207,7 +213,7 @@ def test_generate_exhausts_retry_returns_last_illegal() -> None:
             }
         ]
     }
-    provider = FakeModelProvider(generate_payload=illegal)
+    provider = FakeModelProvider(generate_payload=_payload(illegal))
     handler = _handler(provider=provider)
     meter = RecordingCostMeter()
     claim = _claim()
@@ -218,6 +224,7 @@ def test_generate_exhausts_retry_returns_last_illegal() -> None:
         types_csv="Concept",
         meter=meter,
     )
+    assert out is not None
     assert out.observations[0].subject.type == "Process"
     assert len(provider.generated_prompts) == 2
     illegal_set = _illegal_types_in_response(
@@ -240,7 +247,7 @@ def test_normalize_claim_drops_illegal_observation_without_resolve() -> None:
             }
         ]
     }
-    provider = FakeModelProvider(generate_payload=illegal)
+    provider = FakeModelProvider(generate_payload=_payload(illegal))
     resolver = RecordingResolver()
     facts = RecordingFacts()
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
@@ -275,7 +282,7 @@ def test_normalize_claim_drops_illegal_relation_before_other_predicate() -> None
             }
         ]
     }
-    provider = FakeModelProvider(generate_payload=illegal)
+    provider = FakeModelProvider(generate_payload=_payload(illegal))
     resolver = RecordingResolver()
     facts = RecordingFacts()
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
@@ -304,7 +311,7 @@ def test_normalize_claim_keeps_legal_sibling_observation() -> None:
             {"subject": {"name": "cache", "type": "Concept"}, "statement": "legal"},
         ]
     }
-    provider = FakeModelProvider(generate_payload=mixed)
+    provider = FakeModelProvider(generate_payload=_payload(mixed))
     resolver = RecordingResolver()
     handler = _handler(provider=provider, resolver=resolver, facts=RecordingFacts())
     observations: dict = {}
@@ -420,7 +427,7 @@ def test_resolver_invalid_response_is_not_soft() -> None:
             raise ProviderInvalidResponseError("t4 schema fail", usage=usage)
 
     handler = _handler(
-        provider=FakeModelProvider(generate_payload=legal),
+        provider=FakeModelProvider(generate_payload=_payload(legal)),
         resolver=RaisingResolver(),
         facts=RecordingFacts(),
     )
