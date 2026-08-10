@@ -41,8 +41,10 @@ consumers are harnesses (requirements §Retrieval); operators install `[server]`
 
 ## 2. The client surface (what the base package exposes)
 
-- **Query**: the typed SDK + CLI + MCP server over the retrieval API (D48–D51) — primitives,
-  recipes, envelopes. The MCP tool list renders from the recipe registry (D50).
+- **Query**: the typed SDK + CLI + MCP server over the retrieval API (D48–D51, D87) —
+  primitives, the four closed assured operations, D49 envelopes, open SQL/Cypher, and governed
+  saved queries. MCP renders the four platform-owned assured descriptors plus open-query
+  infrastructure; customer and `examples.*` saved queries do not become top-level intent tools.
 - **Ingest — lineage-aware by contract**: `client.ingest(bytes|path, *, source_kind=…,
   source_ref=…, source_modified_at=…, versioning_mode=…)` / `remember ingest …`. Writes always
   enter through E0 (D60 invariant — no surface writes around the pipeline). The optional
@@ -167,7 +169,7 @@ rememberstack/
                # providers, managed telemetry
     testing/   # in-process queue, tmpdir object store — the test tier
   llm/         # the programmatic-LLM layer (D52 class 2): prompt registry (rendered from the
-               # ontology/recipe registries), schema-constrained calls, transcript writing —
+               # ontology and closed assured-operation registries), schema-constrained calls, transcript writing —
                # every extractor/adjudicator call goes through here, no exceptions
   workers/     # stage handlers: thin orchestration composing core + spine + ports
   surfaces/    # api / mcp / cli — depend on services, never on adapters

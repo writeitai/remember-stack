@@ -1,7 +1,8 @@
 # LoCoMo full-system benchmark design
 
-> **Status:** binding current-system protocol. Real provider execution remains
-> operator-invoked; the owner authorized the full v11 run on 2026-08-07.
+> **Status:** binding current-system protocol contract. Real provider execution
+> remains operator-invoked. The 2026-08-07 authorization covered v11 only; this
+> design does not authorize a paid v12 run.
 
 ## 1. Acceptance boundary
 
@@ -19,13 +20,14 @@ run must satisfy these gates:
 - the operator supplies explicit execution, isolated-deployment, call-budget,
   and spend acknowledgements.
 
-The 2026-08-07 authorization covers one fresh full v11 publication run. It does
-not authorize an unbounded cost or a run against a different revision/surface.
+No provider run follows from accepting a protocol design. Every paid run still
+requires explicit authorization for its exact revision, surface, call budget,
+and spend ceiling.
 
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v11
+protocol                RS-LoCoMo-Full-v12
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -49,6 +51,20 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v11 → v12 (2026-08-10 — authority-aligned context operations):** D87
+replaces the assured-operation subset with `resolve_entity`,
+`testimony_context`, `fact_context`, and `answer_context`. The removed
+`question_context`/`current_context` names and optional mixed-grain flags are
+not compatibility tools. The complete answer catalog therefore contains four
+assured operations, seven direct primitives, nine open-query operations, and
+three P3 motions: 23 descriptors. The answer prompt routes source-testimony
+questions to `testimony_context`, current or historical truth questions to
+`fact_context`, general questions needing both layers to `answer_context`, and
+identity ambiguity to `resolve_entity`. The tool-catalog hash, surface manifest,
+prompt, adapter identity, and protocol fingerprint roll together. V11 artifacts
+remain self-describing and are not comparable to v12. Decision: D87; analysis:
+`plan/analysis/context_operation_model_analysis.md`.
 
 **v10 → v11 (2026-08-07 — complete retrieval plane):** V10 exposed only the
 three assured operations to the answer agent even though it built P2/P3 and the
@@ -213,7 +229,8 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and v11 instead measure the
-owner-selected Luna agent against the current surface. Answer and judge
+owner-selected Luna agent against their pinned surfaces; v12 retains that model
+choice for the D87 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
 
@@ -413,7 +430,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v11; no benchmark-specific
+an integrity requirement and an answer channel in v12; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -456,7 +473,8 @@ The answer command refuses a false report and checkpoints a true one. The old
 
 The answer catalog is the exact union of:
 
-- assured operations: `resolve_entity`, `question_context`, `current_context`;
+- assured operations: `resolve_entity`, `testimony_context`, `fact_context`,
+  `answer_context`;
 - direct primitives: `resolve`, `lookup_relations`, `transcript_relation`,
   `lookup_observations`, `search_claims`, `search_chunks`, `hydrate_relation`;
 - open query: `query_sql`, `explain_sql`, `query_cypher`, `explain_cypher`,
@@ -471,9 +489,9 @@ channel; it does not mean every question must call every channel.
 
 The protocol pins the checked-in `surface_manifest_hash`, verifies it against
 `GET /query/space` before ingestion and again before answering, and requires
-`GET /recipes` to equal the canonical three descriptors at both boundaries.
-Each descriptor carries an `implementation_chain_hash` computed from the live
-registry row, so equality covers the chain the executor will actually run, not
+`GET /operations` to equal the canonical four descriptors at both boundaries.
+Each descriptor carries an `implementation_plan_hash` computed from the live
+registry row, so equality covers the plan the executor will actually run, not
 only its name and schema. This catches both implementation-contract drift and
 registry bootstrap drift before remote processing or answer-model spend.
 
@@ -496,19 +514,20 @@ stay inside the normal P3 mount.
 
 For each question:
 
-1. Render the frozen answer-agent prompt with the question, all 22 tool
+1. Render the frozen answer-agent prompt with the question, all 23 tool
    descriptors, and prior trace.
 2. Ask for strict `AnswerAgentStep`.
 3. For `action="tool"`, validate the name against the catalog, decode
    `arguments_json` by taking its first complete JSON object (trailing text is
    recorded on the trace row, not discarded silently — see §2.4), and dispatch
    it through `MemoryClient` or the bounded P3 adapter.
-4. Append arguments, latency, and the complete JSON response. Assured and
-   primitive responses retain their complete envelopes.
+4. Append arguments, latency, and the complete JSON wire response. Single-layer
+   assured and primitive responses retain their complete envelopes;
+   `answer_context` retains both complete child envelopes in `ContextBundle/v1`.
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v11 leaves it unset.
+   prepared protocol's `answer_word_cap` is set; v12 leaves it unset.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
@@ -518,8 +537,11 @@ For each question:
    reader-position attempts after tool results; `first_step_retries` counts
    additional calls made before any tool result.
 
-The agent is instructed to choose the cheapest suitable channel: assured
-operations for ordinary typed recall/current truth, direct primitives for
+The agent is instructed to choose the cheapest suitable channel:
+`testimony_context` for what sources said, `fact_context` for current or
+historical truth, `answer_context` when both authority layers are useful, and
+`resolve_entity` before entity-grounded retrieval when identity is ambiguous;
+direct primitives for
 targeted evidence and audit, discovery before unfamiliar SQL/Cypher, SQL for
 live composition and P1 search functions, Cypher for P2 graph questions, saved
 queries for shipped patterns, and P3 for filesystem orientation/grep/read. It
@@ -528,7 +550,7 @@ respect grain, validity, freshness, truncation, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside
 retrieval.
 
-Loop guards in the frozen answer prompt (v11): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v12): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". These are prompt discipline, not harness enforcement
@@ -555,11 +577,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v11 \
+  --protocol full-v12 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v11`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v12`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
@@ -647,7 +669,7 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
   readiness.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
-- Public surface hash, recipe descriptors, live implementation-chain hashes,
+- Public surface hash, assured-operation descriptors, live implementation-plan hashes,
   nine open-query names, and the fingerprinted complete answer catalog match.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
