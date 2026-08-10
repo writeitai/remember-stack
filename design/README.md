@@ -18,3 +18,4 @@ Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
 | Topic | Binding | Analysis |
 | --- | --- | --- |
 | Chunk-level E2 extract (D84) | [`../plan/designs/chunk_level_extract_design.md`](../plan/designs/chunk_level_extract_design.md) | [`../plan/analysis/chunk_level_extract_analysis.md`](../plan/analysis/chunk_level_extract_analysis.md) |
+| Unknown entity type gate (E3 soft-drop) | [`../plan/designs/e3_unknown_entity_type_gate_design.md`](../plan/designs/e3_unknown_entity_type_gate_design.md) | [`../plan/analysis/e3_unknown_entity_type_gate_analysis.md`](../plan/analysis/e3_unknown_entity_type_gate_analysis.md) |
