@@ -16,6 +16,7 @@ from uuid import UUID
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+from sqlalchemy.exc import IntegrityError
 
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimForNormalization
@@ -25,6 +26,9 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ObservationAssertion
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model import RelationCandidate
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
@@ -34,6 +38,7 @@ from rememberstack.spine.fact_catalog import FactCatalog
 from rememberstack.spine.fact_catalog import OTHER_PREDICATE_GRAMMAR
 from rememberstack.spine.observation_adjudication import ObservationAdjudicator
 from rememberstack.spine.resolver import CascadeResolver
+from rememberstack.spine.resolver import UnregisteredEntityTypeError
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.workers.base import HandlerOutcome
@@ -45,9 +50,15 @@ _logger = logging.getLogger(__name__)
 _OTHER_PREDICATE: Final = OTHER_PREDICATE_GRAMMAR
 """The escape-value routing check (the spine re-validates authoritatively)."""
 
-E3_NORMALIZER_VERSION: Final = "e3-normalize-2026.07b:temp0-1"
+E3_NORMALIZER_VERSION: Final = "e3-normalize-2026.08a:temp0-1:unknown-type-gate-1"
 """The normalize sub-worker's component version (D12 idempotency member).
-07b pins temperature=0.0 — generation parameters are part of provenance."""
+
+08a: D86 unknown-entity-type gate (inner retry then drop). Temperature=0.0 is
+part of provenance.
+"""
+
+_MAX_INNER_NORMALIZE_ATTEMPTS: Final = 2
+"""First generate plus one type-gate retry (D86)."""
 
 _NORMALIZE_PROMPT: Final = """You are the normalizer of a memory system. Turn
 the CLAIM into zero or more of:
@@ -68,6 +79,13 @@ GOVERNED PREDICATES:
 REGISTRY TYPES: {types}
 
 CLAIM (attributed={is_attributed}): {claim_text}"""
+
+_TYPE_RETRY_SUFFIX: Final = """
+
+TYPE GATE RETRY: The previous response used illegal entity type(s): {illegal}.
+Every entity `type` field MUST be exactly one of: {types}.
+Do not invent types. Prefer dropping a relation or observation over inventing
+a type. Re-emit the full JSON NormalizationResponse."""
 
 
 class E3Settings(BaseSettings):
@@ -141,19 +159,64 @@ class NormalizeRelationsHandler:
             claim_ids=tuple(claim.claim_id for claim in claims)
         )
         observations_by_entity: dict[UUID, list[ObservationAssertion]] = {}
+        allowed_types = frozenset(type_parents)
+        claims_processed = 0
+        soft_claim_errors = 0
         for claim in claims:
             if claim.claim_id in normalized_claim_ids:
                 continue  # replay: stored mentions/facts are the output (D7)
-            self._normalize_claim(
-                created_relations=created_relations,
-                observations_by_entity=observations_by_entity,
-                deployment_id=deployment_id,
-                claim=claim,
-                predicates=predicates,
-                prompt_lines=prompt_lines,
-                signatures=signatures,
-                type_parents=type_parents,
-                meter=meter,
+            claims_processed += 1
+            try:
+                soft_skipped = self._normalize_claim(
+                    created_relations=created_relations,
+                    observations_by_entity=observations_by_entity,
+                    deployment_id=deployment_id,
+                    claim=claim,
+                    predicates=predicates,
+                    prompt_lines=prompt_lines,
+                    signatures=signatures,
+                    type_parents=type_parents,
+                    allowed_types=allowed_types,
+                    meter=meter,
+                )
+            except UnregisteredEntityTypeError:
+                # Defense-in-depth mint refusal: gate should have dropped first.
+                # Loud alarm + outer ledger (do not soft-succeed the version).
+                _logger.error(
+                    "e3.entity_type_fk_violation claim_id=%s error_class=%s",
+                    claim.claim_id,
+                    UnregisteredEntityTypeError.__name__,
+                )
+                raise
+            except IntegrityError as integrity_error:
+                if _is_entity_type_fk_violation(error=integrity_error):
+                    _logger.error(
+                        "e3.entity_type_fk_violation claim_id=%s error_class=%s",
+                        claim.claim_id,
+                        type(integrity_error).__name__,
+                    )
+                raise
+            if soft_skipped:
+                # Normalizer generate content poison only (already metered under
+                # aN:failure). Resolver/upsert exceptions are never soft here.
+                soft_claim_errors += 1
+        _logger.info(
+            "e3.claims_processed count=%s soft_claim_errors=%s",
+            claims_processed,
+            soft_claim_errors,
+        )
+        if (
+            claims_processed > 0
+            and soft_claim_errors == claims_processed
+            and not created_relations
+            and not observations_by_entity
+        ):
+            # All claims were content-poison soft failures with zero facts.
+            # Still succeed the version job (D86: soft failures must not DLQ);
+            # log loudly so ops can distinguish from a clean empty extract.
+            _logger.error(
+                "e3.normalize_all_soft_failed count=%s relations=0 observations=0",
+                claims_processed,
             )
         for entity_id, assertions in observations_by_entity.items():
             self._observation_adjudicator.add_observations(
@@ -218,29 +281,43 @@ class NormalizeRelationsHandler:
         prompt_lines: str,
         signatures: dict[str, tuple[tuple[str, str], ...]],
         type_parents: dict[str, str | None],
+        allowed_types: frozenset[str],
         meter: CostMeterPort,
-    ) -> None:
-        """One claim through the normalizer call and the deterministic gates."""
-        response_call = self._model_provider.generate(
-            request=ModelRequest(
-                model=self._settings.normalize_model,
-                prompt=_NORMALIZE_PROMPT.format(
-                    predicates=prompt_lines,
-                    types=", ".join(sorted(type_parents)),
-                    is_attributed=claim.is_attributed,
-                    claim_text=claim.claim_text,
-                ),
-                temperature=0.0,
-            ),
-            response_type=NormalizationResponse,
+    ) -> bool:
+        """One claim through the normalizer call and the deterministic gates.
+
+        Returns True when the normalizer generate path soft-skipped the claim
+        (content poison already metered). Returns False after gates run.
+        Resolver and fact writes re-raise; they are never claim-soft.
+        """
+        types_csv = ", ".join(sorted(allowed_types))
+        base_prompt = _NORMALIZE_PROMPT.format(
+            predicates=prompt_lines,
+            types=types_csv,
+            is_attributed=claim.is_attributed,
+            claim_text=claim.claim_text,
         )
-        meter.record(
-            call_key=f"normalize:{claim.claim_id}",
-            tier="normalize",
-            usage=response_call.usage,
+        response = self._generate_normalize_response(
+            claim=claim,
+            base_prompt=base_prompt,
+            allowed_types=allowed_types,
+            types_csv=types_csv,
+            meter=meter,
         )
-        response = response_call.output
+        if response is None:
+            return True
         for relation_index, relation in enumerate(response.relations):
+            illegal = _illegal_types_in_relation(
+                relation=relation, allowed_types=allowed_types
+            )
+            if illegal:
+                _logger.warning(
+                    "e3.unknown_entity_type_dropped claim_id=%s kind=relation "
+                    "illegal_types=%s site=relation",
+                    claim.claim_id,
+                    [_bounded_type_label(value=value) for value in sorted(illegal)],
+                )
+                continue
             if _OTHER_PREDICATE.fullmatch(relation.predicate):
                 # the D5 escape funnel: register tier=other, unconstrained
                 # by signatures, ranked by usage for periodic promotion
@@ -316,6 +393,17 @@ class NormalizeRelationsHandler:
             if upserted.created:
                 created_relations.append(str(upserted.relation_id))
         for observation_index, observation in enumerate(response.observations):
+            if observation.subject.type not in allowed_types:
+                _logger.warning(
+                    "e3.unknown_entity_type_dropped claim_id=%s kind=observation "
+                    "illegal_types=%s site=observation",
+                    claim.claim_id,
+                    [
+                        _bounded_type_label(value=value)
+                        for value in [observation.subject.type]
+                    ],
+                )
+                continue
             subject = self._resolver.resolve(
                 deployment_id=deployment_id,
                 reference=observation.subject,
@@ -335,6 +423,140 @@ class NormalizeRelationsHandler:
                     doc_id=claim.doc_id,
                 )
             )
+        return False
+
+    def _generate_normalize_response(
+        self,
+        *,
+        claim: ClaimForNormalization,
+        base_prompt: str,
+        allowed_types: frozenset[str],
+        types_csv: str,
+        meter: CostMeterPort,
+    ) -> NormalizationResponse | None:
+        """Generate with D86 type-gate inner retry; return the final response only.
+
+        Returns ``None`` when the normalizer generate path hits claim-soft
+        content poison (``ProviderInvalidResponseError``), after metering
+        ``normalize:{id}:aN:failure``. Systemic provider errors re-raise.
+        """
+        prompt = base_prompt
+        response: NormalizationResponse | None = None
+        for attempt in range(1, _MAX_INNER_NORMALIZE_ATTEMPTS + 1):
+            call_key = f"normalize:{claim.claim_id}:a{attempt}"
+            try:
+                response_call = self._model_provider.generate(
+                    request=ModelRequest(
+                        model=self._settings.normalize_model,
+                        prompt=prompt,
+                        temperature=0.0,
+                    ),
+                    response_type=NormalizationResponse,
+                )
+            except ProviderInvalidResponseError as exception:
+                # Soft boundary is generate-only: meter and skip the claim.
+                # Resolver ProviderInvalidResponseError is not soft (re-raises
+                # from resolve) so Worker can meter provider_failure.
+                if exception.usage is not None:
+                    meter.record(
+                        call_key=f"{call_key}:failure",
+                        tier="normalize_failed_response",
+                        usage=exception.usage,
+                    )
+                _logger.exception(
+                    "e3.claim_normalize_error claim_id=%s error_class=%s site=generate",
+                    claim.claim_id,
+                    type(exception).__name__,
+                )
+                return None
+            except ProviderCallError:
+                # Systemic: do not meter here (Worker.run_one records
+                # provider_failure once).
+                raise
+            meter.record(call_key=call_key, tier="normalize", usage=response_call.usage)
+            response = response_call.output
+            illegal = _illegal_types_in_response(
+                response=response, allowed_types=allowed_types
+            )
+            if not illegal:
+                if attempt > 1:
+                    _logger.info(
+                        "e3.unknown_entity_type_recovered claim_id=%s attempts_used=%s",
+                        claim.claim_id,
+                        attempt,
+                    )
+                return response
+            _logger.warning(
+                "e3.unknown_entity_type claim_id=%s attempt=%s illegal_types=%s "
+                "site=response",
+                claim.claim_id,
+                attempt,
+                [_bounded_type_label(value=value) for value in sorted(illegal)],
+            )
+            if attempt >= _MAX_INNER_NORMALIZE_ATTEMPTS:
+                break
+            _logger.info(
+                "e3.unknown_entity_type_retry claim_id=%s attempt=%s",
+                claim.claim_id,
+                attempt,
+            )
+            # Bound free-form illegal labels in the retry prompt (cardinality).
+            illegal_labels = ", ".join(
+                _bounded_type_label(value=value) for value in sorted(illegal)
+            )
+            prompt = base_prompt + _TYPE_RETRY_SUFFIX.format(
+                illegal=illegal_labels, types=types_csv
+            )
+        assert response is not None
+        return response
+
+
+def _is_entity_type_fk_violation(*, error: IntegrityError) -> bool:
+    """Whether an IntegrityError is the entities.type → entity_types FK (D86)."""
+    message = str(error).lower()
+    if "entity_types" in message:
+        return True
+    orig = getattr(error, "orig", None)
+    diag = getattr(orig, "diag", None) if orig is not None else None
+    constraint = getattr(diag, "constraint_name", None) if diag is not None else None
+    if constraint is not None and "entity_type" in str(constraint).lower():
+        return True
+    return False
+
+
+def _bounded_type_label(*, value: str, max_len: int = 48) -> str:
+    """Truncate free-form model type tokens for prompts and log fields."""
+    cleaned = value.strip().replace("\n", " ")
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1] + "…"
+
+
+def _illegal_types_in_response(
+    *, response: NormalizationResponse, allowed_types: frozenset[str]
+) -> frozenset[str]:
+    """Entity types emitted by the normalizer that are outside the registry."""
+    found: set[str] = set()
+    for relation in response.relations:
+        found.update(
+            _illegal_types_in_relation(relation=relation, allowed_types=allowed_types)
+        )
+    for observation in response.observations:
+        if observation.subject.type not in allowed_types:
+            found.add(observation.subject.type)
+    return frozenset(found)
+
+
+def _illegal_types_in_relation(
+    *, relation: RelationCandidate, allowed_types: frozenset[str]
+) -> frozenset[str]:
+    """Illegal types on one relation's endpoints."""
+    found: set[str] = set()
+    if relation.subject.type not in allowed_types:
+        found.add(relation.subject.type)
+    if relation.object.type not in allowed_types:
+        found.add(relation.object.type)
+    return frozenset(found)
 
 
 def _signature_allows(

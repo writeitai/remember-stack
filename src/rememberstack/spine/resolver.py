@@ -38,6 +38,10 @@ class ResolverVersionConflictError(Exception):
     """A resolver version re-registered with a different definition (D22)."""
 
 
+class UnregisteredEntityTypeError(Exception):
+    """Mint refused: emitted type is not in the deployment entity_types registry (D86)."""
+
+
 RESOLVER_VERSION: Final = "resolver-2026.07b"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
 07b pins T4 temperature=0.0 — generation parameters are part of provenance."""
@@ -429,6 +433,18 @@ class CascadeResolver:
         call_key: str,
     ) -> ResolvedEntity:
         """Create the canonical entity + alias and index its T3 profile."""
+        registered = connection.execute(
+            _SELECT_ENTITY_TYPE_EXISTS,
+            {"deployment_id": deployment_id, "entity_type": reference.type},
+        ).one_or_none()
+        if registered is None:
+            # D86 defense-in-depth: never hit the entity_types FK with an
+            # invented type. Callers (E3) should gate first; this is the last
+            # stop before INSERT.
+            raise UnregisteredEntityTypeError(
+                f"entity type {reference.type!r} is not registered for "
+                f"deployment {deployment_id}"
+            )
         entity_id = uuid4()
         # the mint verdict records the tier that DECIDED novelty: T0 when
         # nothing blocked, else the rejecting tier's method and confidence
@@ -692,6 +708,15 @@ _T1_T2_BLOCK = text(
       AND (t1.entity_id IS NOT NULL OR t2.entity_id IS NOT NULL)
     ORDER BY coalesce(t1.score, 0.0) DESC
     LIMIT :limit
+    """
+)
+
+_SELECT_ENTITY_TYPE_EXISTS = text(
+    """
+    SELECT 1
+    FROM entity_types
+    WHERE deployment_id = :deployment_id
+      AND type = :entity_type
     """
 )
 
