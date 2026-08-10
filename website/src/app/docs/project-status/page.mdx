@@ -22,7 +22,7 @@ Current public release: [`v0.2.0`](https://github.com/writeitai/remember-stack/r
 - Search indexes, knowledge-graph snapshots, and a browsable corpus filesystem
 - Three assured operations: `resolve_entity`, `question_context`, `current_context`
 - Open query: sandboxed SQL, read-only Cypher, saved examples, schema discovery
-- MCP memory verbs: `ingest` + `pipeline_readiness` (async write; poll until ready) alongside recipe and open-query tools
+- MCP recipe and open-query tools (stdio client transport)
 - Self-accounting response envelopes (grain, freshness, contradictions, typed negatives)
 - API, CLI, and MCP in lockstep; optional filesystem mounts and a deployment-rendered consumption skill
 - Cold-agent skill checks so harnesses keep claims and facts straight
@@ -52,6 +52,10 @@ Current public release: [`v0.2.0`](https://github.com/writeitai/remember-stack/r
 | PDF / HTML / media conversion | Engine-capable; register routes — not auto-wired in the smoke profile |
 | Query-time entity resolve | Exact-name match; richer matching runs at write time |
 | Competitive benchmark scores | Operator-run protocols; not a continuous public scoreboard |
+
+## Planned for v0.3.0 (not in the v0.2.0 release)
+
+- MCP memory write verbs: `ingest` + `pipeline_readiness` (async write; poll until ready). Documented on the [MCP reference](/docs/reference/mcp); not present in installs pinned to `0.2.0`.
 
 ## Intentionally not in the library
 

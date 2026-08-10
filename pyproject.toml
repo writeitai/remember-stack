@@ -87,6 +87,7 @@ dev = [
     "boto3>=1.42",
     "fastapi>=0.139.2",
     "import-linter>=2.13",
+    "jsonschema>=4.23",
     "ladybug==0.18.2",
     "lancedb>=0.34.0",
     "markdown-it-py>=4.2.0",

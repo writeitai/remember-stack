@@ -72,9 +72,13 @@ Exactly one body source:
 
 | Mode | When | Notes |
 | --- | --- | --- |
-| `path` | File on the **MCP host** filesystem | Filename/mime inferred when omitted |
+| `path` | File on the **MCP host** filesystem | **Only** when `REMEMBERSTACK_MCP_INGEST_ROOTS` is set (JSON array of absolute roots). Fully resolved; must stay inside a root after symlink resolution; regular file only; size-checked before read. Filename defaults to basename; **mime is guessed from the real path name** unless `mime` is set (SDK parity). With no roots configured, `path` is rejected — use `text` / `content_base64` or ask the operator to configure roots. |
 | `text` | UTF-8 already in agent context | Requires `filename` |
 | `content_base64` | Binary / non-UTF-8 | Requires `filename`; standard base64 only (no `data:` URL) |
+
+Prefer `source_kind` + a stable `source_ref` for durable agent memory so later
+writes version the same document. Omit both only for intentionally anonymous
+one-shot ingest.
 
 Optional: `mime`, `title`, `source_kind` + `source_ref` (must be paired),
 `versioning_mode` (`snapshot` \| `living`), `source_modified_at` (timezone-aware
@@ -93,7 +97,7 @@ UTC ISO-8601), `source_version_ref`. Lineage fields require the
   "pipeline": {
     "status": "accepted_not_ready",
     "next_tool": "pipeline_readiness",
-    "poll_with": { "version_ids": ["…"], "require_projections": true },
+    "poll_with": { "version_ids": ["…"], "require_projections": false },
     "guidance": "Ingest accepted. Wait until pipeline_readiness.ready is true …"
   }
 }
@@ -106,14 +110,17 @@ flight.
 
 Body size limits are enforced by the **deployment**. Client preflight applies
 only when a served capability document supplies a max body size; otherwise the
-server rejects and the tool maps `body_too_large` / `empty_body`.
+server rejects and the tool maps `body_too_large` / `empty_body`. Path reads
+additionally apply a **local resource guard**
+(`REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES`, default 256 MiB) when no capability
+limit is served — process safety on the MCP host, not a cloud ceiling (O1).
 
 ### `pipeline_readiness`
 
 | Argument | Required | Notes |
 | --- | --- | --- |
 | `version_ids` | yes | 1–1000 UUID strings from `ingest` |
-| `require_projections` | no | default `true` |
+| `require_projections` | no | Engine default `true`. For “can I recall this yet?” after ingest, prefer **`false`** (continuous stages only). `true` also requires published projections (locally: the operations profile with projection workers). Default OSS Compose does **not** run projections — polling with `true` can wait forever while E/P1 stages are green. |
 
 Success content is the engine `PipelineReadinessReport` JSON (no second
 envelope).
@@ -121,12 +128,19 @@ envelope).
 **Agent poll algorithm:**
 
 1. `ingest` → read `version_id`, `created`.
-2. If `created=false`, call `pipeline_readiness` once; if `ready`, recall; else poll.
-3. If `created=true`, wait ~30s, then poll with `require_projections: true`.
+2. If `created=false`, call `pipeline_readiness` once with
+   `require_projections: false`; if `ready`, recall; else poll.
+3. If `created=true`, wait ~30s, then poll with
+   `require_projections: false` (unless you specifically need published
+   projections and are on a profile that runs them).
 4. While `ready=false` and no stage is `failed` / `dead_letter`: wait 30–60s
    (back-off, floor ~15s), poll again.
 5. On `ready=true`: call recipe tools (for example `question_context`).
-6. On `failed` / `dead_letter`: stop and report the stage.
+6. On `failed` / `dead_letter`: **STOP** polling and report the stage to the
+   user — do not keep polling.
+7. After ~20–30 minutes without `ready=true` and without a terminal stage
+   failure: stop and escalate to the operator (include `version_id` and last
+   `stages[]`).
 
 ### Recipe tools
 

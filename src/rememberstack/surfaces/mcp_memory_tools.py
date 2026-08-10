@@ -8,8 +8,14 @@ general-purpose memory surface.
 
 Size preflight uses limits from a served capability document when the backend
 exposes one. When no capability document is available, the client does not
-invent a body-size ceiling — the server rejects and the mapped error is
-returned (client-access design §3.1; design-owner ruling O1).
+invent a body-size ceiling for wire payloads — the server rejects and the mapped
+error is returned (client-access design §3.1; design-owner ruling O1).
+
+Path bodies are a separate local concern: they are accepted only when the
+operator configures allowlisted roots (``REMEMBERSTACK_MCP_INGEST_ROOTS``).
+Reading a path always applies a process-local resource guard so a hostile or
+accidental path cannot hang or OOM the MCP process; that guard is **not** a
+cloud body ceiling.
 
 Dependency-light: safe for the base client wheel that hosts remote MCP.
 """
@@ -19,20 +25,32 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 import json
+import logging
 import mimetypes
+import os
 from pathlib import Path
+import stat
 from typing import Final
 from typing import Literal
 from typing import Protocol
 from uuid import UUID
 
+from pydantic import Field
+from pydantic import field_validator
+from pydantic import ValidationError
+from pydantic_settings import BaseSettings
+from pydantic_settings import SettingsConfigDict
+
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.documents import IngestedVersion
+
+logger = logging.getLogger(__name__)
 
 INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
@@ -48,27 +66,51 @@ _SOURCE_REF_MAX_LEN: Final = 512
 _SOURCE_VERSION_REF_MAX_LEN: Final = 512
 _VERSION_IDS_MAX: Final = 1000
 
+# Default LOCAL RESOURCE GUARD for path bodies when no served capability limit
+# is available. This is process safety for the MCP host — not a cloud/O1 body
+# ceiling. Override via REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES.
+_DEFAULT_PATH_READ_MAX_BYTES: Final = 256 * 1024 * 1024
+
 _INGEST_DESCRIPTION: Final = (
     "Store a document into this deployment's memory (E0 write). Returns a"
     " version_id immediately; the indexing pipeline is asynchronous and may"
     " take many minutes (structure alone has been measured at ~11 minutes on a"
     " ~2.5KB file). Do NOT call recipe recall tools expecting this content until"
-    " pipeline_readiness reports ready=true for the version_id. Prefer path when"
-    " the file exists on the local machine running this MCP server; use text for"
-    " short UTF-8 notes already in context; use content_base64 for binary."
-    " Bodies must be non-empty; deployments may enforce a maximum body size"
-    " (oversized or empty bodies map to structured body_too_large / empty_body"
-    " errors). source_kind and source_ref must be supplied together when either"
-    " is set (stable lineage)."
+    " pipeline_readiness reports ready=true for the version_id."
+    " Prefer source_kind plus a stable source_ref for durable agent memory so"
+    " later writes become new versions of the same document; omit both only for"
+    " intentionally anonymous one-shot ingest."
+    " Body sources (exactly one): text for short UTF-8 notes already in context;"
+    " content_base64 for binary; path only when the operator has configured"
+    " REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host —"
+    " with no roots configured, path is rejected (use text/content_base64 or ask"
+    " the operator to set roots). Path reads resolve fully, must stay inside a"
+    " configured root after symlink resolution, must be regular files, and are"
+    " size-bounded (served capability limit when present, otherwise a local"
+    " process resource guard). Bodies must be non-empty; deployments may enforce"
+    " a maximum body size (oversized or empty bodies map to structured"
+    " body_too_large / empty_body errors). source_kind and source_ref must be"
+    " supplied together when either is set (stable lineage)."
 )
 
 _PIPELINE_READINESS_DESCRIPTION: Final = (
     "Inspect whether one or more document version_ids have finished the"
     " continuous pipeline (and optionally projections) and are safe to recall."
-    " Call after ingest with the returned version_id. ready=true means recipe"
-    " tools may see the content (subject to retrieval relevance). ready=false is"
-    " normal while workers run — keep polling; inspect stages[].status for"
-    " failed/dead_letter."
+    " Call after ingest with the returned version_id."
+    " ready=true means recipe tools may see the content (subject to retrieval"
+    " relevance)."
+    " require_projections=false answers 'can I recall this yet?' against"
+    " continuous stages only (structure/extract/index) — use this default for"
+    " post-ingest polling on typical OSS Compose (which does not run projection"
+    " workers)."
+    " require_projections=true additionally requires published aggregate"
+    " projections (locally: the operations profile with projection workers)."
+    " Terminal stop: if any stages[].status is failed or dead_letter, STOP"
+    " polling and report the stage to the user — do not keep polling."
+    " Bounded poll: wait ~30s after ingest, then poll every 30–60s with mild"
+    " back-off (floor ~15s). After ~20–30 minutes without ready=true and without"
+    " a terminal stage failure, stop and escalate to the operator (include"
+    " version_id and last stages[])."
 )
 
 _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
@@ -79,9 +121,13 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
             "type": "string",
             "minLength": 1,
             "description": (
-                "Local filesystem path readable by this MCP process. Mutually"
-                " exclusive with text and content_base64. Filename and mime are"
-                " inferred when omitted."
+                "Local filesystem path readable by this MCP process, only when"
+                " REMEMBERSTACK_MCP_INGEST_ROOTS is configured. Mutually exclusive"
+                " with text and content_base64. Path is resolved fully; symlink"
+                " escape outside a configured root is rejected. Must be a regular"
+                " file (not a directory, FIFO, or device). Size is checked before"
+                " read. Filename defaults to the path basename; mime is guessed"
+                " from the real path name unless mime is supplied (SDK parity)."
             ),
         },
         "text": {
@@ -107,7 +153,9 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
             "maxLength": _FILENAME_MAX_LEN,
             "description": (
                 "Required when text or content_base64 is used. Optional with"
-                " path (defaults to the path basename)."
+                " path (defaults to the path basename). Does not change mime"
+                " inference for path mode — mime follows the real path name"
+                " unless mime is set."
             ),
         },
         "mime": {
@@ -115,8 +163,9 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
             "minLength": 1,
             "maxLength": _MIME_MAX_LEN,
             "description": (
-                "Optional. Default: guessed from path/filename, else text/plain"
-                " for text, application/octet-stream for content_base64."
+                "Optional. Default: for path, guessed from the real path name"
+                " (SDK parity); for text, text/plain; for content_base64,"
+                " application/octet-stream (or guess from filename when set)."
             ),
         },
         "title": {
@@ -130,7 +179,7 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
             "maxLength": _SOURCE_KIND_MAX_LEN,
             "description": (
                 "Lineage class (e.g. agent, cli, feeder). Must be paired with"
-                " source_ref."
+                " source_ref. Prefer setting this for durable agent memory."
             ),
         },
         "source_ref": {
@@ -165,10 +214,25 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
             ),
         },
     },
+    # Each branch requires its mode keys and forbids the other body properties
+    # so hosts validating against this schema reject multi-mode payloads.
     "oneOf": [
-        {"required": ["path"]},
-        {"required": ["text", "filename"]},
-        {"required": ["content_base64", "filename"]},
+        {
+            "required": ["path"],
+            "not": {
+                "anyOf": [{"required": ["text"]}, {"required": ["content_base64"]}]
+            },
+        },
+        {
+            "required": ["text", "filename"],
+            "not": {
+                "anyOf": [{"required": ["path"]}, {"required": ["content_base64"]}]
+            },
+        },
+        {
+            "required": ["content_base64", "filename"],
+            "not": {"anyOf": [{"required": ["path"]}, {"required": ["text"]}]},
+        },
     ],
 }
 
@@ -188,12 +252,56 @@ _PIPELINE_READINESS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "type": "boolean",
             "default": True,
             "description": (
-                "When true, report ready only if aggregate projections are also"
-                " fresh (engine default)."
+                "false: ready when continuous stages finish (use for 'can I"
+                " recall yet?' on default Compose). true: also require published"
+                " projections (operations profile / projection workers)."
             ),
         },
     },
 }
+
+
+class McpMemorySettings(BaseSettings):
+    """Operator settings for MCP memory-write path safety.
+
+    Env prefix ``REMEMBERSTACK_MCP_``:
+
+    - ``INGEST_ROOTS`` — JSON array (or comma-separated) of directory roots
+      allowed for the ``path`` body mode. Empty / unset refuses ``path`` (fail
+      closed; no CWD/home default).
+    - ``PATH_READ_MAX_BYTES`` — LOCAL RESOURCE GUARD for path reads when no
+      served capability body limit is available. Not a cloud ceiling (O1).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_MCP_", extra="ignore")
+
+    ingest_roots: tuple[Path, ...] = ()
+    path_read_max_bytes: int = Field(default=_DEFAULT_PATH_READ_MAX_BYTES, gt=0)
+
+    @field_validator("ingest_roots", mode="before")
+    @classmethod
+    def parse_ingest_roots(cls, value: object) -> object:
+        """Accept JSON arrays or comma-separated path lists from env."""
+        if value is None or value == "":
+            return ()
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return ()
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, list):
+                    raise ValueError("INGEST_ROOTS JSON value must be an array")
+                return tuple(str(item) for item in parsed)
+            return tuple(part.strip() for part in stripped.split(",") if part.strip())
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return tuple(str(item) for item in value)
+        return value
+
+
+def load_mcp_memory_settings() -> McpMemorySettings:
+    """Load MCP path-safety settings from the process environment."""
+    return McpMemorySettings()
 
 
 class MemoryWriteBackend(Protocol):
@@ -224,8 +332,9 @@ class MemoryWriteBackend(Protocol):
     def max_ingest_body_bytes(self) -> int | None:
         """Served capability max body size, or ``None`` when none is available.
 
-        ``None`` means do not client-preflight body size — let the server reject
-        and map the error. Never invent a hard-coded ceiling here.
+        ``None`` means do not invent a cloud body-size ceiling for wire payloads
+        — let the server reject and map the error. Path mode still applies the
+        local process resource guard from settings.
         """
         ...
 
@@ -283,13 +392,20 @@ def memory_write_tool_descriptors() -> list[dict[str, object]]:
 
 
 def handle_memory_write_tool(
-    *, name: str, arguments: Mapping[str, object], backend: MemoryWriteBackend | None
+    *,
+    name: str,
+    arguments: Mapping[str, object],
+    backend: MemoryWriteBackend | None,
+    settings: McpMemorySettings | None = None,
 ) -> dict[str, object]:
     """Dispatch one write/readiness tool to a success or structured error result.
 
     When ``backend`` is ``None`` the tools are not composed (recipe-only local
     MCP). Unknown names are the caller's responsibility — this function only
     handles ``MEMORY_WRITE_TOOL_NAMES``.
+
+    ``settings`` is optional so tests can inject roots without mutating the
+    process environment; production callers leave it unset and load from env.
     """
     if name not in MEMORY_WRITE_TOOL_NAMES:
         raise ValueError(f"not a memory write tool: {name!r}")
@@ -310,15 +426,22 @@ def handle_memory_write_tool(
                 ),
             )
         )
+    resolved_settings = settings if settings is not None else load_mcp_memory_settings()
     try:
         if name == INGEST_TOOL_NAME:
-            payload = _run_ingest(arguments=arguments, backend=backend)
+            payload = _run_ingest(
+                arguments=arguments, backend=backend, settings=resolved_settings
+            )
         else:
             payload = _run_pipeline_readiness(arguments=arguments, backend=backend)
     except MemoryToolArgumentError as error:
         return _error_result(error.error)
     except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
         mapped = map_backend_error(error)
+        # Failures never disappear: unexpected / local-backend defects keep a
+        # full traceback at the MCP wire boundary (core value 6).
+        if mapped.code in {"internal_error", "local_backend_error"}:
+            logger.exception("MCP memory tool %s failed with %s", name, mapped.code)
         return _error_result(mapped)
     return {
         "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
@@ -329,34 +452,95 @@ def handle_memory_write_tool(
 def map_backend_error(error: BaseException) -> ToolError:
     """Map an SDK/HTTP/backend failure into the structured tool error envelope.
 
-    Accepts ``MemoryApiError``-shaped objects (``status_code`` + ``detail``)
-    without importing the SDK type, so local port adapters can raise ordinary
-    exceptions that still map when they carry the same attributes.
+    Failure classes:
+
+    - HTTP/API style (``status_code`` + ``detail``) — engine and cloud wire errors
+    - ``spend_safety`` — cloud reservation / spend refusals (not flattened into
+      ``engine_client_error``)
+    - ``ValidationError`` — local backend/Pydantic contract defects
+    - ``ValueError`` — typed client-side contract failures from the SDK
+    - transport-ish OS/network errors — retryable ``transport_error``
+    - everything else — non-retryable ``internal_error`` (programmer defect /
+      unexpected); callers log the full traceback at the MCP boundary
+
+    Accepts ``MemoryApiError``-shaped objects without importing the SDK type, so
+    local port adapters can raise ordinary exceptions that still map when they
+    carry the same attributes.
     """
     status_code = getattr(error, "status_code", None)
     detail = getattr(error, "detail", None)
+    explicit_code = getattr(error, "code", None)
     if isinstance(status_code, int) and isinstance(detail, str):
-        return _map_http_style_error(status_code=status_code, detail=detail)
+        return _map_http_style_error(
+            status_code=status_code, detail=detail, explicit_code=explicit_code
+        )
     if isinstance(status_code, int) and detail is not None:
-        return _map_http_style_error(status_code=status_code, detail=str(detail))
+        return _map_http_style_error(
+            status_code=status_code, detail=str(detail), explicit_code=explicit_code
+        )
+    if isinstance(error, ValidationError):
+        return ToolError(
+            code="local_backend_error",
+            message=f"Local backend validation failed: {error}",
+            http_status=500,
+            retryable=False,
+            agent_action=(
+                "Report a composition/contract defect; do not retry the same call."
+            ),
+        )
+    if isinstance(error, UnicodeEncodeError):
+        return ToolError(
+            code="encoding_error",
+            message=f"Body is not encodable as UTF-8: {error}",
+            http_status=422,
+            retryable=False,
+            agent_action=(
+                "Remove lone surrogates / invalid code points, or send"
+                " content_base64 for binary."
+            ),
+        )
+    if isinstance(error, ValueError):
+        return ToolError(
+            code="invalid_arguments",
+            message=str(error) or "Invalid arguments.",
+            http_status=422,
+            retryable=False,
+            agent_action="Fix the tool arguments and retry.",
+        )
+    if isinstance(error, (ConnectionError, TimeoutError)):
+        return ToolError(
+            code="transport_error",
+            message=str(error) or error.__class__.__name__,
+            http_status=0,
+            retryable=True,
+            agent_action=(
+                "Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and"
+                " network reachability."
+            ),
+        )
     return ToolError(
-        code="transport_error",
+        code="internal_error",
         message=str(error) or error.__class__.__name__,
-        http_status=0,
-        retryable=True,
+        http_status=500,
+        retryable=False,
         agent_action=(
-            "Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and"
-            " network reachability."
+            "Unexpected internal failure. Do not busy-retry; report the error"
+            " (and any request_id) to an operator or as a product defect."
         ),
     )
 
 
 def _run_ingest(
-    *, arguments: Mapping[str, object], backend: MemoryWriteBackend
+    *,
+    arguments: Mapping[str, object],
+    backend: MemoryWriteBackend,
+    settings: McpMemorySettings,
 ) -> dict[str, object]:
     """Parse args, optionally preflight size from capability limits, ingest."""
-    parsed = _parse_ingest_arguments(arguments=arguments)
-    limit = backend.max_ingest_body_bytes()
+    capability_limit = backend.max_ingest_body_bytes()
+    parsed = _parse_ingest_arguments(
+        arguments=arguments, settings=settings, capability_limit=capability_limit
+    )
     if not parsed.content:
         raise MemoryToolArgumentError(
             error=ToolError(
@@ -369,13 +553,13 @@ def _run_ingest(
                 ),
             )
         )
-    if limit is not None and len(parsed.content) > limit:
+    if capability_limit is not None and len(parsed.content) > capability_limit:
         raise MemoryToolArgumentError(
             error=ToolError(
                 code="body_too_large",
                 message=(
                     f"Ingest body exceeds the deployment capability limit of"
-                    f" {limit} bytes."
+                    f" {capability_limit} bytes."
                 ),
                 http_status=413,
                 retryable=False,
@@ -424,7 +608,12 @@ class _ParsedIngest:
     source_version_ref: str | None
 
 
-def _parse_ingest_arguments(*, arguments: Mapping[str, object]) -> _ParsedIngest:
+def _parse_ingest_arguments(
+    *,
+    arguments: Mapping[str, object],
+    settings: McpMemorySettings,
+    capability_limit: int | None,
+) -> _ParsedIngest:
     """Validate mutual exclusion, lineage pairing, and resolve body bytes."""
     _reject_unknown_keys(
         arguments=arguments,
@@ -528,7 +717,11 @@ def _parse_ingest_arguments(*, arguments: Mapping[str, object]) -> _ParsedIngest
 
     if path is not None:
         content, resolved_filename, resolved_mime = _resolve_path_body(
-            path=path, filename=filename, mime=mime
+            path=path,
+            filename=filename,
+            mime=mime,
+            settings=settings,
+            capability_limit=capability_limit,
         )
     elif text is not None:
         if not text:
@@ -537,7 +730,21 @@ def _parse_ingest_arguments(*, arguments: Mapping[str, object]) -> _ParsedIngest
                     message="text must be non-empty when used as the body source."
                 )
             )
-        content = text.encode("utf-8")
+        try:
+            content = text.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise MemoryToolArgumentError(
+                error=ToolError(
+                    code="encoding_error",
+                    message=f"text is not encodable as UTF-8: {error}",
+                    http_status=422,
+                    retryable=False,
+                    agent_action=(
+                        "Remove lone surrogates / invalid code points, or send"
+                        " content_base64 for binary."
+                    ),
+                )
+            ) from error
         if filename is None:
             raise MemoryToolArgumentError(
                 error=_invalid_arguments(
@@ -556,6 +763,8 @@ def _parse_ingest_arguments(*, arguments: Mapping[str, object]) -> _ParsedIngest
                 )
             )
         resolved_filename = filename
+        # Bytes path matches the SDK: default application/octet-stream unless
+        # the caller supplied mime (filename alone does not change the default).
         resolved_mime = mime or "application/octet-stream"
 
     return _ParsedIngest(
@@ -572,12 +781,104 @@ def _parse_ingest_arguments(*, arguments: Mapping[str, object]) -> _ParsedIngest
 
 
 def _resolve_path_body(
-    *, path: str, filename: str | None, mime: str | None
+    *,
+    path: str,
+    filename: str | None,
+    mime: str | None,
+    settings: McpMemorySettings,
+    capability_limit: int | None,
 ) -> tuple[bytes, str, str]:
-    """Read a local path and apply filename/mime defaults."""
-    target = Path(path)
+    """Read a local path under configured roots with fail-closed safety checks.
+
+    Rules (design-owner fail-closed):
+
+    1. ``path`` is accepted only when ``ingest_roots`` is non-empty.
+    2. The path is fully resolved; after resolution it must stay inside a root
+       (symlink escape fails).
+    3. The target must be a regular file (not FIFO/device/directory).
+    4. Size is checked before reading; the read cap is the served capability
+       limit when one exists, otherwise ``path_read_max_bytes`` (LOCAL RESOURCE
+       GUARD — not a cloud ceiling).
+    """
+    if "\x00" in path:
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_not_allowed",
+                message="path must not contain embedded NUL bytes.",
+                http_status=400,
+                retryable=False,
+                agent_action="Pass a clean filesystem path without NUL characters.",
+            )
+        )
+    roots = tuple(settings.ingest_roots)
+    if not roots:
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_not_allowed",
+                message=(
+                    "path body mode is disabled: no ingest roots are configured."
+                    " Set REMEMBERSTACK_MCP_INGEST_ROOTS to a JSON array of"
+                    " absolute directories the operator allows this MCP process to"
+                    ' read (example: ["/var/remember/inbox"]), or send the body'
+                    " as text / content_base64 instead."
+                ),
+                http_status=400,
+                retryable=False,
+                agent_action=(
+                    "Use text or content_base64, or ask the operator to configure"
+                    " REMEMBERSTACK_MCP_INGEST_ROOTS. Do not retry path until roots"
+                    " are set."
+                ),
+            )
+        )
+
     try:
-        content = target.read_bytes()
+        target = Path(path).expanduser()
+        resolved = target.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_unreadable",
+                message=(
+                    f"Path is not readable on the MCP host filesystem: {path}"
+                    f" ({error})."
+                ),
+                http_status=400,
+                retryable=False,
+                agent_action=(
+                    "Check path on the machine running the MCP server (not the"
+                    " remote engine host)."
+                ),
+            )
+        ) from error
+
+    if not _path_is_under_roots(resolved=resolved, roots=roots):
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_not_allowed",
+                message=(
+                    f"Resolved path {str(resolved)!r} is outside the configured"
+                    " REMEMBERSTACK_MCP_INGEST_ROOTS allowlist (symlink escape and"
+                    " absolute paths outside roots are rejected)."
+                ),
+                http_status=400,
+                retryable=False,
+                agent_action=(
+                    "Place the file under an allowlisted root, or use"
+                    " text/content_base64. Ask the operator to extend roots only"
+                    " when intentional."
+                ),
+            )
+        )
+
+    read_cap = (
+        capability_limit
+        if capability_limit is not None
+        else settings.path_read_max_bytes
+    )
+    # Stat before open so FIFOs/devices never hang the MCP process on open().
+    try:
+        pre_stat = resolved.stat()
     except OSError as error:
         raise MemoryToolArgumentError(
             error=ToolError(
@@ -594,19 +895,169 @@ def _resolve_path_body(
                 ),
             )
         ) from error
-    resolved_filename = filename or target.name
+    if not stat.S_ISREG(pre_stat.st_mode):
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_not_regular_file",
+                message=(
+                    f"Path is not a regular file (directories, FIFOs, devices, and"
+                    f" special files are rejected): {path}."
+                ),
+                http_status=400,
+                retryable=False,
+                agent_action=(
+                    "Point path at a regular file, or send text/content_base64."
+                ),
+            )
+        )
+    if pre_stat.st_size > read_cap:
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_too_large",
+                message=(
+                    f"Path file is {pre_stat.st_size} bytes, which exceeds"
+                    f" the read cap of {read_cap} bytes"
+                    + (
+                        " (deployment capability limit)."
+                        if capability_limit is not None
+                        else (
+                            " (LOCAL RESOURCE GUARD"
+                            " REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES — process"
+                            " safety, not a cloud body ceiling)."
+                        )
+                    )
+                ),
+                http_status=413,
+                retryable=False,
+                agent_action=(
+                    "Split the file, raise the local resource guard only if"
+                    " intentional, or use a deployment that publishes a"
+                    " higher capability limit."
+                ),
+            )
+        )
+    try:
+        with resolved.open("rb") as handle:
+            # Re-check via fstat after open (TOCTOU belt).
+            file_stat = _fstat_regular_file(handle=handle, path=str(resolved))
+            if file_stat.st_size > read_cap:
+                raise MemoryToolArgumentError(
+                    error=ToolError(
+                        code="path_too_large",
+                        message=(
+                            f"Path file is {file_stat.st_size} bytes, which exceeds"
+                            f" the read cap of {read_cap} bytes."
+                        ),
+                        http_status=413,
+                        retryable=False,
+                        agent_action=(
+                            "Split the file or raise the configured read cap."
+                        ),
+                    )
+                )
+            content = handle.read(read_cap + 1)
+    except MemoryToolArgumentError:
+        raise
+    except OSError as error:
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_unreadable",
+                message=(
+                    f"Path is not readable on the MCP host filesystem: {path}"
+                    f" ({error})."
+                ),
+                http_status=400,
+                retryable=False,
+                agent_action=(
+                    "Check path on the machine running the MCP server (not the"
+                    " remote engine host)."
+                ),
+            )
+        ) from error
+
+    if len(content) > read_cap:
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_too_large",
+                message=(
+                    f"Path file exceeded the read cap of {read_cap} bytes during read."
+                ),
+                http_status=413,
+                retryable=False,
+                agent_action="Split the file or raise the configured read cap.",
+            )
+        )
+
+    resolved_filename = filename or resolved.name
     if not resolved_filename:
         raise MemoryToolArgumentError(
             error=_invalid_arguments(
                 message="filename could not be inferred from path; pass filename."
             )
         )
+    # MIME matches the SDK: guess from the real target path name, not an
+    # overridden filename, unless the caller supplied mime explicitly.
     if mime:
         resolved_mime = mime
     else:
-        guessed = mimetypes.guess_type(resolved_filename)[0]
+        guessed = mimetypes.guess_type(resolved.name)[0]
         resolved_mime = guessed or "application/octet-stream"
     return content, resolved_filename, resolved_mime
+
+
+def _path_is_under_roots(*, resolved: Path, roots: Sequence[Path]) -> bool:
+    """Return True when ``resolved`` is equal to or inside a configured root."""
+    for root in roots:
+        try:
+            root_resolved = root.expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        if resolved == root_resolved or resolved.is_relative_to(root_resolved):
+            return True
+    return False
+
+
+def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
+    """fstat an open file and require a regular file (reject FIFO/device/dir)."""
+    fileno_attr = getattr(handle, "fileno", None)
+    if fileno_attr is None or not callable(fileno_attr):
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_unreadable",
+                message=f"Path handle cannot be fstat'd: {path}.",
+                http_status=400,
+                retryable=False,
+                agent_action="Pass a regular filesystem file path.",
+            )
+        )
+    fd = fileno_attr()
+    if not isinstance(fd, int):
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_unreadable",
+                message=f"Path handle fileno is not an int: {path}.",
+                http_status=400,
+                retryable=False,
+                agent_action="Pass a regular filesystem file path.",
+            )
+        )
+    file_stat = os.fstat(fd)
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise MemoryToolArgumentError(
+            error=ToolError(
+                code="path_not_regular_file",
+                message=(
+                    f"Path is not a regular file (directories, FIFOs, devices, and"
+                    f" special files are rejected): {path}."
+                ),
+                http_status=400,
+                retryable=False,
+                agent_action=(
+                    "Point path at a regular file, or send text/content_base64."
+                ),
+            )
+        )
+    return file_stat
 
 
 def _decode_base64(value: str) -> bytes:
@@ -722,15 +1173,24 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
     if ingested.created:
         guidance = (
             "Ingest accepted. Wait until pipeline_readiness.ready is true before"
-            " treating this content as recallable. Stages can take many minutes;"
-            " poll with exponential back-off (start ~30s, then 30–60s)."
-            " created=false means content-hash no-op: no new pipeline run."
+            " treating this content as recallable. Prefer require_projections=false"
+            " for 'can I recall this yet?' (continuous stages only); default OSS"
+            " Compose does not run projection workers — require_projections=true"
+            " additionally needs published projections (operations profile)."
+            " Poll algorithm: wait ~30s, then poll every 30–60s with mild back-off"
+            " (floor ~15s). STOP immediately if any stages[].status is failed or"
+            " dead_letter and report that stage. After ~20–30 minutes without"
+            " ready=true, stop and escalate to the operator with version_id and"
+            " last stages[]. created=false means content-hash no-op: no new"
+            " pipeline run."
         )
     else:
         guidance = (
             "Ingest was a content-hash no-op (created=false): this version already"
             " exists and no new pipeline run was started. Call pipeline_readiness"
-            " once; if ready=true the content is already recallable."
+            " once with require_projections=false; if ready=true the content is"
+            " already recallable. If a stage is failed/dead_letter, stop and report"
+            " it — do not keep polling."
         )
     return {
         "deployment_id": str(ingested.deployment_id),
@@ -741,16 +1201,34 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
         "pipeline": {
             "status": "accepted_not_ready",
             "next_tool": PIPELINE_READINESS_TOOL_NAME,
-            "poll_with": {"version_ids": [version_id], "require_projections": True},
+            "poll_with": {"version_ids": [version_id], "require_projections": False},
             "guidance": guidance,
         },
     }
 
 
-def _map_http_style_error(*, status_code: int, detail: str) -> ToolError:
+def _map_http_style_error(
+    *, status_code: int, detail: str, explicit_code: object = None
+) -> ToolError:
     """Map status + detail string (including cloud prefix codes) to ToolError."""
     code, reason_code = _split_detail_code(detail=detail)
+    if isinstance(explicit_code, str) and explicit_code:
+        code = explicit_code
 
+    if _is_spend_safety(code=code, detail=detail, reason_code=reason_code):
+        return ToolError(
+            code="spend_safety",
+            message=detail or "Spend or reservation safety refused this write.",
+            http_status=status_code if status_code else 403,
+            retryable=False,
+            agent_action=(
+                "Surface the spend/reservation refusal to the user/operator; do"
+                " not busy-retry. Adjust budgets or wait for a new reservation."
+            ),
+            reason_code=reason_code
+            if reason_code and code != "spend_safety"
+            else (reason_code or _reason_from_spend_detail(detail=detail)),
+        )
     if code == "body_too_large" or status_code == 413:
         return ToolError(
             code="body_too_large",
@@ -869,6 +1347,47 @@ def _map_http_style_error(*, status_code: int, detail: str) -> ToolError:
     )
 
 
+def _is_spend_safety(*, code: str, detail: str, reason_code: str | None) -> bool:
+    """True when the cloud refused work for spend / reservation safety."""
+    spend_codes = {
+        "spend_safety",
+        "reservation_refused",
+        "spend_cap",
+        "budget_exceeded",
+        "spend_reservation_refused",
+    }
+    if code in spend_codes:
+        return True
+    if detail.startswith("spend_safety"):
+        return True
+    if reason_code in {"cap_hit", "reservation_refused", "spend_cap"} and code in {
+        "dispatch_refused",
+        "spend_safety",
+        "engine_client_error",
+    }:
+        # Only elevate bare spend reason codes when the detail is spend-shaped;
+        # dispatch_refused:cap_hit stays dispatch_refused (already mapped first).
+        return code != "dispatch_refused" and (
+            "spend" in detail.lower() or "reservation" in detail.lower()
+        )
+    return False
+
+
+def _reason_from_spend_detail(*, detail: str) -> str | None:
+    """Pull a reason tail from ``spend_safety:reason`` forms."""
+    if ":" in detail:
+        head, tail = detail.split(":", 1)
+        if head in {
+            "spend_safety",
+            "reservation_refused",
+            "spend_cap",
+            "budget_exceeded",
+            "spend_reservation_refused",
+        }:
+            return tail or None
+    return None
+
+
 def _split_detail_code(*, detail: str) -> tuple[str, str | None]:
     """Split ``code`` or ``code:reason`` cloud detail forms."""
     if ":" in detail:
@@ -878,6 +1397,11 @@ def _split_detail_code(*, detail: str) -> tuple[str, str | None]:
             "dispatch_parked",
             "body_too_large",
             "empty_body",
+            "spend_safety",
+            "reservation_refused",
+            "spend_cap",
+            "budget_exceeded",
+            "spend_reservation_refused",
         }:
             return head, tail or None
     known = {
@@ -886,6 +1410,11 @@ def _split_detail_code(*, detail: str) -> tuple[str, str | None]:
         "dispatch_refused",
         "dispatch_parked",
         "data_plane_upstream_error",
+        "spend_safety",
+        "reservation_refused",
+        "spend_cap",
+        "budget_exceeded",
+        "spend_reservation_refused",
     }
     if detail in known:
         return detail, None
