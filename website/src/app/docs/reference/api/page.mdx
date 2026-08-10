@@ -332,8 +332,9 @@ explicitly maps each fact to each claim and stance, and `evidence_totals[]`
 reports exact returned/total counts for both stances. Both association arrays
 carry the complete `(fact_kind, fact_id)` identity; relation and observation
 UUIDs must not be grouped by bare `fact_id`. It accepts only explicit
-entity IDs, not names or a hidden resolution step; facts with no live evidence
-are never returned.
+entity IDs, not names or a hidden resolution step. A fact with no current
+evidence returns only when D54 identifies historically backed support as
+withdrawn; a fact with no qualifying provenance is never returned.
 
 Choose the authority explicitly: `testimony_context` for what sources said,
 `fact_context` for what the system holds or held true, and `answer_context` when
