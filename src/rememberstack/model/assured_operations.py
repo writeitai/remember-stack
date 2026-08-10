@@ -66,9 +66,10 @@ class OperationBundlePlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: Literal["operation_bundle"] = "operation_bundle"
-    children: tuple[
-        Literal["testimony_context"], Literal["fact_context"]
-    ] = ("testimony_context", "fact_context")
+    children: tuple[Literal["testimony_context"], Literal["fact_context"]] = (
+        "testimony_context",
+        "fact_context",
+    )
 
 
 ExecutionPlan = Annotated[

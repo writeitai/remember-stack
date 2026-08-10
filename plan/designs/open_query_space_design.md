@@ -316,17 +316,21 @@ set:
   eligible when either endpoint is anchored; and
 - fact world-time membership is the selected mode above.
 
-The P1 projections therefore carry rebuildable nomination metadata for current
-survivor entity associations and, for fact labels, kind, endpoints,
-`valid_from`, `valid_until`, `ingested_at`, and active/invalidated status. A backend may instead
-have PostgreSQL enumerate the exact eligible composite IDs and ask P1 to score
-only those IDs. In either implementation, a globally bounded P1 result followed
-by entity or time filtering is forbidden. P1 metadata remains a proposal: live
-PostgreSQL repeats every selector before returning data, so stale metadata can
-cost disclosed recall but never correctness. `testimony_context` applies its
-public `candidate_k` inside this scope. `fact_context` uses a descriptor-pinned
-internal candidate depth of 200 with a hard ceiling of 400; it is not another
-public planning knob.
+The P1 projections therefore carry rebuildable nomination metadata for every
+selector they apply directly. A backend may instead have PostgreSQL enumerate
+the exact eligible composite IDs and ask P1 to score only those IDs; selectors
+may choose either authority independently. The shipping self-host path stores
+fact kind, `valid_from`, `valid_until`, `ingested_at`, and active/invalidated
+status in P1 for time prefiltering, while supplied survivor IDs and multi-anchor
+coverage come from exact PostgreSQL-selected fact IDs. Testimony entity scope
+uses the same PostgreSQL-ID pattern. This deliberately avoids duplicating
+entity associations into P1 when they are not used there. In every case, a
+globally bounded P1 result followed by entity or time filtering is forbidden.
+P1 metadata remains a proposal: live PostgreSQL repeats every selector before
+returning data, so stale metadata can cost disclosed recall but never
+correctness. `testimony_context` applies its public `candidate_k` inside this
+scope. `fact_context` uses a descriptor-pinned internal candidate depth of 200
+with a hard ceiling of 400; it is not another public planning knob.
 
 Ending a fact's world-valid interval does not delete its label from P1: an
 ended-but-still-believed fact remains searchable for `at`, `overlap`, and

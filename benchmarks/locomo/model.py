@@ -270,8 +270,7 @@ class ToolCallRecord(FrozenModel):
     latency_ms: int = Field(ge=0)
     succeeded: bool = True
     response: Annotated[
-        Envelope | ContextBundleV1 | JsonValue,
-        Field(union_mode="left_to_right"),
+        Envelope | ContextBundleV1 | JsonValue, Field(union_mode="left_to_right")
     ]
 
 

@@ -36,9 +36,7 @@ class AssuredOperationRegistry:
         with self._engine.begin() as connection:
             connection.execute(
                 _INSERT_OPERATION,
-                _registration_values(
-                    deployment_id=deployment_id, operation=operation
-                ),
+                _registration_values(deployment_id=deployment_id, operation=operation),
             )
 
     def active(self, *, deployment_id: UUID) -> tuple[AssuredOperation, ...]:
@@ -57,9 +55,7 @@ class AssuredOperationRegistry:
             )
         return tuple(_operation_from_row(row) for row in rows)
 
-    def by_name(
-        self, *, deployment_id: UUID, name: str
-    ) -> AssuredOperation | None:
+    def by_name(self, *, deployment_id: UUID, name: str) -> AssuredOperation | None:
         """Return one canonical active operation, never an arbitrary row."""
         try:
             canonical = AssuredOperationName(name)
@@ -85,7 +81,9 @@ class AssuredOperationRegistry:
     ) -> int:
         """Atomically replace the deployment catalog with the canonical set."""
         if {operation.name for operation in operations} != set(AssuredOperationName):
-            raise ValueError("the assured-operation catalog must contain all four names")
+            raise ValueError(
+                "the assured-operation catalog must contain all four names"
+            )
         for operation in operations:
             lint_assured_operation(operation)
         with self._engine.begin() as connection:
@@ -186,12 +184,7 @@ _ENTITY_IDS = {
     "uniqueItems": True,
 }
 
-_QUERY = {
-    "type": "string",
-    "required": True,
-    "minLength": 1,
-    "maxLength": 8192,
-}
+_QUERY = {"type": "string", "required": True, "minLength": 1, "maxLength": 8192}
 
 
 def _envelope_schema() -> dict[str, object]:
@@ -210,9 +203,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
             "entity_type": {"type": "string", "required": False},
         },
         result_schema=_envelope_schema(),
-        execution_plan=PrimitiveChainPlan(
-            steps=(OperationStep(op="resolve_entity"),)
-        ),
+        execution_plan=PrimitiveChainPlan(steps=(OperationStep(op="resolve_entity"),)),
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.IDENTITY,

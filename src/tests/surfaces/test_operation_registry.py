@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 from alembic import command
@@ -23,12 +24,14 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import PrimitiveChainPlan
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import OperationExecutor
+from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.operation_surface import operation_descriptors
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -90,8 +93,12 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     assert descriptors["answer_context"].output_grain is None
     assert descriptors["answer_context"].implementation_plan_hash
     assert descriptors["testimony_context"].result_contract == "envelope"
-    assert "entity_ids" in descriptors["testimony_context"].input_schema["properties"]
-    assert "time" in descriptors["fact_context"].input_schema["properties"]
+    testimony_properties = descriptors["testimony_context"].input_schema["properties"]
+    fact_properties = descriptors["fact_context"].input_schema["properties"]
+    assert isinstance(testimony_properties, dict)
+    assert isinstance(fact_properties, dict)
+    assert "entity_ids" in testimony_properties
+    assert "time" in fact_properties
 
 
 def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
@@ -101,8 +108,11 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
         for operation in CANONICAL_OPERATIONS
         if operation.name is AssuredOperationName.TESTIMONY_CONTEXT
     )
+    assert isinstance(testimony.execution_plan, PrimitiveChainPlan)
     with pytest.raises(AssuredOperationLintError, match="contract tuple"):
-        lint_assured_operation(testimony.model_copy(update={"output_grain": Grain.FACT}))
+        lint_assured_operation(
+            testimony.model_copy(update={"output_grain": Grain.FACT})
+        )
     with pytest.raises(AssuredOperationLintError, match="same-named authority"):
         lint_assured_operation(
             testimony.model_copy(
@@ -125,30 +135,36 @@ def test_seed_replaces_the_catalog_atomically_and_round_trips(
     registry: AssuredOperationRegistry, database_engine: Engine
 ) -> None:
     """Repeated seeding leaves exactly four typed rows and no recipe table."""
-    assert seed_canonical_operations(
-        registry=registry, deployment_id=_DEPLOYMENT_ID
-    ) == 4
-    assert seed_canonical_operations(
-        registry=registry, deployment_id=_DEPLOYMENT_ID
-    ) == 4
+    assert (
+        seed_canonical_operations(registry=registry, deployment_id=_DEPLOYMENT_ID) == 4
+    )
+    assert (
+        seed_canonical_operations(registry=registry, deployment_id=_DEPLOYMENT_ID) == 4
+    )
     active = registry.active(deployment_id=_DEPLOYMENT_ID)
     assert {operation.name for operation in active} == set(AssuredOperationName)
     expected = {operation.name: operation for operation in CANONICAL_OPERATIONS}
     assert all(operation == expected[operation.name] for operation in active)
-    assert registry.by_name(
-        deployment_id=_DEPLOYMENT_ID, name="question_context"
-    ) is None
+    assert (
+        registry.by_name(deployment_id=_DEPLOYMENT_ID, name="question_context") is None
+    )
     with database_engine.connect() as connection:
-        assert connection.execute(
-            text(
-                "SELECT count(*) FROM assured_operations "
-                "WHERE deployment_id = :deployment_id"
-            ),
-            {"deployment_id": _DEPLOYMENT_ID},
-        ).scalar_one() == 4
-        assert connection.execute(
-            text("SELECT to_regclass('public.retrieval_recipes')")
-        ).scalar_one() is None
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM assured_operations "
+                    "WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            ).scalar_one()
+            == 4
+        )
+        assert (
+            connection.execute(
+                text("SELECT to_regclass('public.retrieval_recipes')")
+            ).scalar_one()
+            is None
+        )
 
 
 class _AuthorityStub:
@@ -181,19 +197,50 @@ class _AuthorityStub:
 
 
 def test_answer_context_is_pure_composition_at_one_evaluation_cut() -> None:
-    """Combined context calls both authorities once with one shared instant."""
+    """The bundle is field-for-field equal to both direct child calls."""
+    direct_authority = _AuthorityStub()
+    direct_testimony = direct_authority.testimony_context(evaluated_at=_NOW)
+    direct_facts = direct_authority.fact_context(evaluated_at=_NOW)
     authority = _AuthorityStub()
     operation = next(
         operation
         for operation in CANONICAL_OPERATIONS
         if operation.name is AssuredOperationName.ANSWER_CONTEXT
     )
-    result = OperationExecutor(query_engine=authority).execute(  # type: ignore[arg-type]
+    result = OperationExecutor(query_engine=cast("QueryEngine", authority)).execute(
         deployment_id=_DEPLOYMENT_ID,
         operation=operation,
         arguments={"query": "launch history"},
+        evaluated_at=_NOW,
     )
     assert isinstance(result, ContextBundleV1)
     assert authority.evaluated_at[0] == authority.evaluated_at[1]
-    assert result.testimony.grain is Grain.EVIDENCE
-    assert result.facts.grain is Grain.FACT
+    assert result.testimony == direct_testimony
+    assert result.facts == direct_facts
+
+
+class _FailingFactAuthority(_AuthorityStub):
+    """A child authority that proves a bundle cannot be partially returned."""
+
+    def fact_context(self, **arguments: object) -> Envelope:
+        """Fail after testimony completes, as a real retrieval error could."""
+        del arguments
+        raise RuntimeError("fact child failed")
+
+
+def test_answer_context_returns_no_half_bundle_when_a_child_fails() -> None:
+    """A child failure propagates instead of manufacturing a partial contract."""
+    operation = next(
+        operation
+        for operation in CANONICAL_OPERATIONS
+        if operation.name is AssuredOperationName.ANSWER_CONTEXT
+    )
+    with pytest.raises(RuntimeError, match="fact child failed"):
+        OperationExecutor(
+            query_engine=cast("QueryEngine", _FailingFactAuthority())
+        ).execute(
+            deployment_id=_DEPLOYMENT_ID,
+            operation=operation,
+            arguments={"query": "launch history"},
+            evaluated_at=_NOW,
+        )

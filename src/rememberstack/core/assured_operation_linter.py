@@ -59,10 +59,7 @@ def lint_assured_operation(operation: AssuredOperation) -> None:
             raise AssuredOperationLintError(
                 "answer_context must use the exact operation_bundle plan"
             )
-        if operation.execution_plan.children != (
-            "testimony_context",
-            "fact_context",
-        ):
+        if operation.execution_plan.children != ("testimony_context", "fact_context"):
             raise AssuredOperationLintError(
                 "answer_context must bundle testimony_context then fact_context"
             )

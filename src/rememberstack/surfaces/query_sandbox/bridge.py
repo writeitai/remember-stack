@@ -15,12 +15,15 @@ complete one.
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import UTC
 from typing import Any
 from typing import Final
 from typing import Protocol
 
 import psycopg
 
+from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.nomination import BODY_COLUMNS
@@ -682,11 +685,14 @@ def _nominator(
         )
 
     def semantic_facts(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
+        evaluated_at = datetime.now(UTC)
         return search.search_facts_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
             vector=vector(query),
             k=k,
             kind=filters.get("fact_kind"),
+            time=CurrentFactTime(),
+            evaluated_at=evaluated_at,
         )
 
     def semantic_entities(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202

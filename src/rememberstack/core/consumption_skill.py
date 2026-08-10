@@ -137,12 +137,7 @@ def _honesty_warnings() -> str:
 
 def _assured_operations(*, operations: tuple[ConsumptionOperation, ...]) -> str:
     """Name the complete four-operation assured surface."""
-    core = {
-        "resolve_entity",
-        "testimony_context",
-        "fact_context",
-        "answer_context",
-    }
+    core = {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
     enabled_core = [operation for operation in operations if operation.name in core]
     if enabled_core:
         core_rows = "\n".join(

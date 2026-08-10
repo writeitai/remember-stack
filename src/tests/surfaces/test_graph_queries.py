@@ -661,9 +661,7 @@ def test_believed_at_is_applied_and_echoed(graph: GraphQueries) -> None:
         entity_id=ids["Acme"], hops=1, believed_at=datetime(2020, 1, 1, tzinfo=UTC)
     )
     assert before_ingest.negative is not None  # nothing was believed yet
-    assert before_ingest.temporal_scope.believed_at == datetime(
-        2020, 1, 1, tzinfo=UTC
-    )
+    assert before_ingest.temporal_scope.believed_at == datetime(2020, 1, 1, tzinfo=UTC)
 
     now = graph.neighborhood(
         entity_id=ids["Acme"], hops=1, believed_at=datetime(2026, 12, 1, tzinfo=UTC)

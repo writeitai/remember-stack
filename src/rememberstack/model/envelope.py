@@ -137,7 +137,9 @@ TemporalScope = Annotated[
 ]
 
 
-def current_temporal_scope(*, evaluated_at: datetime | None = None) -> CurrentTemporalScope:
+def current_temporal_scope(
+    *, evaluated_at: datetime | None = None
+) -> CurrentTemporalScope:
     """Build the ordinary current scope from one shared UTC evaluation instant."""
     instant = evaluated_at or datetime.now(UTC)
     return CurrentTemporalScope(evaluated_at=instant, believed_at=instant)
@@ -567,7 +569,6 @@ class Envelope(BaseModel):
     dropped_by_hydration: int = 0
     excluded_unstamped: int = Field(default=0, ge=0)
     negative: Negative | None = None
-
 
 
 class ContextBundleV1(BaseModel):

@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -9,7 +10,9 @@ from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
+from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import P1FactRow
+from rememberstack.model.assured_operations import FactTime
 
 
 @runtime_checkable
@@ -66,6 +69,10 @@ class FactIndexPort(Protocol):
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
         """Insert or replace rows by fact_id; re-runs are idempotent."""
+        ...
+
+    def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
+        """Refresh mutable time/status scalars without re-embedding labels."""
         ...
 
 
@@ -240,8 +247,10 @@ class P1ScoredSearchPort(Protocol):
         k: int,
         kind: str | None,
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Scored fact nominations from the facts channel."""
+        """Scored facts, with optional D87 time eligibility before top-k."""
         ...
 
     def search_entities_scored(

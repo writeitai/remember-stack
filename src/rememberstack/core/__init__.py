@@ -128,7 +128,6 @@ __all__ = (
     "DEFAULT_EVIDENCE_COUNT_WEIGHT",
     "DEFAULT_GRAPH_DISTANCE_WEIGHT",
     "DEFAULT_RRF_K",
-    "KNOWN_OPS",
     "KnowledgeCompileGraphError",
     "KnowledgeAuthoredDeclarationError",
     "KnowledgeFactLifecycle",

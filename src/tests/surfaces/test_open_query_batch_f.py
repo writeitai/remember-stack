@@ -437,7 +437,12 @@ def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
     operations = client.get("/operations")
     assert operations.status_code == 200
     names = {row["name"] for row in operations.json()}
-    assert names == {"resolve_entity", "testimony_context", "fact_context"}
+    assert names == {
+        "resolve_entity",
+        "testimony_context",
+        "fact_context",
+        "answer_context",
+    }
     # open routes — full first-call discovery, not a shortened subset
     space = client.get("/query/space")
     assert space.status_code == 200
@@ -952,7 +957,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
     assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     assert (
         load_manifest()["surface_manifest_hash"]
-            == "0d8e567f5981c09b3003f70d1be557e0cdf8058abb344c484f89b4cbad6dc99d"
+        == "0d8e567f5981c09b3003f70d1be557e0cdf8058abb344c484f89b4cbad6dc99d"
     )
 
 

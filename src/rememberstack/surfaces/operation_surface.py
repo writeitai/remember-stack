@@ -68,9 +68,7 @@ class OperationSurface:
 
     def run(self, *, name: str, arguments: dict[str, object]) -> OperationResult:
         """Validate transport arguments and run one canonical operation."""
-        operation = self._registry.by_name(
-            deployment_id=self._deployment_id, name=name
-        )
+        operation = self._registry.by_name(deployment_id=self._deployment_id, name=name)
         if operation is None:
             raise UnknownOperationError(name)
         return self._executor.execute(
@@ -130,17 +128,14 @@ def _descriptor(
     )
 
 
-def _plan_hash(
-    *, operation: AssuredOperation, child_hashes: dict[str, str]
-) -> str:
+def _plan_hash(*, operation: AssuredOperation, child_hashes: dict[str, str]) -> str:
     """Hash one plan; bundle identity includes the ordered child plan hashes."""
     payload: dict[str, object] = {
         "plan": operation.execution_plan.model_dump(mode="json")
     }
     if operation.name.value == "answer_context":
         payload["child_plan_hashes"] = [
-            child_hashes[name]
-            for name in ("testimony_context", "fact_context")
+            child_hashes[name] for name in ("testimony_context", "fact_context")
         ]
     return hashlib.sha256(
         canonical_json_bytes(cast("CanonicalValue", payload))
@@ -153,9 +148,7 @@ def _coerce_arguments(
     """Coerce one transport object according to the canonical parameter schema."""
     unknown = set(arguments) - set(operation.parameters)
     if unknown:
-        raise InvalidArgumentError(
-            f"unknown argument(s): {', '.join(sorted(unknown))}"
-        )
+        raise InvalidArgumentError(f"unknown argument(s): {', '.join(sorted(unknown))}")
     coerced: dict[str, object] = {}
     for name, raw in operation.parameters.items():
         spec = raw if isinstance(raw, dict) else {}
@@ -180,7 +173,9 @@ def _coerce_arguments(
 def _coerce_value(*, name: str, value: object, declared: str) -> object:
     """Coerce one value without accepting lossy or ambiguous conversions."""
     if declared == "string":
-        return str(value)
+        if not isinstance(value, str):
+            raise TypeError("expected a string")
+        return value
     if declared == "integer":
         if isinstance(value, bool):
             raise ValueError("expected an integer, got a boolean")
@@ -195,7 +190,7 @@ def _coerce_value(*, name: str, value: object, declared: str) -> object:
         return tuple(UUID(str(item)) for item in raw)
     if declared == "object" and name == "time":
         raw = json.loads(value) if isinstance(value, str) else value
-        fact_time = _FACT_TIME.validate_python(raw or {"mode": "current"})
+        fact_time = _FACT_TIME.validate_python(raw)
         if isinstance(fact_time, AtFactTime):
             at = (
                 fact_time.at.replace(tzinfo=UTC)
@@ -217,7 +212,9 @@ def _coerce_value(*, name: str, value: object, declared: str) -> object:
             fact_time = fact_time.model_copy(update={"from_": from_, "to": to})
         return fact_time
     if declared == "timestamp":
-        instant = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+        instant = (
+            value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+        )
         return instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant
     return value
 
@@ -231,11 +228,17 @@ def _validate_facets(*, name: str, value: object, spec: dict[str, object]) -> No
         ("minItems", lambda actual, limit: actual >= limit),
         ("maxItems", lambda actual, limit: actual <= limit),
     ):
-        if facet in spec and size is not None and not comparison(
-            size, cast(int, spec[facet])
+        if (
+            facet in spec
+            and size is not None
+            and not comparison(size, cast(int, spec[facet]))
         ):
             raise InvalidArgumentError(f"{name} violates {facet}={spec[facet]}")
-    if spec.get("uniqueItems") and isinstance(value, tuple) and len(set(value)) != len(value):
+    if (
+        spec.get("uniqueItems")
+        and isinstance(value, tuple)
+        and len(set(value)) != len(value)
+    ):
         raise InvalidArgumentError(f"{name} must contain unique values")
     if isinstance(value, int):
         if "minimum" in spec and value < cast(int, spec["minimum"]):

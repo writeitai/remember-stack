@@ -1692,9 +1692,7 @@ def test_merge_preserves_ingests_for_chunk_session_diagnostics(
                     latency_ms=1,
                     response=Envelope(
                         grain=Grain.EVIDENCE,
-                        temporal_scope=current_temporal_scope(
-                            evaluated_at=source_time
-                        ),
+                        temporal_scope=current_temporal_scope(evaluated_at=source_time),
                         chunks=(
                             ChunkEvidenceResult(
                                 chunk_id=UUID("57000000-0000-0000-0000-000000000012"),

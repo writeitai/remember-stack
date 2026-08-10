@@ -33,6 +33,7 @@ class OperationExecutor:
         deployment_id: UUID,
         operation: AssuredOperation,
         arguments: dict[str, object],
+        evaluated_at: datetime | None = None,
     ) -> OperationResult:
         """Execute exactly the authority named by a validated descriptor."""
         name = operation.name
@@ -42,7 +43,7 @@ class OperationExecutor:
                 name=cast(str, arguments["name"]),
                 entity_type=cast(str | None, arguments.get("entity_type")),
             )
-        evaluated_at = datetime.now(UTC)
+        evaluation = evaluated_at or datetime.now(UTC)
         query = cast(str, arguments["query"])
         entity_ids = cast(tuple[UUID, ...], arguments.get("entity_ids", ()))
         selected_time = cast(FactTime | None, arguments.get("time"))
@@ -53,7 +54,7 @@ class OperationExecutor:
                 entity_ids=entity_ids,
                 k=cast(int, arguments.get("k", 50)),
                 candidate_k=cast(int, arguments.get("candidate_k", 200)),
-                evaluated_at=evaluated_at,
+                evaluated_at=evaluation,
             )
         if name is AssuredOperationName.FACT_CONTEXT:
             return self._engine.fact_context(
@@ -61,11 +62,9 @@ class OperationExecutor:
                 query=query,
                 entity_ids=entity_ids,
                 k=cast(int, arguments.get("k", 15)),
-                evidence_per_fact=cast(
-                    int, arguments.get("evidence_per_fact", 3)
-                ),
+                evidence_per_fact=cast(int, arguments.get("evidence_per_fact", 3)),
                 time=selected_time,
-                evaluated_at=evaluated_at,
+                evaluated_at=evaluation,
             )
         if name is AssuredOperationName.ANSWER_CONTEXT:
             testimony = self._engine.testimony_context(
@@ -74,7 +73,7 @@ class OperationExecutor:
                 entity_ids=entity_ids,
                 k=50,
                 candidate_k=200,
-                evaluated_at=evaluated_at,
+                evaluated_at=evaluation,
             )
             facts = self._engine.fact_context(
                 deployment_id=deployment_id,
@@ -83,7 +82,7 @@ class OperationExecutor:
                 k=15,
                 evidence_per_fact=3,
                 time=selected_time,
-                evaluated_at=evaluated_at,
+                evaluated_at=evaluation,
             )
             return ContextBundleV1(testimony=testimony, facts=facts)
         raise OperationExecutionError(f"unknown assured operation {name!r}")

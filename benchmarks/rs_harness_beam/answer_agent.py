@@ -475,11 +475,7 @@ def retrieve_full_plane(
         if "testimony_context" in available:
             run(
                 "testimony_context",
-                {
-                    "query": extra_q,
-                    "k": 20,
-                    "candidate_k": 80,
-                },
+                {"query": extra_q, "k": 20, "candidate_k": 80},
                 timeout_s=60.0,
             )
 

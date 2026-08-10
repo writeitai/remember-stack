@@ -916,7 +916,9 @@ def _descriptor(
         description=description,
         input_schema=input_schema,
         result_schema={"type": "object"},
-        result_contract="envelope" if output_grain in {"fact", "evidence", "composite"} else "bounded_snapshot_result",
+        result_contract="envelope"
+        if output_grain in {"fact", "evidence", "composite"}
+        else "bounded_snapshot_result",
         output_grain=output_grain,
         answer_intent=answer_intent,
     )

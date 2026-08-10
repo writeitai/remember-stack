@@ -1,4 +1,5 @@
 """Batch E proofs for deterministic hybrid refill and claim grouping."""
+
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC

@@ -29,6 +29,7 @@ from rememberstack.model.chunks import EmbeddingUpdate
 from rememberstack.model.chunks import P1ChunkRow
 from rememberstack.model.chunks import P1ChunkText
 from rememberstack.model.chunks import P1ClaimRow
+from rememberstack.model.chunks import P1FactMetadataRow
 from rememberstack.model.chunks import P1FactRow
 from rememberstack.model.chunks import PackedChunk
 from rememberstack.model.chunks import SectionSpan
@@ -476,6 +477,7 @@ __all__ = (
     "P1ClaimRow",
     "P1EntityRow",
     "P1FactRow",
+    "P1FactMetadataRow",
     "PackedChunk",
     "PerimeterCredential",
     "PipelineComponent",

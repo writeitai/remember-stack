@@ -555,9 +555,7 @@ class GraphQueries:
         )
 
 
-def _graph_temporal_scope(
-    *, valid_at: datetime | None, believed_at: datetime | None
-):
+def _graph_temporal_scope(*, valid_at: datetime | None, believed_at: datetime | None):
     """Disclose current, world-at, or two-axis audit graph selection."""
     evaluated_at = datetime.now(UTC)
     if believed_at is not None:
@@ -568,9 +566,7 @@ def _graph_temporal_scope(
         )
     if valid_at is not None:
         return AtTemporalScope(
-            at=valid_at,
-            evaluated_at=evaluated_at,
-            believed_at=evaluated_at,
+            at=valid_at, evaluated_at=evaluated_at, believed_at=evaluated_at
         )
     return current_temporal_scope(evaluated_at=evaluated_at)
 

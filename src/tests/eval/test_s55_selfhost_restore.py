@@ -181,6 +181,10 @@ def _seed_p1(
                 kind="relation",
                 label=text,
                 status="active",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=_NOW,
+                invalidated_at=None,
                 vector=vector,
             ),
         )

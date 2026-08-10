@@ -610,7 +610,10 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_parameter", "message": str(error)},
+            ) from error
 
 
 def _mount_ingest(*, app: FastAPI, ingest: IngestPort, deployment_id: UUID) -> None:

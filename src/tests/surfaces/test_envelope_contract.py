@@ -378,9 +378,7 @@ def test_context_bundle_keeps_testimony_and_facts_separate() -> None:
             freshness=Freshness(pg_live_ts=_NOW),
         ),
         facts=Envelope(
-            grain=Grain.FACT,
-            temporal_scope=scope,
-            freshness=Freshness(pg_live_ts=_NOW),
+            grain=Grain.FACT, temporal_scope=scope, freshness=Freshness(pg_live_ts=_NOW)
         ),
     )
     assert bundle.contract == "ContextBundle/v1"
@@ -392,9 +390,7 @@ def test_context_bundle_rejects_swapped_authorities() -> None:
     """Child positions are typed; callers cannot relabel a fact as testimony."""
     scope = current_temporal_scope(evaluated_at=_NOW)
     fact = Envelope(
-        grain=Grain.FACT,
-        temporal_scope=scope,
-        freshness=Freshness(pg_live_ts=_NOW),
+        grain=Grain.FACT, temporal_scope=scope, freshness=Freshness(pg_live_ts=_NOW)
     )
     with pytest.raises(ValidationError, match="testimony"):
         ContextBundleV1(testimony=fact, facts=fact)

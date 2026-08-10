@@ -21,9 +21,16 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
+from rememberstack.model.assured_operations import AtFactTime
+from rememberstack.model.assured_operations import CurrentFactTime
+from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.assured_operations import HistoryFactTime
+from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.query_engine import FACT_CONTEXT_CANDIDATE_K
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-000000000001")
@@ -51,15 +58,38 @@ def database_engine() -> Iterator[Engine]:
 class _FactIndex:
     """Deterministic P1 facts nomination with no unrelated channel behavior."""
 
-    def __init__(self, *, fact_ids: tuple[UUID, ...]) -> None:
-        self.fact_ids = tuple(str(fact_id) for fact_id in fact_ids)
+    def __init__(self, *, fact_keys: tuple[tuple[str | None, UUID], ...]) -> None:
+        self.fact_keys = tuple((kind, str(fact_id)) for kind, fact_id in fact_keys)
         self.requested_k: list[int] = []
 
-    def search_facts(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
-    ) -> tuple[str, ...]:
+    def search_facts_scored(
+        self,
+        *,
+        k: int,
+        candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        **_: object,
+    ) -> tuple[P1Nomination, ...]:
         self.requested_k.append(k)
-        return self.fact_ids[:k]
+        allowed = None if candidate_keys is None else set(candidate_keys)
+        selected = tuple(
+            (kind, fact_id)
+            for kind, fact_id in self.fact_keys
+            if allowed is None or (kind, fact_id) in allowed
+        )[:k]
+        return tuple(
+            P1Nomination(
+                item_id=fact_id,
+                rank=rank,
+                score=1.0 / rank,
+                channel="semantic",
+                qualifier=kind,
+            )
+            for rank, (kind, fact_id) in enumerate(selected, start=1)
+        )
+
+    def search_facts(self, *, k: int, **_: object) -> tuple[str, ...]:
+        """Satisfy the legacy primitive port; D87 never calls this method."""
+        return tuple(fact_id for _kind, fact_id in self.fact_keys[:k])
 
     def search_claims(self, **_: object) -> tuple[str, ...]:
         return ()
@@ -88,6 +118,9 @@ class _Corpus:
         self.relation_id = uuid4()
         self.observation_id = uuid4()
         self.unbacked_id = uuid4()
+        self.ended_id = uuid4()
+        self.future_id = uuid4()
+        self.invalidated_id = uuid4()
         self.budget_fact_ids: list[UUID] = []
         self.claims: dict[str, UUID] = {}
         self.claim_docs: dict[UUID, UUID] = {}
@@ -96,6 +129,7 @@ class _Corpus:
             self._seed_entities(connection)
             self._seed_primary_facts(connection)
             self._seed_primary_evidence(connection)
+            self._seed_temporal_facts(connection)
             self._seed_budget_facts(connection)
 
     def _seed_entities(self, connection: Connection) -> None:
@@ -255,6 +289,44 @@ class _Corpus:
                         at=_NOW - timedelta(minutes=evidence_index),
                     )
 
+    def _seed_temporal_facts(self, connection: Connection) -> None:
+        """Seed ended, future, and retracted intervals for all D87 modes."""
+        self._relation(
+            connection,
+            fact_id=self.ended_id,
+            label="Alice previously advised a project",
+            valid_from=_NOW - timedelta(days=10),
+            valid_until=_NOW - timedelta(days=2),
+            ingested_at=_NOW - timedelta(days=9),
+        )
+        self._relation(
+            connection,
+            fact_id=self.future_id,
+            label="Alice will advise a future project",
+            valid_from=_NOW + timedelta(days=2),
+            ingested_at=_NOW,
+        )
+        self._relation(
+            connection,
+            fact_id=self.invalidated_id,
+            label="Retracted project assignment",
+            ingested_at=_NOW - timedelta(days=5),
+            invalidated_at=_NOW - timedelta(days=1),
+        )
+        for key, fact_id, at in (
+            ("temporal-ended", self.ended_id, _NOW - timedelta(days=3)),
+            ("temporal-future", self.future_id, _NOW),
+            ("temporal-invalidated", self.invalidated_id, _NOW - timedelta(days=2)),
+        ):
+            self._evidence(
+                connection,
+                key=key,
+                fact_id=fact_id,
+                kind="relation",
+                stance="supports",
+                at=at,
+            )
+
     def _relation(
         self,
         connection: Connection,
@@ -264,6 +336,10 @@ class _Corpus:
         evidence_count: int = 0,
         contradict_count: int = 0,
         object_id: UUID | None = None,
+        valid_from: datetime | None = None,
+        valid_until: datetime | None = None,
+        ingested_at: datetime = _NOW,
+        invalidated_at: datetime | None = None,
     ) -> None:
         if object_id is None:
             object_id = uuid4()
@@ -298,8 +374,10 @@ class _Corpus:
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, contradict_count,"
-                " ingested_at) VALUES (:fact, :deployment, :subject, 'works_for',"
-                " :object, 'batch-c', :label, :supports, :contradicts, :at)"
+                " valid_from, valid_until, ingested_at, invalidated_at) VALUES"
+                " (:fact, :deployment, :subject, 'works_for', :object, 'batch-c',"
+                " :label, :supports, :contradicts, :valid_from, :valid_until,"
+                " :ingested_at, :invalidated_at)"
             ),
             {
                 "fact": fact_id,
@@ -309,7 +387,10 @@ class _Corpus:
                 "label": label,
                 "supports": evidence_count,
                 "contradicts": contradict_count,
-                "at": _NOW,
+                "valid_from": valid_from,
+                "valid_until": valid_until,
+                "ingested_at": ingested_at,
+                "invalidated_at": invalidated_at,
             },
         )
 
@@ -444,9 +525,21 @@ class _Corpus:
         )
 
     def query_engine(
-        self, *, fact_ids: tuple[UUID, ...]
+        self, *, fact_ids: tuple[UUID, ...], qualified: bool = True
     ) -> tuple[QueryEngine, _FactIndex]:
-        index = _FactIndex(fact_ids=fact_ids)
+        index = _FactIndex(
+            fact_keys=tuple(
+                (
+                    None
+                    if not qualified
+                    else (
+                        "observation" if fact_id == self.observation_id else "relation"
+                    ),
+                    fact_id,
+                )
+                for fact_id in fact_ids
+            )
+        )
         return (
             QueryEngine(
                 engine=self.engine,
@@ -489,7 +582,7 @@ def test_fact_context_returns_both_fact_kinds_with_both_stances(
         evidence_per_fact=2,
     )
 
-    assert index.requested_k == [3]
+    assert index.requested_k == [FACT_CONTEXT_CANDIDATE_K + 1]
     assert tuple(fact.kind for fact in answer.facts) == ("relation", "observation")
     for fact in answer.facts:
         assert {
@@ -522,7 +615,9 @@ def test_fact_context_drops_an_unqualified_cross_kind_uuid(corpus: _Corpus) -> N
             },
         )
     try:
-        engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+        engine, _index = corpus.query_engine(
+            fact_ids=(corpus.relation_id,), qualified=False
+        )
         answer = engine.fact_context(
             deployment_id=_DEPLOYMENT_ID,
             query="ambiguous fact identity",
@@ -597,6 +692,91 @@ def test_evidence_totals_are_exact_under_per_stance_truncation(corpus: _Corpus) 
     assert totals == {"supports": (1, 2), "contradicts": (1, 2)}
 
 
+@pytest.mark.parametrize(
+    ("time", "expected", "mode"),
+    (
+        (CurrentFactTime(), (), "current"),
+        (AtFactTime(at=_NOW - timedelta(days=3)), ("ended",), "at"),
+        (
+            OverlapFactTime.model_validate(
+                {
+                    "mode": "overlap",
+                    "from": _NOW - timedelta(days=4),
+                    "to": _NOW - timedelta(days=1),
+                }
+            ),
+            ("ended",),
+            "overlap",
+        ),
+        (HistoryFactTime(), ("ended",), "history"),
+        (AtFactTime(at=_NOW + timedelta(days=3)), ("future",), "at"),
+    ),
+)
+def test_fact_context_time_modes_apply_world_and_belief_time(
+    corpus: _Corpus, time: FactTime, expected: tuple[str, ...], mode: str
+) -> None:
+    """Ended/future intervals are selectable; retracted facts never return."""
+    ids = {
+        "ended": corpus.ended_id,
+        "future": corpus.future_id,
+        "invalidated": corpus.invalidated_id,
+    }
+    engine, _index = corpus.query_engine(fact_ids=tuple(ids.values()))
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="project assignments over time",
+        k=3,
+        evidence_per_fact=1,
+        time=time,
+        evaluated_at=_NOW,
+    )
+
+    assert answer.temporal_scope.mode == mode
+    assert tuple(fact.fact_id for fact in answer.facts) == tuple(
+        ids[name] for name in expected
+    )
+    assert corpus.invalidated_id not in {fact.fact_id for fact in answer.facts}
+
+
+def test_fact_context_rejects_unknown_entity_ids_without_partial_results(
+    corpus: _Corpus,
+) -> None:
+    """One unavailable anchor makes the whole scoped fact response opaque."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="Alice employment",
+        entity_ids=(corpus.subject_id, uuid4()),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.UNKNOWN_ENTITY
+    assert answer.facts == ()
+    assert index.requested_k == []
+
+
+def test_fact_context_orders_multi_anchor_coverage_before_relevance(
+    corpus: _Corpus,
+) -> None:
+    """A two-anchor fact outranks a semantically earlier one-anchor fact."""
+    one_anchor = corpus.budget_fact_ids[0]
+    engine, _index = corpus.query_engine(fact_ids=(one_anchor, corpus.relation_id))
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="Alice and Acme",
+        entity_ids=(corpus.subject_id, corpus.object_id),
+        k=2,
+        evidence_per_fact=1,
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (
+        corpus.relation_id,
+        one_anchor,
+    )
+
+
 def test_tombstoned_and_noncurrent_evidence_is_excluded(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     answer = engine.fact_context(
@@ -625,6 +805,22 @@ def test_unbacked_fact_is_dropped_and_never_returned_without_evidence(
     assert answer.dropped_by_hydration == 1
     assert answer.negative is not None
     assert answer.negative.kind is NegativeKind.KNOWN_EMPTY
+
+
+def test_fact_context_refills_a_dropped_head_candidate(corpus: _Corpus) -> None:
+    """The final k applies after confirmation, so a stale head does not waste it."""
+    engine, _index = corpus.query_engine(
+        fact_ids=(corpus.unbacked_id, corpus.relation_id)
+    )
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="employment after a stale nomination",
+        k=1,
+        evidence_per_fact=1,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert answer.dropped_by_hydration == 1
 
 
 def test_no_results_uses_the_query_driven_known_empty_convention(
@@ -672,4 +868,4 @@ def test_fact_nomination_k_probe_discloses_truncation(corpus: _Corpus) -> None:
     assert answer.truncation is not None
     assert answer.truncation.truncated
     assert answer.truncation.estimated_total == 2
-    assert not answer.truncation.total_is_exact
+    assert answer.truncation.total_is_exact

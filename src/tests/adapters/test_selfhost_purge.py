@@ -1,5 +1,7 @@
 """D74 erasure capability tests for the existing self-host stores."""
 
+from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -25,6 +27,7 @@ _DEPLOYMENT_ID = UUID("74000000-0000-0000-0000-000000000001")
 _OTHER_DEPLOYMENT_ID = UUID("74000000-0000-0000-0000-000000000002")
 _DOC_ID = UUID("74000000-0000-0000-0000-000000000003")
 _VERSION_ID = UUID("74000000-0000-0000-0000-000000000004")
+_NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
 
 
 class _ClosedAdmission:
@@ -216,6 +219,10 @@ def _seed_p1(
                 kind="relation",
                 label="fixture fact",
                 status="active",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=_NOW,
+                invalidated_at=None,
                 vector=vector,
             ),
         )

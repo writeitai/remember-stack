@@ -348,6 +348,19 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         "/operations/fact_context", json={"query": "Alice", "k": "not-an-integer"}
     )
     assert bad_integer.status_code == 422
+    assert bad_integer.json()["detail"]["code"] == "invalid_parameter"
+
+    bad_query = deployment.client.post(
+        "/operations/testimony_context", json={"query": 42}
+    )
+    assert bad_query.status_code == 422
+    assert bad_query.json()["detail"]["code"] == "invalid_parameter"
+
+    empty_time = deployment.client.post(
+        "/operations/fact_context", json={"query": "Alice", "time": {}}
+    )
+    assert empty_time.status_code == 422
+    assert empty_time.json()["detail"]["code"] == "invalid_parameter"
 
     typo = deployment.client.post("/operations/resolve_entity", json={"naem": "Alice"})
     assert typo.status_code == 422  # a typo never silently broadens the query

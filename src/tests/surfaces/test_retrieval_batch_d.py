@@ -141,9 +141,7 @@ class _QuestionIndex:
         """Build one deterministic exact-membership nomination."""
         if item_id not in candidate_ids:
             return ()
-        return (
-            P1Nomination(item_id=item_id, rank=1, score=1.0, channel="test"),
-        )
+        return (P1Nomination(item_id=item_id, rank=1, score=1.0, channel="test"),)
 
 
 class _Corpus:
@@ -267,6 +265,38 @@ class _Corpus:
                 stance="contradicts",
                 at=_NOW - timedelta(days=1),
             )
+        scoped_mention = uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO mentions (mention_id, deployment_id, surface_form,"
+                " normalized_lemma, chunk_id, claim_id, doc_id, created_at)"
+                " VALUES (:mention, :deployment, 'Alice', 'alice', :chunk,"
+                " :claim, :doc, :at)"
+            ),
+            {
+                "mention": scoped_mention,
+                "deployment": _DEPLOYMENT_ID,
+                "chunk": self.query_chunk_id,
+                "claim": self.claims["alice_beacon-support-0"],
+                "doc": self.docs["alice_beacon-support-0"],
+                "at": _NOW,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO resolution_decisions (decision_id, deployment_id,"
+                " mention_id, entity_id, method, confidence, resolver_version,"
+                " decided_at) VALUES (:decision, :deployment, :mention, :entity,"
+                " 'T0', 1.0, 'batch-d', :at)"
+            ),
+            {
+                "decision": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "mention": scoped_mention,
+                "entity": self.entities["alice"],
+                "at": _NOW,
+            },
+        )
         # Repeating a claim inside one source lineage must not inflate D54's
         # evidence total. The production query therefore has to count the
         # authoritative evidence_lineage rows, not raw claim associations.
@@ -327,7 +357,7 @@ class _Corpus:
             text("UPDATE documents SET deleted_at = :at WHERE doc_id = :doc"),
             {"at": _NOW, "doc": tombstoned_doc},
         )
-        # The v4 entity channel confirms through entities_current, whose D48
+        # Context entity validation confirms through entities_current, whose D48
         # membership requires a surviving document association. Give the
         # three connected entities explicit, live document provenance instead
         # of weakening the production view for a test fixture.
@@ -629,7 +659,7 @@ def _answer(corpus: tuple[_Corpus, GraphQueries], **arguments: Any):  # noqa: AN
     )
 
 
-def test_testimony_context_v4_flags_default_false(
+def test_testimony_context_contains_only_testimony(
     corpus: tuple[_Corpus, GraphQueries],
 ) -> None:
     seeded, _graph = corpus
@@ -664,9 +694,7 @@ def test_testimony_context_rejects_an_unknown_entity_without_partial_results(
 ) -> None:
     seeded, _graph = corpus
     answer = seeded.query_engine().testimony_context(
-        deployment_id=_DEPLOYMENT_ID,
-        query="Alice",
-        entity_ids=(uuid4(),),
+        deployment_id=_DEPLOYMENT_ID, query="Alice", entity_ids=(uuid4(),)
     )
 
     assert answer.negative is not None

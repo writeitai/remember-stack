@@ -2,7 +2,9 @@
 
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
+from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
+from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CURRENT_FACTS
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
@@ -67,6 +69,10 @@ def test_testimony_context_confirms_claims_and_chunks_through_memory_v1() -> Non
     assert "JOIN memory_v1.sections_live" in chunk_sql
     assert "JOIN memory_v1.documents_live" in chunk_sql
     assert "FROM chunks" not in chunk_sql
+    for scoped in (_CONFIRM_CLAIMS_CURRENT_SCOPED, _CONFIRM_CHUNKS_SCOPED):
+        scoped_sql = str(scoped)
+        assert "memory_v1.mentions_live" in scoped_sql
+        assert "resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))" in scoped_sql
 
 
 def test_graph_enrichment_confirms_against_the_current_edge_authority() -> None:
