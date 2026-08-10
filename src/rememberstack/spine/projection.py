@@ -436,9 +436,16 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
     # into multi-million-cost nested loops (recursive survivor CTEs × provenance
     # EXISTS per entity) and hang P2 rebuilds on modest corpora. See
     # design/operations/p2-projection-hang-beam-smoke.md.
-    # RELATES still matches the D69/D48 contract of graph_edges_visible_history:
-    # survivor-redirected endpoints on active nodes, surviving evidence lineage,
-    # and invalidated edges retained (liveness is derived at read time).
+    # RELATES therefore approximates graph_edges_visible_history rather than
+    # matching it. It agrees on edge membership — survivor-redirected endpoints,
+    # surviving evidence lineage on a live document, and invalidated edges
+    # retained so liveness is derived at read time (D69/D48). It deliberately
+    # differs on the ENDPOINT gate: the view requires both survivors to be in
+    # entities_current (surviving provenance), while this export only requires an
+    # active, unmerged node, because expanding entities_current per row is the
+    # hang described above. Consequence to know: an edge whose endpoint is active
+    # but has no surviving lineage projects here and is dropped by the live
+    # graph_edges_* views, so P2 and live SQL can disagree on that edge alone.
     "Entity": text(
         """
         SELECT e.entity_id AS id, e.type AS type,
