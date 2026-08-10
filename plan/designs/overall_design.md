@@ -184,12 +184,19 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 - **Projections propose, the spine disposes (D48):** entry channels only *nominate*; every
   result is re-verified by-ID against live Postgres at hydration — staleness can cost recall,
   never correctness.
-- **The response envelope (D49):** every answer carries its grain (fact / evidence /
-  compiled), inline contradiction co-members, per-source freshness stamps (incl. K page
-  staleness + open flags), explicit truncation, and a typed negative taxonomy.
-- Composable zero-LLM primitives + **recipes as registry rows** (D50): `relation_hybrid_rrf`,
-  `entity_timeline`, `explain`, `claims_as_of` (evidence-grain, barred from current-fact),
-  … — MCP tools render from the recipe registry.
+- **The response contract (D49/D87):** each single-authority answer carries a
+  grain-labeled envelope (fact / evidence / compiled), inline contradiction
+  co-members, per-source freshness stamps (including K page staleness + open
+  flags), explicit truncation, and a typed negative taxonomy. The sole
+  cross-authority result is `ContextBundle/v1`, which preserves two complete
+  child envelopes.
+- Composable zero-LLM primitives + four **assured operations as closed registry rows**
+  (D50/D87): `resolve_entity`, `testimony_context`, `fact_context`, and
+  `answer_context`. Testimony and facts stay separate; the bundle returns their
+  complete responses without blending. Reusable
+  patterns such as `entity_timeline`, `explain`, and `claims_as_of` are
+  non-tool `examples.*` saved queries; MCP renders only the assured catalog
+  plus open-query infrastructure.
 - Surfaces (D51): HTTP API, CLI, MCP server, and **four read-only mounts** (P3, E0 artifacts,
   E0 raw — off the navigation path, K repo checkout); **filesystem-first** for agent harnesses
   with full mount/API parity; a shipped **consumption skill** teaches cold agents the memory.
@@ -236,7 +243,7 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 | `k_layers_design.md` | plane K: planner/writer/driver compile system, compiled + authored pages, K1 plus K2 purpose scopes (D45–D47, D73) | **current** |
 | `k3_beliefs_design.md` | *(withdrawn — D73; principles are authored K2 content)* | — |
 | `p2_graph_design.md` | graph projection, rebuild, snapshots, search | **current** |
-| `retrieval_design.md` | the query machine: primitives, recipes, envelope, mounts, skill (D48–D51) | **current** |
+| `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
 | `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
 | `orchestration_design.md` | worker runtime: queue topology, lanes, backfill seeding, budget enforcement, DLQ operations (D52–D53) | **current** |
 | `evidence_lifecycle_design.md` | document versions, testimony currency, the counting rule, content-addressed reuse (D54–D56) | **current** |
@@ -244,7 +251,7 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 | `media_design.md` | media (images/audio/video): converter routes, source locators, derivation disclosure, media search (D65) | **current** |
 | `docs_site_design.md` | public docs site: in-repo Next.js/MDX static module + same-PR truthfulness contract (D66) | **current** |
 | `hard_forget_design.md` | lineage hard-forget, active-store purge, and restore non-resurrection (D74) | **current** |
-| `locomo_benchmark_design.md` | pinned `RS-LoCoMo-Full-v7` external benchmark adapter and guarded run protocol (D78) | **current** |
+| `locomo_benchmark_design.md` | pinned `RS-LoCoMo-Full-v12` complete-retrieval benchmark adapter and guarded run protocol (D78/D85/D87) | **current** |
 
 ## 10. Open questions
 

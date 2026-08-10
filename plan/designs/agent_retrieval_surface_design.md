@@ -1,9 +1,18 @@
-# Agent retrieval surface — binding design
+# Agent retrieval surface — superseded historical design
+
+> **Status (2026-08-10): superseded.** D87 and
+> `open_query_space_design.md` §3.1 replace this document's public operation
+> catalog. `question_context`, `current_context`, their optional mixed channels,
+> and the other recipe tools described below are not current binding
+> architecture. This file is retained only as the implementation history that
+> led to the open-query cut; it MUST NOT be used to generate tools, docs, tests,
+> or compatibility aliases.
 
 *2026-08-02, revision 3 (two full dual-review rounds: Grok-4.5 and Codex
 both reviewed revisions 1 and 2; every blocking finding is bound below;
 all four review transcripts are linked from the PR).
-Binding once accepted. Extends `retrieval_design.md` (which owns
+Accepted at the time and now superseded as stated above. Extended
+`retrieval_design.md` (which owns
 nomination/fusion/hydration internals) with the complete agent-facing tool
 surface. Rationale and evidence: `plan/analysis/
 agent_retrieval_surface_analysis.md`. Goal: an AI agent using only the

@@ -127,8 +127,8 @@ any feature ships.
 - **No docs SaaS / external search service** — self-hostability is the constraint that
   chose Pagefind; and **no server-rendered features**: everything must survive
   `clone → npm run build → serve out/`.
-- **No API-reference generation in this design** — when the recipe registry ships
-  (`retrieval_design.md` §4 renders MCP tools from registry rows), the reference pages
+- **No API-reference generation in this design** — when the assured-operation registry ships
+  (`retrieval_design.md` §4 renders MCP tools from its closed registry rows), the reference pages
   should render from the same registry; that mechanism belongs to the retrieval surfaces,
   and the docs site consumes its output as ordinary MDX/data.
 

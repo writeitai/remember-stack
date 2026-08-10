@@ -1,5 +1,10 @@
 # Agent retrieval surface — Batch C implementation note
 
+> **Historical implementation note.** D87 removes `current_context`; its
+> replacement is the temporally complete `fact_context` contract in
+> `open_query_space_design.md` §3.1. The mechanics below describe the built
+> predecessor and are not an active tool contract.
+
 **Date:** 2026-08-03
 **Binding design:** [`agent_retrieval_surface_design.md` §3.2](../designs/agent_retrieval_surface_design.md)
 

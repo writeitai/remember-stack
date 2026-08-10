@@ -1,6 +1,6 @@
 # Retrieval Design — the Query Machine
 
-How agents get answers out of the memory: the primitives, the recipes, the response contract,
+How agents get answers out of the memory: the primitives, assured operations, the response contract,
 the consumption surfaces (API / CLI / MCP / mounted filesystems), and the rules that keep a
 multi-store system honest. Binding design for decisions **D48–D51**, building on D8 (vectors in
 Lance), D9 (parallel channels + RRF, zero LLM on the query path), D10/D44 (as-of mechanics),
@@ -17,7 +17,7 @@ points to measure, not committed constants (CLAUDE.md).
 > (projections: P1 Lance search indexes, P2 LadybugDB graph snapshot, P3 corpus filesystem).
 > Two **grains** matter everywhere here: the **evidence grain** (claims — *what sources
 > asserted*, immutable, possibly stale or contradictory) and the **fact grain**
-> (relations/observations — *what the system currently holds true*, with adjudicated validity
+> (relations/observations — *what the system holds or held true*, with adjudicated validity
 > windows). A third, the **compiled grain**, is K pages (LLM-written syntheses with recorded
 > citations and freshness). "**Hydration**" = resolving the bare IDs that search/traversal
 > return into full, provenance-bearing records from Postgres, the source of truth. The primary
@@ -42,10 +42,10 @@ D9 forbids LLM calls on the query path — so the intelligence must live in the 
 the callers are agents. The consequence is a design that does not try to be smart; it tries to
 be **composable, self-describing, and honest**:
 
-- **Composable** — a small set of typed, orthogonal primitives (§3) that agents chain; recipes
-  (§4) are frozen chains, not new capabilities.
+- **Composable** — a small set of typed, orthogonal primitives (§3) that agents chain; assured
+  operations (§4) are frozen compositions, not new capabilities.
 - **Self-describing** — the system teaches its consumers: MCP tool descriptions render from
-  the recipe registry; a shipped **consumption skill** (§8) teaches the memory model itself.
+  the assured-operation registry; a shipped **consumption skill** (§8) teaches the memory model itself.
 - **Honest** — every response carries a machine-readable account of its own limitations:
   grain, freshness, contradictions, truncation, and a typed taxonomy of "no" (§5, §6).
 
@@ -207,46 +207,72 @@ Two honest limits on `believed_at`, stated rather than discovered (S43, S61):
   envelope states which identity regime answered, so an audit-date query can never silently
   mix today's identities with yesterday's beliefs (S61).
 
-## 4. Recipes — frozen plans as registry data (D50)
+## 4. Assured operations — frozen plans as registry data (D50, D87)
 
-A **recipe** is a named, versioned composition of primitives with fixed fusion/rerank
-settings: `relation_hybrid_rrf`, `relation_near_entity`, `claims_verbatim`, `claims_as_of`,
-`question_context`, `entity_timeline`, `identity_as_of`, `explain`, `brief`, `changed_since`,
-`contradictions`, `pages_about`. Recipes are **registry rows, not code** — the same move as predicates (D5),
-ontology (D15), and K routing rules (D45). A recipe row carries, concretely: `name`,
-`description`, typed `parameters`, the **primitive chain** (an ordered composition of §3
-operations with fixed settings — channel sets, RRF constants, rerank weights), two declared
-enums — **`output_grain`** (fact | evidence | compiled | composite) and **`answer_intent`**
-(current_facts | assertion_history | orientation | audit | change_feed) — plus `version` and
-MCP-rendering metadata. (Full DDL joins the control-plane tables in
+The public intent catalog contains exactly `resolve_entity`,
+`testimony_context`, `fact_context`, and `answer_context`. The former
+`question_context` and `current_context` names and the older named recipe
+catalog are superseded by `open_query_space_design.md` §§2–3; reusable query
+patterns live as non-tool `examples.*` saved queries. There is no compatibility
+alias layer.
+
+An **assured operation** is a named, versioned zero-LLM execution plan.
+`resolve_entity`, `testimony_context`, and `fact_context` are compositions of
+primitives with fixed fusion/rerank settings; `answer_context` is the sole
+`operation_bundle` plan and references the two canonical child descriptors.
+Operations are **closed platform registry rows, not independent
+invariant implementations** — the same move as predicates (D5), ontology
+(D15), and K routing rules (D45). An operation row carries, concretely: `name`,
+`description`, typed `parameters`, a discriminated **`execution_plan`**:
+`primitive_chain` with ordered §3 operations and fixed settings, or the sole
+`operation_bundle` value whose ordered children are exactly
+`testimony_context` and `fact_context`;
+**`result_contract`** (`envelope` | `context_bundle_v1`), nullable-only-for-the-bundle
+**`output_grain`**, **`answer_intent`** (`identity` | `testimony` | `facts` |
+`combined_context`), plus `version` and MCP-rendering metadata. The database closes these fields
+to the four canonical tuples; the bundle has no false single-grain declaration. (Full DDL joins
+the control-plane tables in
 `postgres_schema_design.md`; the fields above are the contract.) Three payoffs:
 
 1. **The linter can enforce semantics — mechanically, on the enums.** The rule is a
-   constraint, not a prose judgment: `answer_intent = current_facts` requires
+   constraint, not a prose judgment: `answer_intent = facts` requires
    `output_grain = fact` and a chain built only over validity-filtered
-   relation/observation primitives. `claims_as_of` declares `assertion_history` over
+   relation/observation primitives. The bundle plan is accepted only for
+   `answer_context` with those exact two children. `testimony_context` declares `testimony` over
    `evidence`, so the D41 bar ("claims never answer *is it true now*") is violated only by a
    registration the constraint rejects. A *name/description* smell-check (a recipe named like
    a fact query but declared evidence-grain) is an advisory lint for humans, not the
    enforcement mechanism.
-2. **The eval harness measures per recipe.** Recall@k per recipe per scenario class (D22's
-   retrieval half); recipe versions make regressions attributable.
-3. **MCP tools render from the registry** — the tool list *is* the recipe registry
-   (name/description/parameters), exactly as extraction prompts render from the ontology
-   registry. Adding a recipe = inserting a row; every surface updates.
+2. **The eval harness measures per operation.** Recall@k per operation per scenario class
+   (D22's retrieval half); operation versions make regressions attributable.
+3. **MCP tools render from the closed registry** — the assured tool list is the four
+   platform-owned rows (name/description/parameters), exactly as extraction prompts render
+   from the ontology registry. Customer-authored behavior belongs in the saved-query registry
+   and never becomes a top-level intent tool merely by inserting a row.
 
-Recipes never add capability — anything a recipe does, an agent can compose from §3. That is
-a testable property (the eval harness replays each recipe as its primitive chain and diffs).
+Assured operations never add base capability — anything they do is composed from §3 and the
+invariant-compiled `memory_v1` authorities. That is a testable property: the eval harness
+replays each operation through those authorities and checks membership equivalence.
 
-The ordinary high-recall evidence entry is **`question_context`**. Its frozen chain independently
+The ordinary high-recall evidence entry is **`testimony_context`**. Its frozen chain independently
 fuses cheap semantic + lexical claim-ID nominations, independently fuses cheap semantic +
 lexical chunk-ID nominations, hydrates each fused list exactly once through D48, then
-`combine_evidence` returns the two payloads under one evidence envelope. This order avoids
+returns the two payloads under one evidence envelope. This order avoids
 hydrating candidate-depth rows or counting one stale candidate more than once. Candidate depth
-is larger than returned depth; both bounds are declared in the recipe schema and measured rather
-than hidden. `claims_hybrid_rrf` remains the narrower atomic-assertion path and must likewise use
-one semantic plus one lexical nomination — duplicate semantic passes are a contract defect, not
-a weak hybrid.
+is larger than returned depth; both bounds are declared in the operation schema and measured rather
+than hidden. Optional confirmed `entity_ids` narrow the P1-eligible set before candidate depth is
+applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
+relevance and before the candidate cut. The operation contains no fact or entity-candidate channel.
+
+`fact_context` is the fact-grain counterpart: semantic facts nomination followed by
+PostgreSQL confirmation under its current, valid-at, overlap, or history world-time mode. It
+applies entity and time eligibility before its internal candidate depth, using rebuildable P1
+metadata or a PostgreSQL-selected eligible-ID set scored by P1; the current-only public
+`semantic_facts` SRF is not the historical implementation. It returns facts with their
+supporting and contradicting evidence associations. `answer_context`
+does not add a retrieval path; it returns the complete testimony and fact responses as separate
+members of `ContextBundle/v1`. The exact contracts and bounds live in
+`open_query_space_design.md` §3.1.
 
 ## 5. The response envelope — the contract is the answer's self-account (D49)
 
@@ -255,19 +281,18 @@ answer itself** — because the caller is an agent that must *reason about* the 
 
 ```
 {
-  grain:        fact | evidence | compiled | composite,  // §6; composite ⇒ read parts[]
-  parts: [ {                                            // one part per grain in a compound answer
-    grain:      fact | evidence | compiled,            // each part single-grain (S47)
-    results: [ { …record…,
+  grain:        fact | evidence | compiled | composite,  // §6; one operation's cohesive result
+  results: [ { …typed record…,
         validity: {valid_from, valid_until, ingested_at, invalidated_at},
         evidence_count, confidence,
         contradiction: {group_id, co_members[≤cap], returned, total, continuation} | null,
         provenance: {hydrate_handle, depth_available,
                      // D65 — on EVIDENCE-GRAIN items only (a claim has one derivation;
                      // a fact aggregates many — its evidence hydrates to per-claim records):
-                     source_locators[]?, derivation: {kind, evidence_mode}? } } ] } ],
-  as_of:        {valid_at, believed_at,                 // the temporal params actually applied (echo)
-                 identity_regime: current | as_of},     // S61 — which identity boundary answered
+                     source_locators[]?, derivation: {kind, evidence_mode}? } } ],
+  temporal_scope: {mode, evaluated_at, believed_at,     // exact applied scope; closed per operation
+                   identity_regime: current | as_of,
+                   ...mode_specific_fields},            // at, from/to, or valid_at as declared
   freshness: {                                          // per contributing source (S42)
       pg: live_ts, p1: {max_write_lag, believed_at_horizon},
       p2: {snapshot_ts, believed_at_horizon},           // horizons: §3 — beyond them, `boundary`
@@ -278,6 +303,13 @@ answer itself** — because the caller is an agent that must *reason about* the 
 }
 ```
 
+`temporal_scope` is required and discriminated by `mode`; an operation exposes
+only the variants it actually supports. In particular, `fact_context` returns
+exactly one of `current`, `at`, `overlap`, or `history`, with the mode-specific
+fields and invariants defined in `open_query_space_design.md` §3.1. This makes
+the applied world-time selection distinguishable on the wire instead of
+encoding history and current as the same pair of null timestamps.
+
 An evidence-grain envelope may carry both `evidence[]` (atomic claims) and `chunks[]` (confirmed
 source-text fallback). They are distinct fields because they have different semantics and
 provenance shapes even though both are testimony. Every chunk record discloses its generated
@@ -285,10 +317,22 @@ context prefix separately from its source body and carries the immutable source 
 needed to audit it. A consumer may compact their rendering, but the raw envelope never erases
 the distinction.
 
-(Single-grain answers are the common case: one entry in `parts[]`, top-level
-`grain` = that part's grain — flat to consume. `composite` appears only for compound recipes
-like S47's said-vs-believe pair, and each part is still strictly single-grain, so the §6
-discipline is never diluted.)
+Single-grain answers are the common case. A `composite` envelope is one operation's cohesive
+typed result, such as a fact hydrated with its explicitly associated evidence; it is not a
+container for independent complete responses. D87 removes `Envelope.parts` and `EnvelopePart`.
+The sole side-by-side testimony/fact form is `ContextBundle/v1`:
+
+```text
+ContextBundleV1 {
+  contract:  literal("ContextBundle/v1")
+  testimony: Envelope  // evidence grain; complete testimony_context result
+  facts:     Envelope  // fact grain; complete fact_context result
+}
+```
+
+The wrapper forbids extra fields, never flattens the children, and returns no partial bundle on a
+child execution failure. A typed negative is a completed child response and stays inside that
+child. `open_query_space_design.md` §3.1 owns the exact failure and equivalence contract.
 
 Three rules that are contract, not garnish:
 
@@ -354,7 +398,8 @@ indistinguishable-from-empty, which is why the taxonomy is safe to freeze withou
 The fact/evidence split (`concepts.md`; requirements §Retrieval) becomes a **type
 discipline** rather than documentation:
 
-- Every primitive and recipe **declares its grain**; every envelope **carries it**.
+- Every primitive and assured operation that returns an `Envelope` **declares its grain**; every
+  envelope **carries it**. `answer_context` instead declares `ContextBundle/v1` explicitly.
 - Source chunks are **evidence grain**, returned through a distinct typed payload. They say what
   the current source text contains; they are not atomic claims and never answer current-fact
   questions without extraction/adjudication.
@@ -363,13 +408,14 @@ discipline** rather than documentation:
   interval (D41) is testimony, never verdict, and the registry linter bars any composition
   that would let it pose as one (S4, S11).
 - Mixed answers are **explicitly two-part**, never blended: S47 ("everything Alice *said*
-  about pricing, plus what we *believe*") returns an evidence-grain timeline and a
-  fact-grain snapshot as separate, labeled sections of one response.
-- **Evidence-grain answers default to *current testimony*** (D54): claims superseded by a newer
-  extraction generation, or left behind by a living document's current version, are excluded
-  unless the caller opts in (`include_superseded_testimony`) — and the envelope disclosure says
-  which regime answered. `claims_as_of` is historical by definition and runs over all
-  testimony. Fact-grain answers carry a `support: current | withdrawn` marker where a fact's
+  about pricing, plus what we *believe*") routes through `answer_context`, whose
+  `ContextBundle/v1` carries the complete evidence and fact envelopes as separately named
+  members.
+- **`testimony_context` returns current testimony** (D54): claims superseded by a newer
+  extraction generation, or left behind by a living document's current version, are excluded.
+  It has no mode flag; historical source-version testimony remains available through
+  `claims_visible_history`, direct audit primitives, and `examples.claims_as_of`. Fact-grain
+  answers carry a `support: current | withdrawn` marker where a fact's
   current-testimony support has dropped to zero (flagged, not vanished — D54).
 - The compiled grain carries its own honesty device: the K freshness block (§5) — a compiled
   answer is *pre-paid synthesis with a timestamp*, and says so.
@@ -385,9 +431,14 @@ by mime — `e0_files_design.md` §2/§5), and the K repo (a read-only checkout:
 authored pages, `_index.md`/`llms.txt` orientation). Markdown is what navigation promotes;
 originals are reachable deliberately (S56, S59).
 
-**API / CLI / MCP:** the primitives and recipes of §3–§4. The MCP tool list renders from the
-recipe registry (§4); CLI mirrors the API 1:1 (agents shell out); the API is the one place
-authorization is enforced for query-engine reads (§9).
+**API / CLI / MCP:** the primitives of §3, the four closed assured operations of §4, and the
+open-query/saved-query infrastructure in `open_query_space_design.md`. MCP renders only the four
+platform-owned assured descriptors as intent tools; reusable patterns remain discoverable
+`examples.*` saved queries rather than becoming tools. CLI mirrors the API 1:1 (agents shell out);
+the API is the one place authorization is enforced for query-engine reads (§9). The clean target
+uses `GET /operations`, `POST /operations/{name}`, SDK
+`list_operations`/`run_operation`, and CLI `remember operations list|run`; recipe-era transport
+names are removed rather than aliased.
 
 **The precedence rule (S56/S57).** Everything *readable* is available through both mounts and
 API/CLI — some environments cannot mount, so parity is a hard requirement. When mounts are
@@ -421,13 +472,13 @@ curriculum, explicitly:
   and observations are the system's current, adjudicated holdings — validity-filtered,
   supersession-honoring. Claims are *testimony*: records of what sources said, possibly
   stale, superseded, or contradicted; they answer "who said what, when" and never "is it true
-  now" (the D41 bar — enforced by the recipe registry, but the skill states it as the
+  now" (the D41 bar — enforced by the assured-operation registry, but the skill states it as the
   agent's default, not just a guardrail it will bounce off).
 - **Testimony currency** (D54): even within the evidence grain, default claim search returns
   *current* testimony only — claims superseded by a newer extraction generation or left
-  behind by a living document's current version are history, reachable via the explicit
-  `include_superseded_testimony` opt-in or `claims_as_of`; the envelope always says which
-  regime answered.
+  behind by a living document's current version are history, reachable through
+  `claims_visible_history`, direct audit queries, or `examples.claims_as_of`;
+  `testimony_context` has no history flag.
 - **The `support: withdrawn` marker**: a fact carrying it has lost all current support (its
   case is in review) — read it as "standing but shaky": fine to report with the caveat, not
   fine to build plans on without checking the transcript.
@@ -448,8 +499,8 @@ curriculum, explicitly:
 - **Validity and the two time axes; contradiction semantics** (expect co-members; never pick
   silently); **the envelope and the negative taxonomy**; **the mount layout and the
   precedence rule**; **the orient→verify→audit motion** (orient on K pages, verify
-  load-bearing facts on the spine, audit down to claims and sources when stakes demand). It is **versioned with the system and partially rendered per deployment** (scopes,
-mounts, and enabled recipes differ) — the same registry-renders-the-prompt move as D15, aimed
+load-bearing facts on the spine, audit down to claims and sources when stakes demand). It is **versioned with the system and partially rendered per deployment** (scopes,
+mounts, and enabled operations or saved queries differ) — the same registry-renders-the-prompt move as D15, aimed
 at consumers instead of extractors. Its acceptance test is scenario **S58**: a harness that
 has never seen the system, given only the skill, must orient via K, keep grains straight, and
 respect the boundaries. The skill is not documentation *about* the system; it is part *of*
@@ -497,8 +548,8 @@ labels, same trust model (§9).
 
 ## 10. Performance envelope and topology
 
-- **Interactive budget (starting point):** P95 ≤ ~300 ms for entry+expand+hydrate recipes at
-  the 1M-doc target (the Zep/Graphiti reference point D9 cites), measured per recipe in the
+- **Interactive budget (starting point):** P95 ≤ ~300 ms for entry+expand+hydrate operations or saved queries at
+  the 1M-doc target (the Zep/Graphiti reference point D9 cites), measured per plan in the
   eval harness. Batch: throughput-bound, no latency promise.
 - **Locality:** API nodes hold the Lance datasets and the current P2 snapshot on local disk
   (hot-swapped per D7); Postgres is the only cross-cloud hop (batched by-ID hydration +
@@ -513,18 +564,19 @@ labels, same trust model (§9).
 
 The scenario battery (S1–S63) is the retrieval golden set's skeleton (D22): each scenario
 class becomes labeled query/expected-result pairs; the harness measures recall@k and
-precision per **recipe × scenario class × corpus slice**, plus contract tests that are
+precision per **operation or saved query × scenario class × corpus slice**, plus contract tests that are
 non-negotiable CI: grain labels present and truthful; contradiction co-members always
 returned (S23); truncation always marked (S18/S49);
 forgotten ≡ never-existed (S55 — the *contract*; D74 designs the end-to-end active-store cascade
 and restore non-resurrection behavior, and WP-7.5 activates the CI gate only when its executable
-canary is green); recipe-vs-primitive-chain
+canary is green); operation-vs-primitive-plan
 equivalence (§4); and S58 as the
 skill's acceptance test. Rerank weights (graph distance, evidence count) are tuned on the
 harness, never in production.
 
 The D22 retrieval measurements separately report semantic claims, lexical claims, hybrid
-claims, semantic chunks, lexical chunks, and `question_context`. Exact source/dialog recall and
+claims, semantic chunks, lexical chunks, `testimony_context`, and each temporal mode of
+`fact_context`. Exact source/dialog recall and
 complete-evidence recall are recorded before any reader or judge result, so a planner or answer
 failure cannot be mislabeled a retrieval miss.
 

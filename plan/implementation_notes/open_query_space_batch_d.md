@@ -1,5 +1,11 @@
 # Batch D — graph surface implementation
 
+> **Historical implementation note.** The graph and Cypher work remains built.
+> D87 removes the `question_context` v4 catalog contract described here; the
+> current binding assured-operation catalog is
+> `open_query_space_design.md` §3.1. Do not generate an alias or active tool from
+> the legacy sections below.
+
 Batch D adds the PostgreSQL graph helpers, the read-only Cypher surface, and
 `question_context` v4. The binding contract is
 `plan/designs/open_query_space_design.md`; the reconciliation rationale is in
