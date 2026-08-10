@@ -400,7 +400,7 @@ def handle_memory_write_tool(
 ) -> dict[str, object]:
     """Dispatch one write/readiness tool to a success or structured error result.
 
-    When ``backend`` is ``None`` the tools are not composed (recipe-only local
+    When ``backend`` is ``None`` the tools are not composed (operation-only local
     MCP). Unknown names are the caller's responsibility — this function only
     handles ``MEMORY_WRITE_TOOL_NAMES``.
 
