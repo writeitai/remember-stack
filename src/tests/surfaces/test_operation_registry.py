@@ -193,11 +193,19 @@ def test_dispatch_matches_the_published_json_types() -> None:
         _coerce_arguments(operation=fact, arguments={"query": "Alice", "k": 2.0})["k"]
         == 2
     )
-    for at in (0, 1_700_000_000, "0", "1700000000"):
+    invalid_times = (
+        {"mode": "at", "at": 0},
+        {"mode": "at", "at": 1_700_000_000},
+        {"mode": "at", "at": "0"},
+        {"mode": "at", "at": "1700000000"},
+        {"mode": "at", "at": "20260810"},
+        {"mode": "overlap", "from": "20260810", "to": "2026-08-10T13:00:00Z"},
+        {"mode": "overlap", "from": "2026-08-10T12:00:00Z", "to": "20260810"},
+    )
+    for time in invalid_times:
         with pytest.raises(InvalidArgumentError, match="date-time"):
             _coerce_arguments(
-                operation=fact,
-                arguments={"query": "Alice", "time": {"mode": "at", "at": at}},
+                operation=fact, arguments={"query": "Alice", "time": time}
             )
 
 

@@ -208,6 +208,8 @@ def _validate_time_strings(*, value: dict[object, object]) -> None:
         raw = value[field]
         if not isinstance(raw, str):
             raise TypeError(f"time.{field} must be a date-time string")
+        if len(raw) < 11 or raw[4] != "-" or raw[7] != "-" or raw[10] not in "Tt":
+            raise ValueError(f"time.{field} must be an ISO-8601 date-time")
         normalized = raw[:-1] + "+00:00" if raw.endswith(("Z", "z")) else raw
         try:
             datetime.fromisoformat(normalized)

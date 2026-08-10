@@ -391,6 +391,7 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         {"query": "Alice", "time": json.dumps({"mode": "current"})},
         {"query": "Alice", "time": {"mode": "at", "at": 0}},
         {"query": "Alice", "time": {"mode": "at", "at": "0"}},
+        {"query": "Alice", "time": {"mode": "at", "at": "20260810"}},
     )
     for arguments in wrong_json_types:
         response = deployment.client.post("/operations/fact_context", json=arguments)
