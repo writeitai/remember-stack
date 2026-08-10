@@ -19,6 +19,7 @@ contradict each fact. Query claims to inspect testimony; query facts to
 answer current-truth questions, then follow the bridge to see why the
 system believes the fact.
 
+(Internally these guarantees are decisions D41 and D54.)
 
 The `remember` command ships in the dependency-light base wheel. Query, ingest,
 connector management, and MCP all talk to the deployment API at `REMEMBERSTACK_API_URL`
@@ -120,6 +121,10 @@ typed client/API composition port; a deployment must supply its persistent
 connector manager.
 
 ## `remember mcp`
+
+Stdio MCP server over the remote client: static write tools (`ingest`,
+`pipeline_readiness`), recipe tools from `GET /recipes`, and open-query tools
+when the deployment composes them. See [MCP reference](/docs/reference/mcp).
 
 Runs the base wheel's MCP stdio server. It discovers recipes from the remote
 deployment and proxies `tools/call` to the same HTTP recipe endpoint used by
