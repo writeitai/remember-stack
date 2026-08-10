@@ -31,7 +31,7 @@ jobs:
         run: |
           started_at="$(date +%s)"
           docker compose --env-file .env.example up --build --detach --wait
-          curl --fail http://localhost:8000/recipes
+          curl --fail http://localhost:8000/operations
           served_revision="$(curl --fail --silent http://localhost:8000/deployment \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
           test "$served_revision" = "${REMEMBERSTACK_BUILD_REVISION}"
