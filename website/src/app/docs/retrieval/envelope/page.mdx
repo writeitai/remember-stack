@@ -30,8 +30,8 @@ populated, and `temporal_scope` states the exact selection applied:
   entities: [ EntityCandidate… ],
   facts: [ FactResult… ],
   evidence: [ EvidenceResult… ],
-  fact_evidence: [ { fact_id, claim_id, stance: supports|contradicts }… ],
-  evidence_totals: [ { fact_id, stance, returned, total }… ],
+  fact_evidence: [ { fact_kind, fact_id, claim_id, stance: supports|contradicts }… ],
+  evidence_totals: [ { fact_kind, fact_id, stance, returned, total }… ],
   chunks: [ ChunkEvidenceResult… ],
   sources: [ SourceRecord… ],
   transcript: [ … ],
@@ -83,6 +83,10 @@ How `fact_context` binds facts to testimony without blending grains:
 
 - `fact_evidence[]` — explicit fact↔claim stance edges returned with the answer
 - `evidence_totals[]` — exact per-fact stance counts (`returned` / `total`) so caps stay honest
+
+Both arrays identify a fact by `(fact_kind, fact_id)`. Relation and observation
+UUIDs are separate namespaces and may contain the same UUID, so consumers must
+never join or group these records by `fact_id` alone.
 
 ## ContextBundle/v1: both authorities, still separate
 

@@ -307,6 +307,12 @@ current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
 contradiction co-members, support state, and the same 60-record evidence budget
 for every mode.
 
+Fact identity is always the composite `(fact_kind, fact_id)`: relation and
+observation UUID namespaces can overlap. Every `fact_evidence[]` association
+and `evidence_totals[]` row therefore carries both `fact_kind` and `fact_id`,
+and implementations must use both coordinates for partitioning, allocation,
+counting, and lookup. Collapsing either structure by bare UUID is forbidden.
+
 #### Eligibility precedes bounded ranking
 
 For every testimony target and fact-time mode, scope is a nomination input,

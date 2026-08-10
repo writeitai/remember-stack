@@ -452,7 +452,7 @@ def test_source_mention_metadata_is_optional_for_stored_envelopes() -> None:
 
 
 def test_fact_evidence_fields_are_explicit_optional_envelope_contract() -> None:
-    """Batch C associations are flat and explicit while legacy payloads stay valid."""
+    """Batch C associations carry the complete fact coordinate explicitly."""
     fact_id = uuid4()
     claim_id = uuid4()
     evidence = EvidenceResult(
@@ -471,16 +471,35 @@ def test_fact_evidence_fields_are_explicit_optional_envelope_contract() -> None:
         temporal_scope=current_temporal_scope(evaluated_at=_NOW),
         evidence=(evidence,),
         fact_evidence=(
-            FactEvidence(fact_id=fact_id, claim_id=claim_id, stance="supports"),
+            FactEvidence(
+                fact_kind="relation",
+                fact_id=fact_id,
+                claim_id=claim_id,
+                stance="supports",
+            ),
         ),
         evidence_totals=(
-            EvidenceTotal(fact_id=fact_id, stance="supports", returned=1, total=4),
-            EvidenceTotal(fact_id=fact_id, stance="contradicts", returned=0, total=0),
+            EvidenceTotal(
+                fact_kind="relation",
+                fact_id=fact_id,
+                stance="supports",
+                returned=1,
+                total=4,
+            ),
+            EvidenceTotal(
+                fact_kind="relation",
+                fact_id=fact_id,
+                stance="contradicts",
+                returned=0,
+                total=0,
+            ),
         ),
         freshness=Freshness(pg_live_ts=_NOW),
     )
 
+    assert envelope.fact_evidence[0].fact_kind == "relation"
     assert envelope.fact_evidence[0].claim_id == claim_id
+    assert envelope.evidence_totals[0].fact_kind == "relation"
     assert envelope.evidence_totals[0].total == 4
     assert (
         Envelope(
@@ -547,4 +566,10 @@ def test_claim_grouping_fields_default_for_old_stored_envelopes() -> None:
 def test_evidence_total_rejects_a_returned_count_above_total() -> None:
     """The exact-total disclosure cannot contradict itself."""
     with pytest.raises(ValidationError, match="cannot exceed"):
-        EvidenceTotal(fact_id=uuid4(), stance="supports", returned=2, total=1)
+        EvidenceTotal(
+            fact_kind="observation",
+            fact_id=uuid4(),
+            stance="supports",
+            returned=2,
+            total=1,
+        )

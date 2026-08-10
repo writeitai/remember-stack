@@ -735,12 +735,12 @@ def test_two_entity_path_has_both_stances_and_exact_totals(
         assert {
             link.stance
             for link in answer.fact_evidence
-            if link.fact_id == edge.relation_id
+            if link.fact_kind == "relation" and link.fact_id == edge.relation_id
         } == {"supports", "contradicts"}
         assert {
             total.stance: (total.returned, total.total)
             for total in answer.evidence_totals
-            if total.fact_id == edge.relation_id
+            if total.fact_kind == "relation" and total.fact_id == edge.relation_id
         } == {"supports": (1, 2), "contradicts": (1, 1)}
 
 

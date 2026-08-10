@@ -312,6 +312,7 @@ class FactEvidence(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    fact_kind: Literal["relation", "observation"]
     fact_id: UUID
     claim_id: UUID
     stance: Literal["supports", "contradicts"]
@@ -322,6 +323,7 @@ class EvidenceTotal(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    fact_kind: Literal["relation", "observation"]
     fact_id: UUID
     stance: Literal["supports", "contradicts"]
     returned: int = Field(ge=0)

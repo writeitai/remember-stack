@@ -561,8 +561,8 @@ class QueryEngine:
             for item in nominated[:FACT_CONTEXT_CANDIDATE_K]
             if item.qualifier in {"relation", "observation"}
         )
-        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
-        totals: dict[tuple[UUID, str], int] = {}
+        evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]] = {}
+        totals: dict[tuple[str, UUID, str], int] = {}
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -590,7 +590,7 @@ class QueryEngine:
                 else []
             )
             for row in evidence_rows:
-                key = (row["fact_id"], str(row["stance"]))
+                key = (str(row["kind"]), row["fact_id"], str(row["stance"]))
                 evidence_by_fact_stance.setdefault(key, []).append(row)
                 totals[key] = int(row["evidence_total"])
             confirmed_facts = self._enrich_fact_context_facts(
@@ -602,17 +602,18 @@ class QueryEngine:
             )
         facts = confirmed_facts[:k]
         selected = _select_fact_evidence(
-            fact_ids=tuple(fact.fact_id for fact in facts),
+            fact_keys=tuple((fact.kind, fact.fact_id) for fact in facts),
             evidence_by_fact_stance=evidence_by_fact_stance,
             evidence_per_fact=evidence_per_fact,
             budget=FACT_CONTEXT_EVIDENCE_BUDGET,
         )
         returned_counts = Counter(
-            (row["fact_id"], str(row["stance"])) for row in selected
+            (str(row["kind"]), row["fact_id"], str(row["stance"])) for row in selected
         )
         associations = tuple(
             FactEvidence.model_validate(
                 {
+                    "fact_kind": str(row["kind"]),
                     "fact_id": row["fact_id"],
                     "claim_id": row["claim_id"],
                     "stance": str(row["stance"]),
@@ -642,10 +643,11 @@ class QueryEngine:
             )
         exact_totals = tuple(
             EvidenceTotal(
+                fact_kind=cast(Literal["relation", "observation"], fact.kind),
                 fact_id=fact.fact_id,
                 stance=stance,
-                returned=returned_counts[(fact.fact_id, stance)],
-                total=totals.get((fact.fact_id, stance), 0),
+                returned=returned_counts[(fact.kind, fact.fact_id, stance)],
+                total=totals.get((fact.kind, fact.fact_id, stance), 0),
             )
             for fact in facts
             for stance in _EVIDENCE_STANCES
@@ -807,15 +809,15 @@ class QueryEngine:
                 )
 
         confirmed_rows: dict[UUID, RowMapping] = {}
-        evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]] = {}
-        totals: dict[tuple[UUID, str], int] = {}
+        evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]] = {}
+        totals: dict[tuple[str, UUID, str], int] = {}
         for row in evidence_rows:
             relation_id = row["fact_id"]
             confirmed_rows.setdefault(relation_id, row)
             if row["claim_id"] is None:
                 continue
             stance = str(row["stance"])
-            key = (relation_id, stance)
+            key = ("relation", relation_id, stance)
             evidence_by_fact_stance.setdefault(key, []).append(row)
             totals[key] = int(row["evidence_total"])
 
@@ -827,7 +829,7 @@ class QueryEngine:
                 continue
             withdrawn = bool(row["support_withdrawn"])
             has_current_support = bool(
-                evidence_by_fact_stance.get((relation_id, "supports"))
+                evidence_by_fact_stance.get(("relation", relation_id, "supports"))
             )
             if not has_current_support and not withdrawn:
                 continue
@@ -862,17 +864,18 @@ class QueryEngine:
         )
 
         selected = _select_fact_evidence(
-            fact_ids=tuple(edge.relation_id for edge in retained_edges),
+            fact_keys=tuple(("relation", edge.relation_id) for edge in retained_edges),
             evidence_by_fact_stance=evidence_by_fact_stance,
             evidence_per_fact=evidence_per_fact,
             budget=MULTI_HOP_CONTEXT_EVIDENCE_BUDGET,
         )
         returned_counts = Counter(
-            (row["fact_id"], str(row["stance"])) for row in selected
+            ("relation", row["fact_id"], str(row["stance"])) for row in selected
         )
         associations = tuple(
             FactEvidence.model_validate(
                 {
+                    "fact_kind": "relation",
                     "fact_id": row["fact_id"],
                     "claim_id": row["claim_id"],
                     "stance": str(row["stance"]),
@@ -887,10 +890,11 @@ class QueryEngine:
             )
         exact_totals = tuple(
             EvidenceTotal(
+                fact_kind="relation",
                 fact_id=edge.relation_id,
                 stance=stance,
-                returned=returned_counts[(edge.relation_id, stance)],
-                total=totals.get((edge.relation_id, stance), 0),
+                returned=returned_counts[("relation", edge.relation_id, stance)],
+                total=totals.get(("relation", edge.relation_id, stance), 0),
             )
             for edge in retained_edges
             for stance in _EVIDENCE_STANCES
@@ -2942,8 +2946,8 @@ def _validate_multi_hop_context_bounds(
 
 def _select_fact_evidence(
     *,
-    fact_ids: Sequence[UUID],
-    evidence_by_fact_stance: dict[tuple[UUID, str], list[RowMapping]],
+    fact_keys: Sequence[tuple[str, UUID]],
+    evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]],
     evidence_per_fact: int,
     budget: int,
 ) -> tuple[RowMapping, ...]:
@@ -2956,9 +2960,11 @@ def _select_fact_evidence(
     """
     selected: list[RowMapping] = []
     for rank in range(evidence_per_fact):
-        for fact_id in fact_ids:
+        for fact_kind, fact_id in fact_keys:
             for stance in _EVIDENCE_STANCES:
-                candidates = evidence_by_fact_stance.get((fact_id, stance), [])
+                candidates = evidence_by_fact_stance.get(
+                    (fact_kind, fact_id, stance), []
+                )
                 if rank < len(candidates):
                     selected.append(candidates[rank])
                     if len(selected) == budget:
@@ -3581,7 +3587,8 @@ _CURRENT_FACT_EVIDENCE = text(
                d.source_kind, c.ingested_at AS evidence_ingested_at,
                totals.evidence_total,
                row_number() OVER (
-                   PARTITION BY links.fact_id, links.stance, links.doc_id
+                   PARTITION BY links.kind, links.fact_id,
+                                links.stance, links.doc_id
                    ORDER BY c.asserted_at DESC NULLS LAST,
                             c.ingested_at DESC, c.claim_id
                ) AS lineage_claim_rank
@@ -3600,7 +3607,7 @@ _CURRENT_FACT_EVIDENCE = text(
     ), diverse AS (
         SELECT eligible.*,
                row_number() OVER (
-                   PARTITION BY fact_id, stance
+                   PARTITION BY kind, fact_id, stance
                    ORDER BY lineage_claim_rank,
                             asserted_at DESC NULLS LAST,
                             evidence_ingested_at DESC, doc_id, claim_id

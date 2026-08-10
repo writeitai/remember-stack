@@ -1205,6 +1205,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "returned": {
                     "minimum": 0,
                     "title": "Returned",
@@ -1225,6 +1233,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "stance",
                   "returned",
@@ -1247,6 +1256,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "stance": {
                     "enum": [
                       "supports",
@@ -1257,6 +1274,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "claim_id",
                   "stance"
@@ -2903,6 +2921,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "returned": {
                     "minimum": 0,
                     "title": "Returned",
@@ -2923,6 +2949,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "stance",
                   "returned",
@@ -2945,6 +2972,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "stance": {
                     "enum": [
                       "supports",
@@ -2955,6 +2990,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "claim_id",
                   "stance"
@@ -4681,6 +4717,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "returned": {
                     "minimum": 0,
                     "title": "Returned",
@@ -4701,6 +4745,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "stance",
                   "returned",
@@ -4723,6 +4768,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "stance": {
                     "enum": [
                       "supports",
@@ -4733,6 +4786,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "claim_id",
                   "stance"
@@ -6491,6 +6545,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "returned": {
                     "minimum": 0,
                     "title": "Returned",
@@ -6511,6 +6573,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "stance",
                   "returned",
@@ -6533,6 +6596,14 @@
                     "title": "Fact Id",
                     "type": "string"
                   },
+                  "fact_kind": {
+                    "enum": [
+                      "relation",
+                      "observation"
+                    ],
+                    "title": "Fact Kind",
+                    "type": "string"
+                  },
                   "stance": {
                     "enum": [
                       "supports",
@@ -6543,6 +6614,7 @@
                   }
                 },
                 "required": [
+                  "fact_kind",
                   "fact_id",
                   "claim_id",
                   "stance"
@@ -36905,5 +36977,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "0d8e567f5981c09b3003f70d1be557e0cdf8058abb344c484f89b4cbad6dc99d"
+  "surface_manifest_hash": "b9ef94b71f10d8ad03ad6e3dc959daa747882ea929c62ff58c7384497886c168"
 }

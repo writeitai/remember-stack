@@ -118,6 +118,7 @@ class _Corpus:
         self.object_id = uuid4()
         self.relation_id = uuid4()
         self.observation_id = uuid4()
+        self.kind_collision_id = uuid4()
         self.unbacked_id = uuid4()
         self.withdrawn_id = uuid4()
         self.ended_id = uuid4()
@@ -196,6 +197,26 @@ class _Corpus:
                 "at": _NOW,
             },
         )
+        self._relation(
+            connection,
+            fact_id=self.kind_collision_id,
+            label="Alice supports the shared-identity relation",
+            evidence_count=1,
+        )
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, normalizer_version, evidence_count,"
+                " contradict_count, ingested_at) VALUES (:fact, :deployment,"
+                " :subject, 'Shared-identity observation', 'batch-c', 0, 1, :at)"
+            ),
+            {
+                "fact": self.kind_collision_id,
+                "deployment": _DEPLOYMENT_ID,
+                "subject": self.subject_id,
+                "at": _NOW,
+            },
+        )
 
     def _seed_primary_evidence(self, connection: Connection) -> None:
         shared_doc = self._document(connection, key="shared-support")
@@ -269,6 +290,22 @@ class _Corpus:
             connection,
             key="observation-contradict",
             fact_id=self.observation_id,
+            kind="observation",
+            stance="contradicts",
+            at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="kind-collision-relation-support",
+            fact_id=self.kind_collision_id,
+            kind="relation",
+            stance="supports",
+            at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="kind-collision-observation-contradict",
+            fact_id=self.kind_collision_id,
             kind="observation",
             stance="contradicts",
             at=_NOW,
@@ -558,7 +595,8 @@ class _Corpus:
     def query_engine(
         self, *, fact_ids: tuple[UUID, ...]
     ) -> tuple[QueryEngine, _FactIndex]:
-        index = _FactIndex(
+        """Build an engine whose P1 stub nominates the requested fact ids."""
+        return self.query_engine_for_keys(
             fact_keys=tuple(
                 (
                     "observation" if fact_id == self.observation_id else "relation",
@@ -567,6 +605,12 @@ class _Corpus:
                 for fact_id in fact_ids
             )
         )
+
+    def query_engine_for_keys(
+        self, *, fact_keys: tuple[tuple[str, UUID], ...]
+    ) -> tuple[QueryEngine, _FactIndex]:
+        """Build an engine whose P1 stub nominates complete fact coordinates."""
+        index = _FactIndex(fact_keys=fact_keys)
         return (
             QueryEngine(
                 engine=self.engine,
@@ -622,6 +666,56 @@ def test_fact_context_returns_both_fact_kinds_with_both_stances(
     ]
     assert len({corpus.claim_docs[claim_id] for claim_id in selected_support}) == 2
     assert corpus.claims["support-old-same-lineage"] not in selected_support
+
+
+def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(
+    corpus: _Corpus,
+) -> None:
+    """Relations and observations with one UUID retain distinct evidence."""
+    engine, _index = corpus.query_engine_for_keys(
+        fact_keys=(
+            ("relation", corpus.kind_collision_id),
+            ("observation", corpus.kind_collision_id),
+        )
+    )
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="shared identity",
+        k=2,
+        evidence_per_fact=1,
+        evaluated_at=_NOW,
+    )
+
+    assert {(fact.kind, fact.fact_id) for fact in answer.facts} == {
+        ("relation", corpus.kind_collision_id),
+        ("observation", corpus.kind_collision_id),
+    }
+    assert {
+        (link.fact_kind, link.fact_id, link.stance, link.claim_id)
+        for link in answer.fact_evidence
+    } == {
+        (
+            "relation",
+            corpus.kind_collision_id,
+            "supports",
+            corpus.claims["kind-collision-relation-support"],
+        ),
+        (
+            "observation",
+            corpus.kind_collision_id,
+            "contradicts",
+            corpus.claims["kind-collision-observation-contradict"],
+        ),
+    }
+    assert {
+        (total.fact_kind, total.stance): (total.returned, total.total)
+        for total in answer.evidence_totals
+    } == {
+        ("relation", "supports"): (1, 1),
+        ("relation", "contradicts"): (0, 0),
+        ("observation", "supports"): (0, 0),
+        ("observation", "contradicts"): (1, 1),
+    }
 
 
 @pytest.mark.parametrize(

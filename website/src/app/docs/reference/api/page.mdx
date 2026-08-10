@@ -329,7 +329,9 @@ representation, offsets, and source timestamps confirmed by the live spine.
 `fact_context` is a flat fact-grain envelope: `facts[]` contains the selected
 verdicts, `evidence[]` contains the backing testimony, `fact_evidence[]`
 explicitly maps each fact to each claim and stance, and `evidence_totals[]`
-reports exact returned/total counts for both stances. It accepts only explicit
+reports exact returned/total counts for both stances. Both association arrays
+carry the complete `(fact_kind, fact_id)` identity; relation and observation
+UUIDs must not be grouped by bare `fact_id`. It accepts only explicit
 entity IDs, not names or a hidden resolution step; facts with no live evidence
 are never returned.
 
