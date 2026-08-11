@@ -36,6 +36,13 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        COMMENT ON TABLE normalize_observation_staging IS
+          'D88: claim-grain normalize stages observations until the version barrier '
+          'fires an ordered D43 flush (asserted_at, claim_id). Not a public fact table.';
+        """
+    )
+    op.execute(
+        """
         CREATE INDEX IF NOT EXISTS ix_normalize_obs_staging_version
         ON normalize_observation_staging (deployment_id, version_id, normalizer_version)
         """

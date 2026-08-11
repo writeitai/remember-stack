@@ -296,7 +296,10 @@ _NORMALIZE_CLAIM_STATUS = text(
              WHEN bool_or(p.status = 'pending') THEN 'pending'
              ELSE 'missing'
            END AS status,
-           COALESCE(max(p.finished_at), now()) AS finished_at
+           COALESCE(
+             max(p.finished_at),
+             max(embed.finished_at)
+           ) AS finished_at
     FROM document_versions v
     LEFT JOIN document_representations r
       ON r.representation_id = v.current_representation_id
@@ -311,6 +314,12 @@ _NORMALIZE_CLAIM_STATUS = text(
      AND p.target_id = cl.claim_id
      AND p.stage = 'normalize_relations'
      AND p.component_version = :normalize_version
+    LEFT JOIN processing_state embed
+      ON embed.deployment_id = :deployment_id
+     AND embed.target_kind = 'document_version'
+     AND embed.target_id = v.version_id
+     AND embed.stage = 'embed_chunk'
+     AND embed.status = 'succeeded'
     WHERE v.version_id IN :version_ids
     GROUP BY v.version_id
     """

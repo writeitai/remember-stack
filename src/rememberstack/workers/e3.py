@@ -134,6 +134,13 @@ class NormalizeRelationsHandler:
         """Normalize claims: claim grain (D88) or legacy version serial path."""
         if work.target_kind is ProcessingTarget.CLAIM:
             return self._handle_claim(work=work, meter=meter)
+        # Fan-out generation version-level rows are coordinators only (D88 §5.3):
+        # they must not re-run the serial multi-claim loop.
+        if "claim-fanout" in work.component_version:
+            raise NonRetryableHandlerError(
+                f"version-level normalize at fan-out generation is coordinator-only; "
+                f"work {work.processing_id} has target_kind=document_version"
+            )
         # Legacy document_version serial normalize (pre-claim-fanout versions).
         return self._handle_version_serial(work=work, meter=meter)
 

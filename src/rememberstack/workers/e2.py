@@ -1061,20 +1061,24 @@ def _claimify_omitted_decision(
 
 
 def _normalize_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcome:
-    """Continue an extracted version even when it contains no chunks."""
+    """Continue an extracted version even when it contains no chunks (D88)."""
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
     return HandlerOutcome(
         follow_up=(
             EnqueueWork(
                 deployment_id=work.deployment_id,
                 target_kind=ProcessingTarget.DOCUMENT_VERSION,
                 target_id=source.version_id,
-                stage=PipelineStage.NORMALIZE_RELATIONS,
-                component_version=E3_NORMALIZER_VERSION,
+                stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                component_version=OBS_FLUSH_VERSION,
                 content_hash=work.content_hash,
                 lane=work.lane,
                 payload={
                     "version_id": str(source.version_id),
                     "representation_id": str(source.representation_id),
+                    "doc_id": str(source.doc_id),
+                    "normalizer_version": E3_NORMALIZER_VERSION,
                 },
             ),
         )
