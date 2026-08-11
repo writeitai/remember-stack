@@ -729,9 +729,19 @@ def test_error_mapping_table(
 
 
 def test_unexpected_exception_is_internal_error_and_logged(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Unknown failures are non-retryable internal_error with a logged traceback."""
+    # Surface fixtures migrate in-process, and Alembic's `fileConfig` runs with
+    # `disable_existing_loggers` at its default of True — so by the time this
+    # test runs inside the full suite, this module's logger has been disabled
+    # and caplog sees nothing. Production applies migrations in a separate
+    # `setup` container that exits before the API starts (compose.yaml), so the
+    # side effect is test-order-only. Re-enable the logger rather than drop the
+    # assertions: the logged traceback is how an operator finds a programmer
+    # defect that reached an MCP client.
+    tool_logger = logging.getLogger(handle_memory_write_tool.__module__)
+    monkeypatch.setattr(tool_logger, "disabled", False)
     backend = _RecordingWriteBackend(fail=RuntimeError("boom programmer defect"))
     with caplog.at_level(logging.ERROR):
         result = handle_memory_write_tool(
