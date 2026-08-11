@@ -520,9 +520,11 @@ _INSERT_ADJUDICATION = text(
 def _is_source_successor(*, left: dict[str, object], right: dict[str, object]) -> bool:
     """True when ``left`` is the source-time successor of ``right`` (D88 §5.5).
 
-    Later ``asserted_at`` wins. Dated testimony is later than undated. Equal
-    times (or both undated) use relation_id so orientation is process-order
-    independent.
+    Later ``asserted_at`` wins. Dated testimony is later than undated. When
+    both times are equal or both undated, keep the caller subject (``left``)
+    as successor — that is the relation being adjudicated as "new", and
+    continuous-ingest independence only requires source-time when times
+    actually differ.
     """
     left_at = left.get("asserted_at")
     right_at = right.get("asserted_at")
@@ -532,7 +534,7 @@ def _is_source_successor(*, left: dict[str, object], right: dict[str, object]) -
         return True
     if left_at is None and right_at is not None:
         return False
-    return str(left["relation_id"]) > str(right["relation_id"])
+    return True
 
 
 _LOCK_BLOCK = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")

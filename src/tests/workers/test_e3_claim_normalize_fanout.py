@@ -145,12 +145,14 @@ def test_supersession_orients_by_asserted_at_not_process_order() -> None:
     newer = {"relation_id": uuid4(), "asserted_at": datetime(2024, 6, 1, tzinfo=UTC)}
     assert _is_source_successor(left=newer, right=older)
     assert not _is_source_successor(left=older, right=newer)
-    # Equal times: stable id order, not arrival order.
+    # Equal / undated times: keep the adjudicated subject (left) as successor.
     same_time = datetime(2020, 1, 1, tzinfo=UTC)
     a = {"relation_id": uuid4(), "asserted_at": same_time}
     b = {"relation_id": uuid4(), "asserted_at": same_time}
-    assert _is_source_successor(left=a, right=b) == (
-        str(a["relation_id"]) > str(b["relation_id"])
+    assert _is_source_successor(left=a, right=b)
+    assert _is_source_successor(
+        left={"relation_id": uuid4(), "asserted_at": None},
+        right={"relation_id": uuid4(), "asserted_at": None},
     )
 
 
