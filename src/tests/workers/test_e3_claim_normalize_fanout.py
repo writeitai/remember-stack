@@ -67,6 +67,7 @@ def test_readiness_normalize_status_pins_extractor_version() -> None:
 
     sql = str(readiness._NORMALIZE_CLAIM_STATUS)
     assert "cl.extractor_version = :extractor_version" in sql
+    assert "chunk_claims" in sql
 
 
 def test_claim_normalize_requires_extractor_version_pin() -> None:
@@ -216,6 +217,8 @@ def test_cycle_wait_does_not_block_on_missing_claim_rows() -> None:
     assert "LEFT JOIN processing_state" not in claim_wait
     assert "w.processing_id IS NULL" not in claim_wait
     assert "w.status IN ('pending', 'running', 'failed', 'dead_letter')" in claim_wait
+    # D56 reused claims are visible through the occurrence map.
+    assert "chunk_claims" in claim_wait
 
 
 def test_claim_handler_rejects_coordinate_mismatches() -> None:

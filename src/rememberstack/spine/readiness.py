@@ -311,8 +311,11 @@ _NORMALIZE_CLAIM_STATUS = text(
     LEFT JOIN chunks c
       ON c.representation_id = r.representation_id
      AND c.chunker_version = :chunker_version
+    -- D56: occurrence map is chunk_claims; claims.chunk_id is origin only.
+    LEFT JOIN chunk_claims cc
+      ON cc.chunk_id = c.chunk_id
     LEFT JOIN claims cl
-      ON cl.chunk_id = c.chunk_id
+      ON cl.claim_id = cc.claim_id
      AND cl.extractor_version = :extractor_version
     LEFT JOIN processing_state p
       ON p.deployment_id = :deployment_id

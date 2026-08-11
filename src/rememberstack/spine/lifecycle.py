@@ -1053,11 +1053,13 @@ _SELECT_READY_CYCLES = text(
           -- D88: when claim-grain normalize rows exist, they must finish
           -- (incl. dead_letter) before cycle finalization. Missing rows are
           -- intentional for pre-fanout serial normalize (legacy drain) — do
-          -- not treat absence as incomplete.
+          -- not treat absence as incomplete. D56: discover claims via
+          -- chunk_claims occurrence map, not origin claims.chunk_id.
           SELECT 1
           FROM document_versions v
           JOIN chunks c ON c.version_id = v.version_id
-          JOIN claims cl ON cl.chunk_id = c.chunk_id
+          JOIN chunk_claims cc ON cc.chunk_id = c.chunk_id
+          JOIN claims cl ON cl.claim_id = cc.claim_id
           JOIN processing_state w
             ON w.deployment_id = y.deployment_id
            AND w.target_kind = 'claim'
