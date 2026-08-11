@@ -207,15 +207,19 @@ and federated GCS identity configured, restore into explicit empty targets:
   --receipt /srv/receipts/conv-50.json \
   --run-dir /srv/locomo-restores/conv-50 \
   --mount-root /srv/locomo-restores/conv-50-mounts \
+  --compose-base-env /opt/remember-stack/.env \
   --start
 ```
 
 Restore first re-verifies the remote manifest and receipt, downloads to a new
 staging directory, checks every size and SHA-256, and refuses non-empty run,
 mount, or Docker-volume targets. `--start` brings up Postgres, MinIO, setup,
-and the API after extraction. Then run the ordinary answer preflight without
-`--execute` to prove sample lineage, readiness, and projection freshness before
-authorizing any paid model call.
+and the API after extraction. It overlays the non-secret model and routing
+bindings saved in the sample's readiness checkpoint onto the operator-supplied
+secret-bearing base env; secrets are never copied into the backup metadata.
+Then assert that the sample has no unanswered items and run the ordinary answer
+preflight with an invalid evaluator key to prove sample lineage, readiness, and
+projection freshness without authorizing a paid model call.
 
 ## 5. Collect run directories
 

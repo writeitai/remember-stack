@@ -28,6 +28,36 @@ from pydantic import Field
 EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifests")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
+RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
+
+MODEL_BINDING_ENVIRONMENT = {
+    "chunk_embedding": "REMEMBERSTACK_E1_EMBEDDING_MODEL",
+    "claim_extraction": "REMEMBERSTACK_E2_EXTRACT_MODEL",
+    "context_prefix": "REMEMBERSTACK_E1_PREFIX_MODEL",
+    "entity_observation_embedding": "REMEMBERSTACK_OBS_EMBEDDING_MODEL",
+    "fact_label": "REMEMBERSTACK_P1_LABEL_MODEL",
+    "observation_frontier": "REMEMBERSTACK_OBS_FRONTIER_MODEL",
+    "observation_small": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "openrouter_embedding_provider": "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER",
+    "openrouter_embedding_provider_order": (
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER"
+    ),
+    "openrouter_max_completion_tokens": (
+        "REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS"
+    ),
+    "openrouter_reasoning_effort": "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT",
+    "openrouter_reasoning_effort_map": (
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP"
+    ),
+    "p1_embedding": "REMEMBERSTACK_P1_EMBEDDING_MODEL",
+    "relation_normalization": "REMEMBERSTACK_E3_NORMALIZE_MODEL",
+    "section_role": "REMEMBERSTACK_ROLE_MODEL",
+    "section_summary": "REMEMBERSTACK_SUMMARY_MODEL",
+    "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
+    "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
+    "supersession_frontier": "REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL",
+    "supersession_small": "REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL",
+}
 
 NonEmpty = Annotated[str, Field(min_length=1)]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -211,6 +241,48 @@ def _run_identity(run_dir: Path) -> RunIdentity:
             value=value.get("item_ids_sha256"), field="item_ids_sha256"
         ),
     )
+
+
+def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
+    """Reconstruct non-secret Compose bindings from saved sample readiness."""
+
+    state = _load_object(run_dir / "state.json")
+    readiness = state.get("readiness")
+    if not isinstance(readiness, dict):
+        raise StoreBackupError("state.json has no readiness object")
+    sample_readiness = readiness.get(sample_id)
+    if not isinstance(sample_readiness, dict):
+        raise StoreBackupError(f"state.json has no readiness for {sample_id}")
+    bindings = sample_readiness.get("model_bindings")
+    if not isinstance(bindings, dict):
+        raise StoreBackupError(f"state.json has no model bindings for {sample_id}")
+
+    environment: dict[str, str] = {}
+    for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
+        value = bindings.get(binding)
+        if not isinstance(value, str) or not value:
+            raise StoreBackupError(f"saved readiness has no valid {binding} binding")
+        normalized = "" if value == "unset" else value
+        if "\n" in normalized or "\r" in normalized or "\x00" in normalized:
+            raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
+        environment[variable] = normalized
+    return environment
+
+
+def _write_runtime_environment(*, run_dir: Path, sample_id: str) -> Path:
+    """Write a non-secret Compose env overlay that reproduces saved bindings."""
+
+    environment = _runtime_environment(run_dir=run_dir, sample_id=sample_id)
+    path = run_dir / RUNTIME_ENVIRONMENT
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = "".join(
+        f"{name}={json.dumps(value)}\n" for name, value in sorted(environment.items())
+    ).encode("utf-8")
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    temporary.write_bytes(payload)
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
+    return path
 
 
 def _volume_names(*, compose_project: str) -> dict[str, str]:
@@ -796,9 +868,14 @@ def restore_store(
     compose_project: str,
     staging_root: Path,
     start_services: bool,
+    compose_base_env: Path | None,
 ) -> BackupManifest:
     """Restore one verified GCS recovery unit into empty local targets."""
 
+    if start_services and (compose_base_env is None or not compose_base_env.is_file()):
+        raise StoreBackupError(
+            "--start requires --compose-base-env with the local deployment secrets"
+        )
     receipt = verify_receipt(receipt_path)
     staging = staging_root / f"restore-{_timestamp(_utc_now())}-{secrets.token_hex(4)}"
     staging.mkdir(parents=True, mode=0o700)
@@ -853,10 +930,18 @@ def restore_store(
         ),
     )
     if start_services:
+        runtime_environment = _write_runtime_environment(
+            run_dir=run_dir, sample_id=receipt.sample_id
+        )
+        assert compose_base_env is not None
         _run(
             args=(
                 "docker",
                 "compose",
+                "--env-file",
+                str(compose_base_env),
+                "--env-file",
+                str(runtime_environment),
                 "up",
                 "--detach",
                 "--wait",
@@ -932,6 +1017,11 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("/var/lib/rememberstack-locomo-backups"),
     )
     restore.add_argument("--start", action="store_true")
+    restore.add_argument(
+        "--compose-base-env",
+        type=_path,
+        help="local secret-bearing Compose env; saved non-secret bindings overlay it",
+    )
     return parser
 
 
@@ -977,6 +1067,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 compose_project=arguments.compose_project,
                 staging_root=arguments.staging_root,
                 start_services=arguments.start,
+                compose_base_env=arguments.compose_base_env,
             )
         else:  # pragma: no cover - argparse enforces the command choices.
             raise StoreBackupError(f"unknown command: {arguments.command}")

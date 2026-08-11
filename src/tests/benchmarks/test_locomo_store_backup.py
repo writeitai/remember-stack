@@ -375,6 +375,7 @@ def test_restore_validates_every_archive_before_running_docker(
             compose_project="rememberstack",
             staging_root=tmp_path / "restore-staging",
             start_services=False,
+            compose_base_env=None,
         )
 
     assert docker_calls == []
@@ -412,6 +413,29 @@ def test_nested_empty_restore_target_is_retryable(tmp_path: Path) -> None:
         store_backup._ensure_empty_restore_targets(
             run_dir=run_dir, mount_root=mount_root
         )
+
+
+def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -> None:
+    """Restore derives model/routing settings without copying deployment secrets."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    bindings = {
+        name: "unset" if name == "openrouter_reasoning_effort_map" else f"value-{name}"
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+    }
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}}),
+        encoding="utf-8",
+    )
+
+    path = store_backup._write_runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    payload = path.read_text(encoding="utf-8")
+
+    assert 'REMEMBERSTACK_E2_EXTRACT_MODEL="value-claim_extraction"' in payload
+    assert 'REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP=""' in payload
+    assert "OPENROUTER_API_KEY" not in payload
+    assert "POSTGRES_PASSWORD" not in payload
 
 
 def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
