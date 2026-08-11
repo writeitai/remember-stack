@@ -97,7 +97,9 @@ def test_claim_normalize_requires_extractor_version_pin() -> None:
             "K", (), {"chunks_for_embedding": staticmethod(lambda **kwargs: ())}
         )(),  # type: ignore[arg-type]
         registry=type(
-            "R", (), {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())}
+            "R",
+            (),
+            {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())},
         )(),  # type: ignore[arg-type]
         resolver=None,  # type: ignore[arg-type]
         facts=None,  # type: ignore[arg-type]
@@ -139,14 +141,8 @@ def test_supersession_orients_by_asserted_at_not_process_order() -> None:
 
     from rememberstack.spine.supersession import _is_source_successor
 
-    older = {
-        "relation_id": uuid4(),
-        "asserted_at": datetime(2019, 1, 1, tzinfo=UTC),
-    }
-    newer = {
-        "relation_id": uuid4(),
-        "asserted_at": datetime(2024, 6, 1, tzinfo=UTC),
-    }
+    older = {"relation_id": uuid4(), "asserted_at": datetime(2019, 1, 1, tzinfo=UTC)}
+    newer = {"relation_id": uuid4(), "asserted_at": datetime(2024, 6, 1, tzinfo=UTC)}
     assert _is_source_successor(left=newer, right=older)
     assert not _is_source_successor(left=older, right=newer)
     # Equal times: stable id order, not arrival order.
@@ -207,6 +203,19 @@ def test_obs_flush_retires_staging_in_same_txn_as_apply() -> None:
     assert "_DELETE_OBS_STAGING_ENTITY" in apply_source
 
 
+def test_claim_complete_rechecks_sibling_version_barriers() -> None:
+    """D56 shared claim work must re-evaluate every occurrence version barrier."""
+    import inspect
+
+    from rememberstack.spine import work_ledger
+
+    source = inspect.getsource(work_ledger.WorkLedger.complete_claim_normalize)
+    assert "_VERSIONS_WITH_CLAIM_OCCURRENCE" in source
+    sql = str(work_ledger._VERSIONS_WITH_CLAIM_OCCURRENCE)
+    assert "chunk_claims" in sql
+    assert "extractor_version" in sql
+
+
 def test_cycle_wait_does_not_block_on_missing_claim_rows() -> None:
     """Legacy serial normalize (no claim-grain rows) must not stall cycles."""
     from rememberstack.spine import lifecycle
@@ -265,7 +274,9 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
         claim_catalog=_Claims(),  # type: ignore[arg-type]
         chunk_catalog=_Chunks(),  # type: ignore[arg-type]
         registry=type(
-            "R", (), {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())}
+            "R",
+            (),
+            {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())},
         )(),  # type: ignore[arg-type]
         resolver=None,  # type: ignore[arg-type]
         facts=None,  # type: ignore[arg-type]
@@ -276,7 +287,7 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
     )
 
     def _work(**payload_overrides: object) -> ClaimedWork:
-        payload = {
+        payload: dict[str, object] = {
             "version_id": str(version_id),
             "representation_id": str(representation_id),
             "claim_id": str(claim_id),
@@ -301,8 +312,7 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
     # Wrong extractor generation on payload vs claim row.
     try:
         handler.handle(
-            work=_work(extractor_version="other-extractor"),
-            meter=NoopCostMeter(),
+            work=_work(extractor_version="other-extractor"), meter=NoopCostMeter()
         )
     except NonRetryableHandlerError as error:
         assert "coordinate mismatch" in str(error)

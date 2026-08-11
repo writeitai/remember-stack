@@ -498,6 +498,7 @@ _INSERT_ADJUDICATION = text(
     """
 ).bindparams(bindparam("features", type_=JSON))
 
+
 def _is_source_successor(*, left: dict[str, object], right: dict[str, object]) -> bool:
     """True when ``left`` is the source-time successor of ``right`` (D88 §5.5).
 

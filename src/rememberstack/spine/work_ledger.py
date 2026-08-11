@@ -343,38 +343,77 @@ class WorkLedger:
             outcomes = [
                 enqueue_on(connection=connection, work=work) for work in follow_up
             ]
-            if not _normalize_claim_barrier_ready(
-                connection=connection,
-                deployment_id=barrier.deployment_id,
-                version_id=barrier.version_id,
-                representation_id=barrier.representation_id,
-                chunker_version=barrier.chunker_version,
-                extractor_version=barrier.extractor_version,
-                normalize_version=barrier.normalize_component_version,
-            ):
-                return tuple(outcomes)
-            outcomes.append(
-                enqueue_on(
+            claim_id = connection.execute(
+                _SELECT_TARGET_ID, {"processing_id": processing_id}
+            ).scalar_one()
+            # Primary barrier from this work's payload, plus every other
+            # version that lists this claim as a D56 occurrence. Shared claim
+            # work rows keep one payload; siblings still need barrier recheck.
+            candidates = [
+                {
+                    "deployment_id": barrier.deployment_id,
+                    "version_id": barrier.version_id,
+                    "representation_id": barrier.representation_id,
+                    "chunker_version": barrier.chunker_version,
+                    "doc_id": barrier.doc_id,
+                }
+            ]
+            for row in connection.execute(
+                _VERSIONS_WITH_CLAIM_OCCURRENCE,
+                {
+                    "claim_id": claim_id,
+                    "extractor_version": barrier.extractor_version,
+                    "deployment_id": barrier.deployment_id,
+                },
+            ).mappings():
+                if (
+                    row["representation_id"] == barrier.representation_id
+                    and row["version_id"] == barrier.version_id
+                ):
+                    continue
+                candidates.append(dict(row))
+            for candidate in candidates:
+                if candidate["representation_id"] != barrier.representation_id:
+                    connection.execute(
+                        _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                        {"representation_id": candidate["representation_id"]},
+                    )
+                if not _normalize_claim_barrier_ready(
                     connection=connection,
-                    work=EnqueueWork(
-                        deployment_id=barrier.deployment_id,
-                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                        target_id=barrier.version_id,
-                        stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                        component_version=barrier.obs_flush_component_version,
-                        content_hash=barrier.content_hash,
-                        lane=barrier.lane,
-                        payload={
-                            "version_id": str(barrier.version_id),
-                            "representation_id": str(barrier.representation_id),
-                            "doc_id": str(barrier.doc_id),
-                            "normalizer_version": barrier.normalize_component_version,
-                            "chunker_version": barrier.chunker_version,
-                            "extractor_version": barrier.extractor_version,
-                        },
-                    ),
+                    deployment_id=UUID(str(candidate["deployment_id"])),
+                    version_id=UUID(str(candidate["version_id"])),
+                    representation_id=UUID(str(candidate["representation_id"])),
+                    chunker_version=str(candidate["chunker_version"]),
+                    extractor_version=barrier.extractor_version,
+                    normalize_version=barrier.normalize_component_version,
+                ):
+                    continue
+                outcomes.append(
+                    enqueue_on(
+                        connection=connection,
+                        work=EnqueueWork(
+                            deployment_id=UUID(str(candidate["deployment_id"])),
+                            target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                            target_id=UUID(str(candidate["version_id"])),
+                            stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                            component_version=barrier.obs_flush_component_version,
+                            content_hash=barrier.content_hash,
+                            lane=barrier.lane,
+                            payload={
+                                "version_id": str(candidate["version_id"]),
+                                "representation_id": str(
+                                    candidate["representation_id"]
+                                ),
+                                "doc_id": str(candidate["doc_id"]),
+                                "normalizer_version": (
+                                    barrier.normalize_component_version
+                                ),
+                                "chunker_version": str(candidate["chunker_version"]),
+                                "extractor_version": barrier.extractor_version,
+                            },
+                        ),
+                    )
                 )
-            )
             return tuple(outcomes)
 
     def fail(
@@ -971,6 +1010,25 @@ _CLAIM_START = text(
     WHERE processing_id = :processing_id
     RETURNING processing_id, deployment_id, target_kind, target_id, stage,
               component_version, content_hash, lane, attempts, payload
+    """
+)
+
+_SELECT_TARGET_ID = text(
+    """
+    SELECT target_id FROM processing_state WHERE processing_id = :processing_id
+    """
+)
+
+_VERSIONS_WITH_CLAIM_OCCURRENCE = text(
+    """
+    SELECT DISTINCT c.deployment_id, c.version_id, c.representation_id,
+           c.chunker_version, cl.doc_id
+    FROM chunk_claims cc
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    JOIN claims cl ON cl.claim_id = cc.claim_id
+    WHERE cc.claim_id = :claim_id
+      AND c.deployment_id = :deployment_id
+      AND cl.extractor_version = :extractor_version
     """
 )
 
