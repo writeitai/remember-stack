@@ -38,6 +38,7 @@ backup_destination=${LOCOMO_BACKUP_DESTINATION:-}
 backup_project=${LOCOMO_GCP_PROJECT:-}
 backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-backups}
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
+runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
 backup_tool=benchmarks/locomo/sharding/store_backup.py
 compose=(docker compose)
 
@@ -58,6 +59,9 @@ export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
 [[ -f "$backup_tool" ]] || die "backup tool does not exist: $backup_tool"
 [[ $(id -u) -eq 0 ]] ||
   die "the sharded runner must run as root to archive Docker volume mountpoints"
+command -v flock >/dev/null || die "flock must be installed before a sharded run"
+exec 9>"$runner_lock"
+flock --nonblock 9 || die "another LoCoMo shard runner owns this host: $runner_lock"
 command -v tar >/dev/null || die "tar must be installed before a sharded run"
 command -v zstd >/dev/null || die "zstd must be installed before a sharded run"
 [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]] ||

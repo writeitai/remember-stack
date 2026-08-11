@@ -58,6 +58,13 @@ MODEL_BINDING_ENVIRONMENT = {
     "supersession_frontier": "REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL",
     "supersession_small": "REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL",
 }
+UNSET_MODEL_BINDINGS = {
+    "openrouter_embedding_provider": "auto",
+    "openrouter_embedding_provider_order": "unset",
+    "openrouter_max_completion_tokens": "unset",
+    "openrouter_reasoning_effort": "auto",
+    "openrouter_reasoning_effort_map": "unset",
+}
 
 NonEmpty = Annotated[str, Field(min_length=1)]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -262,7 +269,7 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
         value = bindings.get(binding)
         if not isinstance(value, str) or not value:
             raise StoreBackupError(f"saved readiness has no valid {binding} binding")
-        normalized = "" if value == "unset" else value
+        normalized = "" if value == UNSET_MODEL_BINDINGS.get(binding) else value
         if "\n" in normalized or "\r" in normalized or "\x00" in normalized:
             raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
         environment[variable] = normalized
@@ -394,6 +401,27 @@ def _extract_directory(*, archive: Path, destination: Path) -> None:
     )
 
 
+def _rebase_published_mount_links(mount_root: Path) -> None:
+    """Make restored P3 pointers relative to their new deployment directory."""
+
+    for link in mount_root.glob("*/p3"):
+        if not link.is_symlink():
+            continue
+        target = Path(os.readlink(link))
+        if not target.is_absolute():
+            continue
+        local_target = link.parent / target.name
+        if (
+            target.parent.name != link.parent.name
+            or not target.name.startswith("p3-")
+            or not local_target.is_dir()
+        ):
+            raise StoreBackupError(f"restored P3 pointer is not portable: {link}")
+        replacement = link.with_name(f".{link.name}.{secrets.token_hex(4)}.tmp")
+        replacement.symlink_to(target.name, target_is_directory=True)
+        os.replace(replacement, link)
+
+
 def _record_for_archive(
     *,
     kind: Literal["volume", "run", "mounts"],
@@ -462,6 +490,22 @@ def _remote_bytes(*, remote_path: str, project_id: str) -> bytes:
         raise StoreBackupError(
             f"cannot read or validate GCS object: {remote_path}"
         ) from exc
+
+
+def _remote_size(*, remote_path: str, project_id: str) -> int:
+    """Return one GCS object's current size, failing when it is unavailable."""
+
+    bucket_name, object_name = _parse_gcs_uri(remote_path)
+    if not object_name:
+        raise StoreBackupError("remote object path is empty")
+    try:
+        blob = _storage_client(project_id).bucket(bucket_name).blob(object_name)
+        blob.reload()
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(f"cannot inspect GCS object: {remote_path}") from exc
+    if blob.size is None:
+        raise StoreBackupError(f"GCS object has no size metadata: {remote_path}")
+    return blob.size
 
 
 def _upload_file(*, source: Path, remote_path: str, project_id: str) -> None:
@@ -586,8 +630,32 @@ def record_live_store(*, run_dir: Path, sample_id: str, compose_project: str) ->
     _log(f"sample={sample_id} live-store-marker=recorded")
 
 
-def verify_receipt(receipt_path: Path) -> BackupReceipt:
-    """Re-read remote manifest and receipt bytes for one local verified receipt."""
+def _validate_manifest_inventory(manifest: BackupManifest) -> None:
+    """Require exactly the recovery objects and safe paths the restore consumes."""
+
+    expected = {
+        "postgres-data": "volume",
+        "minio-data": "volume",
+        "app-state": "volume",
+        "forget-manifests": "volume",
+        "run-directory": "run",
+        "published-mount-root": "mounts",
+    }
+    actual = {archive.logical_name: archive.kind for archive in manifest.archives}
+    if len(actual) != len(manifest.archives) or actual != expected:
+        raise StoreBackupError("backup archive inventory is incomplete or unexpected")
+    for archive in manifest.archives:
+        relative = Path(archive.relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise StoreBackupError("manifest contains an unsafe archive path")
+        if archive.kind == "volume" and not archive.docker_volume:
+            raise StoreBackupError("volume archive has no Docker volume identity")
+        if archive.kind != "volume" and archive.docker_volume is not None:
+            raise StoreBackupError("non-volume archive has a Docker volume identity")
+
+
+def verify_receipt(receipt_path: Path) -> tuple[BackupReceipt, BackupManifest]:
+    """Re-check the receipt, manifest, and every required remote archive."""
 
     try:
         local_bytes = receipt_path.read_bytes()
@@ -602,13 +670,28 @@ def verify_receipt(receipt_path: Path) -> BackupReceipt:
     )
     if _bytes_sha256(manifest_bytes) != receipt.manifest_sha256:
         raise StoreBackupError("remote manifest no longer matches the verified receipt")
+    manifest = BackupManifest.model_validate_json(manifest_bytes)
+    if manifest.sample_id != receipt.sample_id:
+        raise StoreBackupError("manifest and receipt name different samples")
+    _validate_manifest_inventory(manifest)
+    for archive in manifest.archives:
+        remote_path = _remote_join(
+            prefix=receipt.remote_prefix, name=archive.relative_path
+        )
+        if (
+            _remote_size(remote_path=remote_path, project_id=receipt.gcp_project)
+            != archive.byte_size
+        ):
+            raise StoreBackupError(
+                f"remote archive size differs from manifest: {archive.relative_path}"
+            )
     remote_receipt = _remote_bytes(
         remote_path=_remote_join(prefix=receipt.remote_prefix, name="receipt.json"),
         project_id=receipt.gcp_project,
     )
     if remote_receipt != local_bytes:
         raise StoreBackupError("remote receipt no longer matches the local receipt")
-    return receipt
+    return receipt, manifest
 
 
 def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
@@ -630,11 +713,15 @@ def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
     marker = LiveStoreMarker.model_validate_json(marker_path.read_bytes())
     if count:
         _volume_names(compose_project=compose_project)
-    receipt = verify_receipt(_receipt_path(run_dir=run_dir, sample_id=marker.sample_id))
+    receipt, manifest = verify_receipt(
+        _receipt_path(run_dir=run_dir, sample_id=marker.sample_id)
+    )
     if receipt.sample_id != marker.sample_id:
         raise StoreBackupError(
             "live-store marker and verified receipt name different samples"
         )
+    if manifest.compose_project != compose_project:
+        raise StoreBackupError("verified backup belongs to a different Compose project")
     _log(f"sample={marker.sample_id} wipe-authorized receipt=verified")
 
 
@@ -786,21 +873,9 @@ def backup_store(
 def _validate_download(*, staging: Path, manifest: BackupManifest) -> None:
     """Validate every downloaded archive before any restore target is changed."""
 
-    expected = {
-        "postgres-data",
-        "minio-data",
-        "app-state",
-        "forget-manifests",
-        "run-directory",
-        "published-mount-root",
-    }
-    actual = {archive.logical_name for archive in manifest.archives}
-    if actual != expected:
-        raise StoreBackupError("backup archive inventory is incomplete or unexpected")
+    _validate_manifest_inventory(manifest)
     for archive in manifest.archives:
         relative = Path(archive.relative_path)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise StoreBackupError("manifest contains an unsafe archive path")
         path = staging / relative
         if not path.is_file():
             raise StoreBackupError(f"downloaded archive is missing: {relative}")
@@ -876,11 +951,13 @@ def restore_store(
         raise StoreBackupError(
             "--start requires --compose-base-env with the local deployment secrets"
         )
-    receipt = verify_receipt(receipt_path)
+    receipt, verified_manifest = verify_receipt(receipt_path)
     staging = staging_root / f"restore-{_timestamp(_utc_now())}-{secrets.token_hex(4)}"
     staging.mkdir(parents=True, mode=0o700)
     _log(f"sample={receipt.sample_id} restore-stage=download status=starting")
     manifest = _download_recovery_unit(receipt=receipt, staging=staging)
+    if manifest != verified_manifest:
+        raise StoreBackupError("downloaded manifest changed after receipt verification")
     manifest_path = staging / "manifest.json"
     if _sha256(manifest_path) != receipt.manifest_sha256:
         raise StoreBackupError("downloaded manifest does not match the receipt")
@@ -921,6 +998,7 @@ def restore_store(
         archive=staging / by_name["published-mount-root"].relative_path,
         destination=mount_root,
     )
+    _rebase_published_mount_links(mount_root)
     receipt_destination = _receipt_path(run_dir=run_dir, sample_id=receipt.sample_id)
     _write_model(path=receipt_destination, model=receipt)
     _write_model(

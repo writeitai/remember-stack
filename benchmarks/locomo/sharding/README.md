@@ -217,6 +217,8 @@ mount, or Docker-volume targets. `--start` brings up Postgres, MinIO, setup,
 and the API after extraction. It overlays the non-secret model and routing
 bindings saved in the sample's readiness checkpoint onto the operator-supplied
 secret-bearing base env; secrets are never copied into the backup metadata.
+Absolute P3 snapshot pointers are rebased to the restored mount root, so the
+recovery does not depend on the source host's filesystem path.
 Then assert that the sample has no unanswered items and run the ordinary answer
 preflight with an invalid evaluator key to prove sample lineage, readiness, and
 projection freshness without authorizing a paid model call.

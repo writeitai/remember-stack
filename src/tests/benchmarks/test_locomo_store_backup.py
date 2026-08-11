@@ -217,6 +217,99 @@ def test_backup_writes_receipt_only_after_remote_readback(
         == receipt
     )
 
+    checked_archives: list[str] = []
+
+    def remote_size(*, remote_path: str, project_id: str) -> int:
+        """Return synthetic object size while recording archive re-verification."""
+
+        assert project_id == "remember-stack"
+        name = Path(remote_path).name
+        checked_archives.append(name)
+        backup_directories = [path for path in staging_root.iterdir() if path.is_dir()]
+        matches = list(backup_directories[0].rglob(name))
+        assert len(matches) == 1
+        return matches[0].stat().st_size
+
+    monkeypatch.setattr(store_backup, "_remote_size", remote_size)
+
+    verified_receipt, verified_manifest = store_backup.verify_receipt(receipt_path)
+
+    assert verified_receipt == receipt
+    assert verified_manifest.sample_id == "conv-1"
+    assert len(checked_archives) == 6
+
+
+def test_receipt_verification_rejects_a_missing_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A receipt cannot authorize deletion after a required object disappears."""
+
+    run_dir = tmp_path / "run"
+    mount_root = run_dir / ".mounts"
+    staging_root = tmp_path / "staging"
+    _run_json(run_dir)
+    mount_root.mkdir()
+    _write_marker(run_dir=run_dir)
+    volume_roots: dict[str, Path] = {}
+    for name in store_backup.EXPECTED_VOLUMES:
+        volume_roots[name] = tmp_path / name
+        volume_roots[name].mkdir()
+    monkeypatch.setattr(
+        store_backup,
+        "_volume_names",
+        lambda **_kwargs: {name: name for name in store_backup.EXPECTED_VOLUMES},
+    )
+    monkeypatch.setattr(
+        store_backup, "_volume_mountpoint", lambda name: volume_roots[name]
+    )
+
+    def archive(*, source: Path, destination: Path) -> None:
+        """Represent one archive with deterministic bytes."""
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(f"archive:{source.name}".encode())
+
+    monkeypatch.setattr(store_backup, "_archive_directory", archive)
+    monkeypatch.setattr(store_backup, "_upload_directory", lambda **_kwargs: None)
+    monkeypatch.setattr(store_backup, "_upload_file", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        store_backup,
+        "_run",
+        lambda *, args, capture_output=False, text=True: _completed_process(args),
+    )
+
+    def remote_bytes(*, remote_path: str, project_id: str) -> bytes:
+        """Mirror the current local staging object as the synthetic remote."""
+
+        assert project_id == "remember-stack"
+        name = Path(remote_path).name
+        backup_directories = [path for path in staging_root.iterdir() if path.is_dir()]
+        return next(backup_directories[0].rglob(name)).read_bytes()
+
+    monkeypatch.setattr(store_backup, "_remote_bytes", remote_bytes)
+    receipt = store_backup.backup_store(
+        sample_id="conv-1",
+        run_dir=run_dir,
+        mount_root=mount_root,
+        deployment_id="57000000-0000-0000-0000-000000000001",
+        compose_project="rememberstack",
+        gcp_project="remember-stack",
+        remote_destination="gs://bucket/backups",
+        staging_root=staging_root,
+    )
+
+    def missing_remote_object(**_kwargs: object) -> int:
+        """Represent an archive object that is no longer readable."""
+
+        raise store_backup.StoreBackupError("cannot inspect GCS object")
+
+    monkeypatch.setattr(store_backup, "_remote_size", missing_remote_object)
+
+    with pytest.raises(store_backup.StoreBackupError, match="cannot inspect GCS"):
+        store_backup.verify_receipt(
+            store_backup._receipt_path(run_dir=run_dir, sample_id=receipt.sample_id)
+        )
+
 
 def test_failed_remote_manifest_readback_preserves_store_without_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -364,6 +457,7 @@ def test_restore_validates_every_archive_before_running_docker(
         return _completed_process(args)
 
     monkeypatch.setattr(store_backup, "_remote_bytes", remote_bytes)
+    monkeypatch.setattr(store_backup, "_remote_size", lambda **_kwargs: 4)
     monkeypatch.setattr(store_backup, "_download_recovery_unit", download_recovery_unit)
     monkeypatch.setattr(store_backup, "_run", run_command)
 
@@ -415,13 +509,33 @@ def test_nested_empty_restore_target_is_retryable(tmp_path: Path) -> None:
         )
 
 
+def test_restore_rebases_absolute_p3_pointer_to_the_new_mount_root(
+    tmp_path: Path,
+) -> None:
+    """A moved recovery unit never keeps reading the source host's P3 path."""
+
+    old_deployment = tmp_path / "old" / "deployment-1"
+    mount_root = tmp_path / "new"
+    deployment = mount_root / "deployment-1"
+    snapshot = deployment / "p3-version-1"
+    old_deployment.mkdir(parents=True)
+    snapshot.mkdir(parents=True)
+    link = deployment / "p3"
+    link.symlink_to(old_deployment / "p3-version-1", target_is_directory=True)
+
+    store_backup._rebase_published_mount_links(mount_root)
+
+    assert link.readlink() == Path("p3-version-1")
+    assert link.resolve() == snapshot
+
+
 def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -> None:
     """Restore derives model/routing settings without copying deployment secrets."""
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     bindings = {
-        name: "unset" if name == "openrouter_reasoning_effort_map" else f"value-{name}"
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
         for name in store_backup.MODEL_BINDING_ENVIRONMENT
     }
     (run_dir / "state.json").write_text(
@@ -433,6 +547,8 @@ def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -
     payload = path.read_text(encoding="utf-8")
 
     assert 'REMEMBERSTACK_E2_EXTRACT_MODEL="value-claim_extraction"' in payload
+    assert 'REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=""' in payload
+    assert 'REMEMBERSTACK_OPENROUTER_REASONING_EFFORT=""' in payload
     assert 'REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP=""' in payload
     assert "OPENROUTER_API_KEY" not in payload
     assert "POSTGRES_PASSWORD" not in payload
@@ -449,3 +565,6 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
         "stage=backup status=starting"
     )
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
+    assert script.index("flock --nonblock") < script.index(
+        'for sample_id in "${pending_samples[@]}"; do'
+    )
