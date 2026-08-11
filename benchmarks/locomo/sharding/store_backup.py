@@ -334,6 +334,20 @@ def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
     return deployment_ids.pop()
 
 
+def _require_manifest_deployment(
+    *, manifest: BackupManifest, run_dir: Path
+) -> None:
+    """Require backup metadata to match the archived ingest checkpoints."""
+
+    checkpointed = _sample_deployment_id(
+        run_dir=run_dir, sample_id=manifest.sample_id
+    )
+    if manifest.deployment_id != checkpointed:
+        raise StoreBackupError(
+            "backup deployment differs from the sample ingest checkpoints"
+        )
+
+
 def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
     """Reconstruct non-secret Compose bindings from saved sample readiness."""
 
@@ -924,6 +938,7 @@ def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
         )
     if manifest.compose_project != compose_project:
         raise StoreBackupError("verified backup belongs to a different Compose project")
+    _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
     _log(f"sample={marker.sample_id} wipe-authorized receipt=verified")
 
 
@@ -1294,15 +1309,16 @@ def restore_store(
         raise StoreBackupError("Compose created a non-empty restore volume")
 
     by_name = {archive.logical_name: archive for archive in manifest.archives}
+    _extract_directory(
+        archive=staging / by_name["run-directory"].relative_path, destination=run_dir
+    )
+    _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
     for logical_name in EXPECTED_VOLUMES:
         archive = by_name[logical_name]
         _extract_directory(
             archive=staging / archive.relative_path,
             destination=_volume_mountpoint(volumes[logical_name]),
         )
-    _extract_directory(
-        archive=staging / by_name["run-directory"].relative_path, destination=run_dir
-    )
     _extract_directory(
         archive=staging / by_name["published-mount-root"].relative_path,
         destination=mount_root,

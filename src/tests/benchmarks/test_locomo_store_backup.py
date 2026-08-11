@@ -318,6 +318,32 @@ def test_sample_deployment_identity_must_be_unique(tmp_path: Path) -> None:
         store_backup._sample_deployment_id(run_dir=tmp_path, sample_id="conv-1")
 
 
+def test_manifest_deployment_must_match_ingest_checkpoints(tmp_path: Path) -> None:
+    """A stale receipt cannot authorize wipe or startup under a wrong namespace."""
+
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {
+                "ingests": {
+                    "doc-1": {
+                        "sample_id": "conv-1",
+                        "deployment_id": "checkpointed-deployment",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = store_backup.BackupManifest.model_construct(
+        sample_id="conv-1", deployment_id="stale-shell-deployment"
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="ingest checkpoints"):
+        store_backup._require_manifest_deployment(
+            manifest=manifest, run_dir=tmp_path
+        )
+
+
 def test_archive_identity_is_required() -> None:
     """A size-only legacy archive cannot satisfy the current wipe contract."""
 
