@@ -15,6 +15,7 @@ src/tests/benchmarks/test_locomo_protocol.py
 src/tests/benchmarks/test_locomo_retrieval.py
 src/tests/benchmarks/test_locomo_runner.py
 src/tests/benchmarks/test_locomo_sharding.py
+src/tests/benchmarks/test_locomo_store_backup.py
 src/tests/core/test_blockizer_corpus.py
 src/tests/core/test_chunker.py
 src/tests/core/test_consumption_skill.py

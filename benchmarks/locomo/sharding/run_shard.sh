@@ -34,7 +34,17 @@ max_judge_calls=${LOCOMO_MAX_JUDGE_CALLS:-1540}
 max_evaluator_cost_usd=${LOCOMO_MAX_EVALUATOR_COST_USD:-1000}
 drain_timeout_seconds=${LOCOMO_DRAIN_TIMEOUT_SECONDS:-21600}
 drain_poll_seconds=${LOCOMO_DRAIN_POLL_SECONDS:-30}
-compose=(docker compose)
+backup_destination=${LOCOMO_BACKUP_DESTINATION:-}
+backup_project=${LOCOMO_GCP_PROJECT:-}
+backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-backups}
+compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
+runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
+backup_tool=benchmarks/locomo/sharding/store_backup.py
+compose=(docker compose --project-name "$compose_project")
+
+export GOOGLE_APPLICATION_CREDENTIALS=${LOCOMO_GCP_CREDENTIALS_FILE:-/etc/rememberstack/locomo-gcs/credentials.json}
+export GOOGLE_API_CERTIFICATE_CONFIG=${LOCOMO_GCP_CERTIFICATE_CONFIG_FILE:-/etc/rememberstack/locomo-gcs/certificate-config.json}
+export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
 
 [[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"
@@ -42,6 +52,26 @@ compose=(docker compose)
   die "REMEMBERSTACK_OPENROUTER_API_KEY must be exported for the benchmark CLI"
 [[ -n ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:-} ]] ||
   die "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID must be exported"
+[[ -n "$backup_destination" ]] ||
+  die "LOCOMO_BACKUP_DESTINATION must be a private gs:// bucket/base prefix"
+[[ -n "$backup_project" ]] ||
+  die "LOCOMO_GCP_PROJECT must identify the GCS billing project"
+[[ -f "$backup_tool" ]] || die "backup tool does not exist: $backup_tool"
+[[ $(id -u) -eq 0 ]] ||
+  die "the sharded runner must run as root to archive Docker volume mountpoints"
+command -v flock >/dev/null || die "flock must be installed before a sharded run"
+exec 9>"$runner_lock"
+flock --nonblock 9 || die "another LoCoMo shard runner owns this host: $runner_lock"
+command -v tar >/dev/null || die "tar must be installed before a sharded run"
+command -v zstd >/dev/null || die "zstd must be installed before a sharded run"
+[[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]] ||
+  die "GCS workload credential configuration does not exist: $GOOGLE_APPLICATION_CREDENTIALS"
+[[ -f "$GOOGLE_API_CERTIFICATE_CONFIG" ]] ||
+  die "GCS certificate configuration does not exist: $GOOGLE_API_CERTIFICATE_CONFIG"
+"$python_bin" "$backup_tool" preflight \
+  --destination "$backup_destination" \
+  --project "$backup_project" ||
+  die "the configured keyless GCS destination is not readable"
 for value in \
   "$max_documents" \
   "$max_questions" \
@@ -108,6 +138,46 @@ print("complete" if complete else "partial" if partial else "empty")
 PY
 }
 
+backup_sample() {
+  local sample_id=$1
+  "$python_bin" "$backup_tool" backup \
+    --sample "$sample_id" \
+    --run-dir "$run_dir" \
+    --mount-root "$mount_root" \
+    --compose-project "$compose_project" \
+    --project "$backup_project" \
+    --destination "$backup_destination" \
+    --staging-root "$backup_staging_root" \
+    --lock-fd 9
+}
+
+backup_completed_live_store() {
+  local marker=$run_dir/.locomo-live-store.json
+  local sample_id
+  local status
+  local receipt
+  [[ -f "$marker" ]] || return 0
+  sample_id=$(
+    "$python_bin" - "$marker" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(value["sample_id"])
+PY
+  )
+  status=$(sample_status "$sample_id")
+  [[ "$status" == complete ]] || return 0
+  receipt=$run_dir/.locomo-backups/receipts/$sample_id.json
+  if [[ -f "$receipt" ]]; then
+    "$python_bin" "$backup_tool" verify --receipt "$receipt"
+  else
+    log "sample=$sample_id stage=backup status=resuming-after-completed-checkpoint"
+    backup_sample "$sample_id"
+  fi
+}
+
 pending_samples=()
 for sample_id in "${requested_samples[@]}"; do
   status=$(sample_status "$sample_id")
@@ -126,6 +196,7 @@ for sample_id in "${requested_samples[@]}"; do
       ;;
   esac
 done
+backup_completed_live_store
 if [[ ${#pending_samples[@]} -eq 0 ]]; then
   log "shard complete; all requested samples were already checkpointed"
   exit 0
@@ -165,13 +236,23 @@ wait_for_drain() {
 }
 
 for sample_id in "${pending_samples[@]}"; do
+  "$python_bin" "$backup_tool" authorize-wipe \
+    --run-dir "$run_dir" \
+    --compose-project "$compose_project" \
+    --lock-fd 9
   log "sample=$sample_id stage=wipe status=starting"
   "${compose[@]}" down --volumes --remove-orphans
+  "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
   log "sample=$sample_id stage=stack status=starting"
   "${compose[@]}" up --detach --wait \
     --scale worker-extract-claims=3 \
     --scale worker-normalize-relations=6 \
     --scale worker-embed-claim=2
+  "$python_bin" "$backup_tool" record-live \
+    --run-dir "$run_dir" \
+    --sample "$sample_id" \
+    --compose-project "$compose_project" \
+    --lock-fd 9
 
   log "sample=$sample_id stage=ingest status=starting"
   "$python_bin" -m benchmarks.locomo ingest \
@@ -214,6 +295,8 @@ for sample_id in "${pending_samples[@]}"; do
     --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
     --execute
 
+  log "sample=$sample_id stage=backup status=starting"
+  backup_sample "$sample_id"
   log "sample=$sample_id status=complete"
 done
 
