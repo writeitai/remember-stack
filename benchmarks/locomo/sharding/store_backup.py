@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from contextlib import contextmanager
+from contextlib import nullcontext
 from datetime import datetime
 from datetime import UTC
+import fcntl
 from functools import lru_cache
 import hashlib
 import json
@@ -18,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 from typing import Annotated
+from typing import Iterator
 from typing import Literal
 
 from google.api_core.exceptions import GoogleAPIError
@@ -32,6 +36,7 @@ EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifest
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
 RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
+DEFAULT_LOCK_FILE = Path("/var/lock/rememberstack-locomo-shard.lock")
 
 MODEL_BINDING_ENVIRONMENT = {
     "chunk_embedding": "REMEMBERSTACK_E1_EMBEDDING_MODEL",
@@ -92,6 +97,16 @@ class ArchiveRecord(FrozenModel):
     relative_path: NonEmpty
     byte_size: int = Field(ge=0)
     sha256: Sha256
+    gcs_generation: int | None = Field(default=None, ge=1)
+    gcs_crc32c: str | None = None
+
+
+class RemoteObjectMetadata(FrozenModel):
+    """Identify one immutable GCS object after a checked upload or reload."""
+
+    byte_size: int = Field(ge=0)
+    generation: int = Field(ge=1)
+    crc32c: NonEmpty
 
 
 class RunIdentity(FrozenModel):
@@ -185,6 +200,35 @@ def _compose_command(
     """Bind every Compose mutation to the project used by the volume gate."""
 
     return ("docker", "compose", "--project-name", compose_project, *arguments)
+
+
+@contextmanager
+def _exclusive_store_lock(
+    *, lock_file: Path, inherited_lock_fd: int | None
+) -> Iterator[None]:
+    """Exclude every CLI operation that can mutate the benchmark store."""
+
+    descriptor: int | None = None
+    lock_fd = inherited_lock_fd
+    try:
+        if lock_fd is None:
+            lock_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+            descriptor = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o600)
+            lock_fd = descriptor
+        os.fstat(lock_fd)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, ValueError) as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise StoreBackupError(
+            f"another LoCoMo store operation owns this host: {lock_file}"
+        ) from exc
+    try:
+        yield
+    finally:
+        if descriptor is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
 
 def _sha256(path: Path) -> str:
@@ -287,10 +331,14 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
     return environment
 
 
-def _write_runtime_environment(*, run_dir: Path, sample_id: str) -> Path:
-    """Write a non-secret Compose env overlay that reproduces saved bindings."""
+def _write_runtime_environment(
+    *, run_dir: Path, sample_id: str, deployment_id: str, repository_revision: str
+) -> Path:
+    """Write a non-secret Compose overlay for saved bindings and identity."""
 
     environment = _runtime_environment(run_dir=run_dir, sample_id=sample_id)
+    environment["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = deployment_id
+    environment["REMEMBERSTACK_BUILD_REVISION"] = repository_revision
     path = run_dir / RUNTIME_ENVIRONMENT
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     payload = "".join(
@@ -301,6 +349,97 @@ def _write_runtime_environment(*, run_dir: Path, sample_id: str) -> Path:
     temporary.chmod(0o600)
     os.replace(temporary, path)
     return path
+
+
+def _compose_runtime_command(
+    *,
+    compose_project: str,
+    compose_base_env: Path,
+    runtime_environment: Path,
+    arguments: Sequence[str],
+) -> tuple[str, ...]:
+    """Run Compose with saved runtime values authoritative over parent exports."""
+
+    unset = tuple(
+        item
+        for variable in (
+            *MODEL_BINDING_ENVIRONMENT.values(),
+            "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID",
+            "REMEMBERSTACK_BUILD_REVISION",
+        )
+        for item in ("--unset", variable)
+    )
+    return (
+        "env",
+        *unset,
+        *_compose_command(
+            compose_project=compose_project,
+            arguments=(
+                "--env-file",
+                str(compose_base_env),
+                "--env-file",
+                str(runtime_environment),
+                *arguments,
+            ),
+        ),
+    )
+
+
+def _validate_runtime_identity(
+    *,
+    manifest: BackupManifest,
+    compose_project: str,
+    compose_base_env: Path,
+    runtime_environment: Path,
+) -> None:
+    """Refuse setup unless checkout, image, and Compose match saved identity."""
+
+    checkout = _run(args=("git", "rev-parse", "HEAD"), capture_output=True)
+    if str(checkout.stdout).strip() != manifest.run.repository_revision:
+        raise StoreBackupError("checkout revision differs from the backup manifest")
+    configured = _run(
+        args=_compose_runtime_command(
+            compose_project=compose_project,
+            compose_base_env=compose_base_env,
+            runtime_environment=runtime_environment,
+            arguments=("config", "--format", "json"),
+        ),
+        capture_output=True,
+    )
+    try:
+        compose_config = json.loads(str(configured.stdout))
+        api = compose_config["services"]["api"]
+        api_environment = api["environment"]
+        image = api["image"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise StoreBackupError(
+            "Compose did not report a valid API configuration"
+        ) from exc
+    expected = _runtime_environment(
+        run_dir=runtime_environment.parents[1], sample_id=manifest.sample_id
+    )
+    expected["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = manifest.deployment_id
+    expected["REMEMBERSTACK_BUILD_REVISION"] = manifest.run.repository_revision
+    if not isinstance(api_environment, dict) or any(
+        api_environment.get(name) != value for name, value in expected.items()
+    ):
+        raise StoreBackupError("Compose runtime differs from the saved backup identity")
+    if not isinstance(image, str) or not image:
+        raise StoreBackupError("Compose API image identity is unavailable")
+    inspected = _run(
+        args=("docker", "image", "inspect", "--format", "{{json .Config.Env}}", image),
+        capture_output=True,
+    )
+    try:
+        image_environment = json.loads(str(inspected.stdout))
+    except json.JSONDecodeError as exc:
+        raise StoreBackupError("API image environment is unreadable") from exc
+    revision_entry = f"REMEMBERSTACK_BUILD_REVISION={manifest.run.repository_revision}"
+    if (
+        not isinstance(image_environment, list)
+        or revision_entry not in image_environment
+    ):
+        raise StoreBackupError("API image revision differs from the backup manifest")
 
 
 def _volume_names(*, compose_project: str) -> dict[str, str]:
@@ -503,8 +642,8 @@ def _remote_bytes(*, remote_path: str, project_id: str) -> bytes:
         ) from exc
 
 
-def _remote_size(*, remote_path: str, project_id: str) -> int:
-    """Return one GCS object's current size, failing when it is unavailable."""
+def _remote_metadata(*, remote_path: str, project_id: str) -> RemoteObjectMetadata:
+    """Return immutable identity metadata for one required GCS object."""
 
     bucket_name, object_name = _parse_gcs_uri(remote_path)
     if not object_name:
@@ -514,9 +653,11 @@ def _remote_size(*, remote_path: str, project_id: str) -> int:
         blob.reload()
     except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
         raise StoreBackupError(f"cannot inspect GCS object: {remote_path}") from exc
-    if blob.size is None:
-        raise StoreBackupError(f"GCS object has no size metadata: {remote_path}")
-    return blob.size
+    if blob.size is None or blob.generation is None or not blob.crc32c:
+        raise StoreBackupError(f"GCS object has incomplete metadata: {remote_path}")
+    return RemoteObjectMetadata(
+        byte_size=blob.size, generation=int(blob.generation), crc32c=blob.crc32c
+    )
 
 
 def _create_preflight_probe(*, remote_destination: str, project_id: str) -> None:
@@ -544,7 +685,9 @@ def _create_preflight_probe(*, remote_destination: str, project_id: str) -> None
         raise StoreBackupError("GCS preflight probe size differs after upload")
 
 
-def _upload_file(*, source: Path, remote_path: str, project_id: str) -> None:
+def _upload_file(
+    *, source: Path, remote_path: str, project_id: str
+) -> RemoteObjectMetadata:
     """Create one immutable GCS object with transport checksum validation."""
 
     bucket_name, object_name = _parse_gcs_uri(remote_path)
@@ -560,26 +703,15 @@ def _upload_file(*, source: Path, remote_path: str, project_id: str) -> None:
         ) from exc
     except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
         raise StoreBackupError(f"cannot upload GCS object: {remote_path}") from exc
+    if blob.size is None or blob.generation is None or not blob.crc32c:
+        raise StoreBackupError(f"GCS object has incomplete metadata: {remote_path}")
     if blob.size != source.stat().st_size:
         raise StoreBackupError(
             f"remote object size differs after upload: {remote_path}"
         )
-
-
-def _upload_directory(*, source: Path, remote_prefix: str, project_id: str) -> None:
-    """Upload every file under one staging directory to a unique GCS prefix."""
-
-    files = sorted(path for path in source.rglob("*") if path.is_file())
-    if not files:
-        raise StoreBackupError("backup staging directory contains no files")
-    for path in files:
-        _upload_file(
-            source=path,
-            remote_path=_remote_join(
-                prefix=remote_prefix, name=path.relative_to(source).as_posix()
-            ),
-            project_id=project_id,
-        )
+    return RemoteObjectMetadata(
+        byte_size=blob.size, generation=int(blob.generation), crc32c=blob.crc32c
+    )
 
 
 def _download_recovery_unit(*, receipt: BackupReceipt, staging: Path) -> BackupManifest:
@@ -717,12 +849,22 @@ def verify_receipt(receipt_path: Path) -> tuple[BackupReceipt, BackupManifest]:
         remote_path = _remote_join(
             prefix=receipt.remote_prefix, name=archive.relative_path
         )
-        if (
-            _remote_size(remote_path=remote_path, project_id=receipt.gcp_project)
-            != archive.byte_size
-        ):
+        metadata = _remote_metadata(
+            remote_path=remote_path, project_id=receipt.gcp_project
+        )
+        if metadata.byte_size != archive.byte_size:
             raise StoreBackupError(
                 f"remote archive size differs from manifest: {archive.relative_path}"
+            )
+        immutable_identity = (archive.gcs_generation, archive.gcs_crc32c)
+        if immutable_identity.count(None) == 1:
+            raise StoreBackupError("manifest has incomplete GCS archive identity")
+        if archive.gcs_generation is not None and (
+            metadata.generation != archive.gcs_generation
+            or metadata.crc32c != archive.gcs_crc32c
+        ):
+            raise StoreBackupError(
+                f"remote archive identity differs from manifest: {archive.relative_path}"
             )
     remote_receipt = _remote_bytes(
         remote_path=_remote_join(prefix=receipt.remote_prefix, name="receipt.json"),
@@ -851,16 +993,6 @@ def backup_store(
         )
     )
 
-    manifest = BackupManifest(
-        created_at=created_at.isoformat(),
-        sample_id=sample_id,
-        deployment_id=deployment_id,
-        compose_project=compose_project,
-        run=identity,
-        archives=tuple(archives),
-    )
-    manifest_path = staging / "manifest.json"
-    manifest_bytes = _write_model(path=manifest_path, model=manifest)
     prepared = _safe_component(identity.prepared_at)
     remote_prefix = "/".join(
         (
@@ -874,8 +1006,35 @@ def backup_store(
     )
 
     _log(f"sample={sample_id} backup-stage=upload status=starting")
-    _upload_directory(
-        source=staging, remote_prefix=remote_prefix, project_id=gcp_project
+    uploaded_archives: list[ArchiveRecord] = []
+    for archive in archives:
+        metadata = _upload_file(
+            source=staging / archive.relative_path,
+            remote_path=_remote_join(prefix=remote_prefix, name=archive.relative_path),
+            project_id=gcp_project,
+        )
+        uploaded_archives.append(
+            archive.model_copy(
+                update={
+                    "gcs_generation": metadata.generation,
+                    "gcs_crc32c": metadata.crc32c,
+                }
+            )
+        )
+    manifest = BackupManifest(
+        created_at=created_at.isoformat(),
+        sample_id=sample_id,
+        deployment_id=deployment_id,
+        compose_project=compose_project,
+        run=identity,
+        archives=tuple(uploaded_archives),
+    )
+    manifest_path = staging / "manifest.json"
+    manifest_bytes = _write_model(path=manifest_path, model=manifest)
+    _upload_file(
+        source=manifest_path,
+        remote_path=_remote_join(prefix=remote_prefix, name="manifest.json"),
+        project_id=gcp_project,
     )
     remote_manifest = _remote_bytes(
         remote_path=_remote_join(prefix=remote_prefix, name="manifest.json"),
@@ -1118,6 +1277,9 @@ def restore_store(
         destination=mount_root,
     )
     _rebase_published_mount_links(mount_root)
+    nested_mount_root = run_dir / ".mounts"
+    if nested_mount_root != mount_root and nested_mount_root.is_dir():
+        _rebase_published_mount_links(nested_mount_root)
     receipt_destination = _receipt_path(run_dir=run_dir, sample_id=receipt.sample_id)
     _write_model(path=receipt_destination, model=receipt)
     _write_model(
@@ -1128,17 +1290,24 @@ def restore_store(
     )
     if start_services:
         runtime_environment = _write_runtime_environment(
-            run_dir=run_dir, sample_id=receipt.sample_id
+            run_dir=run_dir,
+            sample_id=receipt.sample_id,
+            deployment_id=manifest.deployment_id,
+            repository_revision=manifest.run.repository_revision,
         )
         assert compose_base_env is not None
+        _validate_runtime_identity(
+            manifest=manifest,
+            compose_project=compose_project,
+            compose_base_env=compose_base_env,
+            runtime_environment=runtime_environment,
+        )
         _run(
-            args=_compose_command(
+            args=_compose_runtime_command(
                 compose_project=compose_project,
+                compose_base_env=compose_base_env,
+                runtime_environment=runtime_environment,
                 arguments=(
-                    "--env-file",
-                    str(compose_base_env),
-                    "--env-file",
-                    str(runtime_environment),
                     "up",
                     "--detach",
                     "--wait",
@@ -1169,17 +1338,20 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--run-dir", type=_path, required=True)
     record.add_argument("--sample", required=True)
     record.add_argument("--compose-project", default="rememberstack")
+    _add_lock_arguments(record)
 
     authorize = subparsers.add_parser(
         "authorize-wipe", help="verify the current store may be deleted"
     )
     authorize.add_argument("--run-dir", type=_path, required=True)
     authorize.add_argument("--compose-project", default="rememberstack")
+    _add_lock_arguments(authorize)
 
     clear = subparsers.add_parser(
         "clear-live", help="clear the marker after confirmed volume deletion"
     )
     clear.add_argument("--run-dir", type=_path, required=True)
+    _add_lock_arguments(clear)
 
     preflight = subparsers.add_parser(
         "preflight", help="verify the keyless GCS destination"
@@ -1200,6 +1372,7 @@ def _parser() -> argparse.ArgumentParser:
         type=_path,
         default=Path("/var/lib/rememberstack-locomo-backups"),
     )
+    _add_lock_arguments(backup)
 
     verify = subparsers.add_parser("verify", help="re-verify one remote receipt")
     verify.add_argument("--receipt", type=_path, required=True)
@@ -1220,7 +1393,19 @@ def _parser() -> argparse.ArgumentParser:
         type=_path,
         help="local secret-bearing Compose env; saved non-secret bindings overlay it",
     )
+    _add_lock_arguments(restore)
     return parser
+
+
+def _add_lock_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the shared host-lock contract to one mutating subcommand."""
+
+    parser.add_argument("--lock-file", type=_path, default=DEFAULT_LOCK_FILE)
+    parser.add_argument(
+        "--lock-fd",
+        type=int,
+        help="already-locked inherited descriptor used by run_shard.sh",
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1228,47 +1413,56 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     arguments = _parser().parse_args(argv)
     try:
-        if arguments.command == "record-live":
-            record_live_store(
-                run_dir=arguments.run_dir,
-                sample_id=arguments.sample,
-                compose_project=arguments.compose_project,
+        lock = (
+            _exclusive_store_lock(
+                lock_file=arguments.lock_file, inherited_lock_fd=arguments.lock_fd
             )
-        elif arguments.command == "authorize-wipe":
-            authorize_wipe(
-                run_dir=arguments.run_dir, compose_project=arguments.compose_project
-            )
-        elif arguments.command == "clear-live":
-            clear_live_store_marker(run_dir=arguments.run_dir)
-        elif arguments.command == "preflight":
-            preflight_destination(
-                remote_destination=arguments.destination, project_id=arguments.project
-            )
-        elif arguments.command == "backup":
-            backup_store(
-                sample_id=arguments.sample,
-                run_dir=arguments.run_dir,
-                mount_root=arguments.mount_root,
-                deployment_id=arguments.deployment_id,
-                compose_project=arguments.compose_project,
-                gcp_project=arguments.project,
-                remote_destination=arguments.destination,
-                staging_root=arguments.staging_root,
-            )
-        elif arguments.command == "verify":
-            verify_receipt(arguments.receipt)
-        elif arguments.command == "restore":
-            restore_store(
-                receipt_path=arguments.receipt,
-                run_dir=arguments.run_dir,
-                mount_root=arguments.mount_root,
-                compose_project=arguments.compose_project,
-                staging_root=arguments.staging_root,
-                start_services=arguments.start,
-                compose_base_env=arguments.compose_base_env,
-            )
-        else:  # pragma: no cover - argparse enforces the command choices.
-            raise StoreBackupError(f"unknown command: {arguments.command}")
+            if hasattr(arguments, "lock_file")
+            else nullcontext()
+        )
+        with lock:
+            if arguments.command == "record-live":
+                record_live_store(
+                    run_dir=arguments.run_dir,
+                    sample_id=arguments.sample,
+                    compose_project=arguments.compose_project,
+                )
+            elif arguments.command == "authorize-wipe":
+                authorize_wipe(
+                    run_dir=arguments.run_dir, compose_project=arguments.compose_project
+                )
+            elif arguments.command == "clear-live":
+                clear_live_store_marker(run_dir=arguments.run_dir)
+            elif arguments.command == "preflight":
+                preflight_destination(
+                    remote_destination=arguments.destination,
+                    project_id=arguments.project,
+                )
+            elif arguments.command == "backup":
+                backup_store(
+                    sample_id=arguments.sample,
+                    run_dir=arguments.run_dir,
+                    mount_root=arguments.mount_root,
+                    deployment_id=arguments.deployment_id,
+                    compose_project=arguments.compose_project,
+                    gcp_project=arguments.project,
+                    remote_destination=arguments.destination,
+                    staging_root=arguments.staging_root,
+                )
+            elif arguments.command == "verify":
+                verify_receipt(arguments.receipt)
+            elif arguments.command == "restore":
+                restore_store(
+                    receipt_path=arguments.receipt,
+                    run_dir=arguments.run_dir,
+                    mount_root=arguments.mount_root,
+                    compose_project=arguments.compose_project,
+                    staging_root=arguments.staging_root,
+                    start_services=arguments.start,
+                    compose_base_env=arguments.compose_base_env,
+                )
+            else:  # pragma: no cover - argparse enforces the command choices.
+                raise StoreBackupError(f"unknown command: {arguments.command}")
     except (OSError, StoreBackupError, ValueError) as exc:
         _log(f"ERROR: {exc}; current store and staging files are preserved")
         return 1

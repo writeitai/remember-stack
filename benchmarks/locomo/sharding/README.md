@@ -218,14 +218,16 @@ export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
   --start
 ```
 
-Restore first re-verifies the remote manifest and receipt, downloads to a new
-staging directory, checks every size and SHA-256, and refuses non-empty run,
-mount, or Docker-volume targets. `--start` brings up Postgres, MinIO, setup,
-and the API after extraction. It overlays the non-secret model and routing
-bindings saved in the sample's readiness checkpoint onto the operator-supplied
-secret-bearing base env; secrets are never copied into the backup metadata.
-Absolute P3 snapshot pointers are rebased to the restored mount root, so the
-recovery does not depend on the source host's filesystem path.
+Restore first re-verifies the remote manifest and receipt plus every archive's
+size, GCS generation, and CRC32C, downloads to a new staging directory, checks
+every SHA-256 and tar member, and refuses non-empty run, mount, or Docker-volume
+targets. `--start` brings up Postgres, MinIO, setup, and the API after
+extraction. It makes the saved deployment ID, revision, and non-secret model
+and routing bindings authoritative over the operator-supplied secret-bearing
+base env and parent shell; secrets are never copied into backup metadata.
+Startup refuses a checkout or API image whose revision differs from the
+manifest. Absolute P3 snapshot pointers are rebased to the restored mount root,
+so recovery does not depend on the source host's filesystem path.
 Then assert that the sample has no unanswered items and run the ordinary answer
 preflight with an invalid evaluator key to prove sample lineage, readiness, and
 projection freshness without authorizing a paid model call.

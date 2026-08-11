@@ -148,7 +148,8 @@ backup_sample() {
     --compose-project "$compose_project" \
     --project "$backup_project" \
     --destination "$backup_destination" \
-    --staging-root "$backup_staging_root"
+    --staging-root "$backup_staging_root" \
+    --lock-fd 9
 }
 
 backup_completed_live_store() {
@@ -238,10 +239,11 @@ wait_for_drain() {
 for sample_id in "${pending_samples[@]}"; do
   "$python_bin" "$backup_tool" authorize-wipe \
     --run-dir "$run_dir" \
-    --compose-project "$compose_project"
+    --compose-project "$compose_project" \
+    --lock-fd 9
   log "sample=$sample_id stage=wipe status=starting"
   "${compose[@]}" down --volumes --remove-orphans
-  "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir"
+  "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
   log "sample=$sample_id stage=stack status=starting"
   "${compose[@]}" up --detach --wait \
     --scale worker-extract-claims=3 \
@@ -250,7 +252,8 @@ for sample_id in "${pending_samples[@]}"; do
   "$python_bin" "$backup_tool" record-live \
     --run-dir "$run_dir" \
     --sample "$sample_id" \
-    --compose-project "$compose_project"
+    --compose-project "$compose_project" \
+    --lock-fd 9
 
   log "sample=$sample_id stage=ingest status=starting"
   "$python_bin" -m benchmarks.locomo ingest \

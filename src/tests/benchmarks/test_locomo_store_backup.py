@@ -42,6 +42,16 @@ def _completed_process(
     return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout)
 
 
+def _uploaded_metadata(
+    *, source: Path, **_kwargs: object
+) -> store_backup.RemoteObjectMetadata:
+    """Return deterministic immutable metadata for one synthetic upload."""
+
+    return store_backup.RemoteObjectMetadata(
+        byte_size=source.stat().st_size, generation=1, crc32c="crc32c-one"
+    )
+
+
 def _write_marker(*, run_dir: Path, sample_id: str = "conv-1") -> None:
     """Write one valid live-store marker through the production serializer."""
 
@@ -182,8 +192,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
         destination.write_bytes(f"archive:{source.name}".encode())
 
     monkeypatch.setattr(store_backup, "_archive_directory", archive)
-    monkeypatch.setattr(store_backup, "_upload_directory", lambda **_kwargs: None)
-    monkeypatch.setattr(store_backup, "_upload_file", lambda **_kwargs: None)
+    monkeypatch.setattr(store_backup, "_upload_file", _uploaded_metadata)
     monkeypatch.setattr(store_backup.shutil, "rmtree", lambda _path: None)
     monkeypatch.setattr(
         store_backup,
@@ -222,8 +231,10 @@ def test_backup_writes_receipt_only_after_remote_readback(
 
     checked_archives: list[str] = []
 
-    def remote_size(*, remote_path: str, project_id: str) -> int:
-        """Return synthetic object size while recording archive re-verification."""
+    def remote_metadata(
+        *, remote_path: str, project_id: str
+    ) -> store_backup.RemoteObjectMetadata:
+        """Return synthetic identity while recording archive re-verification."""
 
         assert project_id == "remember-stack"
         name = Path(remote_path).name
@@ -231,15 +242,29 @@ def test_backup_writes_receipt_only_after_remote_readback(
         backup_directories = [path for path in staging_root.iterdir() if path.is_dir()]
         matches = list(backup_directories[0].rglob(name))
         assert len(matches) == 1
-        return matches[0].stat().st_size
+        return store_backup.RemoteObjectMetadata(
+            byte_size=matches[0].stat().st_size, generation=1, crc32c="crc32c-one"
+        )
 
-    monkeypatch.setattr(store_backup, "_remote_size", remote_size)
+    monkeypatch.setattr(store_backup, "_remote_metadata", remote_metadata)
 
     verified_receipt, verified_manifest = store_backup.verify_receipt(receipt_path)
 
     assert verified_receipt == receipt
     assert verified_manifest.sample_id == "conv-1"
     assert len(checked_archives) == 6
+
+    def replaced_metadata(
+        *, remote_path: str, project_id: str
+    ) -> store_backup.RemoteObjectMetadata:
+        """Represent a same-size object recreated under a new generation."""
+
+        current = remote_metadata(remote_path=remote_path, project_id=project_id)
+        return current.model_copy(update={"generation": 2})
+
+    monkeypatch.setattr(store_backup, "_remote_metadata", replaced_metadata)
+    with pytest.raises(store_backup.StoreBackupError, match="identity differs"):
+        store_backup.verify_receipt(receipt_path)
 
 
 def test_receipt_verification_rejects_a_missing_archive(
@@ -273,8 +298,7 @@ def test_receipt_verification_rejects_a_missing_archive(
         destination.write_bytes(f"archive:{source.name}".encode())
 
     monkeypatch.setattr(store_backup, "_archive_directory", archive)
-    monkeypatch.setattr(store_backup, "_upload_directory", lambda **_kwargs: None)
-    monkeypatch.setattr(store_backup, "_upload_file", lambda **_kwargs: None)
+    monkeypatch.setattr(store_backup, "_upload_file", _uploaded_metadata)
     monkeypatch.setattr(store_backup.shutil, "rmtree", lambda _path: None)
     monkeypatch.setattr(
         store_backup,
@@ -302,12 +326,12 @@ def test_receipt_verification_rejects_a_missing_archive(
         staging_root=staging_root,
     )
 
-    def missing_remote_object(**_kwargs: object) -> int:
+    def missing_remote_object(**_kwargs: object) -> store_backup.RemoteObjectMetadata:
         """Represent an archive object that is no longer readable."""
 
         raise store_backup.StoreBackupError("cannot inspect GCS object")
 
-    monkeypatch.setattr(store_backup, "_remote_size", missing_remote_object)
+    monkeypatch.setattr(store_backup, "_remote_metadata", missing_remote_object)
 
     with pytest.raises(store_backup.StoreBackupError, match="cannot inspect GCS"):
         store_backup.verify_receipt(
@@ -342,8 +366,7 @@ def test_failed_remote_manifest_readback_preserves_store_without_receipt(
         destination.write_bytes(str(source).encode())
 
     monkeypatch.setattr(store_backup, "_archive_directory", archive)
-    monkeypatch.setattr(store_backup, "_upload_directory", lambda **_kwargs: None)
-    monkeypatch.setattr(store_backup, "_upload_file", lambda **_kwargs: None)
+    monkeypatch.setattr(store_backup, "_upload_file", _uploaded_metadata)
     monkeypatch.setattr(
         store_backup,
         "_run",
@@ -461,7 +484,13 @@ def test_restore_validates_every_archive_before_running_docker(
         return _completed_process(args)
 
     monkeypatch.setattr(store_backup, "_remote_bytes", remote_bytes)
-    monkeypatch.setattr(store_backup, "_remote_size", lambda **_kwargs: 4)
+    monkeypatch.setattr(
+        store_backup,
+        "_remote_metadata",
+        lambda **_kwargs: store_backup.RemoteObjectMetadata(
+            byte_size=4, generation=1, crc32c="legacy-crc"
+        ),
+    )
     monkeypatch.setattr(store_backup, "_download_recovery_unit", download_recovery_unit)
     monkeypatch.setattr(store_backup, "_run", run_command)
 
@@ -533,6 +562,37 @@ def test_restore_rebases_absolute_p3_pointer_to_the_new_mount_root(
     assert link.resolve() == snapshot
 
 
+def test_restore_rebases_the_duplicated_nested_mount_pointer(tmp_path: Path) -> None:
+    """An external mount target does not leave the run copy tied to its source."""
+
+    run_dir = tmp_path / "restored-run"
+    deployment = run_dir / ".mounts" / "deployment-1"
+    snapshot = deployment / "p3-version-1"
+    snapshot.mkdir(parents=True)
+    old_target = tmp_path / "source" / "deployment-1" / "p3-version-1"
+    link = deployment / "p3"
+    link.symlink_to(old_target, target_is_directory=True)
+
+    store_backup._rebase_published_mount_links(run_dir / ".mounts")
+
+    assert link.readlink() == Path("p3-version-1")
+    assert link.resolve() == snapshot
+
+
+def test_standalone_store_lock_refuses_a_concurrent_operation(tmp_path: Path) -> None:
+    """Backup and restore commands share the runner's host-level exclusion."""
+
+    lock_file = tmp_path / "store.lock"
+    with store_backup._exclusive_store_lock(
+        lock_file=lock_file, inherited_lock_fd=None
+    ):
+        with pytest.raises(store_backup.StoreBackupError, match="owns this host"):
+            with store_backup._exclusive_store_lock(
+                lock_file=lock_file, inherited_lock_fd=None
+            ):
+                pytest.fail("a second operation acquired the store lock")
+
+
 def test_archive_validation_rejects_parent_traversal(tmp_path: Path) -> None:
     """A root restore never accepts a tar member outside its destination."""
 
@@ -588,13 +648,23 @@ def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    path = store_backup._write_runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    path = store_backup._write_runtime_environment(
+        run_dir=run_dir,
+        sample_id="conv-1",
+        deployment_id="57000000-0000-0000-0000-000000000001",
+        repository_revision="r" * 40,
+    )
     payload = path.read_text(encoding="utf-8")
 
     assert 'REMEMBERSTACK_E2_EXTRACT_MODEL="value-claim_extraction"' in payload
     assert 'REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=""' in payload
     assert 'REMEMBERSTACK_OPENROUTER_REASONING_EFFORT=""' in payload
     assert 'REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP=""' in payload
+    assert (
+        'REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="57000000-0000-0000-0000-000000000001"'
+        in payload
+    )
+    assert f'REMEMBERSTACK_BUILD_REVISION="{"r" * 40}"' in payload
     assert "OPENROUTER_API_KEY" not in payload
     assert "POSTGRES_PASSWORD" not in payload
 
@@ -623,6 +693,7 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     )
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
+    assert script.count("--lock-fd 9") == 4
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'
     )
@@ -634,3 +705,19 @@ def test_python_compose_commands_use_the_volume_gate_project() -> None:
     assert store_backup._compose_command(
         compose_project="exact-project", arguments=("down", "--volumes")
     ) == ("docker", "compose", "--project-name", "exact-project", "down", "--volumes")
+
+
+def test_restore_runtime_command_unsets_parent_overrides(tmp_path: Path) -> None:
+    """Saved bindings and identity win over exported operator shell values."""
+
+    command = store_backup._compose_runtime_command(
+        compose_project="exact-project",
+        compose_base_env=tmp_path / "base.env",
+        runtime_environment=tmp_path / "runtime.env",
+        arguments=("up", "api"),
+    )
+
+    assert command[:3] == ("env", "--unset", "REMEMBERSTACK_E1_EMBEDDING_MODEL")
+    assert "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" in command
+    assert "REMEMBERSTACK_BUILD_REVISION" in command
+    assert command[-2:] == ("up", "api")
