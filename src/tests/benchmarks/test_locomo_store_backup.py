@@ -747,6 +747,68 @@ def test_runtime_binding_replay_covers_every_readiness_binding(
     assert set(store_backup.MODEL_BINDING_ENVIRONMENT) == set(_model_bindings())
 
 
+def test_runtime_validation_uses_the_image_revision_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compose need not copy the build stamp out of the image environment."""
+
+    revision = "r" * 40
+    deployment_id = "57000000-0000-0000-0000-000000000001"
+    manifest = store_backup.BackupManifest.model_construct(
+        sample_id="conv-1",
+        deployment_id=deployment_id,
+        run=store_backup.RunIdentity(
+            protocol_name="RS-LoCoMo-Full-v12",
+            protocol_fingerprint="p" * 64,
+            repository_revision=revision,
+            prepared_at="2026-08-11T00:00:00Z",
+            dataset_sha256="d" * 64,
+            item_ids_sha256="e" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        store_backup,
+        "_runtime_environment",
+        lambda **_kwargs: {"REMEMBERSTACK_E2_EXTRACT_MODEL": "saved-model"},
+    )
+
+    def run_command(
+        *, args: tuple[str, ...], capture_output: bool = False, text: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        """Return Compose config and its referenced image metadata."""
+
+        if args[:3] == ("docker", "image", "inspect"):
+            return _completed_process(
+                args,
+                stdout=json.dumps([f"REMEMBERSTACK_BUILD_REVISION={revision}"]),
+            )
+        return _completed_process(
+            args,
+            stdout=json.dumps(
+                {
+                    "services": {
+                        "api": {
+                            "image": "rememberstack:test",
+                            "environment": {
+                                "REMEMBERSTACK_E2_EXTRACT_MODEL": "saved-model",
+                                "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID": deployment_id,
+                            },
+                        }
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr(store_backup, "_run", run_command)
+
+    store_backup._validate_runtime_identity(
+        manifest=manifest,
+        compose_project="rememberstack",
+        compose_base_env=tmp_path / "base.env",
+        runtime_environment=tmp_path / "run/.locomo-backups/compose-runtime.env",
+    )
+
+
 def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     """The destructive command remains textually enclosed by the backup protocol."""
 

@@ -444,7 +444,6 @@ def _validate_runtime_identity(
         run_dir=runtime_environment.parents[1], sample_id=manifest.sample_id
     )
     expected["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = manifest.deployment_id
-    expected["REMEMBERSTACK_BUILD_REVISION"] = manifest.run.repository_revision
     if not isinstance(api_environment, dict) or any(
         api_environment.get(name) != value for name, value in expected.items()
     ):
