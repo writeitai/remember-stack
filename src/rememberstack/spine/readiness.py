@@ -243,7 +243,15 @@ _EXTRACT_CHUNK_STATUS = text(
            'extract_claims'::text AS stage,
            :extractor_version AS component_version,
            CASE
-             WHEN count(c.chunk_id) = 0 THEN 'succeeded'
+             -- A representation with no chunks AT ALL is genuinely terminal
+             -- (D84: embed hops straight to normalize for an empty document).
+             WHEN COALESCE(max(any_chunks.total), 0) = 0 THEN 'succeeded'
+             -- Chunks exist, but none under the grid this readiness check is
+             -- asking about. That is NOT terminal: it means extraction for the
+             -- generation we can see never ran, and reporting 'succeeded' here
+             -- told an agent its memory was queryable when nothing had been
+             -- extracted. Refuse to claim success we cannot observe.
+             WHEN count(c.chunk_id) = 0 THEN 'missing'
              WHEN count(c.chunk_id) FILTER (
                     WHERE p.status = 'succeeded'
                   ) = count(c.chunk_id)
@@ -262,6 +270,15 @@ _EXTRACT_CHUNK_STATUS = text(
     FROM document_versions v
     LEFT JOIN document_representations r
       ON r.representation_id = v.current_representation_id
+    -- Grid-independent chunk presence, as a LATERAL scalar rather than a
+    -- second join on `chunks`: joining twice would multiply this row set by the
+    -- chunk count (a 1k-chunk representation becomes 1M rows) for a number we
+    -- only need once per version.
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS total
+      FROM chunks ac
+      WHERE ac.representation_id = r.representation_id
+    ) any_chunks ON TRUE
     LEFT JOIN chunks c
       ON c.representation_id = r.representation_id
      AND c.chunker_version = :chunker_version

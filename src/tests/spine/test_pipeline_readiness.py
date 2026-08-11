@@ -16,6 +16,8 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core import chunker_version as packing_generation
+from rememberstack.core import ChunkerParams
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import PipelineStage
 from rememberstack.spine import DeploymentBootstrapper
@@ -25,6 +27,11 @@ from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("59000000-0000-0000-0000-000000000001")
+_EXTRACTOR_VERSION = "extract-v1"
+# Readiness hard-codes the default packing grid; a non-default generation is
+# what exposes the false-empty extract status (issue #251).
+_DEFAULT_CHUNKER_VERSION = packing_generation(params=ChunkerParams())
+_OTHER_CHUNKER_VERSION = packing_generation(params=ChunkerParams(token_budget=999))
 
 
 @pytest.fixture(scope="module")
@@ -215,3 +222,139 @@ def test_terminal_status_without_a_completion_timestamp_fails_closed(
     assert report.versions[0].ready is False
     assert report.versions[0].stages[1].status == "succeeded"
     assert report.versions[0].stages[1].finished_at is None
+
+
+def _seed_version_representation(
+    engine: Engine, *, version_id: UUID, chunker_version: str | None
+) -> None:
+    """Attach a current representation, optionally with one chunk under a grid.
+
+    When ``chunker_version`` is set, one chunk is written under that packing
+    generation and no ``extract_claims`` processing_state rows are inserted.
+    When it is ``None``, the representation is genuinely empty (D84).
+    """
+    doc_id = uuid4()
+    representation_id = uuid4()
+    content_hash = f"readiness-{version_id}"
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                " source_ref, title) VALUES (:doc, :d, 'upload', :ref, 'Readiness')"
+            ),
+            {"doc": doc_id, "d": _DEPLOYMENT_ID, "ref": content_hash},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                " raw_uri) VALUES (:d, :hash, 'text/plain', :uri)"
+            ),
+            {"d": _DEPLOYMENT_ID, "hash": content_hash, "uri": f"mem://{content_hash}"},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                " content_hash, version_no, status)"
+                " VALUES (:version, :d, :doc, :hash, 1, 'ready')"
+            ),
+            {
+                "version": version_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "hash": content_hash,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id,"
+                " deployment_id, version_id, route, status)"
+                " VALUES (:representation, :d, :version, 'passthrough', 'ready')"
+            ),
+            {
+                "representation": representation_id,
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id = :rep"
+                " WHERE deployment_id = :d AND version_id = :version"
+            ),
+            {"rep": representation_id, "d": _DEPLOYMENT_ID, "version": version_id},
+        )
+        if chunker_version is not None:
+            connection.execute(
+                text(
+                    "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                    " representation_id, ordinal, block_start, block_end,"
+                    " chunk_content_hash, extraction_input_hash, char_start, char_end,"
+                    " chunker_version)"
+                    " VALUES (:chunk, :d, :doc, :version, :representation, 0, 0, 0,"
+                    " :hash, :hash, 0, 8, :chunker)"
+                ),
+                {
+                    "chunk": uuid4(),
+                    "d": _DEPLOYMENT_ID,
+                    "doc": doc_id,
+                    "version": version_id,
+                    "representation": representation_id,
+                    "hash": content_hash,
+                    "chunker": chunker_version,
+                },
+            )
+
+
+def _extract_stage_status(
+    engine: Engine, *, version_id: UUID
+) -> tuple[bool, str | None]:
+    """Inspect extract_claims readiness only; return (ready, extract status)."""
+    report = PipelineReadinessCatalog(
+        engine=engine,
+        expected_components={PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION},
+        projections=ProjectionCatalog(engine=engine),
+    ).inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(version_id,),
+        require_projections=False,
+    )
+    stages = report.versions[0].stages
+    assert len(stages) == 1
+    assert stages[0].stage == PipelineStage.EXTRACT_CLAIMS.value
+    return report.versions[0].ready, stages[0].status
+
+
+def test_chunks_under_non_default_grid_without_extract_are_not_ready(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Chunks on a non-default packing grid must not look extract-complete.
+
+    Readiness filters chunk rows by the default packing generation. Before the
+    fix, a version whose only chunks used a different generation matched zero
+    rows, took the empty-document 'succeeded' arm, and reported ready — so an
+    agent could query a document that never extracted.
+    """
+    engine, version_id = ready_rows
+    assert _OTHER_CHUNKER_VERSION != _DEFAULT_CHUNKER_VERSION
+    _seed_version_representation(
+        engine, version_id=version_id, chunker_version=_OTHER_CHUNKER_VERSION
+    )
+
+    ready, extract_status = _extract_stage_status(engine, version_id=version_id)
+
+    assert ready is False
+    assert extract_status != "succeeded"
+    assert extract_status == "missing"
+
+
+def test_genuinely_empty_representation_extract_is_succeeded(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """D84: a representation with no chunks at all is extract-terminal."""
+    engine, version_id = ready_rows
+    _seed_version_representation(engine, version_id=version_id, chunker_version=None)
+
+    ready, extract_status = _extract_stage_status(engine, version_id=version_id)
+
+    assert extract_status == "succeeded"
+    assert ready is True
