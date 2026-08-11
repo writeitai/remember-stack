@@ -346,6 +346,7 @@ class WorkLedger:
             if not _normalize_claim_barrier_ready(
                 connection=connection,
                 deployment_id=barrier.deployment_id,
+                version_id=barrier.version_id,
                 representation_id=barrier.representation_id,
                 chunker_version=barrier.chunker_version,
                 extractor_version=barrier.extractor_version,
@@ -646,6 +647,8 @@ def _enqueue_claim_normalize_fanout(
         connection.execute(
             _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT,
             {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
                 "representation_id": representation_id,
                 "chunker_version": chunker_version,
                 "extractor_version": extractor_version,
@@ -707,6 +710,7 @@ def _enqueue_claim_normalize_fanout(
     if _normalize_claim_barrier_ready(
         connection=connection,
         deployment_id=deployment_id,
+        version_id=version_id,
         representation_id=representation_id,
         chunker_version=chunker_version,
         extractor_version=extractor_version,
@@ -741,6 +745,7 @@ def _normalize_claim_barrier_ready(
     *,
     connection: Connection,
     deployment_id: UUID,
+    version_id: UUID,
     representation_id: UUID,
     chunker_version: str,
     extractor_version: str,
@@ -750,6 +755,8 @@ def _normalize_claim_barrier_ready(
     expected = connection.execute(
         _BARRIER_EXPECTED_CLAIMS,
         {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
             "representation_id": representation_id,
             "chunker_version": chunker_version,
             "extractor_version": extractor_version,
@@ -761,6 +768,7 @@ def _normalize_claim_barrier_ready(
         _BARRIER_READY_CLAIMS,
         {
             "deployment_id": deployment_id,
+            "version_id": version_id,
             "representation_id": representation_id,
             "chunker_version": chunker_version,
             "extractor_version": extractor_version,
@@ -1150,7 +1158,10 @@ _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT = text(
     SELECT cl.claim_id, cl.doc_id
     FROM claims cl
     JOIN chunks c ON c.chunk_id = cl.chunk_id
-    WHERE c.representation_id = :representation_id
+    WHERE cl.deployment_id = :deployment_id
+      AND c.deployment_id = :deployment_id
+      AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
       AND cl.extractor_version = :extractor_version
     ORDER BY cl.ingested_at, cl.claim_id
@@ -1162,7 +1173,10 @@ _BARRIER_EXPECTED_CLAIMS = text(
     SELECT count(*)::bigint
     FROM claims cl
     JOIN chunks c ON c.chunk_id = cl.chunk_id
-    WHERE c.representation_id = :representation_id
+    WHERE cl.deployment_id = :deployment_id
+      AND c.deployment_id = :deployment_id
+      AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
       AND cl.extractor_version = :extractor_version
     """
@@ -1180,7 +1194,10 @@ _BARRIER_READY_CLAIMS = text(
      AND p.stage = CAST(:stage AS pipeline_stage)
      AND p.component_version = :normalize_version
      AND p.status = 'succeeded'
-    WHERE c.representation_id = :representation_id
+    WHERE cl.deployment_id = :deployment_id
+      AND c.deployment_id = :deployment_id
+      AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
       AND cl.extractor_version = :extractor_version
     """

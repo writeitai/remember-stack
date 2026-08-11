@@ -63,10 +63,12 @@ class ClaimForNormalization(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     claim_id: UUID
+    deployment_id: UUID
     doc_id: UUID
     chunk_id: UUID
     claim_text: str
     is_attributed: bool
+    extractor_version: str
 
 
 class ResolvedEntity(BaseModel):

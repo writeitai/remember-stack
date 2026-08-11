@@ -161,25 +161,40 @@ class NormalizeRelationsHandler:
             raise NonRetryableHandlerError(
                 f"claim normalize work {work.processing_id} missing extractor_version"
             )
+        payload_claim_id = (work.payload or {}).get("claim_id")
+        if payload_claim_id is not None and str(payload_claim_id) != str(claim_id):
+            raise NonRetryableHandlerError(
+                f"claim payload target mismatch for work {work.processing_id}"
+            )
         claim = self._claim_catalog.claim_for_normalization(claim_id=claim_id)
         if claim is None:
             raise NonRetryableHandlerError(
                 f"claim {claim_id} missing for normalize work {work.processing_id}"
             )
-        if claim.doc_id != doc_id or claim.claim_id != claim_id:
+        deployment_id = work.deployment_id
+        if (
+            claim.deployment_id != deployment_id
+            or claim.doc_id != doc_id
+            or claim.claim_id != claim_id
+            or claim.extractor_version != extractor_version
+        ):
             raise NonRetryableHandlerError(
                 f"claim coordinate mismatch for work {work.processing_id}"
             )
-        # Validate claim belongs to the representation via its chunk.
+        # Validate claim belongs to the representation/version via its chunk.
         chunks = self._chunk_catalog.chunks_for_embedding(
             representation_id=representation_id, chunker_version=chunker_version
         )
-        chunk_ids = {chunk.chunk_id for chunk in chunks}
-        if claim.chunk_id not in chunk_ids:
+        matching = [
+            chunk
+            for chunk in chunks
+            if chunk.chunk_id == claim.chunk_id and chunk.version_id == version_id
+        ]
+        if not matching:
             raise NonRetryableHandlerError(
                 f"claim {claim_id} not in representation {representation_id}"
+                f" version {version_id}"
             )
-        deployment_id = work.deployment_id
         # Always re-run the idempotent claim path on retry. Partial relation
         # writes or staged observations must not skip remaining outputs (D88).
         predicates = self._facts.active_predicates(deployment_id=deployment_id)

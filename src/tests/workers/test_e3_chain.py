@@ -613,10 +613,12 @@ def test_t0_never_resolves_to_a_merged_entity(rig: _E3Rig) -> None:
         reference=EntityRef(name="Gamma Ltd", type="Organization"),
         claim=ClaimForNormalization(
             claim_id=_uuid4(),
+            deployment_id=_DEPLOYMENT_ID,
             doc_id=_uuid4(),
             chunk_id=_uuid4(),
             claim_text="Gamma Ltd exists.",
             is_attributed=False,
+            extractor_version="e2-test",
         ),
     )
     assert resolved.created

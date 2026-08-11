@@ -213,6 +213,7 @@ class ObservationAdjudicator:
                 statement=assertion.statement,
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
+                valid_from=asserted_at,
                 outcome="add",
                 method="novelty_gate",
                 confidence=1.0,
@@ -224,6 +225,7 @@ class ObservationAdjudicator:
                 candidates=candidates,
                 observation_id=observation_id,
                 statement=assertion.statement,
+                valid_from=asserted_at,
             )
             return observation_id
         # Capped state slices are history, not competitors for the next
@@ -240,6 +242,7 @@ class ObservationAdjudicator:
                 statement=assertion.statement,
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
+                valid_from=asserted_at,
                 outcome="add",
                 method="novelty_gate",
                 confidence=1.0,
@@ -251,6 +254,7 @@ class ObservationAdjudicator:
                 candidates=candidates,
                 observation_id=observation_id,
                 statement=assertion.statement,
+                valid_from=asserted_at,
             )
             return observation_id
         ranked = self._rank(
@@ -267,6 +271,7 @@ class ObservationAdjudicator:
                 statement=assertion.statement,
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
+                valid_from=asserted_at,
                 outcome="add",
                 method="embedding",
                 confidence=1.0,
@@ -278,6 +283,7 @@ class ObservationAdjudicator:
                 candidates=candidates,
                 observation_id=observation_id,
                 statement=assertion.statement,
+                valid_from=asserted_at,
             )
             return observation_id
         return self._adjudicate_residue(
@@ -376,6 +382,7 @@ class ObservationAdjudicator:
                         candidates=candidates,
                         observation_id=new_id,
                         statement=statement,
+                        valid_from=asserted_at,
                     )
                     return new_id
                 if verdict.confidence < self._settings.supersede_margin:
@@ -388,6 +395,7 @@ class ObservationAdjudicator:
                         statement=statement,
                         claim_id=claim_id,
                         doc_id=doc_id,
+                        valid_from=asserted_at,
                         outcome="noop",
                         method=method,
                         confidence=verdict.confidence,
@@ -402,6 +410,7 @@ class ObservationAdjudicator:
                         candidates=candidates,
                         observation_id=new_id,
                         statement=statement,
+                        valid_from=asserted_at,
                     )
                     return new_id
                 # D88 continuous ingest: direction follows source time, not
@@ -513,6 +522,7 @@ class ObservationAdjudicator:
                     statement=statement,
                     claim_id=claim_id,
                     doc_id=doc_id,
+                    valid_from=asserted_at,
                     outcome="contradict",
                     method=method,
                     confidence=verdict.confidence,
@@ -534,6 +544,7 @@ class ObservationAdjudicator:
                     observation_id=new_id,
                     statement=statement,
                     contradiction_group=group,
+                    valid_from=asserted_at,
                 )
                 return new_id
             # ObservationOutcome.NEW: no interaction with this candidate
@@ -544,6 +555,7 @@ class ObservationAdjudicator:
             statement=statement,
             claim_id=claim_id,
             doc_id=doc_id,
+            valid_from=asserted_at,
             outcome="add",
             method="small_model",
             confidence=1.0,
@@ -552,7 +564,10 @@ class ObservationAdjudicator:
             contradiction_group=None,
         )
         _remember_candidate(
-            candidates=candidates, observation_id=new_id, statement=statement
+            candidates=candidates,
+            observation_id=new_id,
+            statement=statement,
+            valid_from=asserted_at,
         )
         return new_id
 

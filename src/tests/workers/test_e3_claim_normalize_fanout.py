@@ -54,8 +54,9 @@ def test_fanout_and_barrier_pin_extractor_version() -> None:
         str(work_ledger._BARRIER_EXPECTED_CLAIMS),
         str(work_ledger._BARRIER_READY_CLAIMS),
     ):
-        assert "extractor_version" in sql
         assert "cl.extractor_version = :extractor_version" in sql
+        assert "c.deployment_id = :deployment_id" in sql
+        assert "c.version_id = :version_id" in sql
 
 
 def test_readiness_normalize_status_pins_extractor_version() -> None:
@@ -79,10 +80,12 @@ def test_claim_normalize_requires_extractor_version_pin() -> None:
                 "claim_for_normalization": staticmethod(
                     lambda **kwargs: ClaimForNormalization(
                         claim_id=claim_id,
+                        deployment_id=uuid4(),
                         doc_id=uuid4(),
                         chunk_id=uuid4(),
                         claim_text="x",
                         is_attributed=False,
+                        extractor_version="e2-test-extractor",
                     )
                 )
             },
@@ -167,6 +170,17 @@ def test_observation_reverse_arrival_detects_source_earlier() -> None:
     assert not _is_strictly_earlier(older, None)
 
 
+def test_ordinary_observation_inserts_pass_valid_from() -> None:
+    """First/novelty paths store asserted_at as valid_from (D88 reverse-arrival)."""
+    import inspect
+
+    from rememberstack.spine import observation_adjudication
+
+    source = inspect.getsource(observation_adjudication.ObservationAdjudicator._add_with_block)
+    # Ordinary first-mention / novelty inserts must not drop source time.
+    assert source.count("valid_from=asserted_at") >= 3
+
+
 def test_handle_claim_grain_returns_barrier() -> None:
     """Claim-target work stages observations and returns claim barrier."""
     claim_id = uuid4()
@@ -178,10 +192,12 @@ def test_handle_claim_grain_returns_barrier() -> None:
 
     claim = ClaimForNormalization(
         claim_id=claim_id,
+        deployment_id=deployment_id,
         doc_id=doc_id,
         chunk_id=chunk_id,
         claim_text="Acme hired Bob.",
         is_attributed=False,
+        extractor_version="e2-test-extractor",
     )
 
     class _Claims:
@@ -190,13 +206,14 @@ def test_handle_claim_grain_returns_barrier() -> None:
             return claim
 
     class _Chunk:
-        def __init__(self, cid: object) -> None:
+        def __init__(self, cid: object, vid: object) -> None:
             self.chunk_id = cid
+            self.version_id = vid
 
     class _Chunks:
         def chunks_for_embedding(self, **kwargs: object) -> tuple[_Chunk, ...]:
             del kwargs
-            return (_Chunk(chunk_id),)
+            return (_Chunk(chunk_id, version_id),)
 
     class _Registry:
         def normalized_claim_ids(self, *, claim_ids: object) -> frozenset:

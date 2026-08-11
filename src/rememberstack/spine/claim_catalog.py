@@ -325,7 +325,8 @@ _COPY_CHUNK_DECISIONS = text(
 
 _SELECT_CLAIMS_FOR_CHUNKS = text(
     """
-    SELECT claim_id, doc_id, chunk_id, claim_text, is_attributed
+    SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
+           extractor_version
     FROM claims
     WHERE chunk_id = ANY(:chunk_ids)
     ORDER BY ingested_at, claim_id
@@ -334,7 +335,8 @@ _SELECT_CLAIMS_FOR_CHUNKS = text(
 
 _SELECT_CLAIM_FOR_NORMALIZE = text(
     """
-    SELECT claim_id, doc_id, chunk_id, claim_text, is_attributed
+    SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
+           extractor_version
     FROM claims
     WHERE claim_id = :claim_id
     """

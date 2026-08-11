@@ -105,10 +105,12 @@ def _claim() -> ClaimForNormalization:
     """One claim stub for unit normalize."""
     return ClaimForNormalization(
         claim_id=uuid4(),
+        deployment_id=uuid4(),
         doc_id=uuid4(),
         chunk_id=uuid4(),
         claim_text="The caching process stores hot keys.",
         is_attributed=False,
+        extractor_version="e2-test",
     )
 
 
