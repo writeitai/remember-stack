@@ -182,12 +182,21 @@ class SupersessionAdjudicator:
                         features={"reason": "same object after redirects"},
                     )
                     continue
+                # D88 §5.5: predecessor/successor follow source asserted_at,
+                # not which version finished normalize first.
+                subject_row = dict(subject)
+                candidate_row = dict(candidate)
+                if _is_source_successor(left=subject_row, right=candidate_row):
+                    new_row, old_row = subject_row, candidate_row
+                else:
+                    new_row, old_row = candidate_row, subject_row
                 self._adjudicate_pair(
                     connection=connection,
                     deployment_id=deployment_id,
-                    new=dict(subject),
-                    new_relation_id=relation_id,
-                    old=dict(candidate),
+                    work_relation_id=relation_id,
+                    new=new_row,
+                    new_relation_id=UUID(str(new_row["relation_id"])),
+                    old=old_row,
                     meter=meter,
                     call_key=f"{call_key}:{candidate['relation_id']}",
                 )
@@ -197,13 +206,20 @@ class SupersessionAdjudicator:
         *,
         connection: Connection,
         deployment_id: UUID,
+        work_relation_id: UUID,
         new: dict[str, object],
         new_relation_id: UUID,
         old: dict[str, object],
         meter: CostMeterPort | None,
         call_key: str,
     ) -> None:
-        """Climb the ladder for one blocked pair and apply the outcome."""
+        """Climb the ladder for one blocked pair and apply the outcome.
+
+        ``new``/``old`` are source-time oriented. Transcript rows for
+        coexist/contradict anchor on ``work_relation_id`` (the relation the
+        worker was adjudicating) so undated pair orientation cannot hide the
+        decision from the caller's relation_id lookup.
+        """
         prompt = _ADJUDICATION_PROMPT.format(
             existing_label=old["label"],
             existing_evidence=old["evidence_text"],
@@ -291,22 +307,32 @@ class SupersessionAdjudicator:
                     "group_id": group,
                 },
             )
+            related = (
+                old_relation_id
+                if work_relation_id == new_relation_id
+                else new_relation_id
+            )
             self._record(
                 connection=connection,
                 deployment_id=deployment_id,
-                relation_id=new_relation_id,
-                related_relation_id=old_relation_id,
+                relation_id=work_relation_id,
+                related_relation_id=related,
                 outcome="contradict",
                 method=method,
                 confidence=verdict.confidence,
                 features={**features, "contradiction_group": str(group)},
             )
         else:  # coexist — the fail-safe: both stand, nothing changes
+            related = (
+                old_relation_id
+                if work_relation_id == new_relation_id
+                else new_relation_id
+            )
             self._record(
                 connection=connection,
                 deployment_id=deployment_id,
-                relation_id=new_relation_id,
-                related_relation_id=old_relation_id,
+                relation_id=work_relation_id,
+                related_relation_id=related,
                 outcome="noop",
                 method=method,
                 confidence=verdict.confidence,
@@ -390,7 +416,7 @@ _LOAD_RELATION = text(
         FROM relation_evidence e
         JOIN claims c ON c.claim_id = e.claim_id
         WHERE e.relation_id = r.relation_id AND e.stance = 'supports'
-        ORDER BY c.ingested_at DESC
+        ORDER BY c.asserted_at DESC NULLS LAST, c.ingested_at DESC, c.claim_id DESC
         LIMIT 1
     ) evidence ON true
     WHERE r.deployment_id = :deployment_id AND r.relation_id = :relation_id
@@ -413,7 +439,7 @@ _BLOCK_CANDIDATES = text(
         FROM relation_evidence e
         JOIN claims c ON c.claim_id = e.claim_id
         WHERE e.relation_id = r.relation_id AND e.stance = 'supports'
-        ORDER BY c.ingested_at DESC
+        ORDER BY c.asserted_at DESC NULLS LAST, c.ingested_at DESC, c.claim_id DESC
         LIMIT 1
     ) evidence ON true
     WHERE r.deployment_id = :deployment_id
@@ -448,7 +474,7 @@ _BLOCK_CANDIDATES = text(
       AND r.relation_id <> :relation_id
       AND r.invalidated_at IS NULL
       AND (r.valid_until IS NULL OR r.valid_until > now())
-    ORDER BY r.ingested_at
+    ORDER BY evidence.asserted_at NULLS LAST, r.ingested_at, r.relation_id
     """
 )
 
@@ -489,6 +515,27 @@ _INSERT_ADJUDICATION = text(
     )
     """
 ).bindparams(bindparam("features", type_=JSON))
+
+
+def _is_source_successor(*, left: dict[str, object], right: dict[str, object]) -> bool:
+    """True when ``left`` is the source-time successor of ``right`` (D88 §5.5).
+
+    Later ``asserted_at`` wins. Dated testimony is later than undated. When
+    both times are equal or both undated, keep the caller subject (``left``)
+    as successor — that is the relation being adjudicated as "new", and
+    continuous-ingest independence only requires source-time when times
+    actually differ.
+    """
+    left_at = left.get("asserted_at")
+    right_at = right.get("asserted_at")
+    if left_at is not None and right_at is not None and left_at != right_at:
+        return left_at > right_at  # type: ignore[operator]
+    if left_at is not None and right_at is None:
+        return True
+    if left_at is None and right_at is not None:
+        return False
+    return True
+
 
 _LOCK_BLOCK = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 

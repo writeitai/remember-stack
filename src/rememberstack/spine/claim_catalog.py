@@ -138,6 +138,50 @@ class ClaimCatalog:
             )
         return tuple(ClaimForNormalization.model_validate(dict(row)) for row in rows)
 
+    def claim_for_normalization(
+        self, *, claim_id: UUID
+    ) -> ClaimForNormalization | None:
+        """Load one accepted claim for claim-grain normalize (D88)."""
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(_SELECT_CLAIM_FOR_NORMALIZE, {"claim_id": claim_id})
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        return ClaimForNormalization.model_validate(dict(row))
+
+    def claim_occurs_on_chunks(
+        self, *, claim_id: UUID, chunk_ids: tuple[UUID, ...]
+    ) -> bool:
+        """Whether the claim has a D56 occurrence on any of the given chunks."""
+        if not chunk_ids:
+            return False
+        with self._engine.connect() as connection:
+            return (
+                connection.execute(
+                    _CLAIM_OCCURS_ON_CHUNKS,
+                    {"claim_id": claim_id, "chunk_ids": list(chunk_ids)},
+                ).scalar_one()
+                > 0
+            )
+
+    def version_ids_with_claim_occurrence(
+        self, *, claim_id: UUID, deployment_id: UUID, extractor_version: str
+    ) -> tuple[UUID, ...]:
+        """Document versions that currently list this claim via chunk_claims (D56)."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _VERSION_IDS_WITH_CLAIM_OCCURRENCE,
+                {
+                    "claim_id": claim_id,
+                    "deployment_id": deployment_id,
+                    "extractor_version": extractor_version,
+                },
+            ).all()
+        return tuple(row[0] for row in rows)
+
     def claims_for_embedding(
         self, *, chunk_ids: tuple[UUID, ...], embedding_version: str
     ) -> tuple[ClaimForEmbedding, ...]:
@@ -256,12 +300,14 @@ _INSERT_CLAIM = text(
         claim_text, source_span, char_start, char_end, added_context,
         is_attributed, anchor_ok, window_membership_ok,
         entailment_self_verdict, kept_flagged, extractor_version,
+        asserted_at,
         claim_valid_from, claim_valid_until, claim_valid_precision, claim_valid_kind
     ) VALUES (
         :claim_id, :deployment_id, :doc_id, :chunk_id, :section_id,
         :claim_text, :source_span, :char_start, :char_end, :added_context,
         :is_attributed, true, true,
         :entailment_self_verdict, :kept_flagged, :extractor_version,
+        :asserted_at,
         :claim_valid_from, :claim_valid_until, :claim_valid_precision, :claim_valid_kind
     )
     """
@@ -309,10 +355,43 @@ _COPY_CHUNK_DECISIONS = text(
 
 _SELECT_CLAIMS_FOR_CHUNKS = text(
     """
-    SELECT claim_id, doc_id, chunk_id, claim_text, is_attributed
+    SELECT cl.claim_id, cl.deployment_id, cl.doc_id, cl.chunk_id, cl.claim_text,
+           cl.is_attributed, cl.extractor_version
+    FROM claims cl
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    WHERE cc.chunk_id = ANY(:chunk_ids)
+    ORDER BY cl.ingested_at, cl.claim_id
+    """
+)
+
+_SELECT_CLAIM_FOR_NORMALIZE = text(
+    """
+    SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
+           extractor_version
     FROM claims
-    WHERE chunk_id = ANY(:chunk_ids)
-    ORDER BY ingested_at, claim_id
+    WHERE claim_id = :claim_id
+    """
+)
+
+_CLAIM_OCCURS_ON_CHUNKS = text(
+    """
+    SELECT count(*)::bigint
+    FROM chunk_claims
+    WHERE claim_id = :claim_id
+      AND chunk_id = ANY(:chunk_ids)
+    """
+)
+
+_VERSION_IDS_WITH_CLAIM_OCCURRENCE = text(
+    """
+    SELECT DISTINCT c.version_id
+    FROM chunk_claims cc
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    JOIN claims cl ON cl.claim_id = cc.claim_id
+    WHERE cc.claim_id = :claim_id
+      AND c.deployment_id = :deployment_id
+      AND cl.extractor_version = :extractor_version
+    ORDER BY c.version_id
     """
 )
 

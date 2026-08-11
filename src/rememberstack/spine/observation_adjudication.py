@@ -126,6 +126,7 @@ class ObservationAdjudicator:
         assertions: tuple[ObservationAssertion, ...],
         meter: CostMeterPort | None = None,
         call_key: str = "observation",
+        clear_staging: dict[str, object] | None = None,
     ) -> tuple[UUID, ...]:
         """Adjudicate one document/entity batch against one front-loaded block.
 
@@ -133,6 +134,10 @@ class ObservationAdjudicator:
         read once. Assertions still apply in order so a later assertion sees
         an observation created or closed earlier in the same batch. The batch
         commits in one transaction and retries remain evidence-PK idempotent.
+
+        When ``clear_staging`` is provided (D88 flush), staging rows for the
+        entity are deleted in the same transaction as the D43 writes so a crash
+        cannot leave applied-but-still-staged rows for retry re-apply.
         """
         if not assertions:
             return ()
@@ -159,7 +164,7 @@ class ObservationAdjudicator:
                 .mappings()
                 .all()
             ]
-            return tuple(
+            results = tuple(
                 self._add_with_block(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -172,6 +177,9 @@ class ObservationAdjudicator:
                 )
                 for assertion_index, assertion in enumerate(assertions)
             )
+            if clear_staging is not None:
+                connection.execute(_DELETE_OBS_STAGING_ENTITY, clear_staging)
+            return results
 
     def _add_with_block(
         self,
@@ -204,6 +212,17 @@ class ObservationAdjudicator:
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
             )
+            # D88 continuous ingest: equivalent evidence must not leave
+            # valid_from dependent on which version flushed first. Pull the
+            # open window back to the source-earliest assertion time.
+            self._pull_valid_from_earlier(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
+                observation_id=observation_id,
+                candidate=exact,
+                asserted_at=asserted_at,
+            )
             return observation_id
         if not candidates:
             observation_id = self._insert_new(
@@ -213,6 +232,7 @@ class ObservationAdjudicator:
                 statement=assertion.statement,
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
+                valid_from=asserted_at,
                 outcome="add",
                 method="novelty_gate",
                 confidence=1.0,
@@ -224,6 +244,7 @@ class ObservationAdjudicator:
                 candidates=candidates,
                 observation_id=observation_id,
                 statement=assertion.statement,
+                valid_from=asserted_at,
             )
             return observation_id
         # Capped state slices are history, not competitors for the next
@@ -240,6 +261,7 @@ class ObservationAdjudicator:
                 statement=assertion.statement,
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
+                valid_from=asserted_at,
                 outcome="add",
                 method="novelty_gate",
                 confidence=1.0,
@@ -251,6 +273,7 @@ class ObservationAdjudicator:
                 candidates=candidates,
                 observation_id=observation_id,
                 statement=assertion.statement,
+                valid_from=asserted_at,
             )
             return observation_id
         ranked = self._rank(
@@ -267,6 +290,7 @@ class ObservationAdjudicator:
                 statement=assertion.statement,
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
+                valid_from=asserted_at,
                 outcome="add",
                 method="embedding",
                 confidence=1.0,
@@ -278,6 +302,7 @@ class ObservationAdjudicator:
                 candidates=candidates,
                 observation_id=observation_id,
                 statement=assertion.statement,
+                valid_from=asserted_at,
             )
             return observation_id
         return self._adjudicate_residue(
@@ -338,6 +363,14 @@ class ObservationAdjudicator:
                     claim_id=claim_id,
                     doc_id=doc_id,
                 )
+                self._pull_valid_from_earlier(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    subject_entity_id=subject_entity_id,
+                    observation_id=candidate_id,
+                    candidate=candidate,
+                    asserted_at=asserted_at,
+                )
                 self._record(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -376,6 +409,7 @@ class ObservationAdjudicator:
                         candidates=candidates,
                         observation_id=new_id,
                         statement=statement,
+                        valid_from=asserted_at,
                     )
                     return new_id
                 if verdict.confidence < self._settings.supersede_margin:
@@ -388,6 +422,7 @@ class ObservationAdjudicator:
                         statement=statement,
                         claim_id=claim_id,
                         doc_id=doc_id,
+                        valid_from=asserted_at,
                         outcome="noop",
                         method=method,
                         confidence=verdict.confidence,
@@ -402,11 +437,66 @@ class ObservationAdjudicator:
                         candidates=candidates,
                         observation_id=new_id,
                         statement=statement,
+                        valid_from=asserted_at,
                     )
                     return new_id
-                # the cap lands at the SUCCESSOR's valid_from (D43): the
-                # new testimony's asserted time, degraded to now() only for
-                # undated testimony — the slices tile without overlap.
+                # D88 continuous ingest: direction follows source time, not
+                # flush/worker completion order. If incoming testimony is
+                # source-earlier than the open observation, insert it as a
+                # historical predecessor and leave the later slice open.
+                existing_from = candidate.get("valid_from")
+                if _is_strictly_earlier(asserted_at, existing_from):
+                    new_id = self._insert_new(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        subject_entity_id=subject_entity_id,
+                        statement=statement,
+                        claim_id=claim_id,
+                        doc_id=doc_id,
+                        valid_from=asserted_at,
+                        outcome="add",
+                        method=method,
+                        confidence=verdict.confidence,
+                        features={
+                            **features,
+                            "reason": "source-earlier predecessor (reverse arrival)",
+                        },
+                        related=candidate_id,
+                        contradiction_group=None,
+                    )
+                    capped = connection.execute(
+                        _CAP_WINDOW,
+                        {
+                            "deployment_id": deployment_id,
+                            "observation_id": new_id,
+                            "boundary": existing_from,
+                        },
+                    ).rowcount
+                    self._record(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        observation_id=new_id,
+                        related=candidate_id,
+                        outcome="supersede",
+                        method=method,
+                        confidence=verdict.confidence,
+                        claim_id=claim_id,
+                        features={
+                            **features,
+                            "capped": bool(capped),
+                            "orientation": "incoming_predecessor",
+                        },
+                    )
+                    _remember_candidate(
+                        candidates=candidates,
+                        observation_id=new_id,
+                        statement=statement,
+                        valid_from=asserted_at,
+                        is_open=False,
+                    )
+                    return new_id
+                # Forward path: cap the existing (older) slice at the
+                # SUCCESSOR's valid_from (D43); undated degrades to now().
                 capped = connection.execute(
                     _CAP_WINDOW,
                     {
@@ -443,7 +533,10 @@ class ObservationAdjudicator:
                 )
                 candidate["is_open"] = False
                 _remember_candidate(
-                    candidates=candidates, observation_id=new_id, statement=statement
+                    candidates=candidates,
+                    observation_id=new_id,
+                    statement=statement,
+                    valid_from=asserted_at,
                 )
                 return new_id
             if verdict.outcome is ObservationOutcome.CONTRADICT:
@@ -456,6 +549,7 @@ class ObservationAdjudicator:
                     statement=statement,
                     claim_id=claim_id,
                     doc_id=doc_id,
+                    valid_from=asserted_at,
                     outcome="contradict",
                     method=method,
                     confidence=verdict.confidence,
@@ -477,6 +571,7 @@ class ObservationAdjudicator:
                     observation_id=new_id,
                     statement=statement,
                     contradiction_group=group,
+                    valid_from=asserted_at,
                 )
                 return new_id
             # ObservationOutcome.NEW: no interaction with this candidate
@@ -487,6 +582,7 @@ class ObservationAdjudicator:
             statement=statement,
             claim_id=claim_id,
             doc_id=doc_id,
+            valid_from=asserted_at,
             outcome="add",
             method="small_model",
             confidence=1.0,
@@ -495,7 +591,10 @@ class ObservationAdjudicator:
             contradiction_group=None,
         )
         _remember_candidate(
-            candidates=candidates, observation_id=new_id, statement=statement
+            candidates=candidates,
+            observation_id=new_id,
+            statement=statement,
+            valid_from=asserted_at,
         )
         return new_id
 
@@ -570,6 +669,53 @@ class ObservationAdjudicator:
             for candidate, vector in zip(candidates, open_vectors, strict=True)
         ]
         return sorted(scored, key=lambda item: item[1], reverse=True)
+
+    def _pull_valid_from_earlier(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        subject_entity_id: UUID,
+        observation_id: UUID,
+        candidate: dict[str, object],
+        asserted_at: object,
+    ) -> None:
+        """When equivalent evidence is source-earlier, open the window earlier.
+
+        Exact/evidence collapse reuses one observation row. Without this, the
+        first flusher's asserted_at permanently owns valid_from and reverse
+        completion yields a different window (D88 continuous ingest).
+
+        Refuse the pull when another live slice of the entity ends after the
+        proposed boundary — that neighbour was typically capped at this row's
+        old valid_from, and moving underneath it creates overlapping CURRENT
+        windows for superseding facts.
+        """
+        if asserted_at is None:
+            return
+        existing = candidate.get("valid_from")
+        if existing is not None and not _is_strictly_earlier(asserted_at, existing):
+            return
+        blocked = connection.execute(
+            _HAS_LATER_CAP_BOUNDARY,
+            {
+                "deployment_id": deployment_id,
+                "subject_entity_id": subject_entity_id,
+                "observation_id": observation_id,
+                "boundary": asserted_at,
+            },
+        ).scalar_one()
+        if bool(blocked):
+            return
+        connection.execute(
+            _PULL_VALID_FROM,
+            {
+                "deployment_id": deployment_id,
+                "observation_id": observation_id,
+                "boundary": asserted_at,
+            },
+        )
+        candidate["valid_from"] = asserted_at
 
     def _insert_new(
         self,
@@ -694,6 +840,8 @@ def _remember_candidate(
     observation_id: UUID,
     statement: str,
     contradiction_group: UUID | None = None,
+    valid_from: object = None,
+    is_open: bool = True,
 ) -> None:
     """Expose one in-transaction insert to later assertions in the batch."""
     candidates.append(
@@ -701,7 +849,8 @@ def _remember_candidate(
             "observation_id": observation_id,
             "statement": statement,
             "contradiction_group": contradiction_group,
-            "is_open": True,
+            "valid_from": valid_from,
+            "is_open": is_open,
         }
     )
 
@@ -718,11 +867,25 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _is_strictly_earlier(left: object, right: object) -> bool:
+    """True when both timestamps are present and ``left`` is strictly before ``right``.
+
+    Used to detect reverse-completion-order testimony (D88 continuous ingest):
+    a source-older assertion arriving after a source-newer open observation.
+    """
+    if left is None or right is None:
+        return False
+    try:
+        return left < right  # type: ignore[operator]
+    except TypeError:
+        return False
+
+
 _LOCK_ENTITY = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
 _BLOCK_ENTITY = text(
     """
-    SELECT observation_id, statement, contradiction_group,
+    SELECT observation_id, statement, contradiction_group, valid_from,
            (valid_until IS NULL OR valid_until > now()) AS is_open
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -751,6 +914,40 @@ _CAP_WINDOW = text(
     WHERE deployment_id = :deployment_id AND observation_id = :observation_id
       AND (valid_until IS NULL
            OR valid_until > coalesce(:boundary, now()))
+    """
+)
+
+_PULL_VALID_FROM = text(
+    """
+    UPDATE observations
+    SET valid_from = :boundary, updated_at = now()
+    WHERE deployment_id = :deployment_id AND observation_id = :observation_id
+      AND (valid_from IS NULL OR valid_from > :boundary)
+    """
+)
+
+_HAS_LATER_CAP_BOUNDARY = text(
+    """
+    SELECT EXISTS (
+        SELECT 1
+        FROM observations
+        WHERE deployment_id = :deployment_id
+          AND subject_entity_id = :subject_entity_id
+          AND observation_id <> :observation_id
+          AND invalidated_at IS NULL
+          AND valid_until IS NOT NULL
+          AND valid_until > :boundary
+    )
+    """
+)
+
+_DELETE_OBS_STAGING_ENTITY = text(
+    """
+    DELETE FROM normalize_observation_staging
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND subject_entity_id = :subject_entity_id
+      AND normalizer_version = :normalizer_version
     """
 )
 

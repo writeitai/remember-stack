@@ -151,6 +151,13 @@ services:
       setup:
         condition: service_completed_successfully
 
+  worker-adjudicate-observations:
+    <<: *app
+    command: ["worker", "--stage", "adjudicate_observations"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
   worker-adjudicate-supersession:
     <<: *app
     command: ["worker", "--stage", "adjudicate_supersession"]

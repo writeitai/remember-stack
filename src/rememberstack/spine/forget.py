@@ -1248,6 +1248,12 @@ _POSTGRES_SCRUB = (
     ),
     text(
         """
+        DELETE FROM normalize_observation_staging
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
         DELETE FROM relations
         WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)
         """
@@ -1549,6 +1555,9 @@ _VERIFY_POSTGRES_SCRUB = text(
         SELECT 1 FROM observation_evidence
         WHERE deployment_id = :deployment_id
           AND (doc_id = :doc_id OR observation_id = ANY(:fact_ids))
+        UNION ALL
+        SELECT 1 FROM normalize_observation_staging
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM relations
         WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)

@@ -310,8 +310,8 @@ jobs:
           for service in \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
             worker-extract-claims worker-normalize-relations \
-            worker-adjudicate-supersession worker-embed-claim worker-reconcile \
-            worker-label-relation; do
+            worker-adjudicate-observations worker-adjudicate-supersession \
+            worker-embed-claim worker-reconcile worker-label-relation; do
             printf '%s\n' "$running_services" | grep -qx "$service"
           done
           ingested="$(
@@ -324,10 +324,10 @@ jobs:
               docker compose --env-file .env.example exec -T api \
                 python -c 'import json, sys; print(json.load(sys.stdin)["version_id"])'
           )"
-          # D84: extract_claims is chunk-scoped, so the version-level ledger has
-          # nine stages (convert→structure→chunk→embed_chunk→normalize→
-          # adjudicate→embed_claim→label→reconcile). Empty input may skip
-          # extract entirely when there are no chunks.
+          # D84/D88: extract is chunk-scoped; empty input skips claim normalize
+          # and opens obs-flush then supersession. Version-level ledger stages:
+          # convert→structure→chunk→embed_chunk→adjudicate_observations→
+          # adjudicate_supersession→embed_claim→label→reconcile (9).
           observed=''
           for attempt in {1..60}; do
             observed="$(docker compose --env-file .env.example exec -T postgres \
@@ -358,8 +358,8 @@ jobs:
           docker compose --env-file .env.example stop \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
             worker-extract-claims worker-normalize-relations \
-            worker-adjudicate-supersession worker-embed-claim worker-reconcile \
-            worker-label-relation
+            worker-adjudicate-observations worker-adjudicate-supersession \
+            worker-embed-claim worker-reconcile worker-label-relation
           docker compose --env-file .env.example run --rm --no-deps \
             --entrypoint alembic setup downgrade p7_02_0016
           test "$(docker compose --env-file .env.example exec -T postgres \
@@ -401,7 +401,7 @@ jobs:
             docker compose "${compose_args[@]}" ps --status running --services
           )"
           test -z "$(printf '%s\n' "$running_services" \
-            | grep -E '^(api|worker-(convert|structure|chunk|embed-chunk|extract-claims|normalize-relations|adjudicate-supersession|embed-claim|reconcile|label-relation))$' || true)"
+            | grep -E '^(api|worker-(convert|structure|chunk|embed-chunk|extract-claims|normalize-relations|adjudicate-observations|adjudicate-supersession|embed-claim|reconcile|label-relation))$' || true)"
           test "$(docker compose "${compose_args[@]}" exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT version_num FROM alembic_version')" = 'p7_02_0016'
@@ -411,7 +411,7 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_07_0028'
+            'SELECT version_num FROM alembic_version')" = 'p9_08_0029'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
@@ -421,8 +421,8 @@ jobs:
           for service in \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
             worker-extract-claims worker-normalize-relations \
-            worker-adjudicate-supersession worker-embed-claim worker-reconcile \
-            worker-label-relation; do
+            worker-adjudicate-observations worker-adjudicate-supersession \
+            worker-embed-claim worker-reconcile worker-label-relation; do
             printf '%s\n' "$running_services" | grep -qx "$service"
           done
           curl --fail http://localhost:8000/healthz

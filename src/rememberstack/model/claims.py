@@ -195,6 +195,8 @@ class ClaimRecord(BaseModel):
     entailment_self_verdict: bool
     kept_flagged: bool
     extractor_version: _NonEmpty
+    # Assertion-event time (D41): when the source spoke ≈ version source_modified_at.
+    asserted_at: UTCDateTime | None = None
     claim_valid_from: UTCDateTime | None = None
     claim_valid_until: UTCDateTime | None = None
     claim_valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN

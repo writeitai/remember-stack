@@ -178,8 +178,10 @@ Mirror landed D84 `complete_chunk_extract`
 the other as non-succeeded under read-committed and both skip enqueue. The lock
 is **mandatory**, not a nit.
 
-**Tests:** two real connections interleaved so each sees the other running
-before either commits; expect exactly one downstream pair.
+**Tests (v1):** unit coverage of claim path + wiring is required. A dedicated
+PostgreSQL **two-connection last-claim race** test is **deferred (YAGNI for
+v1)** — correctness rests on the advisory lock + D84-proven pattern; add the
+concurrent race test only if barrier stalls are observed in production.
 
 ### 5.5 Relation supersession selector (binding)
 

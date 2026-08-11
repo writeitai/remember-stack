@@ -398,6 +398,105 @@ class FactCatalog:
             ).all()
         return {entity_type: parent for entity_type, parent in rows}
 
+    def stage_normalize_observation(
+        self,
+        *,
+        deployment_id: UUID,
+        version_id: UUID,
+        claim_id: UUID,
+        subject_entity_id: UUID,
+        statement: str,
+        doc_id: UUID,
+        normalizer_version: str,
+    ) -> None:
+        """Buffer one observation until the post-barrier ordered D43 flush (D88)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _UPSERT_OBS_STAGING,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "claim_id": claim_id,
+                    "subject_entity_id": subject_entity_id,
+                    "statement": statement,
+                    "doc_id": doc_id,
+                    "normalizer_version": normalizer_version,
+                },
+            )
+
+    def load_staged_observations(
+        self, *, deployment_id: UUID, version_id: UUID, normalizer_version: str
+    ) -> tuple[tuple[UUID, UUID, str, UUID], ...]:
+        """Staged rows ordered by claim asserted_at then claim_id (D88 §5.6).
+
+        Each tuple is ``(subject_entity_id, claim_id, statement, doc_id)``.
+        """
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _SELECT_OBS_STAGING_ORDERED,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "normalizer_version": normalizer_version,
+                },
+            ).all()
+        return tuple((row[0], row[1], row[2], row[3]) for row in rows)
+
+    def clear_staged_observations(
+        self, *, deployment_id: UUID, version_id: UUID, normalizer_version: str
+    ) -> None:
+        """Drop staging rows after a successful ordered flush."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _DELETE_OBS_STAGING,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "normalizer_version": normalizer_version,
+                },
+            )
+
+    def clear_staged_observations_for_entity(
+        self,
+        *,
+        deployment_id: UUID,
+        version_id: UUID,
+        subject_entity_id: UUID,
+        normalizer_version: str,
+    ) -> None:
+        """Retire one entity's staging after its D43 apply committed (retry-safe)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _DELETE_OBS_STAGING_ENTITY,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "subject_entity_id": subject_entity_id,
+                    "normalizer_version": normalizer_version,
+                },
+            )
+
+    def relation_ids_for_origin_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        claim_ids: tuple[UUID, ...],
+        normalizer_version: str,
+    ) -> tuple[UUID, ...]:
+        """Relations evidenced by the given origin claims at this normalizer gen."""
+        if not claim_ids:
+            return ()
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _SELECT_RELATIONS_BY_ORIGIN_CLAIMS,
+                {
+                    "deployment_id": deployment_id,
+                    "claim_ids": list(claim_ids),
+                    "normalizer_version": normalizer_version,
+                },
+            ).all()
+        return tuple(row[0] for row in rows)
+
 
 _LOCK_FACT = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
@@ -529,6 +628,64 @@ _SELECT_TYPE_PARENTS = text(
     """
     SELECT type, parent_type FROM entity_types
     WHERE deployment_id = :deployment_id
+    """
+)
+
+_UPSERT_OBS_STAGING = text(
+    """
+    INSERT INTO normalize_observation_staging (
+        deployment_id, version_id, claim_id, subject_entity_id,
+        statement, doc_id, normalizer_version
+    ) VALUES (
+        :deployment_id, :version_id, :claim_id, :subject_entity_id,
+        :statement, :doc_id, :normalizer_version
+    )
+    ON CONFLICT (
+        deployment_id, version_id, claim_id, subject_entity_id,
+        statement, normalizer_version
+    ) DO NOTHING
+    """
+)
+
+_SELECT_OBS_STAGING_ORDERED = text(
+    """
+    SELECT s.subject_entity_id, s.claim_id, s.statement, s.doc_id
+    FROM normalize_observation_staging s
+    JOIN claims c ON c.claim_id = s.claim_id
+    WHERE s.deployment_id = :deployment_id
+      AND s.version_id = :version_id
+      AND s.normalizer_version = :normalizer_version
+    ORDER BY c.asserted_at NULLS LAST, s.claim_id, s.subject_entity_id, s.statement
+    """
+)
+
+_DELETE_OBS_STAGING = text(
+    """
+    DELETE FROM normalize_observation_staging
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_DELETE_OBS_STAGING_ENTITY = text(
+    """
+    DELETE FROM normalize_observation_staging
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND subject_entity_id = :subject_entity_id
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_SELECT_RELATIONS_BY_ORIGIN_CLAIMS = text(
+    """
+    SELECT DISTINCT e.relation_id
+    FROM relation_evidence e
+    WHERE e.deployment_id = :deployment_id
+      AND e.claim_id = ANY(:claim_ids)
+      AND e.normalizer_version = :normalizer_version
+    ORDER BY e.relation_id
     """
 )
 

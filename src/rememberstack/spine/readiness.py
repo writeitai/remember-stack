@@ -66,6 +66,14 @@ class PipelineReadinessCatalog:
             ),
             None,
         )
+        normalize_version = next(
+            (
+                version
+                for stage, version in self._expected
+                if stage is PipelineStage.NORMALIZE_RELATIONS
+            ),
+            None,
+        )
         # Packing generation on chunk rows includes params (D58); the CHUNK
         # processing_state component_version is the bare algorithm pin. Use the
         # default pack params for the active grid filter (compose/selfhost default).
@@ -94,6 +102,26 @@ class PipelineReadinessCatalog:
                     .mappings()
                     .all()
                 )
+            normalize_rows = ()
+            if (
+                normalize_version is not None
+                and chunk_version is not None
+                and extract_version is not None
+            ):
+                normalize_rows = (
+                    connection.execute(
+                        _NORMALIZE_CLAIM_STATUS,
+                        {
+                            "deployment_id": deployment_id,
+                            "version_ids": version_ids,
+                            "normalize_version": normalize_version,
+                            "chunker_version": chunk_version,
+                            "extractor_version": extract_version,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
         by_key = {
             (
                 UUID(str(row["target_id"])),
@@ -116,6 +144,15 @@ class PipelineReadinessCatalog:
                 "succeeded"
             ):
                 by_key[key] = row
+        # Claim-grain normalize (D88): derived status replaces version-level
+        # coordinator success (coordinator alone is not normalize-complete).
+        for row in normalize_rows:
+            key = (
+                UUID(str(row["target_id"])),
+                PipelineStage.NORMALIZE_RELATIONS,
+                str(row["component_version"]),
+            )
+            by_key[key] = row
         versions: list[VersionPipelineReadiness] = []
         terminal_at = None
         for version_id in version_ids:
@@ -234,6 +271,58 @@ _EXTRACT_CHUNK_STATUS = text(
      AND p.target_id = c.chunk_id
      AND p.stage = 'extract_claims'
      AND p.component_version = :extractor_version
+    LEFT JOIN processing_state embed
+      ON embed.deployment_id = :deployment_id
+     AND embed.target_kind = 'document_version'
+     AND embed.target_id = v.version_id
+     AND embed.stage = 'embed_chunk'
+     AND embed.status = 'succeeded'
+    WHERE v.version_id IN :version_ids
+    GROUP BY v.version_id
+    """
+).bindparams(bindparam("version_ids", expanding=True))
+
+# D88: normalize_relations primary rows target claims; derive version status.
+# dead_letter blocks readiness. Version-level coordinator success is ignored.
+_NORMALIZE_CLAIM_STATUS = text(
+    """
+    SELECT v.version_id AS target_id,
+           'normalize_relations'::text AS stage,
+           :normalize_version AS component_version,
+           CASE
+             WHEN count(cl.claim_id) = 0 THEN 'succeeded'
+             WHEN count(cl.claim_id) FILTER (
+                    WHERE p.status = 'succeeded'
+                  ) = count(cl.claim_id)
+               THEN 'succeeded'
+             WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
+             WHEN bool_or(p.status = 'running') THEN 'running'
+             WHEN bool_or(p.status = 'failed') THEN 'failed'
+             WHEN bool_or(p.status = 'pending') THEN 'pending'
+             ELSE 'missing'
+           END AS status,
+           COALESCE(
+             max(p.finished_at),
+             max(embed.finished_at)
+           ) AS finished_at
+    FROM document_versions v
+    LEFT JOIN document_representations r
+      ON r.representation_id = v.current_representation_id
+    LEFT JOIN chunks c
+      ON c.representation_id = r.representation_id
+     AND c.chunker_version = :chunker_version
+    -- D56: occurrence map is chunk_claims; claims.chunk_id is origin only.
+    LEFT JOIN chunk_claims cc
+      ON cc.chunk_id = c.chunk_id
+    LEFT JOIN claims cl
+      ON cl.claim_id = cc.claim_id
+     AND cl.extractor_version = :extractor_version
+    LEFT JOIN processing_state p
+      ON p.deployment_id = :deployment_id
+     AND p.target_kind = 'claim'
+     AND p.target_id = cl.claim_id
+     AND p.stage = 'normalize_relations'
+     AND p.component_version = :normalize_version
     LEFT JOIN processing_state embed
       ON embed.deployment_id = :deployment_id
      AND embed.target_kind = 'document_version'

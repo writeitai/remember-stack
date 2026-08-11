@@ -56,6 +56,7 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
     PipelineStage.NORMALIZE_RELATIONS,
+    PipelineStage.ADJUDICATE_OBSERVATIONS,
     PipelineStage.ADJUDICATE_SUPERSESSION,
     PipelineStage.EMBED_CLAIM,
     PipelineStage.RECONCILE,
@@ -642,6 +643,7 @@ class SelfHostProfile:
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
         from rememberstack.spine import SupersessionSettings
+        from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
         from rememberstack.workers import ConvertHandler
@@ -735,13 +737,30 @@ class SelfHostProfile:
                 settings=E3Settings.model_validate({}),
                 chunker_version=chunk_generation,
             )
+        if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
+            observation_settings = ObservationSettings.model_validate({})
+            return AdjudicateObservationsHandler(
+                facts=facts,
+                observation_adjudicator=ObservationAdjudicator(
+                    engine=self._engine,
+                    model_provider=self._model_provider,
+                    settings=observation_settings,
+                ),
+                chunk_catalog=chunks,
+                claim_catalog=claims,
+                chunker_version=chunk_generation,
+            )
         if stage is PipelineStage.ADJUDICATE_SUPERSESSION:
             return AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,
                     settings=SupersessionSettings.model_validate({}),
-                )
+                ),
+                facts=facts,
+                chunk_catalog=chunks,
+                claim_catalog=claims,
+                chunker_version=chunk_generation,
             )
         if stage is PipelineStage.EMBED_CLAIM:
             return EmbedClaimsHandler(
@@ -864,6 +883,7 @@ def _expected_components() -> dict[PipelineStage, str]:
     from rememberstack.workers import E1_EMBED_VERSION
     from rememberstack.workers import E2_EXTRACTOR_VERSION
     from rememberstack.workers import E3_NORMALIZER_VERSION
+    from rememberstack.workers import OBS_FLUSH_VERSION
     from rememberstack.workers import P1_EMBED_CLAIMS_VERSION
     from rememberstack.workers import RECONCILE_VERSION
     from rememberstack.workers.p1 import label_relation_component_version
@@ -876,6 +896,7 @@ def _expected_components() -> dict[PipelineStage, str]:
         PipelineStage.EMBED_CHUNK: E1_EMBED_VERSION,
         PipelineStage.EXTRACT_CLAIMS: E2_EXTRACTOR_VERSION,
         PipelineStage.NORMALIZE_RELATIONS: E3_NORMALIZER_VERSION,
+        PipelineStage.ADJUDICATE_OBSERVATIONS: OBS_FLUSH_VERSION,
         PipelineStage.ADJUDICATE_SUPERSESSION: ADJUDICATOR_VERSION,
         PipelineStage.EMBED_CLAIM: P1_EMBED_CLAIMS_VERSION,
         PipelineStage.RECONCILE: RECONCILE_VERSION,

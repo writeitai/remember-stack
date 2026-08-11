@@ -122,10 +122,12 @@ def _claim() -> ClaimForNormalization:
     """A synthetic claim context for resolutions."""
     return ClaimForNormalization(
         claim_id=uuid4(),
+        deployment_id=uuid4(),
         doc_id=uuid4(),
         chunk_id=uuid4(),
         claim_text="Karel Dvorzak from sales joined the Atlas project.",
         is_attributed=False,
+        extractor_version="e2-test",
     )
 
 

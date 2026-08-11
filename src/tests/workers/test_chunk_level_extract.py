@@ -118,8 +118,10 @@ def test_advisory_lock_uses_one_postgres_bigint_signature() -> None:
     assert ":k2" not in statement
 
 
-def test_extract_follow_up_zero_chunks_enqueues_normalize() -> None:
-    """Empty representations still chain normalize without extract jobs."""
+def test_extract_follow_up_zero_chunks_enqueues_obs_flush() -> None:
+    """Empty representations skip claim-grain normalize and open obs flush (D88)."""
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
     version_id = uuid4()
     deployment_id = uuid4()
     work = ClaimedWork(
@@ -140,7 +142,9 @@ def test_extract_follow_up_zero_chunks_enqueues_normalize() -> None:
     outcome = _extract_follow_up(work=work, source=source, chunks=())
     assert len(outcome.follow_up) == 1
     job = outcome.follow_up[0]
-    assert job.stage is PipelineStage.NORMALIZE_RELATIONS
+    assert job.stage is PipelineStage.ADJUDICATE_OBSERVATIONS
     assert job.target_kind is ProcessingTarget.DOCUMENT_VERSION
     assert job.target_id == version_id
-    assert job.component_version == E3_NORMALIZER_VERSION
+    assert job.component_version == OBS_FLUSH_VERSION
+    assert job.payload is not None
+    assert job.payload.get("normalizer_version") == E3_NORMALIZER_VERSION

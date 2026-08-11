@@ -259,8 +259,6 @@ class WorkLedger:
         extractor version **and** claim/decision/occurrence extract evidence.
         Only then enqueue version-level ``normalize_relations`` (idempotent).
         """
-        from rememberstack.model import PipelineStage
-        from rememberstack.model import ProcessingTarget
         from rememberstack.workers.base import ExtractChunkBarrier
 
         if not isinstance(barrier, ExtractChunkBarrier):
@@ -293,24 +291,141 @@ class WorkLedger:
                 chunker_version=barrier.chunker_version,
                 extractor_version=barrier.extractor_version,
             ):
-                outcomes.append(
-                    enqueue_on(
+                # D88: materialize the full claim normalize set atomically with
+                # the extract barrier handoff (no partial fan-out).
+                outcomes.extend(
+                    _enqueue_claim_normalize_fanout(
                         connection=connection,
-                        work=EnqueueWork(
-                            deployment_id=barrier.deployment_id,
-                            target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                            target_id=barrier.version_id,
-                            stage=PipelineStage.NORMALIZE_RELATIONS,
-                            component_version=barrier.normalize_component_version,
-                            content_hash=barrier.content_hash,
-                            lane=barrier.lane,
-                            payload={
-                                "version_id": str(barrier.version_id),
-                                "representation_id": str(barrier.representation_id),
-                            },
-                        ),
+                        deployment_id=barrier.deployment_id,
+                        version_id=barrier.version_id,
+                        representation_id=barrier.representation_id,
+                        chunker_version=barrier.chunker_version,
+                        extractor_version=barrier.extractor_version,
+                        normalize_component_version=barrier.normalize_component_version,
+                        content_hash=barrier.content_hash,
+                        lane=barrier.lane,
                     )
                 )
+            return tuple(outcomes)
+
+    def complete_claim_normalize(
+        self,
+        *,
+        processing_id: UUID,
+        barrier: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """D88: mark one claim normalize succeeded and maybe enqueue downstream.
+
+        Serializes on a representation-scoped advisory lock (same race class as
+        D84). When every expected claim has succeeded at the fan-out normalizer
+        version, enqueues the ordered observation flush stage for the version.
+        """
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.workers.base import ClaimNormalizeBarrier
+
+        if not isinstance(barrier, ClaimNormalizeBarrier):
+            raise TypeError("barrier must be ClaimNormalizeBarrier")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            claim_id = connection.execute(
+                _SELECT_TARGET_ID, {"processing_id": processing_id}
+            ).scalar_one()
+            # Discover every version that lists this claim as a D56 occurrence
+            # (including the work's own payload coordinates). Acquire ALL
+            # representation locks in sorted order BEFORE complete+barrier so
+            # concurrent multi-claim completes cannot deadlock.
+            by_rep: dict[str, list[dict[str, object]]] = {}
+            primary = {
+                "deployment_id": barrier.deployment_id,
+                "version_id": barrier.version_id,
+                "representation_id": barrier.representation_id,
+                "chunker_version": barrier.chunker_version,
+                "doc_id": barrier.doc_id,
+            }
+            by_rep[str(barrier.representation_id)] = [primary]
+            for row in connection.execute(
+                _VERSIONS_WITH_CLAIM_OCCURRENCE,
+                {
+                    "claim_id": claim_id,
+                    "extractor_version": barrier.extractor_version,
+                    "deployment_id": barrier.deployment_id,
+                },
+            ).mappings():
+                key = str(row["representation_id"])
+                if (
+                    row["representation_id"] == barrier.representation_id
+                    and row["version_id"] == barrier.version_id
+                ):
+                    continue
+                by_rep.setdefault(key, []).append(dict(row))
+            for rep_key in sorted(by_rep):
+                connection.execute(
+                    _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                    {"representation_id": UUID(rep_key)},
+                )
+            updated = connection.execute(
+                _COMPLETE, {"processing_id": processing_id}
+            ).rowcount
+            if updated == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            for rep_key in sorted(by_rep):
+                for candidate in by_rep[rep_key]:
+                    deployment_id = UUID(str(candidate["deployment_id"]))
+                    version_id = UUID(str(candidate["version_id"]))
+                    representation_id = UUID(str(candidate["representation_id"]))
+                    chunker_version = str(candidate["chunker_version"])
+                    # Do not open a sibling barrier until its extract set has
+                    # closed (extract barrier ready) — otherwise a partial
+                    # D56 attach can look like a complete normalize set.
+                    if not _extract_barrier_ready(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        representation_id=representation_id,
+                        chunker_version=chunker_version,
+                        extractor_version=barrier.extractor_version,
+                    ):
+                        continue
+                    if not _normalize_claim_barrier_ready(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        version_id=version_id,
+                        representation_id=representation_id,
+                        chunker_version=chunker_version,
+                        extractor_version=barrier.extractor_version,
+                        normalize_version=barrier.normalize_component_version,
+                    ):
+                        continue
+                    outcomes.append(
+                        enqueue_on(
+                            connection=connection,
+                            work=EnqueueWork(
+                                deployment_id=deployment_id,
+                                target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                                target_id=version_id,
+                                stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                                component_version=barrier.obs_flush_component_version,
+                                content_hash=barrier.content_hash,
+                                lane=barrier.lane,
+                                payload={
+                                    "version_id": str(version_id),
+                                    "representation_id": str(representation_id),
+                                    "doc_id": str(candidate["doc_id"]),
+                                    "normalizer_version": (
+                                        barrier.normalize_component_version
+                                    ),
+                                    "chunker_version": chunker_version,
+                                    "extractor_version": barrier.extractor_version,
+                                },
+                            ),
+                        )
+                    )
             return tuple(outcomes)
 
     def fail(
@@ -555,6 +670,166 @@ def _extract_barrier_ready(
     return int(ready) == int(expected)
 
 
+def _enqueue_claim_normalize_fanout(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    version_id: UUID,
+    representation_id: UUID,
+    chunker_version: str,
+    extractor_version: str,
+    normalize_component_version: str,
+    content_hash: str,
+    lane: ProcessingLane | None,
+) -> list[EnqueueOutcome]:
+    """D88: insert every claim normalize row for this representation (idempotent).
+
+    The expected set is pinned to the extract generation in force when the
+    extract barrier fired (design §5.1) so a later extractor re-run cannot
+    enlarge an already-materialized barrier.
+    """
+    from rememberstack.model import ProcessingTarget
+
+    # Lazy import: workers.e3 does not import WorkLedger at module load.
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
+    obs_flush_version = OBS_FLUSH_VERSION
+    rows = (
+        connection.execute(
+            _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT,
+            {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "representation_id": representation_id,
+                "chunker_version": chunker_version,
+                "extractor_version": extractor_version,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    if not rows:
+        # Empty extract: skip claim grain; open obs-flush → supersession → embed.
+        return [
+            enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
+                    deployment_id=deployment_id,
+                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                    target_id=version_id,
+                    stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                    component_version=obs_flush_version,
+                    content_hash=content_hash,
+                    lane=lane,
+                    payload={
+                        "version_id": str(version_id),
+                        "representation_id": str(representation_id),
+                        "doc_id": None,
+                        "normalizer_version": normalize_component_version,
+                        "chunker_version": chunker_version,
+                        "extractor_version": extractor_version,
+                    },
+                ),
+            )
+        ]
+    outcomes: list[EnqueueOutcome] = []
+    doc_id = rows[0]["doc_id"]
+    for row in rows:
+        outcomes.append(
+            enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
+                    deployment_id=deployment_id,
+                    target_kind=ProcessingTarget.CLAIM,
+                    target_id=row["claim_id"],
+                    stage=PipelineStage.NORMALIZE_RELATIONS,
+                    component_version=normalize_component_version,
+                    content_hash=content_hash,
+                    lane=lane,
+                    payload={
+                        "version_id": str(version_id),
+                        "representation_id": str(representation_id),
+                        "claim_id": str(row["claim_id"]),
+                        "doc_id": str(row["doc_id"]),
+                        "chunker_version": chunker_version,
+                        "extractor_version": extractor_version,
+                    },
+                ),
+            )
+        )
+    # If every claim job already succeeded (replay/migration), fire downstream.
+    if _normalize_claim_barrier_ready(
+        connection=connection,
+        deployment_id=deployment_id,
+        version_id=version_id,
+        representation_id=representation_id,
+        chunker_version=chunker_version,
+        extractor_version=extractor_version,
+        normalize_version=normalize_component_version,
+    ):
+        outcomes.append(
+            enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
+                    deployment_id=deployment_id,
+                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                    target_id=version_id,
+                    stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                    component_version=obs_flush_version,
+                    content_hash=content_hash,
+                    lane=lane,
+                    payload={
+                        "version_id": str(version_id),
+                        "representation_id": str(representation_id),
+                        "doc_id": str(doc_id),
+                        "normalizer_version": normalize_component_version,
+                        "chunker_version": chunker_version,
+                        "extractor_version": extractor_version,
+                    },
+                ),
+            )
+        )
+    return outcomes
+
+
+def _normalize_claim_barrier_ready(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    version_id: UUID,
+    representation_id: UUID,
+    chunker_version: str,
+    extractor_version: str,
+    normalize_version: str,
+) -> bool:
+    """True when every expected claim has a succeeded claim-grain normalize row."""
+    expected = connection.execute(
+        _BARRIER_EXPECTED_CLAIMS,
+        {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "representation_id": representation_id,
+            "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
+        },
+    ).scalar_one()
+    if int(expected) == 0:
+        return True
+    ready = connection.execute(
+        _BARRIER_READY_CLAIMS,
+        {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "representation_id": representation_id,
+            "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
+            "normalize_version": normalize_version,
+            "stage": PipelineStage.NORMALIZE_RELATIONS.value,
+        },
+    ).scalar_one()
+    return int(ready) == int(expected)
+
+
 def _budget_window_spend(
     *, connection: Connection, budget: CostBudget
 ) -> _BudgetWindowSpend:
@@ -750,6 +1025,25 @@ _CLAIM_START = text(
     """
 )
 
+_SELECT_TARGET_ID = text(
+    """
+    SELECT target_id FROM processing_state WHERE processing_id = :processing_id
+    """
+)
+
+_VERSIONS_WITH_CLAIM_OCCURRENCE = text(
+    """
+    SELECT DISTINCT c.deployment_id, c.version_id, c.representation_id,
+           c.chunker_version, cl.doc_id
+    FROM chunk_claims cc
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    JOIN claims cl ON cl.claim_id = cc.claim_id
+    WHERE cc.claim_id = :claim_id
+      AND c.deployment_id = :deployment_id
+      AND cl.extractor_version = :extractor_version
+    """
+)
+
 _COMPLETE = text(
     """
     UPDATE processing_state
@@ -916,6 +1210,70 @@ _ADVISORY_LOCK_REPRESENTATION = text(
     SELECT pg_advisory_xact_lock(
         hashtextextended('d84-representation:' || CAST(:representation_id AS text), 0)
     )
+    """
+)
+
+_ADVISORY_LOCK_NORMALIZE_BARRIER = text(
+    """
+    SELECT pg_advisory_xact_lock(
+        hashtextextended(
+            'd88-normalize-barrier:' || CAST(:representation_id AS text), 0
+        )
+    )
+    """
+)
+
+# D56: occurrence map is chunk_claims; claims.chunk_id is origin only.
+_SELECT_CLAIMS_FOR_NORMALIZE_FANOUT = text(
+    """
+    SELECT cl.claim_id, cl.doc_id
+    FROM claims cl
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    WHERE cl.deployment_id = :deployment_id
+      AND c.deployment_id = :deployment_id
+      AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
+    ORDER BY cl.ingested_at, cl.claim_id
+    """
+)
+
+_BARRIER_EXPECTED_CLAIMS = text(
+    """
+    SELECT count(*)::bigint
+    FROM claims cl
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    WHERE cl.deployment_id = :deployment_id
+      AND c.deployment_id = :deployment_id
+      AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
+    """
+)
+
+_BARRIER_READY_CLAIMS = text(
+    """
+    SELECT count(*)::bigint
+    FROM claims cl
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    JOIN processing_state p
+      ON p.deployment_id = :deployment_id
+     AND p.target_kind = 'claim'
+     AND p.target_id = cl.claim_id
+     AND p.stage = CAST(:stage AS pipeline_stage)
+     AND p.component_version = :normalize_version
+     AND p.status = 'succeeded'
+    WHERE cl.deployment_id = :deployment_id
+      AND c.deployment_id = :deployment_id
+      AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
     """
 )
 
