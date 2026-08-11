@@ -32,6 +32,7 @@ from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
@@ -55,6 +56,8 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_engine import believed_at_boundary
+from tests.surfaces.lineage_seed import seed_entity_mention
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("53000000-0000-0000-0000-000000000001")
@@ -146,6 +149,32 @@ class _Corpus:
                     ),
                     {"e": entity_id, "d": _DEPLOYMENT_ID, "t": kind, "n": name},
                 )
+            # memory_v1.facts_current / contradiction_members_current only
+            # publish a fact with SURVIVING PROVENANCE: every endpoint in
+            # entities_current, and at least one relation_evidence row bound
+            # to a claim on a complete live lineage. Seed that chain once and
+            # hang every relation + entity membership off it.
+            lineage = seed_live_document_lineage(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                label="envelope",
+                title="Envelope evidence",
+                source_ref="envelope-evidence",
+                at=_NOW,
+            )
+            self.doc_id = lineage.doc_id
+            self.chunk_id = lineage.chunk_id
+            for name, entity_id in self.ids.items():
+                seed_entity_mention(
+                    connection=connection,
+                    deployment_id=_DEPLOYMENT_ID,
+                    entity_id=entity_id,
+                    doc_id=lineage.doc_id,
+                    chunk_id=lineage.chunk_id,
+                    surface_form=name,
+                    at=_NOW,
+                    resolver_version="envelope",
+                )
             # a live 2-side contradiction: Alice can't work for both at once
             self._relation(
                 connection, "for_acme", "Alice", "works_for", "Acme", group=self.group
@@ -205,7 +234,7 @@ class _Corpus:
 
     def _relation(
         self,
-        connection: object,
+        connection: Connection,
         key: str,
         subject: str,
         predicate: str,
@@ -215,7 +244,8 @@ class _Corpus:
     ) -> None:
         relation_id = uuid4()
         self.rel[key] = relation_id
-        connection.execute(  # type: ignore[attr-defined]
+        label = f"{subject} {predicate} {obj}"
+        connection.execute(
             text(
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
@@ -230,9 +260,41 @@ class _Corpus:
                 "s": self.ids[subject],
                 "p": predicate,
                 "o": self.ids[obj],
-                "label": f"{subject} {predicate} {obj}",
+                "label": label,
                 "ing": _NOW,
                 "g": group,
+            },
+        )
+        claim_id = uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, is_current_testimony, extractor_version,"
+                " ingested_at) VALUES (:claim, :deployment, :doc, :chunk, :body,"
+                " :body, 0, :end, true, true, true, 'envelope', :at)"
+            ),
+            {
+                "claim": claim_id,
+                "deployment": _DEPLOYMENT_ID,
+                "doc": self.doc_id,
+                "chunk": self.chunk_id,
+                "body": label,
+                "end": len(label),
+                "at": _NOW,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                " claim_id, doc_id, stance, normalizer_version) VALUES"
+                " (:deployment, :relation, :claim, :doc, 'supports', 'envelope')"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "relation": relation_id,
+                "claim": claim_id,
+                "doc": self.doc_id,
             },
         )
 
