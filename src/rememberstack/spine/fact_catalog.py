@@ -621,7 +621,8 @@ _UPSERT_OBS_STAGING = text(
         :statement, :doc_id, :normalizer_version
     )
     ON CONFLICT (
-        deployment_id, version_id, claim_id, subject_entity_id, statement
+        deployment_id, version_id, claim_id, subject_entity_id,
+        statement, normalizer_version
     ) DO NOTHING
     """
 )

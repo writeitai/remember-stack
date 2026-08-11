@@ -174,23 +174,8 @@ class NormalizeRelationsHandler:
                 f"claim {claim_id} not in representation {representation_id}"
             )
         deployment_id = work.deployment_id
-        if claim.claim_id in self._registry.normalized_claim_ids(
-            claim_ids=(claim.claim_id,)
-        ):
-            # Replay: evidence already written; still participate in barrier.
-            return HandlerOutcome(
-                claim_normalize_barrier=ClaimNormalizeBarrier(
-                    deployment_id=deployment_id,
-                    version_id=version_id,
-                    representation_id=representation_id,
-                    doc_id=doc_id,
-                    chunker_version=chunker_version,
-                    content_hash=work.content_hash,
-                    lane=work.lane,
-                    normalize_component_version=E3_NORMALIZER_VERSION,
-                    obs_flush_component_version=OBS_FLUSH_VERSION,
-                )
-            )
+        # Always re-run the idempotent claim path on retry. Partial relation
+        # writes or staged observations must not skip remaining outputs (D88).
         predicates = self._facts.active_predicates(deployment_id=deployment_id)
         prompt_lines = self._facts.predicate_prompt_lines(deployment_id=deployment_id)
         signatures = self._facts.predicate_signatures(deployment_id=deployment_id)

@@ -29,7 +29,8 @@ def upgrade() -> None:
           normalizer_version text NOT NULL,
           staged_at timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (
-            deployment_id, version_id, claim_id, subject_entity_id, statement
+            deployment_id, version_id, claim_id, subject_entity_id,
+            statement, normalizer_version
           )
         )
         """
