@@ -349,15 +349,15 @@ class WorkLedger:
             # Primary barrier from this work's payload, plus every other
             # version that lists this claim as a D56 occurrence. Shared claim
             # work rows keep one payload; siblings still need barrier recheck.
-            candidates = [
-                {
-                    "deployment_id": barrier.deployment_id,
-                    "version_id": barrier.version_id,
-                    "representation_id": barrier.representation_id,
-                    "chunker_version": barrier.chunker_version,
-                    "doc_id": barrier.doc_id,
-                }
-            ]
+            by_rep: dict[str, list[dict[str, object]]] = {}
+            primary = {
+                "deployment_id": barrier.deployment_id,
+                "version_id": barrier.version_id,
+                "representation_id": barrier.representation_id,
+                "chunker_version": barrier.chunker_version,
+                "doc_id": barrier.doc_id,
+            }
+            by_rep[str(barrier.representation_id)] = [primary]
             for row in connection.execute(
                 _VERSIONS_WITH_CLAIM_OCCURRENCE,
                 {
@@ -366,54 +366,69 @@ class WorkLedger:
                     "deployment_id": barrier.deployment_id,
                 },
             ).mappings():
+                key = str(row["representation_id"])
                 if (
                     row["representation_id"] == barrier.representation_id
                     and row["version_id"] == barrier.version_id
                 ):
                     continue
-                candidates.append(dict(row))
-            for candidate in candidates:
-                if candidate["representation_id"] != barrier.representation_id:
-                    connection.execute(
-                        _ADVISORY_LOCK_NORMALIZE_BARRIER,
-                        {"representation_id": candidate["representation_id"]},
-                    )
-                if not _normalize_claim_barrier_ready(
-                    connection=connection,
-                    deployment_id=UUID(str(candidate["deployment_id"])),
-                    version_id=UUID(str(candidate["version_id"])),
-                    representation_id=UUID(str(candidate["representation_id"])),
-                    chunker_version=str(candidate["chunker_version"]),
-                    extractor_version=barrier.extractor_version,
-                    normalize_version=barrier.normalize_component_version,
-                ):
-                    continue
-                outcomes.append(
-                    enqueue_on(
-                        connection=connection,
-                        work=EnqueueWork(
-                            deployment_id=UUID(str(candidate["deployment_id"])),
-                            target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                            target_id=UUID(str(candidate["version_id"])),
-                            stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                            component_version=barrier.obs_flush_component_version,
-                            content_hash=barrier.content_hash,
-                            lane=barrier.lane,
-                            payload={
-                                "version_id": str(candidate["version_id"]),
-                                "representation_id": str(
-                                    candidate["representation_id"]
-                                ),
-                                "doc_id": str(candidate["doc_id"]),
-                                "normalizer_version": (
-                                    barrier.normalize_component_version
-                                ),
-                                "chunker_version": str(candidate["chunker_version"]),
-                                "extractor_version": barrier.extractor_version,
-                            },
-                        ),
-                    )
+                by_rep.setdefault(key, []).append(dict(row))
+            # Deterministic lock order: representation_id ascending.
+            for rep_key in sorted(by_rep):
+                connection.execute(
+                    _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                    {"representation_id": UUID(rep_key)},
                 )
+                for candidate in by_rep[rep_key]:
+                    deployment_id = UUID(str(candidate["deployment_id"]))
+                    version_id = UUID(str(candidate["version_id"]))
+                    representation_id = UUID(str(candidate["representation_id"]))
+                    chunker_version = str(candidate["chunker_version"])
+                    # Do not open a sibling barrier until its extract set has
+                    # closed (extract barrier ready) — otherwise a partial
+                    # D56 attach can look like a complete normalize set.
+                    if not _extract_barrier_ready(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        representation_id=representation_id,
+                        chunker_version=chunker_version,
+                        extractor_version=barrier.extractor_version,
+                    ):
+                        continue
+                    if not _normalize_claim_barrier_ready(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        version_id=version_id,
+                        representation_id=representation_id,
+                        chunker_version=chunker_version,
+                        extractor_version=barrier.extractor_version,
+                        normalize_version=barrier.normalize_component_version,
+                    ):
+                        continue
+                    outcomes.append(
+                        enqueue_on(
+                            connection=connection,
+                            work=EnqueueWork(
+                                deployment_id=deployment_id,
+                                target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                                target_id=version_id,
+                                stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                                component_version=barrier.obs_flush_component_version,
+                                content_hash=barrier.content_hash,
+                                lane=barrier.lane,
+                                payload={
+                                    "version_id": str(version_id),
+                                    "representation_id": str(representation_id),
+                                    "doc_id": str(candidate["doc_id"]),
+                                    "normalizer_version": (
+                                        barrier.normalize_component_version
+                                    ),
+                                    "chunker_version": chunker_version,
+                                    "extractor_version": barrier.extractor_version,
+                                },
+                            ),
+                        )
+                    )
             return tuple(outcomes)
 
     def fail(

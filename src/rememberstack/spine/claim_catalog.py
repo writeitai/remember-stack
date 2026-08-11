@@ -167,6 +167,21 @@ class ClaimCatalog:
                 > 0
             )
 
+    def version_ids_with_claim_occurrence(
+        self, *, claim_id: UUID, deployment_id: UUID, extractor_version: str
+    ) -> tuple[UUID, ...]:
+        """Document versions that currently list this claim via chunk_claims (D56)."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _VERSION_IDS_WITH_CLAIM_OCCURRENCE,
+                {
+                    "claim_id": claim_id,
+                    "deployment_id": deployment_id,
+                    "extractor_version": extractor_version,
+                },
+            ).all()
+        return tuple(row[0] for row in rows)
+
     def claims_for_embedding(
         self, *, chunk_ids: tuple[UUID, ...], embedding_version: str
     ) -> tuple[ClaimForEmbedding, ...]:
@@ -364,6 +379,19 @@ _CLAIM_OCCURS_ON_CHUNKS = text(
     FROM chunk_claims
     WHERE claim_id = :claim_id
       AND chunk_id = ANY(:chunk_ids)
+    """
+)
+
+_VERSION_IDS_WITH_CLAIM_OCCURRENCE = text(
+    """
+    SELECT DISTINCT c.version_id
+    FROM chunk_claims cc
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    JOIN claims cl ON cl.claim_id = cc.claim_id
+    WHERE cc.claim_id = :claim_id
+      AND c.deployment_id = :deployment_id
+      AND cl.extractor_version = :extractor_version
+    ORDER BY c.version_id
     """
 )
 

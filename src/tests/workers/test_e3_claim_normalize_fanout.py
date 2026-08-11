@@ -211,6 +211,8 @@ def test_claim_complete_rechecks_sibling_version_barriers() -> None:
 
     source = inspect.getsource(work_ledger.WorkLedger.complete_claim_normalize)
     assert "_VERSIONS_WITH_CLAIM_OCCURRENCE" in source
+    assert "_extract_barrier_ready" in source
+    assert "sorted(by_rep)" in source
     sql = str(work_ledger._VERSIONS_WITH_CLAIM_OCCURRENCE)
     assert "chunk_claims" in sql
     assert "extractor_version" in sql
@@ -372,6 +374,12 @@ def test_handle_claim_grain_returns_barrier() -> None:
             self, *, claim_id: object, chunk_ids: object
         ) -> bool:
             return claim_id == claim.claim_id and claim.chunk_id in set(chunk_ids)  # type: ignore[arg-type]
+
+        def version_ids_with_claim_occurrence(
+            self, **kwargs: object
+        ) -> tuple[object, ...]:
+            del kwargs
+            return (version_id,)
 
     class _Chunk:
         def __init__(self, cid: object, vid: object) -> None:

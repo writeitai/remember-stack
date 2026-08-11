@@ -237,16 +237,27 @@ class NormalizeRelationsHandler:
                     type(integrity_error).__name__,
                 )
             raise
+        # Stage under every version that currently lists this claim (D56). A
+        # shared claim work row may complete with one payload while siblings
+        # already carry the occurrence and need the same staged assertions.
+        stage_versions = self._claim_catalog.version_ids_with_claim_occurrence(
+            claim_id=claim_id,
+            deployment_id=deployment_id,
+            extractor_version=extractor_version,
+        )
+        if not stage_versions:
+            stage_versions = (version_id,)
         for subject_entity_id, assertion in staged_observations:
-            self._facts.stage_normalize_observation(
-                deployment_id=deployment_id,
-                version_id=version_id,
-                claim_id=assertion.claim_id,
-                subject_entity_id=subject_entity_id,
-                statement=assertion.statement,
-                doc_id=assertion.doc_id,
-                normalizer_version=E3_NORMALIZER_VERSION,
-            )
+            for stage_version_id in stage_versions:
+                self._facts.stage_normalize_observation(
+                    deployment_id=deployment_id,
+                    version_id=stage_version_id,
+                    claim_id=assertion.claim_id,
+                    subject_entity_id=subject_entity_id,
+                    statement=assertion.statement,
+                    doc_id=assertion.doc_id,
+                    normalizer_version=E3_NORMALIZER_VERSION,
+                )
         return HandlerOutcome(
             claim_normalize_barrier=ClaimNormalizeBarrier(
                 deployment_id=deployment_id,
