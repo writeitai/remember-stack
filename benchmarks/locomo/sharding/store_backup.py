@@ -1242,20 +1242,26 @@ def restore_store(
             raise StoreBackupError(
                 f"refusing to restore over non-empty volumes: {', '.join(non_empty)}"
             )
+    base_env_arguments = (
+        ("--env-file", str(compose_base_env)) if compose_base_env is not None else ()
+    )
     _run(
         args=_compose_command(
-            compose_project=compose_project, arguments=("down", "--remove-orphans")
+            compose_project=compose_project,
+            arguments=(*base_env_arguments, "down", "--remove-orphans"),
         )
     )
     if count == 0:
         _run(
             args=_compose_command(
-                compose_project=compose_project, arguments=("create",)
+                compose_project=compose_project,
+                arguments=(*base_env_arguments, "create"),
             )
         )
         _run(
             args=_compose_command(
-                compose_project=compose_project, arguments=("down", "--remove-orphans")
+                compose_project=compose_project,
+                arguments=(*base_env_arguments, "down", "--remove-orphans"),
             )
         )
     volumes = _volume_names(compose_project=compose_project)
