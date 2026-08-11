@@ -334,14 +334,10 @@ def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
     return deployment_ids.pop()
 
 
-def _require_manifest_deployment(
-    *, manifest: BackupManifest, run_dir: Path
-) -> None:
+def _require_manifest_deployment(*, manifest: BackupManifest, run_dir: Path) -> None:
     """Require backup metadata to match the archived ingest checkpoints."""
 
-    checkpointed = _sample_deployment_id(
-        run_dir=run_dir, sample_id=manifest.sample_id
-    )
+    checkpointed = _sample_deployment_id(run_dir=run_dir, sample_id=manifest.sample_id)
     if manifest.deployment_id != checkpointed:
         raise StoreBackupError(
             "backup deployment differs from the sample ingest checkpoints"

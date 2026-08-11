@@ -280,10 +280,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
 
     assert verified_receipt == receipt
     assert verified_manifest.sample_id == "conv-1"
-    assert (
-        verified_manifest.deployment_id
-        == "57000000-0000-0000-0000-000000000001"
-    )
+    assert verified_manifest.deployment_id == "57000000-0000-0000-0000-000000000001"
     assert len(checked_archives) == 6
 
     def replaced_metadata(
@@ -339,9 +336,7 @@ def test_manifest_deployment_must_match_ingest_checkpoints(tmp_path: Path) -> No
     )
 
     with pytest.raises(store_backup.StoreBackupError, match="ingest checkpoints"):
-        store_backup._require_manifest_deployment(
-            manifest=manifest, run_dir=tmp_path
-        )
+        store_backup._require_manifest_deployment(manifest=manifest, run_dir=tmp_path)
 
 
 def test_archive_identity_is_required() -> None:
@@ -805,8 +800,7 @@ def test_runtime_validation_uses_the_image_revision_stamp(
 
         if args[:3] == ("docker", "image", "inspect"):
             return _completed_process(
-                args,
-                stdout=json.dumps([f"REMEMBERSTACK_BUILD_REVISION={revision}"]),
+                args, stdout=json.dumps([f"REMEMBERSTACK_BUILD_REVISION={revision}"])
             )
         return _completed_process(
             args,
