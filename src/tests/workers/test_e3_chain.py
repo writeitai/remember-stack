@@ -498,6 +498,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
         PipelineStage.NORMALIZE_RELATIONS,
+        PipelineStage.ADJUDICATE_OBSERVATIONS,
         PipelineStage.ADJUDICATE_SUPERSESSION,
         PipelineStage.EMBED_CLAIM,
         PipelineStage.RECONCILE,
@@ -506,8 +507,8 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         outcome = rig.worker.run_one(
             deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
         ).outcome
-        if stage is PipelineStage.EXTRACT_CLAIMS:
-            # No chunks → no extract jobs; terminal via the readiness aggregate.
+        if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.NORMALIZE_RELATIONS):
+            # No chunks → no extract/claim jobs; D88 hops embed→obs-flush.
             assert outcome is RunResultOutcome.NO_WORK, stage
         else:
             assert outcome is RunResultOutcome.SUCCEEDED, stage
@@ -604,14 +605,20 @@ def test_rerunning_normalization_replays_without_model_calls(rig: _E3Rig) -> Non
 
     from rememberstack.model import ClaimedWork
     from rememberstack.model import ProcessingTarget
+    from rememberstack.workers import E2_EXTRACTOR_VERSION
     from rememberstack.workers import E3_NORMALIZER_VERSION
 
+    # D88: claim-grain replay uses target_kind=claim; version-level is coordinator-only.
+    with rig.engine.connect() as connection:
+        claim_id, doc_id = connection.execute(
+            text("SELECT claim_id, doc_id FROM claims ORDER BY claim_id LIMIT 1")
+        ).one()
     rig.normalize_handler.handle(
         work=ClaimedWork(
             processing_id=version,
             deployment_id=_DEPLOYMENT_ID,
-            target_kind=ProcessingTarget.DOCUMENT,
-            target_id=version,
+            target_kind=ProcessingTarget.CLAIM,
+            target_id=claim_id,
             stage=PipelineStage.NORMALIZE_RELATIONS,
             component_version=E3_NORMALIZER_VERSION,
             content_hash="sha256:replay",
@@ -620,6 +627,10 @@ def test_rerunning_normalization_replays_without_model_calls(rig: _E3Rig) -> Non
             payload={
                 "version_id": str(version),
                 "representation_id": str(representation),
+                "claim_id": str(claim_id),
+                "doc_id": str(doc_id),
+                "chunker_version": chunker_version(params=_PARAMS),
+                "extractor_version": E2_EXTRACTOR_VERSION,
             },
         ),
         meter=NoopCostMeter(),

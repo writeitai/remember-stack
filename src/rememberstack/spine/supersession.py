@@ -193,6 +193,7 @@ class SupersessionAdjudicator:
                 self._adjudicate_pair(
                     connection=connection,
                     deployment_id=deployment_id,
+                    work_relation_id=relation_id,
                     new=new_row,
                     new_relation_id=UUID(str(new_row["relation_id"])),
                     old=old_row,
@@ -205,13 +206,20 @@ class SupersessionAdjudicator:
         *,
         connection: Connection,
         deployment_id: UUID,
+        work_relation_id: UUID,
         new: dict[str, object],
         new_relation_id: UUID,
         old: dict[str, object],
         meter: CostMeterPort | None,
         call_key: str,
     ) -> None:
-        """Climb the ladder for one blocked pair and apply the outcome."""
+        """Climb the ladder for one blocked pair and apply the outcome.
+
+        ``new``/``old`` are source-time oriented. Transcript rows for
+        coexist/contradict anchor on ``work_relation_id`` (the relation the
+        worker was adjudicating) so undated pair orientation cannot hide the
+        decision from the caller's relation_id lookup.
+        """
         prompt = _ADJUDICATION_PROMPT.format(
             existing_label=old["label"],
             existing_evidence=old["evidence_text"],
@@ -299,22 +307,32 @@ class SupersessionAdjudicator:
                     "group_id": group,
                 },
             )
+            related = (
+                old_relation_id
+                if work_relation_id == new_relation_id
+                else new_relation_id
+            )
             self._record(
                 connection=connection,
                 deployment_id=deployment_id,
-                relation_id=new_relation_id,
-                related_relation_id=old_relation_id,
+                relation_id=work_relation_id,
+                related_relation_id=related,
                 outcome="contradict",
                 method=method,
                 confidence=verdict.confidence,
                 features={**features, "contradiction_group": str(group)},
             )
         else:  # coexist — the fail-safe: both stand, nothing changes
+            related = (
+                old_relation_id
+                if work_relation_id == new_relation_id
+                else new_relation_id
+            )
             self._record(
                 connection=connection,
                 deployment_id=deployment_id,
-                relation_id=new_relation_id,
-                related_relation_id=old_relation_id,
+                relation_id=work_relation_id,
+                related_relation_id=related,
                 outcome="noop",
                 method=method,
                 confidence=verdict.confidence,
