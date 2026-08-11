@@ -392,11 +392,7 @@ def _validate_runtime_identity(
     compose_base_env: Path,
     runtime_environment: Path,
 ) -> None:
-    """Refuse setup unless checkout, image, and Compose match saved identity."""
-
-    checkout = _run(args=("git", "rev-parse", "HEAD"), capture_output=True)
-    if str(checkout.stdout).strip() != manifest.run.repository_revision:
-        raise StoreBackupError("checkout revision differs from the backup manifest")
+    """Refuse setup unless the image and Compose match saved identity."""
     configured = _run(
         args=_compose_runtime_command(
             compose_project=compose_project,
