@@ -88,6 +88,8 @@ dev = [
     "alembic>=1.16",
     "boto3>=1.42",
     "fastapi>=0.139.2",
+    "google-auth>=2.39",
+    "google-cloud-storage>=3.4,<4",
     "import-linter>=2.13",
     "jsonschema>=4.23",
     "ladybug==0.18.2",
