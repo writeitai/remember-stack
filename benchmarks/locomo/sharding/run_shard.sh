@@ -35,6 +35,7 @@ max_evaluator_cost_usd=${LOCOMO_MAX_EVALUATOR_COST_USD:-1000}
 drain_timeout_seconds=${LOCOMO_DRAIN_TIMEOUT_SECONDS:-21600}
 drain_poll_seconds=${LOCOMO_DRAIN_POLL_SECONDS:-30}
 backup_destination=${LOCOMO_BACKUP_DESTINATION:-}
+backup_project=${LOCOMO_GCP_PROJECT:-}
 backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-backups}
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
 backup_tool=benchmarks/locomo/sharding/store_backup.py
@@ -52,6 +53,8 @@ export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
   die "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID must be exported"
 [[ -n "$backup_destination" ]] ||
   die "LOCOMO_BACKUP_DESTINATION must be a private gs:// bucket/base prefix"
+[[ -n "$backup_project" ]] ||
+  die "LOCOMO_GCP_PROJECT must identify the GCS billing project"
 [[ -f "$backup_tool" ]] || die "backup tool does not exist: $backup_tool"
 [[ $(id -u) -eq 0 ]] ||
   die "the sharded runner must run as root to archive Docker volume mountpoints"
@@ -61,7 +64,9 @@ command -v zstd >/dev/null || die "zstd must be installed before a sharded run"
   die "GCS workload credential configuration does not exist: $GOOGLE_APPLICATION_CREDENTIALS"
 [[ -f "$GOOGLE_API_CERTIFICATE_CONFIG" ]] ||
   die "GCS certificate configuration does not exist: $GOOGLE_API_CERTIFICATE_CONFIG"
-"$python_bin" "$backup_tool" preflight --destination "$backup_destination" ||
+"$python_bin" "$backup_tool" preflight \
+  --destination "$backup_destination" \
+  --project "$backup_project" ||
   die "the configured keyless GCS destination is not readable"
 for value in \
   "$max_documents" \
@@ -137,6 +142,7 @@ backup_sample() {
     --mount-root "$mount_root" \
     --deployment-id "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" \
     --compose-project "$compose_project" \
+    --project "$backup_project" \
     --destination "$backup_destination" \
     --staging-root "$backup_staging_root"
 }

@@ -29,6 +29,7 @@ Every host needs:
 - `LOCOMO_BACKUP_DESTINATION` exported as the private bucket and base prefix
   (for example
   `gs://remember-stack-locomo-backups/runs`).
+- `LOCOMO_GCP_PROJECT` exported as the bucket's GCP billing project.
 
 Treat the OpenRouter key and X.509 client private key as secrets. Inject them
 from the host's secret manager. Never put either value in this repository, a
@@ -152,6 +153,7 @@ The following environment variables tune the driver without changing its argumen
 | `LOCOMO_DRAIN_TIMEOUT_SECONDS` | `21600` | true-drain budget (six hours) |
 | `LOCOMO_DRAIN_POLL_SECONDS` | `30` | ledger poll interval |
 | `LOCOMO_BACKUP_DESTINATION` | **required** | private `gs://` bucket/base prefix |
+| `LOCOMO_GCP_PROJECT` | **required** | GCP project used by the external-account Storage client |
 | `LOCOMO_BACKUP_STAGING_ROOT` | `/var/lib/rememberstack-locomo-backups` | local staging retained on failure |
 | `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
 | `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |
@@ -187,6 +189,7 @@ bytes. If an older host contains a known store, identify its sample and run:
   --mount-root /srv/locomo-runs/publication/.mounts \
   --sample conv-50 \
   --deployment-id "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" \
+  --project "$LOCOMO_GCP_PROJECT" \
   --destination "$LOCOMO_BACKUP_DESTINATION"
 ```
 

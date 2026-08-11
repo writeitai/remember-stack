@@ -61,6 +61,15 @@ def test_authorize_wipe_allows_only_an_absent_unmarked_store(
     store_backup.authorize_wipe(run_dir=tmp_path, compose_project="rememberstack")
 
 
+def test_storage_client_requires_an_explicit_project() -> None:
+    """External-account credentials must not guess their GCP billing project."""
+
+    store_backup._storage_client.cache_clear()
+
+    with pytest.raises(store_backup.StoreBackupError, match="must be explicit"):
+        store_backup._storage_client("")
+
+
 def test_authorize_wipe_rejects_an_existing_unmarked_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -129,6 +138,7 @@ def test_failed_stop_preserves_store_without_a_receipt(
             mount_root=mount_root,
             deployment_id="57000000-0000-0000-0000-000000000001",
             compose_project="rememberstack",
+            gcp_project="remember-stack",
             remote_destination="gs://bucket/backups",
             staging_root=tmp_path / "staging",
         )
@@ -178,9 +188,10 @@ def test_backup_writes_receipt_only_after_remote_readback(
         lambda *, args, capture_output=False, text=True: _completed_process(args),
     )
 
-    def remote_bytes(remote_path: str) -> bytes:
+    def remote_bytes(*, remote_path: str, project_id: str) -> bytes:
         """Mirror the current local staging object as the synthetic remote."""
 
+        assert project_id == "remember-stack"
         name = Path(remote_path).name
         backup_directories = [path for path in staging_root.iterdir() if path.is_dir()]
         assert len(backup_directories) == 1
@@ -194,6 +205,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
         mount_root=mount_root,
         deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
+        gcp_project="remember-stack",
         remote_destination="gs://bucket/backups",
         staging_root=staging_root,
     )
@@ -240,7 +252,7 @@ def test_failed_remote_manifest_readback_preserves_store_without_receipt(
         "_run",
         lambda *, args, capture_output=False, text=True: _completed_process(args),
     )
-    monkeypatch.setattr(store_backup, "_remote_bytes", lambda _path: b"corrupt")
+    monkeypatch.setattr(store_backup, "_remote_bytes", lambda **_kwargs: b"corrupt")
 
     with pytest.raises(store_backup.StoreBackupError, match="manifest bytes differ"):
         store_backup.backup_store(
@@ -249,6 +261,7 @@ def test_failed_remote_manifest_readback_preserves_store_without_receipt(
             mount_root=mount_root,
             deployment_id="57000000-0000-0000-0000-000000000001",
             compose_project="rememberstack",
+            gcp_project="remember-stack",
             remote_destination="gs://bucket/backups",
             staging_root=staging_root,
         )
@@ -312,6 +325,7 @@ def test_restore_validates_every_archive_before_running_docker(
     )
     receipt = store_backup.BackupReceipt(
         sample_id="conv-1",
+        gcp_project="remember-stack",
         remote_prefix="gs://bucket/prefix",
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         verified_at="2026-08-11T00:01:00+00:00",
@@ -321,9 +335,10 @@ def test_restore_validates_every_archive_before_running_docker(
     (remote_root / "receipt.json").write_bytes(receipt_bytes)
     docker_calls: list[tuple[str, ...]] = []
 
-    def remote_bytes(remote_path: str) -> bytes:
+    def remote_bytes(*, remote_path: str, project_id: str) -> bytes:
         """Read the named object from the synthetic remote directory."""
 
+        assert project_id == "remember-stack"
         return (remote_root / Path(remote_path).name).read_bytes()
 
     def download_recovery_unit(

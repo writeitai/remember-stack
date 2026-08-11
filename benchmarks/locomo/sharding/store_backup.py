@@ -89,6 +89,7 @@ class BackupReceipt(FrozenModel):
     )
     status: Literal["verified"] = "verified"
     sample_id: NonEmpty
+    gcp_project: NonEmpty
     remote_prefix: NonEmpty
     manifest_sha256: Sha256
     verified_at: NonEmpty
@@ -360,17 +361,19 @@ def _parse_gcs_uri(uri: str) -> tuple[str, str]:
     return bucket, object_name.strip("/")
 
 
-@lru_cache(maxsize=1)
-def _storage_client() -> storage.Client:
+@lru_cache(maxsize=4)
+def _storage_client(project_id: str) -> storage.Client:
     """Create a GCS client from the workload's Application Default Credentials."""
 
+    if not project_id:
+        raise StoreBackupError("GCS billing project must be explicit")
     try:
-        return storage.Client()
+        return storage.Client(project=project_id)
     except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
         raise StoreBackupError("cannot initialize GCS workload credentials") from exc
 
 
-def _remote_bytes(remote_path: str) -> bytes:
+def _remote_bytes(*, remote_path: str, project_id: str) -> bytes:
     """Read and CRC32C-validate one complete GCS object."""
 
     bucket_name, object_name = _parse_gcs_uri(remote_path)
@@ -378,7 +381,7 @@ def _remote_bytes(remote_path: str) -> bytes:
         raise StoreBackupError("remote object path is empty")
     try:
         return (
-            _storage_client()
+            _storage_client(project_id)
             .bucket(bucket_name)
             .blob(object_name)
             .download_as_bytes(checksum="crc32c")
@@ -389,14 +392,14 @@ def _remote_bytes(remote_path: str) -> bytes:
         ) from exc
 
 
-def _upload_file(*, source: Path, remote_path: str) -> None:
+def _upload_file(*, source: Path, remote_path: str, project_id: str) -> None:
     """Create one immutable GCS object with transport checksum validation."""
 
     bucket_name, object_name = _parse_gcs_uri(remote_path)
     if not object_name:
         raise StoreBackupError("remote object path is empty")
     try:
-        blob = _storage_client().bucket(bucket_name).blob(object_name)
+        blob = _storage_client(project_id).bucket(bucket_name).blob(object_name)
         blob.upload_from_filename(str(source), if_generation_match=0, checksum="crc32c")
         blob.reload()
     except PreconditionFailed as exc:
@@ -411,7 +414,7 @@ def _upload_file(*, source: Path, remote_path: str) -> None:
         )
 
 
-def _upload_directory(*, source: Path, remote_prefix: str) -> None:
+def _upload_directory(*, source: Path, remote_prefix: str, project_id: str) -> None:
     """Upload every file under one staging directory to a unique GCS prefix."""
 
     files = sorted(path for path in source.rglob("*") if path.is_file())
@@ -423,6 +426,7 @@ def _upload_directory(*, source: Path, remote_prefix: str) -> None:
             remote_path=_remote_join(
                 prefix=remote_prefix, name=path.relative_to(source).as_posix()
             ),
+            project_id=project_id,
         )
 
 
@@ -430,7 +434,8 @@ def _download_recovery_unit(*, receipt: BackupReceipt, staging: Path) -> BackupM
     """Download every manifest-declared object with GCS checksum validation."""
 
     manifest_bytes = _remote_bytes(
-        _remote_join(prefix=receipt.remote_prefix, name="manifest.json")
+        remote_path=_remote_join(prefix=receipt.remote_prefix, name="manifest.json"),
+        project_id=receipt.gcp_project,
     )
     if _bytes_sha256(manifest_bytes) != receipt.manifest_sha256:
         raise StoreBackupError("remote manifest no longer matches the receipt")
@@ -448,7 +453,7 @@ def _download_recovery_unit(*, receipt: BackupReceipt, staging: Path) -> BackupM
         )
         try:
             (
-                _storage_client()
+                _storage_client(receipt.gcp_project)
                 .bucket(bucket_name)
                 .blob(object_name)
                 .download_to_filename(str(destination), checksum="crc32c")
@@ -460,12 +465,15 @@ def _download_recovery_unit(*, receipt: BackupReceipt, staging: Path) -> BackupM
     return manifest
 
 
-def preflight_destination(remote_destination: str) -> None:
+def preflight_destination(*, remote_destination: str, project_id: str) -> None:
     """Prove that the federated workload can list the configured private bucket."""
 
     bucket_name, _prefix = _parse_gcs_uri(remote_destination)
     try:
-        next(iter(_storage_client().list_blobs(bucket_name, max_results=1)), None)
+        next(
+            iter(_storage_client(project_id).list_blobs(bucket_name, max_results=1)),
+            None,
+        )
     except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
         raise StoreBackupError(
             f"configured GCS destination is not readable: {remote_destination}"
@@ -517,12 +525,14 @@ def verify_receipt(receipt_path: Path) -> BackupReceipt:
         ) from exc
     receipt = BackupReceipt.model_validate_json(local_bytes)
     manifest_bytes = _remote_bytes(
-        _remote_join(prefix=receipt.remote_prefix, name="manifest.json")
+        remote_path=_remote_join(prefix=receipt.remote_prefix, name="manifest.json"),
+        project_id=receipt.gcp_project,
     )
     if _bytes_sha256(manifest_bytes) != receipt.manifest_sha256:
         raise StoreBackupError("remote manifest no longer matches the verified receipt")
     remote_receipt = _remote_bytes(
-        _remote_join(prefix=receipt.remote_prefix, name="receipt.json")
+        remote_path=_remote_join(prefix=receipt.remote_prefix, name="receipt.json"),
+        project_id=receipt.gcp_project,
     )
     if remote_receipt != local_bytes:
         raise StoreBackupError("remote receipt no longer matches the local receipt")
@@ -571,6 +581,7 @@ def backup_store(
     mount_root: Path,
     deployment_id: str,
     compose_project: str,
+    gcp_project: str,
     remote_destination: str,
     staging_root: Path,
 ) -> BackupReceipt:
@@ -661,15 +672,19 @@ def backup_store(
     )
 
     _log(f"sample={sample_id} backup-stage=upload status=starting")
-    _upload_directory(source=staging, remote_prefix=remote_prefix)
+    _upload_directory(
+        source=staging, remote_prefix=remote_prefix, project_id=gcp_project
+    )
     remote_manifest = _remote_bytes(
-        _remote_join(prefix=remote_prefix, name="manifest.json")
+        remote_path=_remote_join(prefix=remote_prefix, name="manifest.json"),
+        project_id=gcp_project,
     )
     if remote_manifest != manifest_bytes:
         raise StoreBackupError("remote manifest bytes differ from the local manifest")
 
     receipt = BackupReceipt(
         sample_id=sample_id,
+        gcp_project=gcp_project,
         remote_prefix=remote_prefix,
         manifest_sha256=_bytes_sha256(manifest_bytes),
         verified_at=_utc_now().isoformat(),
@@ -679,9 +694,13 @@ def backup_store(
     _upload_file(
         source=receipt_staging_path,
         remote_path=_remote_join(prefix=remote_prefix, name="receipt.json"),
+        project_id=gcp_project,
     )
     if (
-        _remote_bytes(_remote_join(prefix=remote_prefix, name="receipt.json"))
+        _remote_bytes(
+            remote_path=_remote_join(prefix=remote_prefix, name="receipt.json"),
+            project_id=gcp_project,
+        )
         != receipt_bytes
     ):
         raise StoreBackupError("remote receipt bytes differ from the local receipt")
@@ -848,6 +867,7 @@ def _parser() -> argparse.ArgumentParser:
         "preflight", help="verify the keyless GCS destination"
     )
     preflight.add_argument("--destination", required=True)
+    preflight.add_argument("--project", required=True)
 
     backup = subparsers.add_parser("backup", help="create and verify one backup")
     backup.add_argument("--sample", required=True)
@@ -855,6 +875,7 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--mount-root", type=_path, required=True)
     backup.add_argument("--deployment-id", required=True)
     backup.add_argument("--compose-project", default="rememberstack")
+    backup.add_argument("--project", required=True)
     backup.add_argument("--destination", required=True)
     backup.add_argument(
         "--staging-root",
@@ -897,7 +918,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif arguments.command == "clear-live":
             clear_live_store_marker(run_dir=arguments.run_dir)
         elif arguments.command == "preflight":
-            preflight_destination(arguments.destination)
+            preflight_destination(
+                remote_destination=arguments.destination, project_id=arguments.project
+            )
         elif arguments.command == "backup":
             backup_store(
                 sample_id=arguments.sample,
@@ -905,6 +928,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mount_root=arguments.mount_root,
                 deployment_id=arguments.deployment_id,
                 compose_project=arguments.compose_project,
+                gcp_project=arguments.project,
                 remote_destination=arguments.destination,
                 staging_root=arguments.staging_root,
             )
