@@ -398,6 +398,22 @@ def test_volume_empty_check_allows_only_empty_compose_mount_directories(
     assert not store_backup._volume_is_empty("app-state")
 
 
+def test_nested_empty_restore_target_is_retryable(tmp_path: Path) -> None:
+    """A prior safe refusal may leave the default empty nested mount directory."""
+
+    run_dir = tmp_path / "run"
+    mount_root = run_dir / ".mounts"
+    mount_root.mkdir(parents=True)
+
+    store_backup._ensure_empty_restore_targets(run_dir=run_dir, mount_root=mount_root)
+
+    (mount_root / "unexpected").write_text("data", encoding="utf-8")
+    with pytest.raises(store_backup.StoreBackupError, match="not an empty"):
+        store_backup._ensure_empty_restore_targets(
+            run_dir=run_dir, mount_root=mount_root
+        )
+
+
 def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     """The destructive command remains textually enclosed by the backup protocol."""
 

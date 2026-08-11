@@ -746,6 +746,39 @@ def _ensure_empty_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
+def _ensure_empty_restore_targets(*, run_dir: Path, mount_root: Path) -> None:
+    """Create empty restore targets, including a mount root nested in the run."""
+
+    try:
+        relative_mount = mount_root.relative_to(run_dir)
+    except ValueError:
+        _ensure_empty_directory(run_dir)
+        _ensure_empty_directory(mount_root)
+        return
+    if relative_mount == Path("."):
+        _ensure_empty_directory(run_dir)
+        return
+
+    allowed: set[Path] = set()
+    current = run_dir
+    for component in relative_mount.parts:
+        current /= component
+        allowed.add(current)
+    if run_dir.exists():
+        if not run_dir.is_dir():
+            raise StoreBackupError(
+                f"restore target is not an empty directory: {run_dir}"
+            )
+        entries = set(run_dir.rglob("*"))
+        if entries - allowed or any(
+            not path.is_dir() or path.is_symlink() for path in entries
+        ):
+            raise StoreBackupError(
+                f"restore target is not an empty directory: {run_dir}"
+            )
+    mount_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
 def _volume_is_empty(volume_name: str) -> bool:
     """Return whether a volume contains no data beyond empty mount directories."""
 
@@ -777,8 +810,7 @@ def restore_store(
     if manifest.sample_id != receipt.sample_id:
         raise StoreBackupError("manifest and receipt name different samples")
     _validate_download(staging=staging, manifest=manifest)
-    _ensure_empty_directory(run_dir)
-    _ensure_empty_directory(mount_root)
+    _ensure_empty_restore_targets(run_dir=run_dir, mount_root=mount_root)
 
     count = _volume_count(compose_project=compose_project)
     if count:
