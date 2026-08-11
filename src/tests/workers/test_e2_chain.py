@@ -472,7 +472,12 @@ def test_empty_extraction_is_terminal_and_replays_without_calls(
     rig: _E2Rig, tmp_path: Path
 ) -> None:
     """Codex review: a chunk whose Selection finds nothing is DONE — the
-    no_info marker makes the replay check hold without re-calling the model."""
+    no_info marker makes the replay check hold without re-calling the model.
+
+    D84: extract_claims is chunk-grain. A document/version-targeted handle only
+    fans out; Claimify runs on the CHUNK job. This proof drives the chunk grain
+    directly so the empty-Selection terminal marker and replay stay covered.
+    """
     rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
@@ -498,6 +503,14 @@ def test_empty_extraction_is_terminal_and_replays_without_calls(
         representation, version = connection.execute(
             text("SELECT current_representation_id, version_id FROM document_versions")
         ).one()
+        chunk_id = connection.execute(
+            text(
+                "SELECT chunk_id FROM chunks"
+                " WHERE representation_id = :representation"
+                " ORDER BY ordinal LIMIT 1"
+            ),
+            {"representation": representation},
+        ).scalar_one()
 
     from rememberstack.model import ClaimedWork
     from rememberstack.model import ProcessingTarget
@@ -513,16 +526,20 @@ def test_empty_extraction_is_terminal_and_replays_without_calls(
         chunker_version=chunker_version(params=_PARAMS),
     )
     work = ClaimedWork(
-        processing_id=version,
+        processing_id=chunk_id,
         deployment_id=_DEPLOYMENT_ID,
-        target_kind=ProcessingTarget.DOCUMENT,
-        target_id=version,
+        target_kind=ProcessingTarget.CHUNK,
+        target_id=chunk_id,
         stage=PipelineStage.EXTRACT_CLAIMS,
         component_version=E2_EXTRACTOR_VERSION,
         content_hash="sha256:empty",
         lane=ProcessingLane.STEADY,
         attempt=1,
-        payload={"version_id": str(version), "representation_id": str(representation)},
+        payload={
+            "version_id": str(version),
+            "representation_id": str(representation),
+            "chunk_id": str(chunk_id),
+        },
     )
     handler.handle(work=work, meter=NoopCostMeter())
     calls_after_first = len(empty_provider.generated_prompts)
