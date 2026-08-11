@@ -130,20 +130,21 @@ class PipelineReadinessCatalog:
             ): row
             for row in rows
         }
-        # Chunk-grain extract (D84) wins over a missing version-level extract row.
+        # Chunk-grain extract (D84): the derived status REPLACES a version-level
+        # row, exactly as D88 normalize does below. The version-level
+        # extract_claims row is the fan-out coordinator — under D84 it succeeds
+        # once it has enqueued one job per chunk, which says nothing about
+        # whether those jobs ran. Preferring it whenever it read `succeeded`
+        # (the previous behaviour) let coordinator success mask a chunk-derived
+        # `missing`, which is the same false-ready this aggregate exists to
+        # prevent. Coordinator alone is not extract-complete.
         for row in extract_rows:
             key = (
                 UUID(str(row["target_id"])),
                 PipelineStage.EXTRACT_CLAIMS,
                 str(row["component_version"]),
             )
-            existing = by_key.get(key)
-            if existing is None or str(existing["status"]) == "missing":
-                by_key[key] = row
-            elif str(existing["status"]) != "succeeded" and str(row["status"]) == (
-                "succeeded"
-            ):
-                by_key[key] = row
+            by_key[key] = row
         # Claim-grain normalize (D88): derived status replaces version-level
         # coordinator success (coordinator alone is not normalize-complete).
         for row in normalize_rows:
@@ -243,6 +244,12 @@ _EXTRACT_CHUNK_STATUS = text(
            'extract_claims'::text AS stage,
            :extractor_version AS component_version,
            CASE
+             -- No current representation at all: convert/structure have not
+             -- produced one, so extraction cannot have happened. This is NOT
+             -- the D84 empty-document case — an empty document still HAS a
+             -- representation, it just yields zero chunks. Collapsing the two
+             -- reported `succeeded` for a version that had not been converted.
+             WHEN count(r.representation_id) = 0 THEN 'missing'
              -- A representation with no chunks AT ALL is genuinely terminal
              -- (D84: embed hops straight to normalize for an empty document).
              WHEN COALESCE(max(any_chunks.total), 0) = 0 THEN 'succeeded'
