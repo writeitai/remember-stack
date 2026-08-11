@@ -56,6 +56,22 @@ class ExtractChunkBarrier(BaseModel):
     normalize_component_version: str
 
 
+class ClaimNormalizeBarrier(BaseModel):
+    """D88: after a claim normalize succeeds, complete+barrier in one ledger txn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deployment_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    doc_id: UUID
+    chunker_version: str
+    content_hash: str
+    lane: ProcessingLane | None
+    normalize_component_version: str
+    obs_flush_component_version: str
+
+
 class HandlerOutcome(BaseModel):
     """What a successful handler produced: the chain follow-ups to enqueue."""
 
@@ -63,6 +79,7 @@ class HandlerOutcome(BaseModel):
 
     follow_up: tuple[EnqueueWork, ...] = ()
     extract_chunk_barrier: ExtractChunkBarrier | None = None
+    claim_normalize_barrier: ClaimNormalizeBarrier | None = None
 
 
 @runtime_checkable
@@ -275,6 +292,12 @@ class Worker:
             self._ledger.complete_chunk_extract(
                 processing_id=claimed.processing_id,
                 barrier=outcome.extract_chunk_barrier,
+                follow_up=outcome.follow_up,
+            )
+        elif outcome.claim_normalize_barrier is not None:
+            self._ledger.complete_claim_normalize(
+                processing_id=claimed.processing_id,
+                barrier=outcome.claim_normalize_barrier,
                 follow_up=outcome.follow_up,
             )
         else:

@@ -56,6 +56,7 @@ src/tests/workers/test_d79_structure_route.py
 src/tests/workers/test_d79_summaries.py
 src/tests/workers/test_d79_summary_consumption.py
 src/tests/workers/test_extraction_temperature.py
+src/tests/workers/test_e3_claim_normalize_fanout.py
 src/tests/workers/test_e3_unknown_entity_type_gate.py
 src/tests/workers/test_hard_forget_handler.py
 src/tests/workers/test_hard_forget_service.py

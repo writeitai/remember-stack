@@ -138,6 +138,20 @@ class ClaimCatalog:
             )
         return tuple(ClaimForNormalization.model_validate(dict(row)) for row in rows)
 
+    def claim_for_normalization(
+        self, *, claim_id: UUID
+    ) -> ClaimForNormalization | None:
+        """Load one accepted claim for claim-grain normalize (D88)."""
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(_SELECT_CLAIM_FOR_NORMALIZE, {"claim_id": claim_id})
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        return ClaimForNormalization.model_validate(dict(row))
+
     def claims_for_embedding(
         self, *, chunk_ids: tuple[UUID, ...], embedding_version: str
     ) -> tuple[ClaimForEmbedding, ...]:
@@ -313,6 +327,14 @@ _SELECT_CLAIMS_FOR_CHUNKS = text(
     FROM claims
     WHERE chunk_id = ANY(:chunk_ids)
     ORDER BY ingested_at, claim_id
+    """
+)
+
+_SELECT_CLAIM_FOR_NORMALIZE = text(
+    """
+    SELECT claim_id, doc_id, chunk_id, claim_text, is_attributed
+    FROM claims
+    WHERE claim_id = :claim_id
     """
 )
 

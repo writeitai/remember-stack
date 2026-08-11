@@ -28,10 +28,12 @@ from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.e1 import EmbedChunksHandler
 from rememberstack.workers.e2 import E2Settings
 from rememberstack.workers.e2 import ExtractClaimsHandler
+from rememberstack.workers.e3 import AdjudicateObservationsHandler
 from rememberstack.workers.e3 import AdjudicateSupersessionHandler
 from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
+from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 from rememberstack.workers.forget import ForgetProjectionRebuilder
 from rememberstack.workers.forget import HardForgetHandler
@@ -86,6 +88,7 @@ from rememberstack.workers.sync import SyncCycleRunner
 from rememberstack.workers.sync import SyncSettings
 
 __all__ = (
+    "AdjudicateObservationsHandler",
     "AdjudicateSupersessionHandler",
     "ChunkHandler",
     "ConvertHandler",
@@ -97,6 +100,7 @@ __all__ = (
     "EmbedChunksHandler",
     "E3Settings",
     "E3_NORMALIZER_VERSION",
+    "OBS_FLUSH_VERSION",
     "ExtractClaimsHandler",
     "EmbedClaimsHandler",
     "FACT_LABEL_VERSION",

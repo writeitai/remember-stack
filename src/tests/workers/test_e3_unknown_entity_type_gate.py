@@ -256,6 +256,7 @@ def test_normalize_claim_drops_illegal_observation_without_resolve() -> None:
     handler._normalize_claim(
         created_relations=created,
         observations_by_entity=observations,
+        staged_observations=None,
         deployment_id=uuid4(),
         claim=_claim(),
         predicates={"related_to": None},
@@ -289,6 +290,7 @@ def test_normalize_claim_drops_illegal_relation_before_other_predicate() -> None
     handler._normalize_claim(
         created_relations=[],
         observations_by_entity={},
+        staged_observations=None,
         deployment_id=uuid4(),
         claim=_claim(),
         predicates={"related_to": None},
@@ -318,6 +320,7 @@ def test_normalize_claim_keeps_legal_sibling_observation() -> None:
     handler._normalize_claim(
         created_relations=[],
         observations_by_entity=observations,
+        staged_observations=None,
         deployment_id=uuid4(),
         claim=_claim(),
         predicates={},
@@ -397,6 +400,7 @@ def test_normalize_claim_soft_skip_does_not_resolve() -> None:
     soft = handler._normalize_claim(
         created_relations=[],
         observations_by_entity={},
+        staged_observations=None,
         deployment_id=uuid4(),
         claim=_claim(),
         predicates={},
@@ -435,6 +439,7 @@ def test_resolver_invalid_response_is_not_soft() -> None:
         handler._normalize_claim(
             created_relations=[],
             observations_by_entity={},
+            staged_observations=None,
             deployment_id=uuid4(),
             claim=_claim(),
             predicates={},

@@ -141,6 +141,7 @@ EXPECTED_TABLES: Final = (
     "knowledge_rule_keys",
     "knowledge_subscriptions",
     "mentions",
+    "normalize_observation_staging",
     "merge_events",
     "observation_adjudications",
     "observation_evidence",
