@@ -176,9 +176,146 @@ def test_ordinary_observation_inserts_pass_valid_from() -> None:
 
     from rememberstack.spine import observation_adjudication
 
-    source = inspect.getsource(observation_adjudication.ObservationAdjudicator._add_with_block)
+    source = inspect.getsource(
+        observation_adjudication.ObservationAdjudicator._add_with_block
+    )
     # Ordinary first-mention / novelty inserts must not drop source time.
     assert source.count("valid_from=asserted_at") >= 3
+    # Evidence collapse pulls open window to source-earliest assertion.
+    assert "_pull_valid_from_earlier" in source
+    sql = str(observation_adjudication._PULL_VALID_FROM)
+    assert "SET valid_from = :boundary" in sql
+    assert "valid_from IS NULL OR valid_from > :boundary" in sql
+
+
+def test_obs_flush_retires_staging_per_entity() -> None:
+    """Mid-flush retry must not re-apply entities already committed."""
+    import inspect
+
+    from rememberstack.workers import e3
+
+    source = inspect.getsource(e3.AdjudicateObservationsHandler.handle)
+    assert "clear_staged_observations_for_entity" in source
+
+
+def test_cycle_wait_does_not_block_on_missing_claim_rows() -> None:
+    """Legacy serial normalize (no claim-grain rows) must not stall cycles."""
+    from rememberstack.spine import lifecycle
+
+    sql = str(lifecycle._SELECT_READY_CYCLES)
+    # Presence-only wait: JOIN processing_state, not LEFT JOIN + IS NULL.
+    claim_wait = sql.split("claim-grain normalize")[1].split("ORDER BY")[0]
+    assert "LEFT JOIN processing_state" not in claim_wait
+    assert "w.processing_id IS NULL" not in claim_wait
+    assert "w.status IN ('pending', 'running', 'failed', 'dead_letter')" in claim_wait
+
+
+def test_claim_handler_rejects_coordinate_mismatches() -> None:
+    """Cross-tenant / wrong version / wrong extractor pins are non-retryable."""
+    from rememberstack.model import NonRetryableHandlerError
+
+    claim_id = uuid4()
+    version_id = uuid4()
+    representation_id = uuid4()
+    doc_id = uuid4()
+    chunk_id = uuid4()
+    deployment_id = uuid4()
+    claim = ClaimForNormalization(
+        claim_id=claim_id,
+        deployment_id=deployment_id,
+        doc_id=doc_id,
+        chunk_id=chunk_id,
+        claim_text="x",
+        is_attributed=False,
+        extractor_version="e2-test-extractor",
+    )
+
+    class _Claims:
+        def claim_for_normalization(self, *, claim_id: object) -> ClaimForNormalization:
+            del claim_id
+            return claim
+
+    class _Chunk:
+        def __init__(self) -> None:
+            self.chunk_id = chunk_id
+            self.version_id = version_id
+
+    class _Chunks:
+        def chunks_for_embedding(self, **kwargs: object) -> tuple[_Chunk, ...]:
+            del kwargs
+            return (_Chunk(),)
+
+    handler = NormalizeRelationsHandler(
+        claim_catalog=_Claims(),  # type: ignore[arg-type]
+        chunk_catalog=_Chunks(),  # type: ignore[arg-type]
+        registry=type(
+            "R", (), {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())}
+        )(),  # type: ignore[arg-type]
+        resolver=None,  # type: ignore[arg-type]
+        facts=None,  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        model_provider=FakeModelProvider(generate_payload={}),
+        settings=E3Settings(normalize_model="test"),
+        chunker_version="test-chunker",
+    )
+
+    def _work(**payload_overrides: object) -> ClaimedWork:
+        payload = {
+            "version_id": str(version_id),
+            "representation_id": str(representation_id),
+            "claim_id": str(claim_id),
+            "doc_id": str(doc_id),
+            "chunker_version": "test-chunker",
+            "extractor_version": "e2-test-extractor",
+        }
+        payload.update(payload_overrides)
+        return ClaimedWork(
+            processing_id=uuid4(),
+            deployment_id=deployment_id,
+            target_kind=ProcessingTarget.CLAIM,
+            target_id=claim_id,
+            stage=PipelineStage.NORMALIZE_RELATIONS,
+            component_version=E3_NORMALIZER_VERSION,
+            content_hash="h",
+            lane=ProcessingLane.STEADY,
+            attempt=1,
+            payload=payload,
+        )
+
+    # Wrong extractor generation on payload vs claim row.
+    try:
+        handler.handle(
+            work=_work(extractor_version="other-extractor"),
+            meter=NoopCostMeter(),
+        )
+    except NonRetryableHandlerError as error:
+        assert "coordinate mismatch" in str(error)
+    else:
+        raise AssertionError("expected extractor mismatch rejection")
+
+    # Wrong document in payload.
+    try:
+        handler.handle(work=_work(doc_id=str(uuid4())), meter=NoopCostMeter())
+    except NonRetryableHandlerError as error:
+        assert "coordinate mismatch" in str(error)
+    else:
+        raise AssertionError("expected doc mismatch rejection")
+
+    # Payload claim_id disagrees with target_id.
+    try:
+        handler.handle(work=_work(claim_id=str(uuid4())), meter=NoopCostMeter())
+    except NonRetryableHandlerError as error:
+        assert "payload target mismatch" in str(error)
+    else:
+        raise AssertionError("expected payload claim mismatch rejection")
+
+    # Wrong version: claim chunk not at payload version.
+    try:
+        handler.handle(work=_work(version_id=str(uuid4())), meter=NoopCostMeter())
+    except NonRetryableHandlerError as error:
+        assert "not in representation" in str(error)
+    else:
+        raise AssertionError("expected version membership rejection")
 
 
 def test_handle_claim_grain_returns_barrier() -> None:

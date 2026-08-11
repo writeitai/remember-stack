@@ -745,6 +745,8 @@ class AdjudicateObservationsHandler:
                 )
             )
         for entity_id, assertions in by_entity.items():
+            # Apply then retire staging for this entity so a mid-flush retry
+            # does not re-adjudicate already-committed entities (D88).
             self._observation_adjudicator.add_observations(
                 deployment_id=work.deployment_id,
                 subject_entity_id=entity_id,
@@ -752,6 +754,13 @@ class AdjudicateObservationsHandler:
                 meter=meter,
                 call_key=f"observation_flush:{entity_id}",
             )
+            self._facts.clear_staged_observations_for_entity(
+                deployment_id=work.deployment_id,
+                version_id=version_uuid,
+                subject_entity_id=entity_id,
+                normalizer_version=normalizer_version,
+            )
+        # Safety net: drop any residual staging for this version/generation.
         self._facts.clear_staged_observations(
             deployment_id=work.deployment_id,
             version_id=version_uuid,

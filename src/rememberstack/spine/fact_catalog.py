@@ -456,6 +456,26 @@ class FactCatalog:
                 },
             )
 
+    def clear_staged_observations_for_entity(
+        self,
+        *,
+        deployment_id: UUID,
+        version_id: UUID,
+        subject_entity_id: UUID,
+        normalizer_version: str,
+    ) -> None:
+        """Retire one entity's staging after its D43 apply committed (retry-safe)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _DELETE_OBS_STAGING_ENTITY,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "subject_entity_id": subject_entity_id,
+                    "normalizer_version": normalizer_version,
+                },
+            )
+
     def relation_ids_for_origin_claims(
         self,
         *,
@@ -644,6 +664,16 @@ _DELETE_OBS_STAGING = text(
     DELETE FROM normalize_observation_staging
     WHERE deployment_id = :deployment_id
       AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_DELETE_OBS_STAGING_ENTITY = text(
+    """
+    DELETE FROM normalize_observation_staging
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND subject_entity_id = :subject_entity_id
       AND normalizer_version = :normalizer_version
     """
 )

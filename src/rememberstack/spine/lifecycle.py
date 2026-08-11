@@ -1050,22 +1050,21 @@ _SELECT_READY_CYCLES = text(
             AND w.status IN ('pending', 'running', 'failed', 'dead_letter')
       )
       AND NOT EXISTS (
-          -- D88: claim-grain normalize must finish (incl. dead_letter) before
-          -- cycle finalization treats the version's testimony as settled.
+          -- D88: when claim-grain normalize rows exist, they must finish
+          -- (incl. dead_letter) before cycle finalization. Missing rows are
+          -- intentional for pre-fanout serial normalize (legacy drain) — do
+          -- not treat absence as incomplete.
           SELECT 1
           FROM document_versions v
           JOIN chunks c ON c.version_id = v.version_id
           JOIN claims cl ON cl.chunk_id = c.chunk_id
-          LEFT JOIN processing_state w
+          JOIN processing_state w
             ON w.deployment_id = y.deployment_id
            AND w.target_kind = 'claim'
            AND w.target_id = cl.claim_id
            AND w.stage = 'normalize_relations'
           WHERE v.sync_cycle_id = y.cycle_id
-            AND (
-              w.processing_id IS NULL
-              OR w.status IN ('pending', 'running', 'failed', 'dead_letter')
-            )
+            AND w.status IN ('pending', 'running', 'failed', 'dead_letter')
       )
     ORDER BY y.started_at
     """

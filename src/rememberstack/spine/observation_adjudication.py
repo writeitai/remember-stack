@@ -204,6 +204,16 @@ class ObservationAdjudicator:
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
             )
+            # D88 continuous ingest: equivalent evidence must not leave
+            # valid_from dependent on which version flushed first. Pull the
+            # open window back to the source-earliest assertion time.
+            self._pull_valid_from_earlier(
+                connection=connection,
+                deployment_id=deployment_id,
+                observation_id=observation_id,
+                candidate=exact,
+                asserted_at=asserted_at,
+            )
             return observation_id
         if not candidates:
             observation_id = self._insert_new(
@@ -343,6 +353,13 @@ class ObservationAdjudicator:
                     observation_id=candidate_id,
                     claim_id=claim_id,
                     doc_id=doc_id,
+                )
+                self._pull_valid_from_earlier(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    observation_id=candidate_id,
+                    candidate=candidate,
+                    asserted_at=asserted_at,
                 )
                 self._record(
                     connection=connection,
@@ -643,6 +660,36 @@ class ObservationAdjudicator:
         ]
         return sorted(scored, key=lambda item: item[1], reverse=True)
 
+    def _pull_valid_from_earlier(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        observation_id: UUID,
+        candidate: dict[str, object],
+        asserted_at: object,
+    ) -> None:
+        """When equivalent evidence is source-earlier, open the window earlier.
+
+        Exact/evidence collapse reuses one observation row. Without this, the
+        first flusher's asserted_at permanently owns valid_from and reverse
+        completion yields a different window (D88 continuous ingest).
+        """
+        if asserted_at is None:
+            return
+        existing = candidate.get("valid_from")
+        if existing is not None and not _is_strictly_earlier(asserted_at, existing):
+            return
+        connection.execute(
+            _PULL_VALID_FROM,
+            {
+                "deployment_id": deployment_id,
+                "observation_id": observation_id,
+                "boundary": asserted_at,
+            },
+        )
+        candidate["valid_from"] = asserted_at
+
     def _insert_new(
         self,
         *,
@@ -840,6 +887,15 @@ _CAP_WINDOW = text(
     WHERE deployment_id = :deployment_id AND observation_id = :observation_id
       AND (valid_until IS NULL
            OR valid_until > coalesce(:boundary, now()))
+    """
+)
+
+_PULL_VALID_FROM = text(
+    """
+    UPDATE observations
+    SET valid_from = :boundary, updated_at = now()
+    WHERE deployment_id = :deployment_id AND observation_id = :observation_id
+      AND (valid_from IS NULL OR valid_from > :boundary)
     """
 )
 
