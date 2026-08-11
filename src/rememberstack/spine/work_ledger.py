@@ -329,26 +329,13 @@ class WorkLedger:
         for work in follow_up:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
-            connection.execute(
-                _ADVISORY_LOCK_NORMALIZE_BARRIER,
-                {"representation_id": barrier.representation_id},
-            )
-            updated = connection.execute(
-                _COMPLETE, {"processing_id": processing_id}
-            ).rowcount
-            if updated == 0:
-                raise WorkNotRunningError(
-                    f"processing row {processing_id} is not running; cannot complete"
-                )
-            outcomes = [
-                enqueue_on(connection=connection, work=work) for work in follow_up
-            ]
             claim_id = connection.execute(
                 _SELECT_TARGET_ID, {"processing_id": processing_id}
             ).scalar_one()
-            # Primary barrier from this work's payload, plus every other
-            # version that lists this claim as a D56 occurrence. Shared claim
-            # work rows keep one payload; siblings still need barrier recheck.
+            # Discover every version that lists this claim as a D56 occurrence
+            # (including the work's own payload coordinates). Acquire ALL
+            # representation locks in sorted order BEFORE complete+barrier so
+            # concurrent multi-claim completes cannot deadlock.
             by_rep: dict[str, list[dict[str, object]]] = {}
             primary = {
                 "deployment_id": barrier.deployment_id,
@@ -373,12 +360,22 @@ class WorkLedger:
                 ):
                     continue
                 by_rep.setdefault(key, []).append(dict(row))
-            # Deterministic lock order: representation_id ascending.
             for rep_key in sorted(by_rep):
                 connection.execute(
                     _ADVISORY_LOCK_NORMALIZE_BARRIER,
                     {"representation_id": UUID(rep_key)},
                 )
+            updated = connection.execute(
+                _COMPLETE, {"processing_id": processing_id}
+            ).rowcount
+            if updated == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            for rep_key in sorted(by_rep):
                 for candidate in by_rep[rep_key]:
                     deployment_id = UUID(str(candidate["deployment_id"]))
                     version_id = UUID(str(candidate["version_id"]))
