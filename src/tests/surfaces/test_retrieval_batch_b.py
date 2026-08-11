@@ -336,6 +336,24 @@ class _Corpus:
                 chunk_id=chunk_id,
                 entity_id=self.entity_ids["alice"],
             )
+        # Both Sams are ambiguity fixtures, but memory_v1.entities_current only
+        # publishes an entity with SURVIVING PROVENANCE. Give each the same
+        # association production gives a real extracted Person — a mention on a
+        # live chunk plus its resolution decision — so resolution can see them.
+        # The document-entity bridge is the other membership arm, but it belongs
+        # to Document-typed registry entities, not to people.
+        for key, chunk_id in (
+            ("sam_a", self.chunk_ids[0]),
+            ("sam_b", self.chunk_ids[1]),
+        ):
+            self._mention(
+                connection=connection,
+                doc_id=self.doc_id,
+                chunk_id=chunk_id,
+                entity_id=self.entity_ids[key],
+                surface_form="Sam",
+                normalized_lemma="sam",
+            )
 
     def _seed_hub_documents(self, *, connection: Connection) -> None:
         for index in range(55):
@@ -362,18 +380,26 @@ class _Corpus:
 
     @staticmethod
     def _mention(
-        *, connection: Connection, doc_id: UUID, chunk_id: UUID, entity_id: UUID
+        *,
+        connection: Connection,
+        doc_id: UUID,
+        chunk_id: UUID,
+        entity_id: UUID,
+        surface_form: str = "Alice",
+        normalized_lemma: str = "alice",
     ) -> None:
         mention_id = uuid4()
         connection.execute(
             text(
                 "INSERT INTO mentions (mention_id, deployment_id, surface_form,"
                 " normalized_lemma, chunk_id, doc_id, created_at) VALUES"
-                " (:mention, :deployment, 'Alice', 'alice', :chunk, :doc, :at)"
+                " (:mention, :deployment, :surface, :lemma, :chunk, :doc, :at)"
             ),
             {
                 "mention": mention_id,
                 "deployment": _DEPLOYMENT_ID,
+                "surface": surface_form,
+                "lemma": normalized_lemma,
                 "chunk": chunk_id,
                 "doc": doc_id,
                 "at": _MENTIONED_AT,

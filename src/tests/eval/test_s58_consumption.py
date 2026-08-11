@@ -33,6 +33,8 @@ from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import ConsumptionSkillSurface
 from rememberstack.surfaces import QueryEngine
+from tests.surfaces.lineage_seed import seed_entity_mention
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("55000000-0000-0000-0000-000000000058")
@@ -258,6 +260,25 @@ def test_s58_and_skeleton_canaries_share_one_retrieval_evaluator(
                 "deployment_id": _DEPLOYMENT_ID,
                 "entity_id": acme_id,
             },
+        )
+        # S39's known-empty arm resolves Acme through entities_current, which
+        # requires surviving mention provenance on a live lineage.
+        lineage = seed_live_document_lineage(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            label="s58-acme",
+            title="S58 Acme",
+            source_ref="s58-acme",
+        )
+        seed_entity_mention(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            entity_id=acme_id,
+            doc_id=lineage.doc_id,
+            chunk_id=lineage.chunk_id,
+            surface_form="Acme",
+            normalized_lemma="acme",
+            resolver_version="s58",
         )
     seed_skeleton_canaries(engine=database_engine, deployment_id=_DEPLOYMENT_ID)
     with database_engine.begin() as connection:
