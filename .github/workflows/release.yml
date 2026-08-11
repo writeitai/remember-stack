@@ -11,7 +11,13 @@ jobs:
   verify:
     name: Verify release
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # This job runs the WHOLE suite in one process, so its budget must exceed the
+    # sum of CI's split integration jobs — not match any one of them. CI alone
+    # budgets 45 minutes for workers and 50 for surfaces. At 30 minutes this job
+    # was killed mid-run (reported as "cancelled", with pytest terminated as an
+    # orphan process), which silently made the release unpublishable: verify can
+    # never pass, so publish-pypi and publish-ghcr never run.
+    timeout-minutes: 90
     env:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     services:

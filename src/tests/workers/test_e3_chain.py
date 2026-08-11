@@ -464,13 +464,53 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
 def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls(
     rig: _E3Rig,
 ) -> None:
-    """An empty but valid memory is terminal, not permanently unready."""
+    """An empty but valid memory is terminal, not permanently unready.
+
+    D84: zero-chunk versions never enqueue extract_claims (embed hops straight
+    to normalize). The stage therefore returns NO_WORK rather than writing a
+    version-level processing_state row; readiness still reports extract as
+    succeeded via the zero-chunk aggregate.
+    """
+    from rememberstack.spine import PipelineReadinessCatalog
+    from rememberstack.spine import ProjectionCatalog
+    from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+    from rememberstack.workers import E0_CONVERT_VERSION
+    from rememberstack.workers import E0_STRUCTURE_VERSION
+    from rememberstack.workers import E1_CHUNK_VERSION
+    from rememberstack.workers import E1_EMBED_VERSION
+    from rememberstack.workers import E2_EXTRACTOR_VERSION
+    from rememberstack.workers import E3_NORMALIZER_VERSION
+    from rememberstack.workers import OBS_FLUSH_VERSION
+    from rememberstack.workers.p1 import label_relation_component_version
+    from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
+    from rememberstack.workers.p1 import P1Settings
+    from rememberstack.workers.reconcile import RECONCILE_VERSION
+
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(filename="empty.md", mime="text/markdown", content=b""),
     )
 
-    rig.run_chain()
+    for stage in (
+        PipelineStage.CONVERT,
+        PipelineStage.STRUCTURE,
+        PipelineStage.CHUNK,
+        PipelineStage.EMBED_CHUNK,
+        PipelineStage.EXTRACT_CLAIMS,
+        PipelineStage.NORMALIZE_RELATIONS,
+        PipelineStage.ADJUDICATE_SUPERSESSION,
+        PipelineStage.EMBED_CLAIM,
+        PipelineStage.RECONCILE,
+        PipelineStage.LABEL_RELATION,
+    ):
+        outcome = rig.worker.run_one(
+            deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+        ).outcome
+        if stage is PipelineStage.EXTRACT_CLAIMS:
+            # No chunks → no extract jobs; terminal via the readiness aggregate.
+            assert outcome is RunResultOutcome.NO_WORK, stage
+        else:
+            assert outcome is RunResultOutcome.SUCCEEDED, stage
 
     with rig.engine.connect() as connection:
         rows = connection.execute(
@@ -482,9 +522,19 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             ),
             {"deployment_id": _DEPLOYMENT_ID, "version_id": ingested.version_id},
         ).all()
+        chunk_count = connection.execute(
+            text(
+                "SELECT count(*) FROM chunks c"
+                " JOIN document_versions v"
+                "   ON v.current_representation_id = c.representation_id"
+                " WHERE v.version_id = :version_id"
+            ),
+            {"version_id": ingested.version_id},
+        ).scalar_one()
 
-    # Empty input: no claim normalize rows; extract is chunk-scoped; D88 opens
-    # obs-flush then supersession at version grain.
+    assert chunk_count == 0
+    # D84 zero-chunk hop: no version-grain extract. D88 empty extract opens
+    # obs-flush (not claim normalize) then supersession at version grain.
     assert {stage for stage, _status in rows} == {
         stage.value
         for stage in (
@@ -502,6 +552,36 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
     assert len(rows) == 9
     assert {status for _stage, status in rows} == {"succeeded"}
     assert rig.provider.generated_prompts == []
+
+    report = PipelineReadinessCatalog(
+        engine=rig.engine,
+        expected_components={
+            PipelineStage.CONVERT: E0_CONVERT_VERSION,
+            PipelineStage.STRUCTURE: E0_STRUCTURE_VERSION,
+            PipelineStage.CHUNK: E1_CHUNK_VERSION,
+            PipelineStage.EMBED_CHUNK: E1_EMBED_VERSION,
+            PipelineStage.EXTRACT_CLAIMS: E2_EXTRACTOR_VERSION,
+            PipelineStage.NORMALIZE_RELATIONS: E3_NORMALIZER_VERSION,
+            PipelineStage.ADJUDICATE_OBSERVATIONS: OBS_FLUSH_VERSION,
+            PipelineStage.ADJUDICATE_SUPERSESSION: ADJUDICATOR_VERSION,
+            PipelineStage.EMBED_CLAIM: P1_EMBED_CLAIMS_VERSION,
+            PipelineStage.RECONCILE: RECONCILE_VERSION,
+            PipelineStage.LABEL_RELATION: label_relation_component_version(
+                embedding_model=P1Settings().embedding_model
+            ),
+        },
+        projections=ProjectionCatalog(engine=rig.engine),
+    ).inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(ingested.version_id,),
+        require_projections=False,
+    )
+    version = report.versions[0]
+    assert version.ready is True
+    by_stage = {item.stage: item for item in version.stages}
+    assert by_stage[PipelineStage.EXTRACT_CLAIMS].status == "succeeded"
+    assert by_stage[PipelineStage.EXTRACT_CLAIMS].finished_at is not None
+    assert by_stage[PipelineStage.NORMALIZE_RELATIONS].status == "succeeded"
 
 
 def test_rerunning_normalization_replays_without_model_calls(rig: _E3Rig) -> None:

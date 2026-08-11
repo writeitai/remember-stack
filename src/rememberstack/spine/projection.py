@@ -436,6 +436,16 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
     # into multi-million-cost nested loops (recursive survivor CTEs × provenance
     # EXISTS per entity) and hang P2 rebuilds on modest corpora. See
     # design/operations/p2-projection-hang-beam-smoke.md.
+    # RELATES therefore approximates graph_edges_visible_history rather than
+    # matching it. It agrees on edge membership — survivor-redirected endpoints,
+    # surviving evidence lineage on a live document, and invalidated edges
+    # retained so liveness is derived at read time (D69/D48). It deliberately
+    # differs on the ENDPOINT gate: the view requires both survivors to be in
+    # entities_current (surviving provenance), while this export only requires an
+    # active, unmerged node, because expanding entities_current per row is the
+    # hang described above. Consequence to know: an edge whose endpoint is active
+    # but has no surviving lineage projects here and is dropped by the live
+    # graph_edges_* views, so P2 and live SQL can disagree on that edge alone.
     "Entity": text(
         """
         SELECT e.entity_id AS id, e.type AS type,
@@ -460,9 +470,9 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
     ),
     "RELATES": text(
         """
-        SELECT r.subject_entity_id AS from_id, r.object_entity_id AS to_id,
-               r.relation_id, r.subject_entity_id AS subject_id,
-               r.object_entity_id AS object_id,
+        SELECT subject.survivor AS from_id, object.survivor AS to_id,
+               r.relation_id, subject.survivor AS subject_id,
+               object.survivor AS object_id,
                r.predicate, r.fact_label AS fact,
                r.evidence_count AS evidence_count,
                r.contradict_count AS contradict_count,
@@ -476,8 +486,25 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
           ON subject.entity_id = r.subject_entity_id
         JOIN graph_survivor AS object
           ON object.entity_id = r.object_entity_id
+        JOIN entities AS subject_node
+          ON subject_node.entity_id = subject.survivor
+         AND subject_node.status = 'active'
+         AND subject_node.merged_into IS NULL
+        JOIN entities AS object_node
+          ON object_node.entity_id = object.survivor
+         AND object_node.status = 'active'
+         AND object_node.merged_into IS NULL
         WHERE r.deployment_id = :deployment_id
-          AND r.invalidated_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM relation_evidence AS re
+            JOIN documents AS d
+              ON d.deployment_id = re.deployment_id
+             AND d.doc_id = re.doc_id
+             AND d.deleted_at IS NULL
+            WHERE re.deployment_id = r.deployment_id
+              AND re.relation_id = r.relation_id
+          )
         """
     ),
     "MENTIONED_IN": text(
@@ -697,8 +724,25 @@ _SELECT_WATERMARK = text(
       ON subject.entity_id = r.subject_entity_id
     JOIN graph_survivor AS object
       ON object.entity_id = r.object_entity_id
+    JOIN entities AS subject_node
+      ON subject_node.entity_id = subject.survivor
+     AND subject_node.status = 'active'
+     AND subject_node.merged_into IS NULL
+    JOIN entities AS object_node
+      ON object_node.entity_id = object.survivor
+     AND object_node.status = 'active'
+     AND object_node.merged_into IS NULL
     WHERE r.deployment_id = :deployment_id
-      AND r.invalidated_at IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM relation_evidence AS re
+        JOIN documents AS d
+          ON d.deployment_id = re.deployment_id
+         AND d.doc_id = re.doc_id
+         AND d.deleted_at IS NULL
+        WHERE re.deployment_id = r.deployment_id
+          AND re.relation_id = r.relation_id
+      )
     """
 )
 

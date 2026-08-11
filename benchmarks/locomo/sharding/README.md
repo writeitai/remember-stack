@@ -23,10 +23,21 @@ Every host needs:
   benchmark CLI; and
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` exported so the driver can address the
   published P3 path (the value must match Compose).
+- GNU tar with zstd support and the benchmark extra's Google Cloud Storage
+  client configured through short-lived X.509 Workload Identity Federation;
+  and
+- `LOCOMO_BACKUP_DESTINATION` exported as the private bucket and base prefix
+  (for example
+  `gs://remember-stack-locomo-backups/runs`).
+- `LOCOMO_GCP_PROJECT` exported as the bucket's GCP billing project.
 
-Treat the OpenRouter key as a secret. Inject it from the host's secret manager or export it in the
-interactive session that starts `nohup`. Never put it in this repository, a shard plan, a command
-argument, or a log. Use an OpenRouter account cap as the hard monetary boundary; the harness cost
+Treat the OpenRouter key and X.509 client private key as secrets. Inject them
+from the host's secret manager. Never put either value in this repository, a
+shard plan, a command argument, or a log. The federated GCS principal must be
+scoped to the benchmark bucket with object create/view access but no
+overwrite/delete. A Google service-account JSON key is neither needed nor
+permitted by the current organization policy.
+Use an OpenRouter account cap as the hard monetary boundary; the harness cost
 cap is a reported-spend stop threshold.
 
 Build the image once from the checked-out revision on every host:
@@ -39,7 +50,11 @@ docker compose build
 
 The driver assumes the checkout, virtual environment, image, Compose configuration, dataset, and
 environment variables already exist. It deliberately does not provision machines or distribute
-secrets. Any set of SSH-accessible hosts works.
+secrets. It runs as root because Docker's volume mountpoints are root-owned,
+and it verifies that the configured GCS bucket is readable before preparing or
+running any paid sample. The preflight also writes one tiny create-only probe,
+so a missing uploader grant fails before paid work. Any set of SSH-accessible
+hosts works.
 
 ## 1. Plan balanced shards
 
@@ -104,17 +119,25 @@ nohup benchmarks/locomo/sharding/run_shard.sh \
 Repeat with the generated list on `bench-b` and `bench-c`. The first invocation prepares the full
 publication manifest locally. For every assigned sample the driver:
 
-1. runs `docker compose down --volumes`, then starts every service with extract-claims ×3,
-   normalize-relations ×6, and embed-claim ×2;
-2. ingests only that sample with the isolated-deployment confirmation;
-3. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
+1. verifies that an existing store has a readable off-host backup receipt,
+   then and only then runs `docker compose down --volumes`;
+2. starts every service with extract-claims ×3, normalize-relations ×6, and
+   embed-claim ×2, then records which sample owns the new volumes;
+3. ingests only that sample with the isolated-deployment confirmation;
+4. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
    six-hour default budget, and stops immediately on a dead letter;
-4. builds projections through the Compose `operations` profile; and
-5. publishes the ordinary P3 mount, then runs the complete-plane answer agent
-   and judge with run-absolute caps.
+5. builds projections through the Compose `operations` profile;
+6. publishes the ordinary P3 mount, then runs the complete-plane answer agent
+   and judge with run-absolute caps; and
+7. stops the stack; archives Postgres, MinIO, application state, forget
+   manifests, run state, and the published mount root; uploads them to a unique
+   immutable GCS prefix with CRC32C transport validation and create-only
+   preconditions; checks object sizes; reads back the manifest; and writes a
+   verified receipt.
 
-Progress is emitted as UTC timestamped log lines. Sample databases are disposable benchmark
-state and are not backed up before the next isolated sample starts.
+Progress is emitted as UTC timestamped log lines. Sample stores are disposable
+only *after* their remote receipt verifies. A backup, upload, comparison, or
+read-back failure exits non-zero with the stack stopped and volumes intact.
 
 The following environment variables tune the driver without changing its arguments:
 
@@ -131,6 +154,13 @@ The following environment variables tune the driver without changing its argumen
 | `LOCOMO_MAX_EVALUATOR_COST_USD` | `1000` | shared reported-spend stop threshold |
 | `LOCOMO_DRAIN_TIMEOUT_SECONDS` | `21600` | true-drain budget (six hours) |
 | `LOCOMO_DRAIN_POLL_SECONDS` | `30` | ledger poll interval |
+| `LOCOMO_BACKUP_DESTINATION` | **required** | private `gs://` bucket/base prefix |
+| `LOCOMO_GCP_PROJECT` | **required** | GCP project used by the external-account Storage client |
+| `LOCOMO_BACKUP_STAGING_ROOT` | `/var/lib/rememberstack-locomo-backups` | local staging retained on failure |
+| `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
+| `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
+| `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |
+| `LOCOMO_GCP_CERTIFICATE_CONFIG_FILE` | `/etc/rememberstack/locomo-gcs/certificate-config.json` | public client-certificate path configuration |
 
 The call ceilings cover the whole prepared publication manifest, not merely one sample. Lower
 values must still satisfy the harness's run-absolute guards. If a command fails, leave the stack
@@ -146,7 +176,64 @@ run. With any such record, restart every sample assigned to the old run
 directory: the merger deliberately rejects a replacement for an
 already-recorded sample. Never edit or force a checkpoint forward.
 
-## 4. Collect run directories
+### Existing unmarked stores
+
+The wipe guard refuses a pre-existing Compose store with no live-sample marker.
+This is deliberate: the runner cannot guess which conversation produced those
+bytes. If an older host contains a known store, identify its sample and run:
+
+```bash
+.venv/bin/python benchmarks/locomo/sharding/store_backup.py record-live \
+  --run-dir /srv/locomo-runs/publication \
+  --sample conv-50
+
+.venv/bin/python benchmarks/locomo/sharding/store_backup.py backup \
+  --run-dir /srv/locomo-runs/publication \
+  --mount-root /srv/locomo-runs/publication/.mounts \
+  --sample conv-50 \
+  --project "$LOCOMO_GCP_PROJECT" \
+  --destination "$LOCOMO_BACKUP_DESTINATION"
+```
+
+The backup derives the deployment ID from that sample's completed ingest
+checkpoints; it never trusts the current shell for stored identity. Do not
+record a guessed sample ID. If store identity cannot be proven, leave the
+volumes in place for inspection.
+
+## 4. Restore one conversation
+
+Keep the verified receipt with the collected run artifacts. On a checkout of
+the manifest's recorded engine revision, with the ordinary Compose environment
+and federated GCS identity configured, restore into explicit empty targets:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/etc/rememberstack/locomo-gcs/credentials.json
+export GOOGLE_API_CERTIFICATE_CONFIG=/etc/rememberstack/locomo-gcs/certificate-config.json
+export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
+
+.venv/bin/python benchmarks/locomo/sharding/store_backup.py restore \
+  --receipt /srv/receipts/conv-50.json \
+  --run-dir /srv/locomo-restores/conv-50 \
+  --mount-root /srv/locomo-restores/conv-50-mounts \
+  --compose-base-env /opt/remember-stack/.env \
+  --start
+```
+
+Restore first re-verifies the remote manifest and receipt plus every archive's
+size, GCS generation, and CRC32C, downloads to a new staging directory, checks
+every SHA-256 and tar member, and refuses non-empty run, mount, or Docker-volume
+targets. `--start` brings up Postgres, MinIO, setup, and the API after
+extraction. It makes the saved deployment ID, revision, and non-secret model
+and routing bindings authoritative over the operator-supplied secret-bearing
+base env and parent shell; secrets are never copied into backup metadata.
+Startup refuses an API image whose stamped revision differs from the manifest.
+Absolute P3 snapshot pointers are rebased to the restored mount root, so
+recovery does not depend on the source host's filesystem path.
+Then assert that the sample has no unanswered items and run the ordinary answer
+preflight with an invalid evaluator key to prove sample lineage, readiness, and
+projection freshness without authorizing a paid model call.
+
+## 5. Collect run directories
 
 Create a host file on the collector with one SSH destination or configured alias per line:
 
@@ -173,7 +260,7 @@ one `--run` flag per directory. It writes
 judge/official-F1 score. Use a new or empty collection directory so stale files cannot survive a
 second collection.
 
-## 5. Merge manually
+## 6. Merge manually
 
 Run merging without the collection helper when the run directories are already local:
 

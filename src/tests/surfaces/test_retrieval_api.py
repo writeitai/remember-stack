@@ -75,6 +75,8 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.surfaces.lineage_seed import seed_entity_mention
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a0000000-0000-0000-0000-000000000001")
@@ -611,6 +613,16 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
     second_context = UUID("51000000-0000-0000-0000-000000000003")
     acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
     with rig.engine.begin() as connection:
+        # Johns and the second context entity need surviving provenance so
+        # entities_current publishes them, and each relation needs a claim on a
+        # live lineage so graph_edges_current can count context hits.
+        lineage = seed_live_document_lineage(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            label="s51",
+            title="S51 context",
+            source_ref="s51-context",
+        )
         for entity_id, canonical_name in (
             (distractor, "John A"),
             (contextual, "John B"),
@@ -641,6 +653,16 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
                     "entity_id": entity_id,
                 },
             )
+            seed_entity_mention(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                entity_id=entity_id,
+                doc_id=lineage.doc_id,
+                chunk_id=lineage.chunk_id,
+                surface_form="John",
+                normalized_lemma="john",
+                resolver_version="s51",
+            )
         connection.execute(
             text(
                 "INSERT INTO entities (entity_id, deployment_id, type,"
@@ -650,11 +672,15 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
             ),
             {"entity_id": second_context, "deployment_id": _DEPLOYMENT_ID},
         )
-        relation = text(
-            "INSERT INTO relations (relation_id, deployment_id,"
-            " subject_entity_id, predicate, object_entity_id,"
-            " normalizer_version) VALUES (:relation_id, :deployment_id,"
-            " :subject_id, :predicate, :object_id, 's51-spike')"
+        seed_entity_mention(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            entity_id=second_context,
+            doc_id=lineage.doc_id,
+            chunk_id=lineage.chunk_id,
+            surface_form="Second context",
+            normalized_lemma="second context",
+            resolver_version="s51",
         )
         for subject_id, predicate, object_id in (
             (contextual, "works_for", UUID(acme["entity_id"])),
@@ -663,14 +689,53 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
             (distractor, "works_for", UUID(acme["entity_id"])),
             (distractor, "member_of", UUID(acme["entity_id"])),
         ):
+            relation_id = uuid4()
+            claim_id = uuid4()
+            body = f"{subject_id} {predicate} {object_id}"
             connection.execute(
-                relation,
+                text(
+                    "INSERT INTO relations (relation_id, deployment_id,"
+                    " subject_entity_id, predicate, object_entity_id,"
+                    " normalizer_version, evidence_count, ingested_at) VALUES"
+                    " (:relation_id, :deployment_id, :subject_id, :predicate,"
+                    " :object_id, 's51-spike', 1, now())"
+                ),
                 {
-                    "relation_id": uuid4(),
+                    "relation_id": relation_id,
                     "deployment_id": _DEPLOYMENT_ID,
                     "subject_id": subject_id,
                     "predicate": predicate,
                     "object_id": object_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                    " claim_text, source_span, char_start, char_end, anchor_ok,"
+                    " window_membership_ok, is_current_testimony, extractor_version,"
+                    " ingested_at) VALUES (:claim, :deployment, :doc, :chunk,"
+                    " :body, :body, 0, :end, true, true, true, 's51', now())"
+                ),
+                {
+                    "claim": claim_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "doc": lineage.doc_id,
+                    "chunk": lineage.chunk_id,
+                    "body": body,
+                    "end": len(body),
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                    " claim_id, doc_id, stance, normalizer_version) VALUES"
+                    " (:deployment, :relation, :claim, :doc, 'supports', 's51')"
+                ),
+                {
+                    "deployment": _DEPLOYMENT_ID,
+                    "relation": relation_id,
+                    "claim": claim_id,
+                    "doc": lineage.doc_id,
                 },
             )
 
@@ -737,7 +802,9 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
         _executemany: bool,
     ) -> None:
         nonlocal confirmation_calls
-        if "FROM claims" in statement:
+        # Confirmation now reads the invariant view (memory_v1.claims_live),
+        # not the base table — still the real nominate-then-confirm path.
+        if "memory_v1.claims_live" in statement:
             confirmation_calls += 1
 
     event.listen(rig.engine, "before_cursor_execute", count_confirmation_calls)

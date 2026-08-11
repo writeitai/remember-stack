@@ -73,12 +73,15 @@ export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
 
-Per sample it: wipes the disposable stack (`docker compose down -v`), starts
-it with worker scaling (`--scale worker-extract-claims=3
+Per sample it: acquires the host lock, verifies the previous live sample's
+complete-plane GCS receipt and archive identities, then wipes the explicitly
+bound Compose project. It starts the empty stack with worker scaling (`--scale worker-extract-claims=3
 --scale worker-normalize-relations=6 --scale worker-embed-claim=2`),
 ingests, waits for a **true drain** (6 h budget, aborts on dead-letter),
-publishes projections, answers, judges. `summarize --run <dir>` prints the
-scorecard.
+publishes projections, answers, judges, and creates a new verified GCS backup
+before the next sample may begin. See
+`benchmarks/locomo/sharding/README.md` for the binding backup/restore contract.
+`summarize --run <dir>` prints the scorecard.
 
 Manual equivalents, when you need them:
 

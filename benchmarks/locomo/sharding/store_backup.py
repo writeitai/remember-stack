@@ -1,0 +1,1514 @@
+"""Fail-closed complete-plane backup and restore for sharded LoCoMo stores."""
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Sequence
+from contextlib import contextmanager
+from contextlib import nullcontext
+from datetime import datetime
+from datetime import UTC
+import fcntl
+from functools import lru_cache
+import hashlib
+import json
+import os
+from pathlib import Path
+from pathlib import PurePosixPath
+import secrets
+import shutil
+import subprocess
+import sys
+import tarfile
+from typing import Annotated
+from typing import Iterator
+from typing import Literal
+
+from google.api_core.exceptions import GoogleAPIError
+from google.api_core.exceptions import PreconditionFailed
+from google.auth.exceptions import GoogleAuthError
+from google.cloud import storage
+from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import Field
+
+EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifests")
+RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
+LIVE_STORE_MARKER = Path(".locomo-live-store.json")
+RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
+DEFAULT_LOCK_FILE = Path("/var/lock/rememberstack-locomo-shard.lock")
+
+MODEL_BINDING_ENVIRONMENT = {
+    "chunk_embedding": "REMEMBERSTACK_E1_EMBEDDING_MODEL",
+    "claim_extraction": "REMEMBERSTACK_E2_EXTRACT_MODEL",
+    "context_prefix": "REMEMBERSTACK_E1_PREFIX_MODEL",
+    "entity_observation_embedding": "REMEMBERSTACK_OBS_EMBEDDING_MODEL",
+    "fact_label": "REMEMBERSTACK_P1_LABEL_MODEL",
+    "observation_frontier": "REMEMBERSTACK_OBS_FRONTIER_MODEL",
+    "observation_small": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "openrouter_embedding_provider": "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER",
+    "openrouter_embedding_provider_order": (
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER"
+    ),
+    "openrouter_max_completion_tokens": (
+        "REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS"
+    ),
+    "openrouter_reasoning_effort": "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT",
+    "openrouter_reasoning_effort_map": (
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP"
+    ),
+    "p1_embedding": "REMEMBERSTACK_P1_EMBEDDING_MODEL",
+    "relation_normalization": "REMEMBERSTACK_E3_NORMALIZE_MODEL",
+    "section_role": "REMEMBERSTACK_ROLE_MODEL",
+    "section_summary": "REMEMBERSTACK_SUMMARY_MODEL",
+    "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
+    "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
+    "supersession_frontier": "REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL",
+    "supersession_small": "REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL",
+}
+UNSET_MODEL_BINDINGS = {
+    "openrouter_embedding_provider": "auto",
+    "openrouter_embedding_provider_order": "unset",
+    "openrouter_max_completion_tokens": "unset",
+    "openrouter_reasoning_effort": "auto",
+    "openrouter_reasoning_effort_map": "unset",
+}
+
+NonEmpty = Annotated[str, Field(min_length=1)]
+Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class StoreBackupError(RuntimeError):
+    """Report a safety failure that must preserve the current store."""
+
+
+class FrozenModel(BaseModel):
+    """Strict immutable base for durable backup metadata."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class LocalArchiveRecord(FrozenModel):
+    """Identify one complete archive before it has a remote object identity."""
+
+    kind: Literal["volume", "run", "mounts"]
+    logical_name: NonEmpty
+    docker_volume: str | None = None
+    relative_path: NonEmpty
+    byte_size: int = Field(ge=0)
+    sha256: Sha256
+
+
+class ArchiveRecord(LocalArchiveRecord):
+    """Bind one uploaded archive to its immutable GCS object identity."""
+
+    gcs_generation: int = Field(ge=1)
+    gcs_crc32c: NonEmpty
+
+
+class RemoteObjectMetadata(FrozenModel):
+    """Identify one immutable GCS object after a checked upload or reload."""
+
+    byte_size: int = Field(ge=0)
+    generation: int = Field(ge=1)
+    crc32c: NonEmpty
+
+
+class RunIdentity(FrozenModel):
+    """Bind a store to the benchmark protocol and input bytes that produced it."""
+
+    protocol_name: NonEmpty
+    protocol_fingerprint: NonEmpty
+    repository_revision: NonEmpty
+    prepared_at: NonEmpty
+    dataset_sha256: Sha256
+    item_ids_sha256: Sha256
+
+
+class BackupManifest(FrozenModel):
+    """Describe one complete, restorable LoCoMo recovery unit."""
+
+    schema_version: Literal[1] = 1
+    kind: Literal["rememberstack-locomo-store-backup"] = (
+        "rememberstack-locomo-store-backup"
+    )
+    created_at: NonEmpty
+    sample_id: NonEmpty
+    deployment_id: NonEmpty
+    compose_project: NonEmpty
+    run: RunIdentity
+    archives: Annotated[tuple[ArchiveRecord, ...], Field(min_length=6, max_length=6)]
+
+
+class BackupReceipt(FrozenModel):
+    """Prove that a manifest and all of its archives passed remote verification."""
+
+    schema_version: Literal[1] = 1
+    kind: Literal["rememberstack-locomo-backup-receipt"] = (
+        "rememberstack-locomo-backup-receipt"
+    )
+    status: Literal["verified"] = "verified"
+    sample_id: NonEmpty
+    gcp_project: NonEmpty
+    remote_prefix: NonEmpty
+    manifest_sha256: Sha256
+    verified_at: NonEmpty
+
+
+class LiveStoreMarker(FrozenModel):
+    """Name the sample whose isolated store currently occupies Compose volumes."""
+
+    schema_version: Literal[1] = 1
+    sample_id: NonEmpty
+    recorded_at: NonEmpty
+
+
+def _utc_now() -> datetime:
+    """Return the current timezone-aware UTC time."""
+
+    return datetime.now(tz=UTC)
+
+
+def _timestamp(value: datetime) -> str:
+    """Render a UTC timestamp with a stable filesystem-safe form."""
+
+    return value.strftime("%Y%m%dT%H%M%SZ")
+
+
+def _log(message: str) -> None:
+    """Emit one UTC-stamped operator log line."""
+
+    print(f"{_utc_now().strftime('%Y-%m-%dT%H:%M:%SZ')} {message}", flush=True)
+
+
+def _run(
+    *, args: Sequence[str], capture_output: bool = False, text: bool = True
+) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    """Run one checked command and translate failures into preservation errors."""
+
+    try:
+        return subprocess.run(
+            list(args), check=True, capture_output=capture_output, text=text
+        )
+    except FileNotFoundError as exc:
+        raise StoreBackupError(f"required command is not installed: {args[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = ""
+        if exc.stderr:
+            detail = f": {str(exc.stderr).strip()}"
+        raise StoreBackupError(f"command failed: {' '.join(args)}{detail}") from exc
+
+
+def _compose_command(
+    *, compose_project: str, arguments: Sequence[str]
+) -> tuple[str, ...]:
+    """Bind every Compose mutation to the project used by the volume gate."""
+
+    return ("docker", "compose", "--project-name", compose_project, *arguments)
+
+
+@contextmanager
+def _exclusive_store_lock(
+    *, lock_file: Path, inherited_lock_fd: int | None
+) -> Iterator[None]:
+    """Exclude every CLI operation that can mutate the benchmark store."""
+
+    descriptor: int | None = None
+    lock_fd = inherited_lock_fd
+    try:
+        if lock_fd is None:
+            lock_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+            descriptor = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o600)
+            lock_fd = descriptor
+        os.fstat(lock_fd)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, ValueError) as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise StoreBackupError(
+            f"another LoCoMo store operation owns this host: {lock_file}"
+        ) from exc
+    try:
+        yield
+    finally:
+        if descriptor is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+
+def _sha256(path: Path) -> str:
+    """Calculate the SHA-256 digest of one local file."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _bytes_sha256(value: bytes) -> str:
+    """Calculate the SHA-256 digest of in-memory bytes."""
+
+    return hashlib.sha256(value).hexdigest()
+
+
+def _write_model(*, path: Path, model: BaseModel) -> bytes:
+    """Atomically write one validated model as canonical human-readable JSON."""
+
+    payload = (model.model_dump_json(indent=2) + "\n").encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    temporary.write_bytes(payload)
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
+    return payload
+
+
+def _load_object(path: Path) -> dict[str, object]:
+    """Load one JSON object and reject non-object roots."""
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise StoreBackupError(f"cannot read JSON object: {path}") from exc
+    if not isinstance(value, dict):
+        raise StoreBackupError(f"JSON root must be an object: {path}")
+    return value
+
+
+def _required_string(*, value: object, field: str) -> str:
+    """Return one required non-empty string from untrusted run metadata."""
+
+    if not isinstance(value, str) or not value:
+        raise StoreBackupError(f"run.json has no valid {field}")
+    return value
+
+
+def _run_identity(run_dir: Path) -> RunIdentity:
+    """Read the stable protocol identity from a prepared benchmark run."""
+
+    value = _load_object(run_dir / "run.json")
+    return RunIdentity(
+        protocol_name=_required_string(
+            value=value.get("protocol_name"), field="protocol_name"
+        ),
+        protocol_fingerprint=_required_string(
+            value=value.get("protocol_fingerprint"), field="protocol_fingerprint"
+        ),
+        repository_revision=_required_string(
+            value=value.get("repository_revision"), field="repository_revision"
+        ),
+        prepared_at=_required_string(
+            value=value.get("prepared_at"), field="prepared_at"
+        ),
+        dataset_sha256=_required_string(
+            value=value.get("dataset_sha256"), field="dataset_sha256"
+        ),
+        item_ids_sha256=_required_string(
+            value=value.get("item_ids_sha256"), field="item_ids_sha256"
+        ),
+    )
+
+
+def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
+    """Derive one sample's deployment identity from its ingest checkpoints."""
+
+    state = _load_object(run_dir / "state.json")
+    ingests = state.get("ingests")
+    if not isinstance(ingests, dict):
+        raise StoreBackupError("state.json has no ingest checkpoints")
+    deployment_ids: set[str] = set()
+    for record in ingests.values():
+        if not isinstance(record, dict) or record.get("sample_id") != sample_id:
+            continue
+        deployment_id = record.get("deployment_id")
+        if not isinstance(deployment_id, str) or not deployment_id:
+            raise StoreBackupError(
+                f"ingest checkpoint for {sample_id} has no deployment identity"
+            )
+        deployment_ids.add(deployment_id)
+    if len(deployment_ids) != 1:
+        raise StoreBackupError(
+            f"ingest checkpoints for {sample_id} do not identify one deployment"
+        )
+    return deployment_ids.pop()
+
+
+def _require_manifest_deployment(*, manifest: BackupManifest, run_dir: Path) -> None:
+    """Require backup metadata to match the archived ingest checkpoints."""
+
+    checkpointed = _sample_deployment_id(run_dir=run_dir, sample_id=manifest.sample_id)
+    if manifest.deployment_id != checkpointed:
+        raise StoreBackupError(
+            "backup deployment differs from the sample ingest checkpoints"
+        )
+
+
+def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
+    """Reconstruct non-secret Compose bindings from saved sample readiness."""
+
+    state = _load_object(run_dir / "state.json")
+    readiness = state.get("readiness")
+    if not isinstance(readiness, dict):
+        raise StoreBackupError("state.json has no readiness object")
+    sample_readiness = readiness.get(sample_id)
+    if not isinstance(sample_readiness, dict):
+        raise StoreBackupError(f"state.json has no readiness for {sample_id}")
+    bindings = sample_readiness.get("model_bindings")
+    if not isinstance(bindings, dict):
+        raise StoreBackupError(f"state.json has no model bindings for {sample_id}")
+
+    environment: dict[str, str] = {}
+    for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
+        value = bindings.get(binding)
+        if not isinstance(value, str) or not value:
+            raise StoreBackupError(f"saved readiness has no valid {binding} binding")
+        normalized = "" if value == UNSET_MODEL_BINDINGS.get(binding) else value
+        if "\n" in normalized or "\r" in normalized or "\x00" in normalized:
+            raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
+        environment[variable] = normalized
+    return environment
+
+
+def _write_runtime_environment(
+    *, run_dir: Path, sample_id: str, deployment_id: str, repository_revision: str
+) -> Path:
+    """Write a non-secret Compose overlay for saved bindings and identity."""
+
+    environment = _runtime_environment(run_dir=run_dir, sample_id=sample_id)
+    environment["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = deployment_id
+    environment["REMEMBERSTACK_BUILD_REVISION"] = repository_revision
+    path = run_dir / RUNTIME_ENVIRONMENT
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = "".join(
+        f"{name}={json.dumps(value)}\n" for name, value in sorted(environment.items())
+    ).encode("utf-8")
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    temporary.write_bytes(payload)
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
+    return path
+
+
+def _compose_runtime_command(
+    *,
+    compose_project: str,
+    compose_base_env: Path,
+    runtime_environment: Path,
+    arguments: Sequence[str],
+) -> tuple[str, ...]:
+    """Run Compose with saved runtime values authoritative over parent exports."""
+
+    unset = tuple(
+        item
+        for variable in (
+            *MODEL_BINDING_ENVIRONMENT.values(),
+            "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID",
+            "REMEMBERSTACK_BUILD_REVISION",
+        )
+        for item in ("--unset", variable)
+    )
+    return (
+        "env",
+        *unset,
+        *_compose_command(
+            compose_project=compose_project,
+            arguments=(
+                "--env-file",
+                str(compose_base_env),
+                "--env-file",
+                str(runtime_environment),
+                *arguments,
+            ),
+        ),
+    )
+
+
+def _validate_runtime_identity(
+    *,
+    manifest: BackupManifest,
+    compose_project: str,
+    compose_base_env: Path,
+    runtime_environment: Path,
+) -> None:
+    """Refuse setup unless the image and Compose match saved identity."""
+    configured = _run(
+        args=_compose_runtime_command(
+            compose_project=compose_project,
+            compose_base_env=compose_base_env,
+            runtime_environment=runtime_environment,
+            arguments=("config", "--format", "json"),
+        ),
+        capture_output=True,
+    )
+    try:
+        compose_config = json.loads(str(configured.stdout))
+        api = compose_config["services"]["api"]
+        api_environment = api["environment"]
+        image = api["image"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise StoreBackupError(
+            "Compose did not report a valid API configuration"
+        ) from exc
+    expected = _runtime_environment(
+        run_dir=runtime_environment.parents[1], sample_id=manifest.sample_id
+    )
+    expected["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = manifest.deployment_id
+    if not isinstance(api_environment, dict) or any(
+        api_environment.get(name) != value for name, value in expected.items()
+    ):
+        raise StoreBackupError("Compose runtime differs from the saved backup identity")
+    if not isinstance(image, str) or not image:
+        raise StoreBackupError("Compose API image identity is unavailable")
+    inspected = _run(
+        args=("docker", "image", "inspect", "--format", "{{json .Config.Env}}", image),
+        capture_output=True,
+    )
+    try:
+        image_environment = json.loads(str(inspected.stdout))
+    except json.JSONDecodeError as exc:
+        raise StoreBackupError("API image environment is unreadable") from exc
+    revision_entry = f"REMEMBERSTACK_BUILD_REVISION={manifest.run.repository_revision}"
+    if (
+        not isinstance(image_environment, list)
+        or revision_entry not in image_environment
+    ):
+        raise StoreBackupError("API image revision differs from the backup manifest")
+
+
+def _volume_names(*, compose_project: str) -> dict[str, str]:
+    """Resolve exactly one Docker volume for each logical Compose volume."""
+
+    resolved: dict[str, str] = {}
+    for logical_name in EXPECTED_VOLUMES:
+        result = _run(
+            args=(
+                "docker",
+                "volume",
+                "ls",
+                "--quiet",
+                "--filter",
+                f"label=com.docker.compose.project={compose_project}",
+                "--filter",
+                f"label=com.docker.compose.volume={logical_name}",
+            ),
+            capture_output=True,
+        )
+        names = [line for line in str(result.stdout).splitlines() if line]
+        if len(names) != 1:
+            raise StoreBackupError(
+                f"expected one {logical_name!r} volume for project "
+                f"{compose_project!r}, found {len(names)}"
+            )
+        resolved[logical_name] = names[0]
+    return resolved
+
+
+def _volume_count(*, compose_project: str) -> int:
+    """Count all Docker volumes labelled for one Compose project."""
+
+    result = _run(
+        args=(
+            "docker",
+            "volume",
+            "ls",
+            "--quiet",
+            "--filter",
+            f"label=com.docker.compose.project={compose_project}",
+        ),
+        capture_output=True,
+    )
+    return len([line for line in str(result.stdout).splitlines() if line])
+
+
+def _volume_mountpoint(volume_name: str) -> Path:
+    """Return the host mountpoint for one named Docker volume."""
+
+    result = _run(
+        args=(
+            "docker",
+            "volume",
+            "inspect",
+            "--format",
+            "{{ .Mountpoint }}",
+            volume_name,
+        ),
+        capture_output=True,
+    )
+    mountpoint = Path(str(result.stdout).strip())
+    if not mountpoint.is_dir():
+        raise StoreBackupError(
+            f"Docker volume mountpoint is not a directory: {mountpoint}"
+        )
+    return mountpoint
+
+
+def _archive_directory(*, source: Path, destination: Path) -> None:
+    """Create one ownership-preserving zstd-compressed tar archive."""
+
+    if not source.is_dir():
+        raise StoreBackupError(f"archive source is not a directory: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _run(
+        args=(
+            "tar",
+            "--create",
+            "--zstd",
+            "--file",
+            str(destination),
+            "--directory",
+            str(source),
+            "--acls",
+            "--xattrs",
+            "--numeric-owner",
+            ".",
+        )
+    )
+
+
+def _extract_directory(*, archive: Path, destination: Path) -> None:
+    """Extract one ownership-preserving zstd-compressed tar archive."""
+
+    _run(
+        args=(
+            "tar",
+            "--extract",
+            "--zstd",
+            "--file",
+            str(archive),
+            "--directory",
+            str(destination),
+            "--acls",
+            "--xattrs",
+            "--numeric-owner",
+        )
+    )
+
+
+def _rebase_published_mount_links(mount_root: Path) -> None:
+    """Make restored P3 pointers relative to their new deployment directory."""
+
+    for link in mount_root.glob("*/p3"):
+        if not link.is_symlink():
+            continue
+        target = Path(os.readlink(link))
+        if not target.is_absolute():
+            continue
+        local_target = link.parent / target.name
+        if (
+            target.parent.name != link.parent.name
+            or not target.name.startswith("p3-")
+            or not local_target.is_dir()
+        ):
+            raise StoreBackupError(f"restored P3 pointer is not portable: {link}")
+        replacement = link.with_name(f".{link.name}.{secrets.token_hex(4)}.tmp")
+        replacement.symlink_to(target.name, target_is_directory=True)
+        os.replace(replacement, link)
+
+
+def _record_for_archive(
+    *,
+    kind: Literal["volume", "run", "mounts"],
+    logical_name: str,
+    docker_volume: str | None,
+    archive: Path,
+    root: Path,
+) -> LocalArchiveRecord:
+    """Build checksum metadata for one newly created archive."""
+
+    return LocalArchiveRecord(
+        kind=kind,
+        logical_name=logical_name,
+        docker_volume=docker_volume,
+        relative_path=archive.relative_to(root).as_posix(),
+        byte_size=archive.stat().st_size,
+        sha256=_sha256(archive),
+    )
+
+
+def _remote_join(*, prefix: str, name: str) -> str:
+    """Join a GCS prefix and a relative object name."""
+
+    return f"{prefix.rstrip('/')}/{name.lstrip('/')}"
+
+
+def _parse_gcs_uri(uri: str) -> tuple[str, str]:
+    """Split one gs:// URI into a bucket name and object path."""
+
+    if not uri.startswith("gs://"):
+        raise StoreBackupError("backup destination must be a gs:// URI")
+    bucket, separator, object_name = uri[5:].partition("/")
+    if not bucket:
+        raise StoreBackupError("backup destination has no bucket name")
+    if not separator:
+        object_name = ""
+    return bucket, object_name.strip("/")
+
+
+@lru_cache(maxsize=4)
+def _storage_client(project_id: str) -> storage.Client:
+    """Create a GCS client from the workload's Application Default Credentials."""
+
+    if not project_id:
+        raise StoreBackupError("GCS billing project must be explicit")
+    try:
+        return storage.Client(project=project_id)
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError("cannot initialize GCS workload credentials") from exc
+
+
+def _remote_bytes(*, remote_path: str, project_id: str) -> bytes:
+    """Read and CRC32C-validate one complete GCS object."""
+
+    bucket_name, object_name = _parse_gcs_uri(remote_path)
+    if not object_name:
+        raise StoreBackupError("remote object path is empty")
+    try:
+        return (
+            _storage_client(project_id)
+            .bucket(bucket_name)
+            .blob(object_name)
+            .download_as_bytes(checksum="crc32c")
+        )
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(
+            f"cannot read or validate GCS object: {remote_path}"
+        ) from exc
+
+
+def _remote_metadata(*, remote_path: str, project_id: str) -> RemoteObjectMetadata:
+    """Return immutable identity metadata for one required GCS object."""
+
+    bucket_name, object_name = _parse_gcs_uri(remote_path)
+    if not object_name:
+        raise StoreBackupError("remote object path is empty")
+    try:
+        blob = _storage_client(project_id).bucket(bucket_name).blob(object_name)
+        blob.reload()
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(f"cannot inspect GCS object: {remote_path}") from exc
+    if blob.size is None or blob.generation is None or not blob.crc32c:
+        raise StoreBackupError(f"GCS object has incomplete metadata: {remote_path}")
+    return RemoteObjectMetadata(
+        byte_size=blob.size, generation=int(blob.generation), crc32c=blob.crc32c
+    )
+
+
+def _create_preflight_probe(*, remote_destination: str, project_id: str) -> None:
+    """Prove create-only access before any paid benchmark work can begin."""
+
+    remote_path = _remote_join(
+        prefix=remote_destination,
+        name=f"preflight/{_timestamp(_utc_now())}-{secrets.token_hex(4)}.txt",
+    )
+    bucket_name, object_name = _parse_gcs_uri(remote_path)
+    payload = b"rememberstack-locomo-backup-preflight\n"
+    try:
+        blob = _storage_client(project_id).bucket(bucket_name).blob(object_name)
+        blob.upload_from_string(payload, if_generation_match=0, checksum="crc32c")
+        blob.reload()
+    except PreconditionFailed as exc:
+        raise StoreBackupError(
+            f"refusing to replace an existing GCS object: {remote_path}"
+        ) from exc
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(
+            f"configured GCS destination is not create-capable: {remote_destination}"
+        ) from exc
+    if blob.size != len(payload):
+        raise StoreBackupError("GCS preflight probe size differs after upload")
+
+
+def _upload_file(
+    *, source: Path, remote_path: str, project_id: str
+) -> RemoteObjectMetadata:
+    """Create one immutable GCS object with transport checksum validation."""
+
+    bucket_name, object_name = _parse_gcs_uri(remote_path)
+    if not object_name:
+        raise StoreBackupError("remote object path is empty")
+    try:
+        blob = _storage_client(project_id).bucket(bucket_name).blob(object_name)
+        blob.upload_from_filename(str(source), if_generation_match=0, checksum="crc32c")
+        blob.reload()
+    except PreconditionFailed as exc:
+        raise StoreBackupError(
+            f"refusing to replace an existing GCS object: {remote_path}"
+        ) from exc
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(f"cannot upload GCS object: {remote_path}") from exc
+    if blob.size is None or blob.generation is None or not blob.crc32c:
+        raise StoreBackupError(f"GCS object has incomplete metadata: {remote_path}")
+    if blob.size != source.stat().st_size:
+        raise StoreBackupError(
+            f"remote object size differs after upload: {remote_path}"
+        )
+    return RemoteObjectMetadata(
+        byte_size=blob.size, generation=int(blob.generation), crc32c=blob.crc32c
+    )
+
+
+def _download_recovery_unit(*, receipt: BackupReceipt, staging: Path) -> BackupManifest:
+    """Download every manifest-declared object with GCS checksum validation."""
+
+    manifest_bytes = _remote_bytes(
+        remote_path=_remote_join(prefix=receipt.remote_prefix, name="manifest.json"),
+        project_id=receipt.gcp_project,
+    )
+    if _bytes_sha256(manifest_bytes) != receipt.manifest_sha256:
+        raise StoreBackupError("remote manifest no longer matches the receipt")
+    manifest = BackupManifest.model_validate_json(manifest_bytes)
+    manifest_path = staging / "manifest.json"
+    manifest_path.write_bytes(manifest_bytes)
+    for archive in manifest.archives:
+        relative = Path(archive.relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise StoreBackupError("manifest contains an unsafe archive path")
+        destination = staging / relative
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        bucket_name, object_name = _parse_gcs_uri(
+            _remote_join(prefix=receipt.remote_prefix, name=archive.relative_path)
+        )
+        try:
+            (
+                _storage_client(receipt.gcp_project)
+                .bucket(bucket_name)
+                .blob(object_name)
+                .download_to_filename(str(destination), checksum="crc32c")
+            )
+        except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+            raise StoreBackupError(
+                f"cannot download or validate GCS object: {archive.relative_path}"
+            ) from exc
+    return manifest
+
+
+def preflight_destination(*, remote_destination: str, project_id: str) -> None:
+    """Prove that the workload can read and create in the private destination."""
+
+    bucket_name, _prefix = _parse_gcs_uri(remote_destination)
+    try:
+        next(
+            iter(_storage_client(project_id).list_blobs(bucket_name, max_results=1)),
+            None,
+        )
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(
+            f"configured GCS destination is not readable: {remote_destination}"
+        ) from exc
+    _create_preflight_probe(
+        remote_destination=remote_destination, project_id=project_id
+    )
+
+
+def _safe_component(value: str) -> str:
+    """Convert one manifest identity component into a safe object-path segment."""
+
+    safe = "".join(
+        character if character.isalnum() or character in "._-" else "-"
+        for character in value
+    )
+    safe = safe.strip(".-")
+    if not safe:
+        raise StoreBackupError("backup identity produced an empty path component")
+    return safe
+
+
+def _receipt_path(*, run_dir: Path, sample_id: str) -> Path:
+    """Return the stable local verified-receipt path for one sample."""
+
+    return run_dir / RECEIPT_DIRECTORY / f"{_safe_component(sample_id)}.json"
+
+
+def _marker_path(run_dir: Path) -> Path:
+    """Return the live-store marker path for one benchmark run."""
+
+    return run_dir / LIVE_STORE_MARKER
+
+
+def record_live_store(*, run_dir: Path, sample_id: str, compose_project: str) -> None:
+    """Record which sample owns a newly created complete set of volumes."""
+
+    _volume_names(compose_project=compose_project)
+    marker = LiveStoreMarker(sample_id=sample_id, recorded_at=_utc_now().isoformat())
+    _write_model(path=_marker_path(run_dir), model=marker)
+    _log(f"sample={sample_id} live-store-marker=recorded")
+
+
+def _validate_manifest_inventory(manifest: BackupManifest) -> None:
+    """Require exactly the recovery objects and safe paths the restore consumes."""
+
+    expected = {
+        "postgres-data": "volume",
+        "minio-data": "volume",
+        "app-state": "volume",
+        "forget-manifests": "volume",
+        "run-directory": "run",
+        "published-mount-root": "mounts",
+    }
+    actual = {archive.logical_name: archive.kind for archive in manifest.archives}
+    if len(actual) != len(manifest.archives) or actual != expected:
+        raise StoreBackupError("backup archive inventory is incomplete or unexpected")
+    for archive in manifest.archives:
+        relative = Path(archive.relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise StoreBackupError("manifest contains an unsafe archive path")
+        if archive.kind == "volume" and not archive.docker_volume:
+            raise StoreBackupError("volume archive has no Docker volume identity")
+        if archive.kind != "volume" and archive.docker_volume is not None:
+            raise StoreBackupError("non-volume archive has a Docker volume identity")
+
+
+def verify_receipt(receipt_path: Path) -> tuple[BackupReceipt, BackupManifest]:
+    """Re-check the receipt, manifest, and every required remote archive."""
+
+    try:
+        local_bytes = receipt_path.read_bytes()
+    except OSError as exc:
+        raise StoreBackupError(
+            f"verified receipt is unavailable: {receipt_path}"
+        ) from exc
+    receipt = BackupReceipt.model_validate_json(local_bytes)
+    manifest_bytes = _remote_bytes(
+        remote_path=_remote_join(prefix=receipt.remote_prefix, name="manifest.json"),
+        project_id=receipt.gcp_project,
+    )
+    if _bytes_sha256(manifest_bytes) != receipt.manifest_sha256:
+        raise StoreBackupError("remote manifest no longer matches the verified receipt")
+    manifest = BackupManifest.model_validate_json(manifest_bytes)
+    if manifest.sample_id != receipt.sample_id:
+        raise StoreBackupError("manifest and receipt name different samples")
+    _validate_manifest_inventory(manifest)
+    for archive in manifest.archives:
+        remote_path = _remote_join(
+            prefix=receipt.remote_prefix, name=archive.relative_path
+        )
+        metadata = _remote_metadata(
+            remote_path=remote_path, project_id=receipt.gcp_project
+        )
+        if metadata.byte_size != archive.byte_size:
+            raise StoreBackupError(
+                f"remote archive size differs from manifest: {archive.relative_path}"
+            )
+        if (
+            metadata.generation != archive.gcs_generation
+            or metadata.crc32c != archive.gcs_crc32c
+        ):
+            raise StoreBackupError(
+                f"remote archive identity differs from manifest: {archive.relative_path}"
+            )
+    remote_receipt = _remote_bytes(
+        remote_path=_remote_join(prefix=receipt.remote_prefix, name="receipt.json"),
+        project_id=receipt.gcp_project,
+    )
+    if remote_receipt != local_bytes:
+        raise StoreBackupError("remote receipt no longer matches the local receipt")
+    return receipt, manifest
+
+
+def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
+    """Refuse volume deletion unless the current live store has a valid receipt."""
+
+    count = _volume_count(compose_project=compose_project)
+    marker_path = _marker_path(run_dir)
+    if count == 0 and not marker_path.exists():
+        _log("wipe-authorized reason=no-existing-store")
+        return
+    if count not in (0, len(EXPECTED_VOLUMES)):
+        raise StoreBackupError(
+            f"Compose project has {count} volumes; expected zero or {len(EXPECTED_VOLUMES)}"
+        )
+    if not marker_path.is_file():
+        raise StoreBackupError(
+            "existing Compose store has no live-sample marker; identify and back it up before wiping"
+        )
+    marker = LiveStoreMarker.model_validate_json(marker_path.read_bytes())
+    if count:
+        _volume_names(compose_project=compose_project)
+    receipt, manifest = verify_receipt(
+        _receipt_path(run_dir=run_dir, sample_id=marker.sample_id)
+    )
+    if receipt.sample_id != marker.sample_id:
+        raise StoreBackupError(
+            "live-store marker and verified receipt name different samples"
+        )
+    if manifest.compose_project != compose_project:
+        raise StoreBackupError("verified backup belongs to a different Compose project")
+    _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
+    _log(f"sample={marker.sample_id} wipe-authorized receipt=verified")
+
+
+def clear_live_store_marker(*, run_dir: Path) -> None:
+    """Remove the local marker after Docker confirms volume deletion."""
+
+    marker = _marker_path(run_dir)
+    if marker.exists():
+        marker.unlink()
+
+
+def backup_store(
+    *,
+    sample_id: str,
+    run_dir: Path,
+    mount_root: Path,
+    compose_project: str,
+    gcp_project: str,
+    remote_destination: str,
+    staging_root: Path,
+) -> BackupReceipt:
+    """Stop, archive, upload, and verify one complete LoCoMo sample store."""
+
+    if not run_dir.is_dir():
+        raise StoreBackupError(f"run directory does not exist: {run_dir}")
+    if not mount_root.is_dir():
+        raise StoreBackupError(f"mount root does not exist: {mount_root}")
+    marker_path = _marker_path(run_dir)
+    if not marker_path.is_file():
+        raise StoreBackupError("refusing to back up an unmarked live store")
+    marker = LiveStoreMarker.model_validate_json(marker_path.read_bytes())
+    if marker.sample_id != sample_id:
+        raise StoreBackupError("requested sample does not own the marked live store")
+
+    identity = _run_identity(run_dir)
+    deployment_id = _sample_deployment_id(run_dir=run_dir, sample_id=sample_id)
+    created_at = _utc_now()
+    backup_id = f"{_timestamp(created_at)}-{secrets.token_hex(4)}"
+    staging = staging_root / backup_id
+    staging.mkdir(parents=True, mode=0o700)
+
+    _log(f"sample={sample_id} backup-stage=stop status=starting")
+    _run(
+        args=_compose_command(
+            compose_project=compose_project, arguments=("stop", "--timeout", "120")
+        )
+    )
+    volumes = _volume_names(compose_project=compose_project)
+
+    archives: list[LocalArchiveRecord] = []
+    for logical_name in EXPECTED_VOLUMES:
+        docker_volume = volumes[logical_name]
+        archive = staging / "volumes" / f"{logical_name}.tar.zst"
+        _log(f"sample={sample_id} backup-stage=archive volume={logical_name}")
+        _archive_directory(
+            source=_volume_mountpoint(docker_volume), destination=archive
+        )
+        archives.append(
+            _record_for_archive(
+                kind="volume",
+                logical_name=logical_name,
+                docker_volume=docker_volume,
+                archive=archive,
+                root=staging,
+            )
+        )
+
+    run_archive = staging / "run.tar.zst"
+    _archive_directory(source=run_dir, destination=run_archive)
+    archives.append(
+        _record_for_archive(
+            kind="run",
+            logical_name="run-directory",
+            docker_volume=None,
+            archive=run_archive,
+            root=staging,
+        )
+    )
+    mounts_archive = staging / "mounts.tar.zst"
+    _archive_directory(source=mount_root, destination=mounts_archive)
+    archives.append(
+        _record_for_archive(
+            kind="mounts",
+            logical_name="published-mount-root",
+            docker_volume=None,
+            archive=mounts_archive,
+            root=staging,
+        )
+    )
+
+    prepared = _safe_component(identity.prepared_at)
+    remote_prefix = "/".join(
+        (
+            remote_destination.rstrip("/"),
+            _safe_component(identity.protocol_fingerprint),
+            _safe_component(identity.repository_revision),
+            prepared,
+            _safe_component(sample_id),
+            backup_id,
+        )
+    )
+
+    _log(f"sample={sample_id} backup-stage=upload status=starting")
+    uploaded_archives: list[ArchiveRecord] = []
+    for archive in archives:
+        metadata = _upload_file(
+            source=staging / archive.relative_path,
+            remote_path=_remote_join(prefix=remote_prefix, name=archive.relative_path),
+            project_id=gcp_project,
+        )
+        uploaded_archives.append(
+            ArchiveRecord(
+                kind=archive.kind,
+                logical_name=archive.logical_name,
+                docker_volume=archive.docker_volume,
+                relative_path=archive.relative_path,
+                byte_size=archive.byte_size,
+                sha256=archive.sha256,
+                gcs_generation=metadata.generation,
+                gcs_crc32c=metadata.crc32c,
+            )
+        )
+    manifest = BackupManifest(
+        created_at=created_at.isoformat(),
+        sample_id=sample_id,
+        deployment_id=deployment_id,
+        compose_project=compose_project,
+        run=identity,
+        archives=tuple(uploaded_archives),
+    )
+    manifest_path = staging / "manifest.json"
+    manifest_bytes = _write_model(path=manifest_path, model=manifest)
+    _upload_file(
+        source=manifest_path,
+        remote_path=_remote_join(prefix=remote_prefix, name="manifest.json"),
+        project_id=gcp_project,
+    )
+    remote_manifest = _remote_bytes(
+        remote_path=_remote_join(prefix=remote_prefix, name="manifest.json"),
+        project_id=gcp_project,
+    )
+    if remote_manifest != manifest_bytes:
+        raise StoreBackupError("remote manifest bytes differ from the local manifest")
+
+    receipt = BackupReceipt(
+        sample_id=sample_id,
+        gcp_project=gcp_project,
+        remote_prefix=remote_prefix,
+        manifest_sha256=_bytes_sha256(manifest_bytes),
+        verified_at=_utc_now().isoformat(),
+    )
+    receipt_staging_path = staging / "receipt.json"
+    receipt_bytes = _write_model(path=receipt_staging_path, model=receipt)
+    _upload_file(
+        source=receipt_staging_path,
+        remote_path=_remote_join(prefix=remote_prefix, name="receipt.json"),
+        project_id=gcp_project,
+    )
+    if (
+        _remote_bytes(
+            remote_path=_remote_join(prefix=remote_prefix, name="receipt.json"),
+            project_id=gcp_project,
+        )
+        != receipt_bytes
+    ):
+        raise StoreBackupError("remote receipt bytes differ from the local receipt")
+    _write_model(
+        path=_receipt_path(run_dir=run_dir, sample_id=sample_id), model=receipt
+    )
+    try:
+        shutil.rmtree(staging)
+    except OSError as exc:
+        _log(f"sample={sample_id} backup-stage=cleanup warning={exc}")
+    _log(f"sample={sample_id} backup-stage=verified prefix={remote_prefix}")
+    return receipt
+
+
+def _member_path(name: str) -> PurePosixPath:
+    """Normalize one tar member name for exact containment checks."""
+
+    path = PurePosixPath(name)
+    parts = tuple(part for part in path.parts if part not in {"", "."})
+    return PurePosixPath(*parts)
+
+
+def _validate_archive_members(
+    *, archive: Path, destination: Path, allow_absolute_p3_pointer: bool
+) -> None:
+    """Reject archive members that could escape a root-owned restore target."""
+
+    try:
+        process = subprocess.Popen(
+            ("zstd", "--decompress", "--stdout", str(archive)), stdout=subprocess.PIPE
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise StoreBackupError("cannot start zstd archive validation") from exc
+    if process.stdout is None:  # pragma: no cover - PIPE guarantees this.
+        process.kill()
+        raise StoreBackupError("zstd archive validation has no output stream")
+    seen: set[PurePosixPath] = set()
+    required_p3_targets: set[PurePosixPath] = set()
+    try:
+        with process.stdout, tarfile.open(fileobj=process.stdout, mode="r|") as handle:
+            for member in handle:
+                member_path = _member_path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise StoreBackupError("archive contains an unsafe member path")
+                seen.add(member_path)
+                link_target = PurePosixPath(member.linkname)
+                if (
+                    allow_absolute_p3_pointer
+                    and member.issym()
+                    and member_path.name == "p3"
+                    and link_target.is_absolute()
+                    and link_target.name.startswith("p3-")
+                    and link_target.parent.name == member_path.parent.name
+                ):
+                    required_p3_targets.add(member_path.parent / link_target.name)
+                    continue
+                tarfile.data_filter(member, str(destination))
+    except (OSError, tarfile.TarError, StoreBackupError) as exc:
+        process.kill()
+        process.wait()
+        if isinstance(exc, StoreBackupError):
+            raise
+        raise StoreBackupError(f"archive member validation failed: {archive}") from exc
+    if process.wait() != 0:
+        raise StoreBackupError(f"zstd archive validation failed: {archive}")
+    if not required_p3_targets.issubset(seen):
+        raise StoreBackupError("P3 pointer target is absent from the mounts archive")
+
+
+def _validate_download(*, staging: Path, manifest: BackupManifest) -> None:
+    """Validate every downloaded archive before any restore target is changed."""
+
+    _validate_manifest_inventory(manifest)
+    for archive in manifest.archives:
+        relative = Path(archive.relative_path)
+        path = staging / relative
+        if not path.is_file():
+            raise StoreBackupError(f"downloaded archive is missing: {relative}")
+        if path.stat().st_size != archive.byte_size:
+            raise StoreBackupError(f"downloaded archive size differs: {relative}")
+        if _sha256(path) != archive.sha256:
+            raise StoreBackupError(f"downloaded archive checksum differs: {relative}")
+        _validate_archive_members(
+            archive=path,
+            destination=staging / "member-validation",
+            allow_absolute_p3_pointer=archive.kind in {"run", "mounts"},
+        )
+
+
+def _ensure_empty_directory(path: Path) -> None:
+    """Create one restore directory or refuse if it already contains entries."""
+
+    if path.exists() and (not path.is_dir() or any(path.iterdir())):
+        raise StoreBackupError(f"restore target is not an empty directory: {path}")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def _ensure_empty_restore_targets(*, run_dir: Path, mount_root: Path) -> None:
+    """Create empty restore targets, including a mount root nested in the run."""
+
+    try:
+        relative_mount = mount_root.relative_to(run_dir)
+    except ValueError:
+        _ensure_empty_directory(run_dir)
+        _ensure_empty_directory(mount_root)
+        return
+    if relative_mount == Path("."):
+        _ensure_empty_directory(run_dir)
+        return
+
+    allowed: set[Path] = set()
+    current = run_dir
+    for component in relative_mount.parts:
+        current /= component
+        allowed.add(current)
+    if run_dir.exists():
+        if not run_dir.is_dir():
+            raise StoreBackupError(
+                f"restore target is not an empty directory: {run_dir}"
+            )
+        entries = set(run_dir.rglob("*"))
+        if entries - allowed or any(
+            not path.is_dir() or path.is_symlink() for path in entries
+        ):
+            raise StoreBackupError(
+                f"restore target is not an empty directory: {run_dir}"
+            )
+    mount_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def _volume_is_empty(volume_name: str) -> bool:
+    """Return whether a volume contains no data beyond empty mount directories."""
+
+    return all(
+        path.is_dir() and not path.is_symlink()
+        for path in _volume_mountpoint(volume_name).rglob("*")
+    )
+
+
+def restore_store(
+    *,
+    receipt_path: Path,
+    run_dir: Path,
+    mount_root: Path,
+    compose_project: str,
+    staging_root: Path,
+    start_services: bool,
+    compose_base_env: Path | None,
+) -> BackupManifest:
+    """Restore one verified GCS recovery unit into empty local targets."""
+
+    if start_services and (compose_base_env is None or not compose_base_env.is_file()):
+        raise StoreBackupError(
+            "--start requires --compose-base-env with the local deployment secrets"
+        )
+    receipt, verified_manifest = verify_receipt(receipt_path)
+    staging = staging_root / f"restore-{_timestamp(_utc_now())}-{secrets.token_hex(4)}"
+    staging.mkdir(parents=True, mode=0o700)
+    _log(f"sample={receipt.sample_id} restore-stage=download status=starting")
+    manifest = _download_recovery_unit(receipt=receipt, staging=staging)
+    if manifest != verified_manifest:
+        raise StoreBackupError("downloaded manifest changed after receipt verification")
+    manifest_path = staging / "manifest.json"
+    if _sha256(manifest_path) != receipt.manifest_sha256:
+        raise StoreBackupError("downloaded manifest does not match the receipt")
+    if manifest.sample_id != receipt.sample_id:
+        raise StoreBackupError("manifest and receipt name different samples")
+    _validate_download(staging=staging, manifest=manifest)
+    _ensure_empty_restore_targets(run_dir=run_dir, mount_root=mount_root)
+
+    count = _volume_count(compose_project=compose_project)
+    if count:
+        volumes = _volume_names(compose_project=compose_project)
+        non_empty = [
+            name for name, volume in volumes.items() if not _volume_is_empty(volume)
+        ]
+        if non_empty:
+            raise StoreBackupError(
+                f"refusing to restore over non-empty volumes: {', '.join(non_empty)}"
+            )
+    base_env_arguments = (
+        ("--env-file", str(compose_base_env)) if compose_base_env is not None else ()
+    )
+    _run(
+        args=_compose_command(
+            compose_project=compose_project,
+            arguments=(*base_env_arguments, "down", "--remove-orphans"),
+        )
+    )
+    if count == 0:
+        _run(
+            args=_compose_command(
+                compose_project=compose_project,
+                arguments=(*base_env_arguments, "create"),
+            )
+        )
+        _run(
+            args=_compose_command(
+                compose_project=compose_project,
+                arguments=(*base_env_arguments, "down", "--remove-orphans"),
+            )
+        )
+    volumes = _volume_names(compose_project=compose_project)
+    if any(not _volume_is_empty(volume) for volume in volumes.values()):
+        raise StoreBackupError("Compose created a non-empty restore volume")
+
+    by_name = {archive.logical_name: archive for archive in manifest.archives}
+    _extract_directory(
+        archive=staging / by_name["run-directory"].relative_path, destination=run_dir
+    )
+    _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
+    for logical_name in EXPECTED_VOLUMES:
+        archive = by_name[logical_name]
+        _extract_directory(
+            archive=staging / archive.relative_path,
+            destination=_volume_mountpoint(volumes[logical_name]),
+        )
+    _extract_directory(
+        archive=staging / by_name["published-mount-root"].relative_path,
+        destination=mount_root,
+    )
+    _rebase_published_mount_links(mount_root)
+    nested_mount_root = run_dir / ".mounts"
+    if nested_mount_root != mount_root and nested_mount_root.is_dir():
+        _rebase_published_mount_links(nested_mount_root)
+    receipt_destination = _receipt_path(run_dir=run_dir, sample_id=receipt.sample_id)
+    _write_model(path=receipt_destination, model=receipt)
+    _write_model(
+        path=_marker_path(run_dir),
+        model=LiveStoreMarker(
+            sample_id=receipt.sample_id, recorded_at=_utc_now().isoformat()
+        ),
+    )
+    if start_services:
+        runtime_environment = _write_runtime_environment(
+            run_dir=run_dir,
+            sample_id=receipt.sample_id,
+            deployment_id=manifest.deployment_id,
+            repository_revision=manifest.run.repository_revision,
+        )
+        assert compose_base_env is not None
+        _validate_runtime_identity(
+            manifest=manifest,
+            compose_project=compose_project,
+            compose_base_env=compose_base_env,
+            runtime_environment=runtime_environment,
+        )
+        _run(
+            args=_compose_runtime_command(
+                compose_project=compose_project,
+                compose_base_env=compose_base_env,
+                runtime_environment=runtime_environment,
+                arguments=(
+                    "up",
+                    "--detach",
+                    "--wait",
+                    "postgres",
+                    "minio",
+                    "setup",
+                    "api",
+                ),
+            )
+        )
+    _log(f"sample={receipt.sample_id} restore-stage=complete")
+    return manifest
+
+
+def _path(value: str) -> Path:
+    """Resolve a command-line path without requiring it to exist yet."""
+
+    return Path(value).expanduser().resolve()
+
+
+def _parser() -> argparse.ArgumentParser:
+    """Build the complete backup/restore command-line parser."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    record = subparsers.add_parser("record-live", help="mark a newly isolated store")
+    record.add_argument("--run-dir", type=_path, required=True)
+    record.add_argument("--sample", required=True)
+    record.add_argument("--compose-project", default="rememberstack")
+    _add_lock_arguments(record)
+
+    authorize = subparsers.add_parser(
+        "authorize-wipe", help="verify the current store may be deleted"
+    )
+    authorize.add_argument("--run-dir", type=_path, required=True)
+    authorize.add_argument("--compose-project", default="rememberstack")
+    _add_lock_arguments(authorize)
+
+    clear = subparsers.add_parser(
+        "clear-live", help="clear the marker after confirmed volume deletion"
+    )
+    clear.add_argument("--run-dir", type=_path, required=True)
+    _add_lock_arguments(clear)
+
+    preflight = subparsers.add_parser(
+        "preflight", help="verify the keyless GCS destination"
+    )
+    preflight.add_argument("--destination", required=True)
+    preflight.add_argument("--project", required=True)
+
+    backup = subparsers.add_parser("backup", help="create and verify one backup")
+    backup.add_argument("--sample", required=True)
+    backup.add_argument("--run-dir", type=_path, required=True)
+    backup.add_argument("--mount-root", type=_path, required=True)
+    backup.add_argument("--compose-project", default="rememberstack")
+    backup.add_argument("--project", required=True)
+    backup.add_argument("--destination", required=True)
+    backup.add_argument(
+        "--staging-root",
+        type=_path,
+        default=Path("/var/lib/rememberstack-locomo-backups"),
+    )
+    _add_lock_arguments(backup)
+
+    verify = subparsers.add_parser("verify", help="re-verify one remote receipt")
+    verify.add_argument("--receipt", type=_path, required=True)
+
+    restore = subparsers.add_parser("restore", help="restore one verified backup")
+    restore.add_argument("--receipt", type=_path, required=True)
+    restore.add_argument("--run-dir", type=_path, required=True)
+    restore.add_argument("--mount-root", type=_path, required=True)
+    restore.add_argument("--compose-project", default="rememberstack")
+    restore.add_argument(
+        "--staging-root",
+        type=_path,
+        default=Path("/var/lib/rememberstack-locomo-backups"),
+    )
+    restore.add_argument("--start", action="store_true")
+    restore.add_argument(
+        "--compose-base-env",
+        type=_path,
+        help="local secret-bearing Compose env; saved non-secret bindings overlay it",
+    )
+    _add_lock_arguments(restore)
+    return parser
+
+
+def _add_lock_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the shared host-lock contract to one mutating subcommand."""
+
+    parser.add_argument("--lock-file", type=_path, default=DEFAULT_LOCK_FILE)
+    parser.add_argument(
+        "--lock-fd",
+        type=int,
+        help="already-locked inherited descriptor used by run_shard.sh",
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run one fail-closed backup, verification, wipe-guard, or restore action."""
+
+    arguments = _parser().parse_args(argv)
+    try:
+        lock = (
+            _exclusive_store_lock(
+                lock_file=arguments.lock_file, inherited_lock_fd=arguments.lock_fd
+            )
+            if hasattr(arguments, "lock_file")
+            else nullcontext()
+        )
+        with lock:
+            if arguments.command == "record-live":
+                record_live_store(
+                    run_dir=arguments.run_dir,
+                    sample_id=arguments.sample,
+                    compose_project=arguments.compose_project,
+                )
+            elif arguments.command == "authorize-wipe":
+                authorize_wipe(
+                    run_dir=arguments.run_dir, compose_project=arguments.compose_project
+                )
+            elif arguments.command == "clear-live":
+                clear_live_store_marker(run_dir=arguments.run_dir)
+            elif arguments.command == "preflight":
+                preflight_destination(
+                    remote_destination=arguments.destination,
+                    project_id=arguments.project,
+                )
+            elif arguments.command == "backup":
+                backup_store(
+                    sample_id=arguments.sample,
+                    run_dir=arguments.run_dir,
+                    mount_root=arguments.mount_root,
+                    compose_project=arguments.compose_project,
+                    gcp_project=arguments.project,
+                    remote_destination=arguments.destination,
+                    staging_root=arguments.staging_root,
+                )
+            elif arguments.command == "verify":
+                verify_receipt(arguments.receipt)
+            elif arguments.command == "restore":
+                restore_store(
+                    receipt_path=arguments.receipt,
+                    run_dir=arguments.run_dir,
+                    mount_root=arguments.mount_root,
+                    compose_project=arguments.compose_project,
+                    staging_root=arguments.staging_root,
+                    start_services=arguments.start,
+                    compose_base_env=arguments.compose_base_env,
+                )
+            else:  # pragma: no cover - argparse enforces the command choices.
+                raise StoreBackupError(f"unknown command: {arguments.command}")
+    except (OSError, StoreBackupError, ValueError) as exc:
+        _log(f"ERROR: {exc}; current store and staging files are preserved")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
