@@ -390,7 +390,7 @@ _LOAD_RELATION = text(
         FROM relation_evidence e
         JOIN claims c ON c.claim_id = e.claim_id
         WHERE e.relation_id = r.relation_id AND e.stance = 'supports'
-        ORDER BY c.ingested_at DESC
+        ORDER BY c.asserted_at DESC NULLS LAST, c.ingested_at DESC, c.claim_id DESC
         LIMIT 1
     ) evidence ON true
     WHERE r.deployment_id = :deployment_id AND r.relation_id = :relation_id
@@ -413,7 +413,7 @@ _BLOCK_CANDIDATES = text(
         FROM relation_evidence e
         JOIN claims c ON c.claim_id = e.claim_id
         WHERE e.relation_id = r.relation_id AND e.stance = 'supports'
-        ORDER BY c.ingested_at DESC
+        ORDER BY c.asserted_at DESC NULLS LAST, c.ingested_at DESC, c.claim_id DESC
         LIMIT 1
     ) evidence ON true
     WHERE r.deployment_id = :deployment_id
@@ -448,7 +448,7 @@ _BLOCK_CANDIDATES = text(
       AND r.relation_id <> :relation_id
       AND r.invalidated_at IS NULL
       AND (r.valid_until IS NULL OR r.valid_until > now())
-    ORDER BY r.ingested_at
+    ORDER BY evidence.asserted_at NULLS LAST, r.ingested_at, r.relation_id
     """
 )
 

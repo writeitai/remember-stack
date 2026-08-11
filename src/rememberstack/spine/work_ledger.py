@@ -629,8 +629,10 @@ def _enqueue_claim_normalize_fanout(
     """D88: insert every claim normalize row for this representation (idempotent)."""
     from rememberstack.model import ProcessingTarget
 
-    # Keep string literal aligned with workers.e3.OBS_FLUSH_VERSION (avoid import cycle).
-    obs_flush_version = "e3-obs-flush-2026.08a:claim-fanout-1"
+    # Lazy import: workers.e3 does not import WorkLedger at module load.
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
+    obs_flush_version = OBS_FLUSH_VERSION
     rows = (
         connection.execute(
             _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT,

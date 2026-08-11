@@ -23,6 +23,28 @@ def test_e3_version_includes_claim_fanout_suffix() -> None:
     assert OBS_FLUSH_VERSION.startswith("e3-obs-flush")
 
 
+def test_obs_flush_version_is_single_source_for_ledger_fanout() -> None:
+    """Ledger fan-out imports OBS_FLUSH_VERSION (no drifted literal)."""
+    import inspect
+
+    from rememberstack.spine import work_ledger
+
+    source = inspect.getsource(work_ledger._enqueue_claim_normalize_fanout)
+    assert "OBS_FLUSH_VERSION" in source
+    assert "e3-obs-flush-2026.08a:claim-fanout-1" not in source.replace(
+        "OBS_FLUSH_VERSION", ""
+    )
+
+
+def test_normalize_barrier_uses_dedicated_advisory_lock() -> None:
+    """Last-claim race is closed by a D88-scoped xact advisory lock."""
+    from rememberstack.spine import work_ledger
+
+    sql = str(work_ledger._ADVISORY_LOCK_NORMALIZE_BARRIER)
+    assert "d88-normalize-barrier" in sql
+    assert "pg_advisory_xact_lock" in sql
+
+
 def test_handle_claim_grain_returns_barrier() -> None:
     """Claim-target work stages observations and returns claim barrier."""
     claim_id = uuid4()
