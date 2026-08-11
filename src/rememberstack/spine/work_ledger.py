@@ -300,6 +300,7 @@ class WorkLedger:
                         version_id=barrier.version_id,
                         representation_id=barrier.representation_id,
                         chunker_version=barrier.chunker_version,
+                        extractor_version=barrier.extractor_version,
                         normalize_component_version=barrier.normalize_component_version,
                         content_hash=barrier.content_hash,
                         lane=barrier.lane,
@@ -347,6 +348,7 @@ class WorkLedger:
                 deployment_id=barrier.deployment_id,
                 representation_id=barrier.representation_id,
                 chunker_version=barrier.chunker_version,
+                extractor_version=barrier.extractor_version,
                 normalize_version=barrier.normalize_component_version,
             ):
                 return tuple(outcomes)
@@ -367,6 +369,7 @@ class WorkLedger:
                             "doc_id": str(barrier.doc_id),
                             "normalizer_version": barrier.normalize_component_version,
                             "chunker_version": barrier.chunker_version,
+                            "extractor_version": barrier.extractor_version,
                         },
                     ),
                 )
@@ -622,11 +625,17 @@ def _enqueue_claim_normalize_fanout(
     version_id: UUID,
     representation_id: UUID,
     chunker_version: str,
+    extractor_version: str,
     normalize_component_version: str,
     content_hash: str,
     lane: ProcessingLane | None,
 ) -> list[EnqueueOutcome]:
-    """D88: insert every claim normalize row for this representation (idempotent)."""
+    """D88: insert every claim normalize row for this representation (idempotent).
+
+    The expected set is pinned to the extract generation in force when the
+    extract barrier fired (design §5.1) so a later extractor re-run cannot
+    enlarge an already-materialized barrier.
+    """
     from rememberstack.model import ProcessingTarget
 
     # Lazy import: workers.e3 does not import WorkLedger at module load.
@@ -639,6 +648,7 @@ def _enqueue_claim_normalize_fanout(
             {
                 "representation_id": representation_id,
                 "chunker_version": chunker_version,
+                "extractor_version": extractor_version,
             },
         )
         .mappings()
@@ -663,6 +673,7 @@ def _enqueue_claim_normalize_fanout(
                         "doc_id": None,
                         "normalizer_version": normalize_component_version,
                         "chunker_version": chunker_version,
+                        "extractor_version": extractor_version,
                     },
                 ),
             )
@@ -687,6 +698,7 @@ def _enqueue_claim_normalize_fanout(
                         "claim_id": str(row["claim_id"]),
                         "doc_id": str(row["doc_id"]),
                         "chunker_version": chunker_version,
+                        "extractor_version": extractor_version,
                     },
                 ),
             )
@@ -697,6 +709,7 @@ def _enqueue_claim_normalize_fanout(
         deployment_id=deployment_id,
         representation_id=representation_id,
         chunker_version=chunker_version,
+        extractor_version=extractor_version,
         normalize_version=normalize_component_version,
     ):
         outcomes.append(
@@ -716,6 +729,7 @@ def _enqueue_claim_normalize_fanout(
                         "doc_id": str(doc_id),
                         "normalizer_version": normalize_component_version,
                         "chunker_version": chunker_version,
+                        "extractor_version": extractor_version,
                     },
                 ),
             )
@@ -729,12 +743,17 @@ def _normalize_claim_barrier_ready(
     deployment_id: UUID,
     representation_id: UUID,
     chunker_version: str,
+    extractor_version: str,
     normalize_version: str,
 ) -> bool:
     """True when every expected claim has a succeeded claim-grain normalize row."""
     expected = connection.execute(
         _BARRIER_EXPECTED_CLAIMS,
-        {"representation_id": representation_id, "chunker_version": chunker_version},
+        {
+            "representation_id": representation_id,
+            "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
+        },
     ).scalar_one()
     if int(expected) == 0:
         return True
@@ -744,6 +763,7 @@ def _normalize_claim_barrier_ready(
             "deployment_id": deployment_id,
             "representation_id": representation_id,
             "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
             "normalize_version": normalize_version,
             "stage": PipelineStage.NORMALIZE_RELATIONS.value,
         },
@@ -1132,6 +1152,7 @@ _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT = text(
     JOIN chunks c ON c.chunk_id = cl.chunk_id
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
     ORDER BY cl.ingested_at, cl.claim_id
     """
 )
@@ -1143,6 +1164,7 @@ _BARRIER_EXPECTED_CLAIMS = text(
     JOIN chunks c ON c.chunk_id = cl.chunk_id
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
     """
 )
 
@@ -1160,6 +1182,7 @@ _BARRIER_READY_CLAIMS = text(
      AND p.status = 'succeeded'
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
     """
 )
 

@@ -103,7 +103,11 @@ class PipelineReadinessCatalog:
                     .all()
                 )
             normalize_rows = ()
-            if normalize_version is not None and chunk_version is not None:
+            if (
+                normalize_version is not None
+                and chunk_version is not None
+                and extract_version is not None
+            ):
                 normalize_rows = (
                     connection.execute(
                         _NORMALIZE_CLAIM_STATUS,
@@ -112,6 +116,7 @@ class PipelineReadinessCatalog:
                             "version_ids": version_ids,
                             "normalize_version": normalize_version,
                             "chunker_version": chunk_version,
+                            "extractor_version": extract_version,
                         },
                     )
                     .mappings()
@@ -308,6 +313,7 @@ _NORMALIZE_CLAIM_STATUS = text(
      AND c.chunker_version = :chunker_version
     LEFT JOIN claims cl
       ON cl.chunk_id = c.chunk_id
+     AND cl.extractor_version = :extractor_version
     LEFT JOIN processing_state p
       ON p.deployment_id = :deployment_id
      AND p.target_kind = 'claim'

@@ -182,12 +182,20 @@ class SupersessionAdjudicator:
                         features={"reason": "same object after redirects"},
                     )
                     continue
+                # D88 §5.5: predecessor/successor follow source asserted_at,
+                # not which version finished normalize first.
+                subject_row = dict(subject)
+                candidate_row = dict(candidate)
+                if _is_source_successor(left=subject_row, right=candidate_row):
+                    new_row, old_row = subject_row, candidate_row
+                else:
+                    new_row, old_row = candidate_row, subject_row
                 self._adjudicate_pair(
                     connection=connection,
                     deployment_id=deployment_id,
-                    new=dict(subject),
-                    new_relation_id=relation_id,
-                    old=dict(candidate),
+                    new=new_row,
+                    new_relation_id=UUID(str(new_row["relation_id"])),
+                    old=old_row,
                     meter=meter,
                     call_key=f"{call_key}:{candidate['relation_id']}",
                 )
@@ -489,6 +497,24 @@ _INSERT_ADJUDICATION = text(
     )
     """
 ).bindparams(bindparam("features", type_=JSON))
+
+def _is_source_successor(*, left: dict[str, object], right: dict[str, object]) -> bool:
+    """True when ``left`` is the source-time successor of ``right`` (D88 §5.5).
+
+    Later ``asserted_at`` wins. Dated testimony is later than undated. Equal
+    times (or both undated) use relation_id so orientation is process-order
+    independent.
+    """
+    left_at = left.get("asserted_at")
+    right_at = right.get("asserted_at")
+    if left_at is not None and right_at is not None and left_at != right_at:
+        return left_at > right_at  # type: ignore[operator]
+    if left_at is not None and right_at is None:
+        return True
+    if left_at is None and right_at is not None:
+        return False
+    return str(left["relation_id"]) > str(right["relation_id"])
+
 
 _LOCK_BLOCK = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 

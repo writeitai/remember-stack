@@ -155,6 +155,12 @@ class NormalizeRelationsHandler:
         chunker_version = (work.payload or {}).get("chunker_version")
         if not isinstance(chunker_version, str) or not chunker_version:
             chunker_version = self._chunker_version
+        extractor_version = (work.payload or {}).get("extractor_version")
+        if not isinstance(extractor_version, str) or not extractor_version:
+            # Fan-out always pins the extract generation; missing pin is non-retryable.
+            raise NonRetryableHandlerError(
+                f"claim normalize work {work.processing_id} missing extractor_version"
+            )
         claim = self._claim_catalog.claim_for_normalization(claim_id=claim_id)
         if claim is None:
             raise NonRetryableHandlerError(
@@ -228,6 +234,7 @@ class NormalizeRelationsHandler:
                 representation_id=representation_id,
                 doc_id=doc_id,
                 chunker_version=chunker_version,
+                extractor_version=extractor_version,
                 content_hash=work.content_hash,
                 lane=work.lane,
                 normalize_component_version=E3_NORMALIZER_VERSION,

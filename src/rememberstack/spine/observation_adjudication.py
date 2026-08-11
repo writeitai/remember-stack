@@ -404,9 +404,63 @@ class ObservationAdjudicator:
                         statement=statement,
                     )
                     return new_id
-                # the cap lands at the SUCCESSOR's valid_from (D43): the
-                # new testimony's asserted time, degraded to now() only for
-                # undated testimony — the slices tile without overlap.
+                # D88 continuous ingest: direction follows source time, not
+                # flush/worker completion order. If incoming testimony is
+                # source-earlier than the open observation, insert it as a
+                # historical predecessor and leave the later slice open.
+                existing_from = candidate.get("valid_from")
+                if _is_strictly_earlier(asserted_at, existing_from):
+                    new_id = self._insert_new(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        subject_entity_id=subject_entity_id,
+                        statement=statement,
+                        claim_id=claim_id,
+                        doc_id=doc_id,
+                        valid_from=asserted_at,
+                        outcome="add",
+                        method=method,
+                        confidence=verdict.confidence,
+                        features={
+                            **features,
+                            "reason": "source-earlier predecessor (reverse arrival)",
+                        },
+                        related=candidate_id,
+                        contradiction_group=None,
+                    )
+                    capped = connection.execute(
+                        _CAP_WINDOW,
+                        {
+                            "deployment_id": deployment_id,
+                            "observation_id": new_id,
+                            "boundary": existing_from,
+                        },
+                    ).rowcount
+                    self._record(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        observation_id=new_id,
+                        related=candidate_id,
+                        outcome="supersede",
+                        method=method,
+                        confidence=verdict.confidence,
+                        claim_id=claim_id,
+                        features={
+                            **features,
+                            "capped": bool(capped),
+                            "orientation": "incoming_predecessor",
+                        },
+                    )
+                    _remember_candidate(
+                        candidates=candidates,
+                        observation_id=new_id,
+                        statement=statement,
+                        valid_from=asserted_at,
+                        is_open=False,
+                    )
+                    return new_id
+                # Forward path: cap the existing (older) slice at the
+                # SUCCESSOR's valid_from (D43); undated degrades to now().
                 capped = connection.execute(
                     _CAP_WINDOW,
                     {
@@ -443,7 +497,10 @@ class ObservationAdjudicator:
                 )
                 candidate["is_open"] = False
                 _remember_candidate(
-                    candidates=candidates, observation_id=new_id, statement=statement
+                    candidates=candidates,
+                    observation_id=new_id,
+                    statement=statement,
+                    valid_from=asserted_at,
                 )
                 return new_id
             if verdict.outcome is ObservationOutcome.CONTRADICT:
@@ -694,6 +751,8 @@ def _remember_candidate(
     observation_id: UUID,
     statement: str,
     contradiction_group: UUID | None = None,
+    valid_from: object = None,
+    is_open: bool = True,
 ) -> None:
     """Expose one in-transaction insert to later assertions in the batch."""
     candidates.append(
@@ -701,7 +760,8 @@ def _remember_candidate(
             "observation_id": observation_id,
             "statement": statement,
             "contradiction_group": contradiction_group,
-            "is_open": True,
+            "valid_from": valid_from,
+            "is_open": is_open,
         }
     )
 
@@ -718,11 +778,25 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _is_strictly_earlier(left: object, right: object) -> bool:
+    """True when both timestamps are present and ``left`` is strictly before ``right``.
+
+    Used to detect reverse-completion-order testimony (D88 continuous ingest):
+    a source-older assertion arriving after a source-newer open observation.
+    """
+    if left is None or right is None:
+        return False
+    try:
+        return left < right  # type: ignore[operator]
+    except TypeError:
+        return False
+
+
 _LOCK_ENTITY = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
 _BLOCK_ENTITY = text(
     """
-    SELECT observation_id, statement, contradiction_group,
+    SELECT observation_id, statement, contradiction_group, valid_from,
            (valid_until IS NULL OR valid_until > now()) AS is_open
     FROM observations
     WHERE deployment_id = :deployment_id

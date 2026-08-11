@@ -593,6 +593,8 @@ def _grounded_claim(
         entailment_self_verdict=candidate.entailment_self_verdict,
         kept_flagged=claim_span in flagged_spans,
         extractor_version=E2_EXTRACTOR_VERSION,
+        # D41 assertion-event time: when the source spoke (D55 source stamp).
+        asserted_at=source.source_modified_at or source.published_at,
         claim_valid_from=valid_from,
         claim_valid_until=valid_until,
         claim_valid_precision=valid_precision,

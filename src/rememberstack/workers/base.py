@@ -66,6 +66,7 @@ class ClaimNormalizeBarrier(BaseModel):
     representation_id: UUID
     doc_id: UUID
     chunker_version: str
+    extractor_version: str
     content_hash: str
     lane: ProcessingLane | None
     normalize_component_version: str

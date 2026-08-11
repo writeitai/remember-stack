@@ -45,6 +45,128 @@ def test_normalize_barrier_uses_dedicated_advisory_lock() -> None:
     assert "pg_advisory_xact_lock" in sql
 
 
+def test_fanout_and_barrier_pin_extractor_version() -> None:
+    """Expected claim set is closed at the extract generation (D88 §5.1)."""
+    from rememberstack.spine import work_ledger
+
+    for sql in (
+        str(work_ledger._SELECT_CLAIMS_FOR_NORMALIZE_FANOUT),
+        str(work_ledger._BARRIER_EXPECTED_CLAIMS),
+        str(work_ledger._BARRIER_READY_CLAIMS),
+    ):
+        assert "extractor_version" in sql
+        assert "cl.extractor_version = :extractor_version" in sql
+
+
+def test_readiness_normalize_status_pins_extractor_version() -> None:
+    """Derived normalize readiness does not count later extract generations."""
+    from rememberstack.spine import readiness
+
+    sql = str(readiness._NORMALIZE_CLAIM_STATUS)
+    assert "cl.extractor_version = :extractor_version" in sql
+
+
+def test_claim_normalize_requires_extractor_version_pin() -> None:
+    """Missing extract pin on claim work is non-retryable (closed handoff)."""
+    from rememberstack.model import NonRetryableHandlerError
+
+    claim_id = uuid4()
+    handler = NormalizeRelationsHandler(
+        claim_catalog=type(
+            "C",
+            (),
+            {
+                "claim_for_normalization": staticmethod(
+                    lambda **kwargs: ClaimForNormalization(
+                        claim_id=claim_id,
+                        doc_id=uuid4(),
+                        chunk_id=uuid4(),
+                        claim_text="x",
+                        is_attributed=False,
+                    )
+                )
+            },
+        )(),  # type: ignore[arg-type]
+        chunk_catalog=type(
+            "K", (), {"chunks_for_embedding": staticmethod(lambda **kwargs: ())}
+        )(),  # type: ignore[arg-type]
+        registry=type(
+            "R", (), {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())}
+        )(),  # type: ignore[arg-type]
+        resolver=None,  # type: ignore[arg-type]
+        facts=None,  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        model_provider=FakeModelProvider(generate_payload={}),
+        settings=E3Settings(normalize_model="test"),
+        chunker_version="test-chunker",
+    )
+    work = ClaimedWork(
+        processing_id=uuid4(),
+        deployment_id=uuid4(),
+        target_kind=ProcessingTarget.CLAIM,
+        target_id=claim_id,
+        stage=PipelineStage.NORMALIZE_RELATIONS,
+        component_version=E3_NORMALIZER_VERSION,
+        content_hash="h",
+        lane=ProcessingLane.STEADY,
+        attempt=1,
+        payload={
+            "version_id": str(uuid4()),
+            "representation_id": str(uuid4()),
+            "claim_id": str(claim_id),
+            "doc_id": str(uuid4()),
+            "chunker_version": "test-chunker",
+        },
+    )
+    try:
+        handler.handle(work=work, meter=NoopCostMeter())
+    except NonRetryableHandlerError as error:
+        assert "extractor_version" in str(error)
+    else:
+        raise AssertionError("expected NonRetryableHandlerError")
+
+
+def test_supersession_orients_by_asserted_at_not_process_order() -> None:
+    """Source-older relation is predecessor even when processed second."""
+    from datetime import datetime
+    from datetime import UTC
+
+    from rememberstack.spine.supersession import _is_source_successor
+
+    older = {
+        "relation_id": uuid4(),
+        "asserted_at": datetime(2019, 1, 1, tzinfo=UTC),
+    }
+    newer = {
+        "relation_id": uuid4(),
+        "asserted_at": datetime(2024, 6, 1, tzinfo=UTC),
+    }
+    assert _is_source_successor(left=newer, right=older)
+    assert not _is_source_successor(left=older, right=newer)
+    # Equal times: stable id order, not arrival order.
+    same_time = datetime(2020, 1, 1, tzinfo=UTC)
+    a = {"relation_id": uuid4(), "asserted_at": same_time}
+    b = {"relation_id": uuid4(), "asserted_at": same_time}
+    assert _is_source_successor(left=a, right=b) == (
+        str(a["relation_id"]) > str(b["relation_id"])
+    )
+
+
+def test_observation_reverse_arrival_detects_source_earlier() -> None:
+    """Cross-version: source-older assertion is not treated as successor."""
+    from datetime import datetime
+    from datetime import UTC
+
+    from rememberstack.spine.observation_adjudication import _is_strictly_earlier
+
+    older = datetime(2019, 1, 1, tzinfo=UTC)
+    newer = datetime(2024, 6, 1, tzinfo=UTC)
+    assert _is_strictly_earlier(older, newer)
+    assert not _is_strictly_earlier(newer, older)
+    assert not _is_strictly_earlier(None, newer)
+    assert not _is_strictly_earlier(older, None)
+
+
 def test_handle_claim_grain_returns_barrier() -> None:
     """Claim-target work stages observations and returns claim barrier."""
     claim_id = uuid4()
@@ -167,6 +289,7 @@ def test_handle_claim_grain_returns_barrier() -> None:
             "claim_id": str(claim_id),
             "doc_id": str(doc_id),
             "chunker_version": "test-chunker",
+            "extractor_version": "e2-test-extractor",
         },
     )
     outcome = handler.handle(work=work, meter=NoopCostMeter())
@@ -175,5 +298,6 @@ def test_handle_claim_grain_returns_barrier() -> None:
     assert outcome.claim_normalize_barrier.normalize_component_version == (
         E3_NORMALIZER_VERSION
     )
+    assert outcome.claim_normalize_barrier.extractor_version == "e2-test-extractor"
     assert facts.staged
     assert outcome.follow_up == ()
