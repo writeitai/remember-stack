@@ -7,11 +7,25 @@ import json
 from pathlib import Path
 import subprocess
 import threading
+import tomllib
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 import zipfile
 
 import pytest
+
+
+def _declared_version() -> str:
+    """Read the one authoritative distribution version from pyproject.
+
+    The wheel must report the version the release contract binds across
+    pyproject, the Compose image tag and uv.lock — so assert against that
+    single source rather than a literal that has to be edited on every
+    release and silently rots between them.
+    """
+    pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    with pyproject.open("rb") as handle:
+        return str(tomllib.load(handle)["project"]["version"])
 
 
 class _DeploymentHandler(BaseHTTPRequestHandler):
@@ -181,7 +195,7 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         server.server_close()
         thread.join()
 
-    assert version.stdout.strip() == "RememberStack 0.2.0"
+    assert version.stdout.strip() == f"RememberStack {_declared_version()}"
     assert json.loads(listing.stdout)["name"] == "resolve_entity"
     assert json.loads(query.stdout)["grain"] == "fact"
     assert json.loads(ingest.stdout)["created"] is True
