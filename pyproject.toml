@@ -64,6 +64,8 @@ connectors-watched-directory = []
 # K ships as repository-native data in Phase 6; this names its install surface.
 k = []
 benchmark = [
+    "google-auth>=2.39",
+    "google-cloud-storage>=3.4,<4",
     "nltk>=3.9",
     "regex>=2024.11.6",
 ]
