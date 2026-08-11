@@ -1153,11 +1153,13 @@ _ADVISORY_LOCK_NORMALIZE_BARRIER = text(
     """
 )
 
+# D56: occurrence map is chunk_claims; claims.chunk_id is origin only.
 _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT = text(
     """
     SELECT cl.claim_id, cl.doc_id
     FROM claims cl
-    JOIN chunks c ON c.chunk_id = cl.chunk_id
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
     WHERE cl.deployment_id = :deployment_id
       AND c.deployment_id = :deployment_id
       AND c.version_id = :version_id
@@ -1172,7 +1174,8 @@ _BARRIER_EXPECTED_CLAIMS = text(
     """
     SELECT count(*)::bigint
     FROM claims cl
-    JOIN chunks c ON c.chunk_id = cl.chunk_id
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
     WHERE cl.deployment_id = :deployment_id
       AND c.deployment_id = :deployment_id
       AND c.version_id = :version_id
@@ -1186,7 +1189,8 @@ _BARRIER_READY_CLAIMS = text(
     """
     SELECT count(*)::bigint
     FROM claims cl
-    JOIN chunks c ON c.chunk_id = cl.chunk_id
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
     JOIN processing_state p
       ON p.deployment_id = :deployment_id
      AND p.target_kind = 'claim'

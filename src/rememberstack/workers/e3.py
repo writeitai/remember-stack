@@ -181,16 +181,21 @@ class NormalizeRelationsHandler:
             raise NonRetryableHandlerError(
                 f"claim coordinate mismatch for work {work.processing_id}"
             )
-        # Validate claim belongs to the representation/version via its chunk.
+        # D56: occurrence may be via chunk_claims, not origin claims.chunk_id.
         chunks = self._chunk_catalog.chunks_for_embedding(
             representation_id=representation_id, chunker_version=chunker_version
         )
-        matching = [
-            chunk
-            for chunk in chunks
-            if chunk.chunk_id == claim.chunk_id and chunk.version_id == version_id
-        ]
-        if not matching:
+        version_chunk_ids = {
+            chunk.chunk_id for chunk in chunks if chunk.version_id == version_id
+        }
+        if not version_chunk_ids:
+            raise NonRetryableHandlerError(
+                f"claim {claim_id} not in representation {representation_id}"
+                f" version {version_id}"
+            )
+        if not self._claim_catalog.claim_occurs_on_chunks(
+            claim_id=claim_id, chunk_ids=tuple(version_chunk_ids)
+        ):
             raise NonRetryableHandlerError(
                 f"claim {claim_id} not in representation {representation_id}"
                 f" version {version_id}"
@@ -745,20 +750,19 @@ class AdjudicateObservationsHandler:
                 )
             )
         for entity_id, assertions in by_entity.items():
-            # Apply then retire staging for this entity so a mid-flush retry
-            # does not re-adjudicate already-committed entities (D88).
+            # D43 apply + staging retire in one transaction (retry-safe).
             self._observation_adjudicator.add_observations(
                 deployment_id=work.deployment_id,
                 subject_entity_id=entity_id,
                 assertions=tuple(assertions),
                 meter=meter,
                 call_key=f"observation_flush:{entity_id}",
-            )
-            self._facts.clear_staged_observations_for_entity(
-                deployment_id=work.deployment_id,
-                version_id=version_uuid,
-                subject_entity_id=entity_id,
-                normalizer_version=normalizer_version,
+                clear_staging={
+                    "deployment_id": work.deployment_id,
+                    "version_id": version_uuid,
+                    "subject_entity_id": entity_id,
+                    "normalizer_version": normalizer_version,
+                },
             )
         # Safety net: drop any residual staging for this version/generation.
         self._facts.clear_staged_observations(

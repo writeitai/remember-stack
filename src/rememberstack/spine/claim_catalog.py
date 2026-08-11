@@ -152,6 +152,21 @@ class ClaimCatalog:
             return None
         return ClaimForNormalization.model_validate(dict(row))
 
+    def claim_occurs_on_chunks(
+        self, *, claim_id: UUID, chunk_ids: tuple[UUID, ...]
+    ) -> bool:
+        """Whether the claim has a D56 occurrence on any of the given chunks."""
+        if not chunk_ids:
+            return False
+        with self._engine.connect() as connection:
+            return (
+                connection.execute(
+                    _CLAIM_OCCURS_ON_CHUNKS,
+                    {"claim_id": claim_id, "chunk_ids": list(chunk_ids)},
+                ).scalar_one()
+                > 0
+            )
+
     def claims_for_embedding(
         self, *, chunk_ids: tuple[UUID, ...], embedding_version: str
     ) -> tuple[ClaimForEmbedding, ...]:
@@ -325,11 +340,12 @@ _COPY_CHUNK_DECISIONS = text(
 
 _SELECT_CLAIMS_FOR_CHUNKS = text(
     """
-    SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
-           extractor_version
-    FROM claims
-    WHERE chunk_id = ANY(:chunk_ids)
-    ORDER BY ingested_at, claim_id
+    SELECT cl.claim_id, cl.deployment_id, cl.doc_id, cl.chunk_id, cl.claim_text,
+           cl.is_attributed, cl.extractor_version
+    FROM claims cl
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    WHERE cc.chunk_id = ANY(:chunk_ids)
+    ORDER BY cl.ingested_at, cl.claim_id
     """
 )
 
@@ -339,6 +355,15 @@ _SELECT_CLAIM_FOR_NORMALIZE = text(
            extractor_version
     FROM claims
     WHERE claim_id = :claim_id
+    """
+)
+
+_CLAIM_OCCURS_ON_CHUNKS = text(
+    """
+    SELECT count(*)::bigint
+    FROM chunk_claims
+    WHERE claim_id = :claim_id
+      AND chunk_id = ANY(:chunk_ids)
     """
 )
 

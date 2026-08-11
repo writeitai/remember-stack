@@ -57,6 +57,8 @@ def test_fanout_and_barrier_pin_extractor_version() -> None:
         assert "cl.extractor_version = :extractor_version" in sql
         assert "c.deployment_id = :deployment_id" in sql
         assert "c.version_id = :version_id" in sql
+        # D56 occurrence map, not origin claims.chunk_id alone.
+        assert "chunk_claims" in sql
 
 
 def test_readiness_normalize_status_pins_extractor_version() -> None:
@@ -188,14 +190,20 @@ def test_ordinary_observation_inserts_pass_valid_from() -> None:
     assert "valid_from IS NULL OR valid_from > :boundary" in sql
 
 
-def test_obs_flush_retires_staging_per_entity() -> None:
-    """Mid-flush retry must not re-apply entities already committed."""
+def test_obs_flush_retires_staging_in_same_txn_as_apply() -> None:
+    """D43 apply and staging retire share one transaction (retry-safe)."""
     import inspect
 
+    from rememberstack.spine import observation_adjudication
     from rememberstack.workers import e3
 
-    source = inspect.getsource(e3.AdjudicateObservationsHandler.handle)
-    assert "clear_staged_observations_for_entity" in source
+    handler_source = inspect.getsource(e3.AdjudicateObservationsHandler.handle)
+    assert "clear_staging=" in handler_source
+    apply_source = inspect.getsource(
+        observation_adjudication.ObservationAdjudicator.add_observations
+    )
+    assert "clear_staging" in apply_source
+    assert "_DELETE_OBS_STAGING_ENTITY" in apply_source
 
 
 def test_cycle_wait_does_not_block_on_missing_claim_rows() -> None:
@@ -234,6 +242,11 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
         def claim_for_normalization(self, *, claim_id: object) -> ClaimForNormalization:
             del claim_id
             return claim
+
+        def claim_occurs_on_chunks(
+            self, *, claim_id: object, chunk_ids: object
+        ) -> bool:
+            return claim_id == claim.claim_id and claim.chunk_id in set(chunk_ids)  # type: ignore[arg-type]
 
     class _Chunk:
         def __init__(self) -> None:
@@ -341,6 +354,11 @@ def test_handle_claim_grain_returns_barrier() -> None:
         def claim_for_normalization(self, *, claim_id: object) -> ClaimForNormalization:
             assert claim_id == claim.claim_id
             return claim
+
+        def claim_occurs_on_chunks(
+            self, *, claim_id: object, chunk_ids: object
+        ) -> bool:
+            return claim_id == claim.claim_id and claim.chunk_id in set(chunk_ids)  # type: ignore[arg-type]
 
     class _Chunk:
         def __init__(self, cid: object, vid: object) -> None:

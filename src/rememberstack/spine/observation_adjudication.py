@@ -126,6 +126,7 @@ class ObservationAdjudicator:
         assertions: tuple[ObservationAssertion, ...],
         meter: CostMeterPort | None = None,
         call_key: str = "observation",
+        clear_staging: dict[str, object] | None = None,
     ) -> tuple[UUID, ...]:
         """Adjudicate one document/entity batch against one front-loaded block.
 
@@ -133,6 +134,10 @@ class ObservationAdjudicator:
         read once. Assertions still apply in order so a later assertion sees
         an observation created or closed earlier in the same batch. The batch
         commits in one transaction and retries remain evidence-PK idempotent.
+
+        When ``clear_staging`` is provided (D88 flush), staging rows for the
+        entity are deleted in the same transaction as the D43 writes so a crash
+        cannot leave applied-but-still-staged rows for retry re-apply.
         """
         if not assertions:
             return ()
@@ -159,7 +164,7 @@ class ObservationAdjudicator:
                 .mappings()
                 .all()
             ]
-            return tuple(
+            results = tuple(
                 self._add_with_block(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -172,6 +177,9 @@ class ObservationAdjudicator:
                 )
                 for assertion_index, assertion in enumerate(assertions)
             )
+            if clear_staging is not None:
+                connection.execute(_DELETE_OBS_STAGING_ENTITY, clear_staging)
+            return results
 
     def _add_with_block(
         self,
@@ -210,6 +218,7 @@ class ObservationAdjudicator:
             self._pull_valid_from_earlier(
                 connection=connection,
                 deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
                 observation_id=observation_id,
                 candidate=exact,
                 asserted_at=asserted_at,
@@ -357,6 +366,7 @@ class ObservationAdjudicator:
                 self._pull_valid_from_earlier(
                     connection=connection,
                     deployment_id=deployment_id,
+                    subject_entity_id=subject_entity_id,
                     observation_id=candidate_id,
                     candidate=candidate,
                     asserted_at=asserted_at,
@@ -665,6 +675,7 @@ class ObservationAdjudicator:
         *,
         connection: Connection,
         deployment_id: UUID,
+        subject_entity_id: UUID,
         observation_id: UUID,
         candidate: dict[str, object],
         asserted_at: object,
@@ -674,11 +685,27 @@ class ObservationAdjudicator:
         Exact/evidence collapse reuses one observation row. Without this, the
         first flusher's asserted_at permanently owns valid_from and reverse
         completion yields a different window (D88 continuous ingest).
+
+        Refuse the pull when another live slice of the entity ends after the
+        proposed boundary — that neighbour was typically capped at this row's
+        old valid_from, and moving underneath it creates overlapping CURRENT
+        windows for superseding facts.
         """
         if asserted_at is None:
             return
         existing = candidate.get("valid_from")
         if existing is not None and not _is_strictly_earlier(asserted_at, existing):
+            return
+        blocked = connection.execute(
+            _HAS_LATER_CAP_BOUNDARY,
+            {
+                "deployment_id": deployment_id,
+                "subject_entity_id": subject_entity_id,
+                "observation_id": observation_id,
+                "boundary": asserted_at,
+            },
+        ).scalar_one()
+        if bool(blocked):
             return
         connection.execute(
             _PULL_VALID_FROM,
@@ -896,6 +923,31 @@ _PULL_VALID_FROM = text(
     SET valid_from = :boundary, updated_at = now()
     WHERE deployment_id = :deployment_id AND observation_id = :observation_id
       AND (valid_from IS NULL OR valid_from > :boundary)
+    """
+)
+
+_HAS_LATER_CAP_BOUNDARY = text(
+    """
+    SELECT EXISTS (
+        SELECT 1
+        FROM observations
+        WHERE deployment_id = :deployment_id
+          AND subject_entity_id = :subject_entity_id
+          AND observation_id <> :observation_id
+          AND invalidated_at IS NULL
+          AND valid_until IS NOT NULL
+          AND valid_until > :boundary
+    )
+    """
+)
+
+_DELETE_OBS_STAGING_ENTITY = text(
+    """
+    DELETE FROM normalize_observation_staging
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND subject_entity_id = :subject_entity_id
+      AND normalizer_version = :normalizer_version
     """
 )
 
