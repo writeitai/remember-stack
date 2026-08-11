@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
+from typing import overload
 
 from benchmarks.locomo.sharding import store_backup
 import pytest
@@ -34,12 +35,28 @@ def _run_json(path: Path) -> None:
     )
 
 
+@overload
+def _completed_process(
+    args: tuple[str, ...], *, stdout: str = ""
+) -> subprocess.CompletedProcess[str]: ...
+
+
+@overload
+def _completed_process(
+    args: tuple[str, ...], *, stdout: bytes
+) -> subprocess.CompletedProcess[bytes]: ...
+
+
 def _completed_process(
     args: tuple[str, ...], *, stdout: str | bytes = ""
 ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
     """Return one successful synthetic command result."""
 
-    return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout)
+    if isinstance(stdout, bytes):
+        return subprocess.CompletedProcess[bytes](
+            args=args, returncode=0, stdout=stdout
+        )
+    return subprocess.CompletedProcess[str](args=args, returncode=0, stdout=stdout)
 
 
 def _uploaded_metadata(
