@@ -380,6 +380,24 @@ def test_restore_validates_every_archive_before_running_docker(
     assert docker_calls == []
 
 
+def test_volume_empty_check_allows_only_empty_compose_mount_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compose-created nested mountpoints are empty, while any stored byte is not."""
+
+    volume_root = tmp_path / "volume"
+    (volume_root / "forget-manifests").mkdir(parents=True)
+    monkeypatch.setattr(store_backup, "_volume_mountpoint", lambda _name: volume_root)
+
+    assert store_backup._volume_is_empty("app-state")
+
+    (volume_root / "forget-manifests" / "manifest.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    assert not store_backup._volume_is_empty("app-state")
+
+
 def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     """The destructive command remains textually enclosed by the backup protocol."""
 

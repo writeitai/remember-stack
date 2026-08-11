@@ -747,9 +747,12 @@ def _ensure_empty_directory(path: Path) -> None:
 
 
 def _volume_is_empty(volume_name: str) -> bool:
-    """Return whether one Docker volume mountpoint contains no entries."""
+    """Return whether a volume contains no data beyond empty mount directories."""
 
-    return not any(_volume_mountpoint(volume_name).iterdir())
+    return all(
+        path.is_dir() and not path.is_symlink()
+        for path in _volume_mountpoint(volume_name).rglob("*")
+    )
 
 
 def restore_store(
