@@ -66,6 +66,7 @@ from rememberstack.spine import SyncCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
@@ -100,6 +101,7 @@ _STAGES = (
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
     PipelineStage.NORMALIZE_RELATIONS,
+    PipelineStage.ADJUDICATE_OBSERVATIONS,
     PipelineStage.ADJUDICATE_SUPERSESSION,
     PipelineStage.EMBED_CLAIM,
     PipelineStage.RECONCILE,
@@ -280,6 +282,12 @@ class _LifecycleRig:
                 chunker_version=chunker_version(params=_PARAMS),
             ),
         )
+        facts = FactCatalog(engine=engine)
+        obs_adjudicator = ObservationAdjudicator(
+            engine=engine,
+            model_provider=self.provider,
+            settings=ObservationSettings(),
+        )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
             handler=NormalizeRelationsHandler(
@@ -295,14 +303,20 @@ class _LifecycleRig:
                     small_model="openai/gpt-5.6-luna",
                     frontier_model="openai/gpt-5.6-sol",
                 ),
-                facts=FactCatalog(engine=engine),
-                observation_adjudicator=ObservationAdjudicator(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=ObservationSettings(),
-                ),
+                facts=facts,
+                observation_adjudicator=obs_adjudicator,
                 model_provider=self.provider,
                 settings=E3Settings(),
+                chunker_version=chunker_version(params=_PARAMS),
+            ),
+        )
+        registry.register(
+            stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+            handler=AdjudicateObservationsHandler(
+                facts=facts,
+                observation_adjudicator=obs_adjudicator,
+                chunk_catalog=chunk_catalog,
+                claim_catalog=claim_catalog,
                 chunker_version=chunker_version(params=_PARAMS),
             ),
         )

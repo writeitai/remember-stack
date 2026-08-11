@@ -45,6 +45,7 @@ from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
@@ -289,6 +290,20 @@ class _E3Rig:
             stage=PipelineStage.NORMALIZE_RELATIONS, handler=self.normalize_handler
         )
         registry.register(
+            stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+            handler=AdjudicateObservationsHandler(
+                facts=FactCatalog(engine=engine),
+                observation_adjudicator=ObservationAdjudicator(
+                    engine=engine,
+                    model_provider=self.provider,
+                    settings=ObservationSettings(),
+                ),
+                chunk_catalog=chunk_catalog,
+                claim_catalog=claim_catalog,
+                chunker_version=chunker_version(params=_PARAMS),
+            ),
+        )
+        registry.register(
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
@@ -329,23 +344,36 @@ class _E3Rig:
         self.worker = Worker(ledger=ledger, registry=registry)
 
     def run_chain(self) -> None:
-        """Drive one document through the full six-stage chain."""
-        for stage in (
+        """Drive one document through the D88 chain (drain multi-unit stages)."""
+        stages = (
             PipelineStage.CONVERT,
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
+            PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
             PipelineStage.EMBED_CLAIM,
             PipelineStage.RECONCILE,
             PipelineStage.LABEL_RELATION,
-        ):
-            outcome = self.worker.run_one(
-                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
-            ).outcome
-            assert outcome is RunResultOutcome.SUCCEEDED, stage
+        )
+        # Chunk extract + claim normalize need multiple run_one passes.
+        for _ in range(200):
+            progressed = False
+            for stage in stages:
+                outcome = self.worker.run_one(
+                    deployment_id=_DEPLOYMENT_ID,
+                    stage=stage,
+                    lane=ProcessingLane.STEADY,
+                ).outcome
+                if outcome is RunResultOutcome.NO_WORK:
+                    continue
+                assert outcome is RunResultOutcome.SUCCEEDED, stage
+                progressed = True
+            if not progressed:
+                return
+        raise AssertionError("chain did not drain within 200 rounds")
 
 
 @pytest.fixture()
@@ -455,6 +483,8 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             {"deployment_id": _DEPLOYMENT_ID, "version_id": ingested.version_id},
         ).all()
 
+    # Empty input: no claim normalize rows; extract is chunk-scoped; D88 opens
+    # obs-flush then supersession at version grain.
     assert {stage for stage, _status in rows} == {
         stage.value
         for stage in (
@@ -462,15 +492,14 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
-            PipelineStage.EXTRACT_CLAIMS,
-            PipelineStage.NORMALIZE_RELATIONS,
+            PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
             PipelineStage.EMBED_CLAIM,
             PipelineStage.RECONCILE,
             PipelineStage.LABEL_RELATION,
         )
     }
-    assert len(rows) == 10
+    assert len(rows) == 9
     assert {status for _stage, status in rows} == {"succeeded"}
     assert rig.provider.generated_prompts == []
 

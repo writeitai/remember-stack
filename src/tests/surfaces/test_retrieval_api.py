@@ -57,6 +57,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import QueryEngine
 import rememberstack.surfaces.query_engine as query_engine_module
+from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
@@ -267,6 +268,12 @@ class _ApiRig:
                 chunker_version=generation,
             ),
         )
+        facts = FactCatalog(engine=engine)
+        obs_adjudicator = ObservationAdjudicator(
+            engine=engine,
+            model_provider=self.provider,
+            settings=ObservationSettings(),
+        )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
             handler=NormalizeRelationsHandler(
@@ -282,14 +289,20 @@ class _ApiRig:
                     small_model="openai/gpt-5.6-luna",
                     frontier_model="openai/gpt-5.6-sol",
                 ),
-                facts=FactCatalog(engine=engine),
-                observation_adjudicator=ObservationAdjudicator(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=ObservationSettings(),
-                ),
+                facts=facts,
+                observation_adjudicator=obs_adjudicator,
                 model_provider=self.provider,
                 settings=E3Settings(),
+                chunker_version=generation,
+            ),
+        )
+        registry.register(
+            stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+            handler=AdjudicateObservationsHandler(
+                facts=facts,
+                observation_adjudicator=obs_adjudicator,
+                chunk_catalog=chunk_catalog,
+                claim_catalog=claim_catalog,
                 chunker_version=generation,
             ),
         )
@@ -357,22 +370,34 @@ class _ApiRig:
                 content=_SOURCE.encode("utf-8"),
             ),
         )
-        for stage in (
+        stages = (
             PipelineStage.CONVERT,
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
+            PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
             PipelineStage.EMBED_CLAIM,
             PipelineStage.RECONCILE,
             PipelineStage.LABEL_RELATION,
-        ):
-            outcome = self.worker.run_one(
-                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
-            ).outcome
-            assert outcome is RunResultOutcome.SUCCEEDED, stage
+        )
+        for _ in range(200):
+            progressed = False
+            for stage in stages:
+                outcome = self.worker.run_one(
+                    deployment_id=_DEPLOYMENT_ID,
+                    stage=stage,
+                    lane=ProcessingLane.STEADY,
+                ).outcome
+                if outcome is RunResultOutcome.NO_WORK:
+                    continue
+                assert outcome is RunResultOutcome.SUCCEEDED, stage
+                progressed = True
+            if not progressed:
+                return
+        raise AssertionError("retrieval corpus chain did not drain")
 
 
 @pytest.fixture()
