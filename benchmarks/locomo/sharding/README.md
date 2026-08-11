@@ -52,7 +52,9 @@ The driver assumes the checkout, virtual environment, image, Compose configurati
 environment variables already exist. It deliberately does not provision machines or distribute
 secrets. It runs as root because Docker's volume mountpoints are root-owned,
 and it verifies that the configured GCS bucket is readable before preparing or
-running any paid sample. Any set of SSH-accessible hosts works.
+running any paid sample. The preflight also writes one tiny create-only probe,
+so a missing uploader grant fails before paid work. Any set of SSH-accessible
+hosts works.
 
 ## 1. Plan balanced shards
 
@@ -156,6 +158,7 @@ The following environment variables tune the driver without changing its argumen
 | `LOCOMO_GCP_PROJECT` | **required** | GCP project used by the external-account Storage client |
 | `LOCOMO_BACKUP_STAGING_ROOT` | `/var/lib/rememberstack-locomo-backups` | local staging retained on failure |
 | `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
+| `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
 | `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |
 | `LOCOMO_GCP_CERTIFICATE_CONFIG_FILE` | `/etc/rememberstack/locomo-gcs/certificate-config.json` | public client-certificate path configuration |
 
@@ -203,6 +206,10 @@ the manifest's recorded engine revision, with the ordinary Compose environment
 and federated GCS identity configured, restore into explicit empty targets:
 
 ```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/etc/rememberstack/locomo-gcs/credentials.json
+export GOOGLE_API_CERTIFICATE_CONFIG=/etc/rememberstack/locomo-gcs/certificate-config.json
+export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
+
 .venv/bin/python benchmarks/locomo/sharding/store_backup.py restore \
   --receipt /srv/receipts/conv-50.json \
   --run-dir /srv/locomo-restores/conv-50 \

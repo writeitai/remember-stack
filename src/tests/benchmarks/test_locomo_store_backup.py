@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import UTC
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
+import tarfile
 
 from benchmarks.locomo.sharding import store_backup
 import pytest
@@ -182,6 +184,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
     monkeypatch.setattr(store_backup, "_archive_directory", archive)
     monkeypatch.setattr(store_backup, "_upload_directory", lambda **_kwargs: None)
     monkeypatch.setattr(store_backup, "_upload_file", lambda **_kwargs: None)
+    monkeypatch.setattr(store_backup.shutil, "rmtree", lambda _path: None)
     monkeypatch.setattr(
         store_backup,
         "_run",
@@ -272,6 +275,7 @@ def test_receipt_verification_rejects_a_missing_archive(
     monkeypatch.setattr(store_backup, "_archive_directory", archive)
     monkeypatch.setattr(store_backup, "_upload_directory", lambda **_kwargs: None)
     monkeypatch.setattr(store_backup, "_upload_file", lambda **_kwargs: None)
+    monkeypatch.setattr(store_backup.shutil, "rmtree", lambda _path: None)
     monkeypatch.setattr(
         store_backup,
         "_run",
@@ -529,6 +533,47 @@ def test_restore_rebases_absolute_p3_pointer_to_the_new_mount_root(
     assert link.resolve() == snapshot
 
 
+def test_archive_validation_rejects_parent_traversal(tmp_path: Path) -> None:
+    """A root restore never accepts a tar member outside its destination."""
+
+    plain = tmp_path / "unsafe.tar"
+    archive = tmp_path / "unsafe.tar.zst"
+    with tarfile.open(plain, "w") as handle:
+        member = tarfile.TarInfo("../escape")
+        payload = b"unsafe"
+        member.size = len(payload)
+        handle.addfile(member, io.BytesIO(payload))
+    subprocess.run(
+        ("zstd", "--quiet", "--force", str(plain), "-o", str(archive)), check=True
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="unsafe member"):
+        store_backup._validate_archive_members(
+            archive=archive,
+            destination=tmp_path / "destination",
+            allow_absolute_p3_pointer=False,
+        )
+
+
+def test_archive_validation_accepts_nested_absolute_p3_pointer(tmp_path: Path) -> None:
+    """The default run archive may duplicate the safely rebaseable mount link."""
+
+    run_dir = tmp_path / "run"
+    deployment = run_dir / ".mounts" / "deployment-1"
+    snapshot = deployment / "p3-version-1"
+    snapshot.mkdir(parents=True)
+    (snapshot / ".snapshot-version").write_text("version-1", encoding="utf-8")
+    (deployment / "p3").symlink_to(snapshot, target_is_directory=True)
+    archive = tmp_path / "run.tar.zst"
+    store_backup._archive_directory(source=run_dir, destination=archive)
+
+    store_backup._validate_archive_members(
+        archive=archive,
+        destination=tmp_path / "destination",
+        allow_absolute_p3_pointer=True,
+    )
+
+
 def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -> None:
     """Restore derives model/routing settings without copying deployment secrets."""
 
@@ -554,6 +599,18 @@ def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -
     assert "POSTGRES_PASSWORD" not in payload
 
 
+def test_runtime_binding_replay_covers_every_readiness_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new readiness binding cannot silently disappear during restore."""
+
+    from rememberstack.profiles.selfhost import _model_bindings
+
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+
+    assert set(store_backup.MODEL_BINDING_ENVIRONMENT) == set(_model_bindings())
+
+
 def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     """The destructive command remains textually enclosed by the backup protocol."""
 
@@ -565,6 +622,15 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
         "stage=backup status=starting"
     )
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
+    assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'
     )
+
+
+def test_python_compose_commands_use_the_volume_gate_project() -> None:
+    """Restore and backup cannot mutate a different Compose project."""
+
+    assert store_backup._compose_command(
+        compose_project="exact-project", arguments=("down", "--volumes")
+    ) == ("docker", "compose", "--project-name", "exact-project", "down", "--volumes")

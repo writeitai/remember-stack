@@ -40,7 +40,7 @@ backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
 runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
 backup_tool=benchmarks/locomo/sharding/store_backup.py
-compose=(docker compose)
+compose=(docker compose --project-name "$compose_project")
 
 export GOOGLE_APPLICATION_CREDENTIALS=${LOCOMO_GCP_CREDENTIALS_FILE:-/etc/rememberstack/locomo-gcs/credentials.json}
 export GOOGLE_API_CERTIFICATE_CONFIG=${LOCOMO_GCP_CERTIFICATE_CONFIG_FILE:-/etc/rememberstack/locomo-gcs/certificate-config.json}

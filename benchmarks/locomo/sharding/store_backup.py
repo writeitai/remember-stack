@@ -11,9 +11,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import secrets
+import shutil
 import subprocess
 import sys
+import tarfile
 from typing import Annotated
 from typing import Literal
 
@@ -174,6 +177,14 @@ def _run(
         if exc.stderr:
             detail = f": {str(exc.stderr).strip()}"
         raise StoreBackupError(f"command failed: {' '.join(args)}{detail}") from exc
+
+
+def _compose_command(
+    *, compose_project: str, arguments: Sequence[str]
+) -> tuple[str, ...]:
+    """Bind every Compose mutation to the project used by the volume gate."""
+
+    return ("docker", "compose", "--project-name", compose_project, *arguments)
 
 
 def _sha256(path: Path) -> str:
@@ -508,6 +519,31 @@ def _remote_size(*, remote_path: str, project_id: str) -> int:
     return blob.size
 
 
+def _create_preflight_probe(*, remote_destination: str, project_id: str) -> None:
+    """Prove create-only access before any paid benchmark work can begin."""
+
+    remote_path = _remote_join(
+        prefix=remote_destination,
+        name=f"preflight/{_timestamp(_utc_now())}-{secrets.token_hex(4)}.txt",
+    )
+    bucket_name, object_name = _parse_gcs_uri(remote_path)
+    payload = b"rememberstack-locomo-backup-preflight\n"
+    try:
+        blob = _storage_client(project_id).bucket(bucket_name).blob(object_name)
+        blob.upload_from_string(payload, if_generation_match=0, checksum="crc32c")
+        blob.reload()
+    except PreconditionFailed as exc:
+        raise StoreBackupError(
+            f"refusing to replace an existing GCS object: {remote_path}"
+        ) from exc
+    except (GoogleAPIError, GoogleAuthError, OSError, ValueError) as exc:
+        raise StoreBackupError(
+            f"configured GCS destination is not create-capable: {remote_destination}"
+        ) from exc
+    if blob.size != len(payload):
+        raise StoreBackupError("GCS preflight probe size differs after upload")
+
+
 def _upload_file(*, source: Path, remote_path: str, project_id: str) -> None:
     """Create one immutable GCS object with transport checksum validation."""
 
@@ -582,7 +618,7 @@ def _download_recovery_unit(*, receipt: BackupReceipt, staging: Path) -> BackupM
 
 
 def preflight_destination(*, remote_destination: str, project_id: str) -> None:
-    """Prove that the federated workload can list the configured private bucket."""
+    """Prove that the workload can read and create in the private destination."""
 
     bucket_name, _prefix = _parse_gcs_uri(remote_destination)
     try:
@@ -594,6 +630,9 @@ def preflight_destination(*, remote_destination: str, project_id: str) -> None:
         raise StoreBackupError(
             f"configured GCS destination is not readable: {remote_destination}"
         ) from exc
+    _create_preflight_probe(
+        remote_destination=remote_destination, project_id=project_id
+    )
 
 
 def _safe_component(value: str) -> str:
@@ -764,7 +803,11 @@ def backup_store(
     staging.mkdir(parents=True, mode=0o700)
 
     _log(f"sample={sample_id} backup-stage=stop status=starting")
-    _run(args=("docker", "compose", "stop", "--timeout", "120"))
+    _run(
+        args=_compose_command(
+            compose_project=compose_project, arguments=("stop", "--timeout", "120")
+        )
+    )
     volumes = _volume_names(compose_project=compose_project)
 
     archives: list[ArchiveRecord] = []
@@ -866,8 +909,67 @@ def backup_store(
     _write_model(
         path=_receipt_path(run_dir=run_dir, sample_id=sample_id), model=receipt
     )
+    try:
+        shutil.rmtree(staging)
+    except OSError as exc:
+        _log(f"sample={sample_id} backup-stage=cleanup warning={exc}")
     _log(f"sample={sample_id} backup-stage=verified prefix={remote_prefix}")
     return receipt
+
+
+def _member_path(name: str) -> PurePosixPath:
+    """Normalize one tar member name for exact containment checks."""
+
+    path = PurePosixPath(name)
+    parts = tuple(part for part in path.parts if part not in {"", "."})
+    return PurePosixPath(*parts)
+
+
+def _validate_archive_members(
+    *, archive: Path, destination: Path, allow_absolute_p3_pointer: bool
+) -> None:
+    """Reject archive members that could escape a root-owned restore target."""
+
+    try:
+        process = subprocess.Popen(
+            ("zstd", "--decompress", "--stdout", str(archive)), stdout=subprocess.PIPE
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise StoreBackupError("cannot start zstd archive validation") from exc
+    if process.stdout is None:  # pragma: no cover - PIPE guarantees this.
+        process.kill()
+        raise StoreBackupError("zstd archive validation has no output stream")
+    seen: set[PurePosixPath] = set()
+    required_p3_targets: set[PurePosixPath] = set()
+    try:
+        with process.stdout, tarfile.open(fileobj=process.stdout, mode="r|") as handle:
+            for member in handle:
+                member_path = _member_path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise StoreBackupError("archive contains an unsafe member path")
+                seen.add(member_path)
+                link_target = PurePosixPath(member.linkname)
+                if (
+                    allow_absolute_p3_pointer
+                    and member.issym()
+                    and member_path.name == "p3"
+                    and link_target.is_absolute()
+                    and link_target.name.startswith("p3-")
+                    and link_target.parent.name == member_path.parent.name
+                ):
+                    required_p3_targets.add(member_path.parent / link_target.name)
+                    continue
+                tarfile.data_filter(member, str(destination))
+    except (OSError, tarfile.TarError, StoreBackupError) as exc:
+        process.kill()
+        process.wait()
+        if isinstance(exc, StoreBackupError):
+            raise
+        raise StoreBackupError(f"archive member validation failed: {archive}") from exc
+    if process.wait() != 0:
+        raise StoreBackupError(f"zstd archive validation failed: {archive}")
+    if not required_p3_targets.issubset(seen):
+        raise StoreBackupError("P3 pointer target is absent from the mounts archive")
 
 
 def _validate_download(*, staging: Path, manifest: BackupManifest) -> None:
@@ -883,6 +985,11 @@ def _validate_download(*, staging: Path, manifest: BackupManifest) -> None:
             raise StoreBackupError(f"downloaded archive size differs: {relative}")
         if _sha256(path) != archive.sha256:
             raise StoreBackupError(f"downloaded archive checksum differs: {relative}")
+        _validate_archive_members(
+            archive=path,
+            destination=staging / "member-validation",
+            allow_absolute_p3_pointer=archive.kind in {"run", "mounts"},
+        )
 
 
 def _ensure_empty_directory(path: Path) -> None:
@@ -976,10 +1083,22 @@ def restore_store(
             raise StoreBackupError(
                 f"refusing to restore over non-empty volumes: {', '.join(non_empty)}"
             )
-    _run(args=("docker", "compose", "down", "--remove-orphans"))
+    _run(
+        args=_compose_command(
+            compose_project=compose_project, arguments=("down", "--remove-orphans")
+        )
+    )
     if count == 0:
-        _run(args=("docker", "compose", "create"))
-        _run(args=("docker", "compose", "down", "--remove-orphans"))
+        _run(
+            args=_compose_command(
+                compose_project=compose_project, arguments=("create",)
+            )
+        )
+        _run(
+            args=_compose_command(
+                compose_project=compose_project, arguments=("down", "--remove-orphans")
+            )
+        )
     volumes = _volume_names(compose_project=compose_project)
     if any(not _volume_is_empty(volume) for volume in volumes.values()):
         raise StoreBackupError("Compose created a non-empty restore volume")
@@ -1013,20 +1132,21 @@ def restore_store(
         )
         assert compose_base_env is not None
         _run(
-            args=(
-                "docker",
-                "compose",
-                "--env-file",
-                str(compose_base_env),
-                "--env-file",
-                str(runtime_environment),
-                "up",
-                "--detach",
-                "--wait",
-                "postgres",
-                "minio",
-                "setup",
-                "api",
+            args=_compose_command(
+                compose_project=compose_project,
+                arguments=(
+                    "--env-file",
+                    str(compose_base_env),
+                    "--env-file",
+                    str(runtime_environment),
+                    "up",
+                    "--detach",
+                    "--wait",
+                    "postgres",
+                    "minio",
+                    "setup",
+                    "api",
+                ),
             )
         )
     _log(f"sample={receipt.sample_id} restore-stage=complete")
