@@ -144,7 +144,6 @@ backup_sample() {
     --sample "$sample_id" \
     --run-dir "$run_dir" \
     --mount-root "$mount_root" \
-    --deployment-id "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" \
     --compose-project "$compose_project" \
     --project "$backup_project" \
     --destination "$backup_destination" \

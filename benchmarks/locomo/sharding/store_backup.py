@@ -88,8 +88,8 @@ class FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ArchiveRecord(FrozenModel):
-    """Identify and validate one archive in a recovery unit."""
+class LocalArchiveRecord(FrozenModel):
+    """Identify one complete archive before it has a remote object identity."""
 
     kind: Literal["volume", "run", "mounts"]
     logical_name: NonEmpty
@@ -97,8 +97,13 @@ class ArchiveRecord(FrozenModel):
     relative_path: NonEmpty
     byte_size: int = Field(ge=0)
     sha256: Sha256
-    gcs_generation: int | None = Field(default=None, ge=1)
-    gcs_crc32c: str | None = None
+
+
+class ArchiveRecord(LocalArchiveRecord):
+    """Bind one uploaded archive to its immutable GCS object identity."""
+
+    gcs_generation: int = Field(ge=1)
+    gcs_crc32c: NonEmpty
 
 
 class RemoteObjectMetadata(FrozenModel):
@@ -303,6 +308,30 @@ def _run_identity(run_dir: Path) -> RunIdentity:
             value=value.get("item_ids_sha256"), field="item_ids_sha256"
         ),
     )
+
+
+def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
+    """Derive one sample's deployment identity from its ingest checkpoints."""
+
+    state = _load_object(run_dir / "state.json")
+    ingests = state.get("ingests")
+    if not isinstance(ingests, dict):
+        raise StoreBackupError("state.json has no ingest checkpoints")
+    deployment_ids: set[str] = set()
+    for record in ingests.values():
+        if not isinstance(record, dict) or record.get("sample_id") != sample_id:
+            continue
+        deployment_id = record.get("deployment_id")
+        if not isinstance(deployment_id, str) or not deployment_id:
+            raise StoreBackupError(
+                f"ingest checkpoint for {sample_id} has no deployment identity"
+            )
+        deployment_ids.add(deployment_id)
+    if len(deployment_ids) != 1:
+        raise StoreBackupError(
+            f"ingest checkpoints for {sample_id} do not identify one deployment"
+        )
+    return deployment_ids.pop()
 
 
 def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
@@ -575,10 +604,10 @@ def _record_for_archive(
     docker_volume: str | None,
     archive: Path,
     root: Path,
-) -> ArchiveRecord:
+) -> LocalArchiveRecord:
     """Build checksum metadata for one newly created archive."""
 
-    return ArchiveRecord(
+    return LocalArchiveRecord(
         kind=kind,
         logical_name=logical_name,
         docker_volume=docker_volume,
@@ -852,10 +881,7 @@ def verify_receipt(receipt_path: Path) -> tuple[BackupReceipt, BackupManifest]:
             raise StoreBackupError(
                 f"remote archive size differs from manifest: {archive.relative_path}"
             )
-        immutable_identity = (archive.gcs_generation, archive.gcs_crc32c)
-        if immutable_identity.count(None) == 1:
-            raise StoreBackupError("manifest has incomplete GCS archive identity")
-        if archive.gcs_generation is not None and (
+        if (
             metadata.generation != archive.gcs_generation
             or metadata.crc32c != archive.gcs_crc32c
         ):
@@ -915,7 +941,6 @@ def backup_store(
     sample_id: str,
     run_dir: Path,
     mount_root: Path,
-    deployment_id: str,
     compose_project: str,
     gcp_project: str,
     remote_destination: str,
@@ -935,6 +960,7 @@ def backup_store(
         raise StoreBackupError("requested sample does not own the marked live store")
 
     identity = _run_identity(run_dir)
+    deployment_id = _sample_deployment_id(run_dir=run_dir, sample_id=sample_id)
     created_at = _utc_now()
     backup_id = f"{_timestamp(created_at)}-{secrets.token_hex(4)}"
     staging = staging_root / backup_id
@@ -948,7 +974,7 @@ def backup_store(
     )
     volumes = _volume_names(compose_project=compose_project)
 
-    archives: list[ArchiveRecord] = []
+    archives: list[LocalArchiveRecord] = []
     for logical_name in EXPECTED_VOLUMES:
         docker_volume = volumes[logical_name]
         archive = staging / "volumes" / f"{logical_name}.tar.zst"
@@ -1010,11 +1036,15 @@ def backup_store(
             project_id=gcp_project,
         )
         uploaded_archives.append(
-            archive.model_copy(
-                update={
-                    "gcs_generation": metadata.generation,
-                    "gcs_crc32c": metadata.crc32c,
-                }
+            ArchiveRecord(
+                kind=archive.kind,
+                logical_name=archive.logical_name,
+                docker_volume=archive.docker_volume,
+                relative_path=archive.relative_path,
+                byte_size=archive.byte_size,
+                sha256=archive.sha256,
+                gcs_generation=metadata.generation,
+                gcs_crc32c=metadata.crc32c,
             )
         )
     manifest = BackupManifest(
@@ -1365,7 +1395,6 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--sample", required=True)
     backup.add_argument("--run-dir", type=_path, required=True)
     backup.add_argument("--mount-root", type=_path, required=True)
-    backup.add_argument("--deployment-id", required=True)
     backup.add_argument("--compose-project", default="rememberstack")
     backup.add_argument("--project", required=True)
     backup.add_argument("--destination", required=True)
@@ -1445,7 +1474,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     sample_id=arguments.sample,
                     run_dir=arguments.run_dir,
                     mount_root=arguments.mount_root,
-                    deployment_id=arguments.deployment_id,
                     compose_project=arguments.compose_project,
                     gcp_project=arguments.project,
                     remote_destination=arguments.destination,

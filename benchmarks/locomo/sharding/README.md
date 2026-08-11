@@ -191,13 +191,14 @@ bytes. If an older host contains a known store, identify its sample and run:
   --run-dir /srv/locomo-runs/publication \
   --mount-root /srv/locomo-runs/publication/.mounts \
   --sample conv-50 \
-  --deployment-id "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" \
   --project "$LOCOMO_GCP_PROJECT" \
   --destination "$LOCOMO_BACKUP_DESTINATION"
 ```
 
-Do not record a guessed sample ID. If store identity cannot be proven, leave
-the volumes in place for inspection.
+The backup derives the deployment ID from that sample's completed ingest
+checkpoints; it never trusts the current shell for stored identity. Do not
+record a guessed sample ID. If store identity cannot be proven, leave the
+volumes in place for inspection.
 
 ## 4. Restore one conversation
 

@@ -33,6 +33,19 @@ def _run_json(path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (path / "state.json").write_text(
+        json.dumps(
+            {
+                "ingests": {
+                    "doc-1": {
+                        "sample_id": "conv-1",
+                        "deployment_id": "57000000-0000-0000-0000-000000000001",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @overload
@@ -165,7 +178,6 @@ def test_failed_stop_preserves_store_without_a_receipt(
             sample_id="conv-1",
             run_dir=run_dir,
             mount_root=mount_root,
-            deployment_id="57000000-0000-0000-0000-000000000001",
             compose_project="rememberstack",
             gcp_project="remember-stack",
             remote_destination="gs://bucket/backups",
@@ -232,7 +244,6 @@ def test_backup_writes_receipt_only_after_remote_readback(
         sample_id="conv-1",
         run_dir=run_dir,
         mount_root=mount_root,
-        deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
         gcp_project="remember-stack",
         remote_destination="gs://bucket/backups",
@@ -269,6 +280,10 @@ def test_backup_writes_receipt_only_after_remote_readback(
 
     assert verified_receipt == receipt
     assert verified_manifest.sample_id == "conv-1"
+    assert (
+        verified_manifest.deployment_id
+        == "57000000-0000-0000-0000-000000000001"
+    )
     assert len(checked_archives) == 6
 
     def replaced_metadata(
@@ -282,6 +297,40 @@ def test_backup_writes_receipt_only_after_remote_readback(
     monkeypatch.setattr(store_backup, "_remote_metadata", replaced_metadata)
     with pytest.raises(store_backup.StoreBackupError, match="identity differs"):
         store_backup.verify_receipt(receipt_path)
+
+
+def test_sample_deployment_identity_must_be_unique(tmp_path: Path) -> None:
+    """Backup cannot stamp an ambiguous checkpoint deployment into its manifest."""
+
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {
+                "ingests": {
+                    "doc-1": {"sample_id": "conv-1", "deployment_id": "one"},
+                    "doc-2": {"sample_id": "conv-1", "deployment_id": "two"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="one deployment"):
+        store_backup._sample_deployment_id(run_dir=tmp_path, sample_id="conv-1")
+
+
+def test_archive_identity_is_required() -> None:
+    """A size-only legacy archive cannot satisfy the current wipe contract."""
+
+    with pytest.raises(ValueError):
+        store_backup.ArchiveRecord.model_validate(
+            {
+                "kind": "run",
+                "logical_name": "run-directory",
+                "relative_path": "run.tar.zst",
+                "byte_size": 4,
+                "sha256": hashlib.sha256(b"good").hexdigest(),
+            }
+        )
 
 
 def test_receipt_verification_rejects_a_missing_archive(
@@ -336,7 +385,6 @@ def test_receipt_verification_rejects_a_missing_archive(
         sample_id="conv-1",
         run_dir=run_dir,
         mount_root=mount_root,
-        deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
         gcp_project="remember-stack",
         remote_destination="gs://bucket/backups",
@@ -396,7 +444,6 @@ def test_failed_remote_manifest_readback_preserves_store_without_receipt(
             sample_id="conv-1",
             run_dir=run_dir,
             mount_root=mount_root,
-            deployment_id="57000000-0000-0000-0000-000000000001",
             compose_project="rememberstack",
             gcp_project="remember-stack",
             remote_destination="gs://bucket/backups",
@@ -437,6 +484,8 @@ def test_restore_validates_every_archive_before_running_docker(
                 relative_path=relative,
                 byte_size=4,
                 sha256=hashlib.sha256(b"good").hexdigest(),
+                gcs_generation=1,
+                gcs_crc32c="crc32c-one",
             )
         )
         archive = remote_root / relative
@@ -505,7 +554,7 @@ def test_restore_validates_every_archive_before_running_docker(
         store_backup,
         "_remote_metadata",
         lambda **_kwargs: store_backup.RemoteObjectMetadata(
-            byte_size=4, generation=1, crc32c="legacy-crc"
+            byte_size=4, generation=1, crc32c="crc32c-one"
         ),
     )
     monkeypatch.setattr(store_backup, "_download_recovery_unit", download_recovery_unit)
