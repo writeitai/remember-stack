@@ -284,9 +284,7 @@ class _LifecycleRig:
         )
         facts = FactCatalog(engine=engine)
         obs_adjudicator = ObservationAdjudicator(
-            engine=engine,
-            model_provider=self.provider,
-            settings=ObservationSettings(),
+            engine=engine, model_provider=self.provider, settings=ObservationSettings()
         )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
