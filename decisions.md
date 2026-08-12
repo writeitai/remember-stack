@@ -3528,3 +3528,47 @@ normalize as the v1 grain (remains a viable later alternative).
 D86 “per-claim fan-out deferred” is superseded by this decision for work grain
 only — D86 drop/retry rules remain binding inside each claim job.
 
+## D89. Fact retrieval shares one PostgreSQL authority and one operation deadline
+
+**Decision (2026-08-11).** The unchanged 24-relation `memory_v1` surface factors
+current fact evidence into two ungranted private authorities:
+`v_memory_fact_claim_live` owns the coordinate-bound current-testimony
+association and `v_memory_evidence_lineage_live` owns the D54 fact × document
+lineage × stance aggregation. `fact_claim_evidence_live`, `evidence_lineage`,
+and `facts_visible_history` compose those helpers and apply
+`v_memory_fact_visible` once. Retained assured operations continue to read
+`memory_v1`; application code may not reconstruct evidence counts or review
+state from base tables.
+
+`fact_context` confirms P1 nominations in bounded exact-key batches, but every
+statement while it holds one pooled connection shares one 25-second monotonic
+database deadline. Each statement receives only the remaining time. Exhaustion
+fails the operation and releases the connection instead of multiplying the
+transport timeout by the number of refill batches.
+
+The manifest and benchmark identity roll to `RS-LoCoMo-Full-v13`. V13 retains
+the v12 dataset, Luna models, answer prompt, call budgets, and complete 23-tool
+retrieval plane, while binding the current D88 11-stage ingest contract with
+claim-level normalize fan-out and a distinct observation-adjudication stage.
+Verified backups can restore the exact run they protect, but ingest, answer,
+and judge checkpoints are never adopted across pipeline or repository
+revisions.
+
+**Context.** During the first v12 answer pass, timed-out
+`facts_visible_history` expansions continued in PostgreSQL, filled all 15 API
+pool slots, and caused unrelated reads to fail. Direct base-table SQL was fast
+but would have violated D83 by duplicating D41/D48/D54 rules in `QueryEngine`.
+The factored database prototype returned 30 exact history rows in about eight
+seconds and 15 facts' representative evidence in about 5.5 seconds on the
+ingested LoCoMo store.
+
+**Rejected.** Rebuild D54 and support state in `QueryEngine`; planner settings
+without changing the repeated authority expansion; increase the HTTP or pool
+timeouts; add a new public query-space relation; silently keep the v12 name
+with a different pinned manifest; preserve cross-revision ingest compatibility
+for an unused benchmark harness.
+
+**Design.** `plan/designs/open_query_space_design.md` §3.2 and
+`plan/designs/locomo_benchmark_design.md` §§2, 9.
+
+**Analysis.** `plan/analysis/fact_context_authority_performance.md`.

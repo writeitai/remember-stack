@@ -33,11 +33,11 @@ obligation:
   the public relations that read it carry their own cells.
 
 The other private helpers are *not* discharged that way. `memory_v1` is where
-a caller reads, but the mention, fact, and K citation helpers are where deletion
-rules are actually *defined* — the public relations project them — so their
+a caller reads, but the mention, fact/evidence, and K citation helpers are where
+deletion rules are actually *defined* — the public relations project them — so their
 cells are executed exactly like a public relation's:
 reachable before the mutation, absent after. Non-reachability is proven for
-all five helpers on top of that, by the gate that reads their grants.
+all seven helpers on top of that, by the gate that reads their grants.
 - ``deferred`` — the target names an object class this batch does not build (a
   P1 nomination candidate, a P2 snapshot edge, a corpus body). The cell is
   recorded rather than omitted, with the batch that will execute it, so the
@@ -58,12 +58,12 @@ from typing import Final
 from pydantic import BaseModel
 from pydantic import ConfigDict
 
-from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
-    AUTHORIZATION_HELPER_VIEWS,
-)
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
 from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS
+from rememberstack.spine.query_space.source_definitions import (
+    AUTHORIZATION_HELPER_VIEWS,
+)
 
 #: Identifier of this artifact's layout. Version 2 replaced one global
 #: expectation and a per-target non-vacuity check with per-cell status,
@@ -82,6 +82,8 @@ SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_su
 #: rule is defined and the public relations project it — so their cells are
 #: executed like a public relation's, before and after the mutation.
 GATED_HELPERS: Final = (
+    "public.v_memory_evidence_lineage_live",
+    "public.v_memory_fact_claim_live",
     "public.v_memory_fact_visible",
     "public.v_memory_mention_current_content",
     "public.v_memory_page_citation_visible",
@@ -233,6 +235,8 @@ DELETION_TARGETS: Final = (
             "memory_v1.page_evidence_visible",
             "memory_v1.sections_live",
             "memory_v1.testimony_currency_events_visible",
+            "public.v_memory_evidence_lineage_live",
+            "public.v_memory_fact_claim_live",
             "public.v_memory_mention_current_content",
             "public.v_memory_fact_visible",
             "public.v_memory_page_citation_visible",
@@ -310,6 +314,8 @@ DELETION_TARGETS: Final = (
             "memory_v1.evidence_lineage",
             "memory_v1.fact_claim_evidence_live",
             "memory_v1.mentions_live",
+            "public.v_memory_evidence_lineage_live",
+            "public.v_memory_fact_claim_live",
             "public.v_memory_mention_current_content",
         ),
     ),
@@ -332,6 +338,8 @@ DELETION_TARGETS: Final = (
             "memory_v1.graph_edges_current",
             "memory_v1.graph_edges_visible_history",
             "memory_v1.page_evidence_visible",
+            "public.v_memory_evidence_lineage_live",
+            "public.v_memory_fact_claim_live",
             "public.v_memory_fact_visible",
             "public.v_memory_page_citation_visible",
         ),
@@ -403,6 +411,8 @@ DELETION_TARGETS: Final = (
             "memory_v1.graph_edges_current",
             "memory_v1.graph_edges_visible_history",
             "memory_v1.page_evidence_visible",
+            "public.v_memory_evidence_lineage_live",
+            "public.v_memory_fact_claim_live",
             "public.v_memory_fact_visible",
             "public.v_memory_page_citation_visible",
         ),

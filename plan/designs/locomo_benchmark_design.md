@@ -1,8 +1,8 @@
 # LoCoMo full-system benchmark design
 
 > **Status:** binding current-system protocol contract. Real provider execution
-> remains operator-invoked. The 2026-08-07 authorization covered v11 only; this
-> design does not authorize a paid v12 run.
+> remains operator-invoked. Accepting this design does not itself authorize a
+> paid v13 run.
 
 ## 1. Acceptance boundary
 
@@ -10,7 +10,7 @@ The adapter is repository tooling around the public `MemoryClient`. Every real
 run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
-- the stock self-host profile composes all ten continuous handlers;
+- the stock self-host profile composes all eleven continuous handlers;
 - P2/P3 can be built explicitly over the same stores the API reads;
 - readiness is machine-verifiable through the public API;
 - the answer agent can use the complete shipped read plane: assured operations,
@@ -27,7 +27,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v12
+protocol                RS-LoCoMo-Full-v13
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -51,6 +51,17 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v12 → v13 (2026-08-11 — current-main ingest and bounded fact authority):**
+D89 keeps the v12 dataset, models, prompts, budgets, and complete 23-tool answer
+catalog. It rolls the query-space manifest and protocol identity because
+the fact views now share private current-evidence and D54 lineage authorities,
+and `fact_context` applies one operation-level PostgreSQL deadline. This fixes
+the pool-exhaustion failure observed during the v12 answer pass without adding
+an answer tool or changing the fact/testimony mental model. V13 also binds the
+current D88 claim-level normalize fan-out and distinct observation-adjudication
+stage. Because that changes the ingest contract, a v12 store is not adopted;
+v13 performs a fresh ingest at its recorded repository revision.
 
 **v11 → v12 (2026-08-10 — authority-aligned context operations):** D87
 replaces the assured-operation subset with `resolve_entity`,
@@ -229,7 +240,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and v11 instead measure the
-owner-selected Luna agent against their pinned surfaces; v12 retains that model
+owner-selected Luna agent against their pinned surfaces; v13 retains that model
 choice for the D87 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -430,7 +441,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v12; no benchmark-specific
+an integrity requirement and an answer channel in v13; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -527,7 +538,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v12 leaves it unset.
+   prepared protocol's `answer_word_cap` is set; v13 leaves it unset.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
@@ -550,7 +561,7 @@ respect grain, validity, freshness, truncation, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside
 retrieval.
 
-Loop guards in the frozen answer prompt (v12): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v13): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". These are prompt discipline, not harness enforcement
@@ -577,11 +588,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v12 \
+  --protocol full-v13 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v12`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v13`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
@@ -629,6 +640,15 @@ the deployment.
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically
 replaced after each ingestion, readiness checkpoint, answer, and judge.
 
+### No cross-revision ingest adoption
+
+One protocol run is produced by the exact repository revision, component
+generations, model bindings, and 11-stage readiness contract recorded in its
+`run.json`. Checkpoints may resume that same run, and verified store backups may
+restore it. They must not be copied into a run with a different pipeline or
+repository identity. This keeps the scored system unambiguous and avoids a
+second compatibility surface for an unused benchmark harness.
+
 Transport/server errors, invalid tool decisions, schema failures, provider accounting failures,
 step exhaustion, and missing records remain explicit and score zero. Typed
 caller-correctable parse, argument, allowlist, and saved-query-state failures,
@@ -662,7 +682,7 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
   response says a new version was created; before answering, the same exact
   checkpointed tuples equal the complete prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
-- All ten workers are running.
+- All eleven workers are running.
 - Every prepared session has an ingest record.
 - P2/P3 one-shot build completed.
 - The ordinary mount publisher completed and its P3 `.snapshot-version` equals

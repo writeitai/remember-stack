@@ -29,14 +29,17 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v12"
-DEFAULT_PROTOCOL_KEY: Final = "full-v12"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-authority-context-v12"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v13"
+DEFAULT_PROTOCOL_KEY: Final = "full-v13"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-fact-authority-v13"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
+API_TIMEOUT_SECONDS: Final = 60.0
+"""Transport budget for compound retrieval, larger than the server DB budget."""
+
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "b9ef94b71f10d8ad03ad6e3dc959daa747882ea929c62ff58c7384497886c168"
+    "2cd5f80c0dab258d82dc3fb2129a47a3624132887a4397e776d44090b85d4853"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -45,12 +48,63 @@ EXPECTED_PIPELINE_STAGES: Final = (
     "embed_chunk",
     "extract_claims",
     "normalize_relations",
+    "adjudicate_observations",
     "adjudicate_supersession",
     "embed_claim",
     "reconcile",
     "label_relation",
 )
 EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
+EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "convert": "e0-convert-2026.07",
+        "structure": "e0-structure-2026.07f:d79-wave2",
+        "chunk": (
+            "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs:"
+            "blockizer-heading-metadata"
+        ),
+        "embed_chunk": "e1-embed-2026.08-d80",
+        "extract_claims": (
+            "e2-extract-2026.08a:d80-location-elements-1:"
+            "token-union-grounding-1:temporal-anchor-2:"
+            "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
+        ),
+        "normalize_relations": (
+            "e3-normalize-2026.08a:temp0-1:unknown-type-gate-1:claim-fanout-1"
+        ),
+        "adjudicate_observations": "e3-obs-flush-2026.08a:claim-fanout-1",
+        "adjudicate_supersession": "adjudicator-2026.07b:temp0-1",
+        "embed_claim": "p1-embed-claims-2026.07",
+        "reconcile": "reconcile-2026.07",
+        "label_relation": (
+            "p1-fact-label-2026.08:deterministic-s4+qwen/qwen3-embedding-8b"
+        ),
+    }
+)
+EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "chunk_embedding": "qwen/qwen3-embedding-8b",
+        "claim_extraction": "openai/gpt-5.6-luna",
+        "context_prefix": "openai/gpt-5.6-luna",
+        "entity_observation_embedding": "qwen/qwen3-embedding-8b",
+        "fact_label": "openai/gpt-5.6-luna",
+        "observation_frontier": "openai/gpt-5.6-luna",
+        "observation_small": "openai/gpt-5.6-luna",
+        "openrouter_embedding_provider": "nebius",
+        "openrouter_embedding_provider_order": "unset",
+        "openrouter_max_completion_tokens": "32000",
+        "openrouter_reasoning_effort": "auto",
+        "openrouter_reasoning_effort_map": '{"openai/gpt-5.6-luna": "high"}',
+        "p1_embedding": "qwen/qwen3-embedding-8b",
+        "relation_normalization": "openai/gpt-5.6-luna",
+        "section_role": "openai/gpt-5.6-luna",
+        "section_summary": "openai/gpt-5.6-luna",
+        "skeleton_check": "openai/gpt-5.6-luna",
+        "structure_fallback": "openai/gpt-5.6-luna",
+        "supersession_frontier": "openai/gpt-5.6-luna",
+        "supersession_small": "openai/gpt-5.6-luna",
+    }
+)
 ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
 ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
@@ -139,8 +193,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V12 = LoCoMoProtocol(
-    key="full-v12",
+_FULL_V13 = LoCoMoProtocol(
+    key="full-v13",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -162,7 +216,7 @@ _FULL_V12 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V12.key: _FULL_V12}
+    {_FULL_V13.key: _FULL_V13}
 )
 
 

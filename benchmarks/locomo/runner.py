@@ -62,7 +62,10 @@ from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
+from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
+from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
 from benchmarks.locomo.protocol import JUDGE_MODEL
@@ -195,6 +198,7 @@ def prepare_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
+        "api_timeout_seconds": API_TIMEOUT_SECONDS,
         "knowledge_mode": "not_composed",
         "answer_agent_model": selected_protocol.answer_agent_model,
         "answer_agent_reasoning_effort": (
@@ -234,6 +238,44 @@ def prepare_run(
         ),
     )
     return configuration
+
+
+def _readiness_matches_protocol(
+    *,
+    readiness: PipelineReadinessReport,
+    version_ids: set[UUID],
+    repository_revision: str,
+) -> bool:
+    """Check exact E/P generations, model bindings, completion, and code identity."""
+    versions_ready = all(
+        version.ready
+        and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
+        and {stage.stage: stage.component_version for stage in version.stages}
+        == dict(EXPECTED_INGEST_COMPONENT_VERSIONS)
+        and all(
+            stage.status in {"succeeded", "skipped"} and stage.finished_at is not None
+            for stage in version.stages
+        )
+        for version in readiness.versions
+    )
+    projections_ready = tuple(
+        projection.plane for projection in readiness.projections
+    ) == EXPECTED_PROJECTION_PLANES and all(
+        projection.ready
+        and projection.version
+        and projection.built_at is not None
+        and projection.published_at is not None
+        for projection in readiness.projections
+    )
+    return bool(
+        readiness.ready
+        and {version.version_id for version in readiness.versions} == version_ids
+        and versions_ready
+        and projections_ready
+        and readiness.model_bindings == dict(EXPECTED_INGEST_MODEL_BINDINGS)
+        and repository_revision
+        and readiness.build_revision == repository_revision
+    )
 
 
 _PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
@@ -356,6 +398,7 @@ def ingest_sample(
             serving=build.build_revision,
             when=_INGEST_STAGE,
         )
+        _require_current_ingest_bindings(model_bindings=build.model_bindings)
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
             client=client,
@@ -503,26 +546,16 @@ def answer_sample(
     readiness = client.pipeline_readiness(
         version_ids=version_ids, require_projections=True
     )
-    reported_versions = {version.version_id for version in readiness.versions}
-    complete_versions = all(
-        version.ready
-        and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
-        and all(stage.status in {"succeeded", "skipped"} for stage in version.stages)
-        for version in readiness.versions
-    )
-    reported_planes = tuple(projection.plane for projection in readiness.projections)
-    complete_projections = reported_planes == EXPECTED_PROJECTION_PLANES and all(
-        projection.ready for projection in readiness.projections
-    )
-    if (
-        not readiness.ready
-        or reported_versions != set(version_ids)
-        or not complete_versions
-        or not complete_projections
+    if readiness.build_revision:
+        _require_serving_revision(context=context, readiness=readiness)
+    if not _readiness_matches_protocol(
+        readiness=readiness,
+        version_ids=set(version_ids),
+        repository_revision=context.configuration.repository_revision,
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v12 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v13 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1109,7 +1142,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v12")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v13")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1119,7 +1152,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v12")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v13")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1148,6 +1181,7 @@ def _validate_run(
         "max_tool_calls_per_question": configuration.max_tool_calls_per_question,
         "max_agent_calls_per_question": configuration.max_agent_calls_per_question,
         "answer_reader_retry_budget": configuration.answer_reader_retry_budget,
+        "api_timeout_seconds": configuration.api_timeout_seconds,
         "knowledge_mode": configuration.knowledge_mode,
         "answer_agent_model": configuration.answer_agent_model,
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
@@ -1175,6 +1209,7 @@ def _validate_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
+        "api_timeout_seconds": API_TIMEOUT_SECONDS,
         "answer_agent_reasoning_effort": (
             selected_protocol.answer_agent_reasoning_effort
         ),
@@ -1360,6 +1395,22 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
             f"the deployment serves revision {serving} at {when} but the run was"
             f" prepared at {prepared}; rebuild the image from the prepared"
             f" revision{remedy}"
+        )
+
+
+def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
+    """Fail before upload unless the deployment serves the pinned ingest models."""
+
+    expected = dict(EXPECTED_INGEST_MODEL_BINDINGS)
+    if model_bindings != expected:
+        mismatches = sorted(
+            name
+            for name in set(model_bindings) | set(expected)
+            if model_bindings.get(name) != expected.get(name)
+        )
+        raise ExecutionGuardError(
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v13: "
+            + ", ".join(mismatches)
         )
 
 

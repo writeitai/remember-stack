@@ -23,7 +23,7 @@ def _run_json(path: Path) -> None:
     (path / "run.json").write_text(
         json.dumps(
             {
-                "protocol_name": "RS-LoCoMo-Full-v12",
+                "protocol_name": "RS-LoCoMo-Full-v13",
                 "protocol_fingerprint": "p" * 64,
                 "repository_revision": "r" * 40,
                 "prepared_at": "2026-08-11T00:00:00Z",
@@ -46,6 +46,8 @@ def _run_json(path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    for name in ("manifest.json", "documents.json"):
+        (path / name).write_text("{}\n", encoding="utf-8")
 
 
 @overload
@@ -339,6 +341,24 @@ def test_manifest_deployment_must_match_ingest_checkpoints(tmp_path: Path) -> No
         store_backup._require_manifest_deployment(manifest=manifest, run_dir=tmp_path)
 
 
+def test_manifest_checkpoint_hashes_must_match_local_run(tmp_path: Path) -> None:
+    """A receipt for older checkpoint bytes cannot authorize this run's wipe."""
+
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    manifest = store_backup.BackupManifest.model_construct(
+        run_files_sha256=store_backup._run_file_hashes(run_dir)
+    )
+    store_backup._require_manifest_checkpoint_files(manifest=manifest, run_dir=run_dir)
+
+    (run_dir / "state.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(store_backup.StoreBackupError, match="checkpoint differs"):
+        store_backup._require_manifest_checkpoint_files(
+            manifest=manifest, run_dir=run_dir
+        )
+
+
 def test_archive_identity_is_required() -> None:
     """A size-only legacy archive cannot satisfy the current wipe contract."""
 
@@ -518,13 +538,14 @@ def test_restore_validates_every_archive_before_running_docker(
         deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v12",
+            protocol_name="RS-LoCoMo-Full-v13",
             protocol_fingerprint="p" * 64,
             repository_revision="r" * 40,
             prepared_at="2026-08-11T00:00:00Z",
             dataset_sha256="d" * 64,
             item_ids_sha256="e" * 64,
         ),
+        run_files_sha256={name: "f" * 64 for name in store_backup.RUN_CHECKPOINT_FILES},
         archives=tuple(records),
     )
     manifest_bytes = store_backup._write_model(
@@ -779,7 +800,7 @@ def test_runtime_validation_uses_the_image_revision_stamp(
         sample_id="conv-1",
         deployment_id=deployment_id,
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v12",
+            protocol_name="RS-LoCoMo-Full-v13",
             protocol_fingerprint="p" * 64,
             repository_revision=revision,
             prepared_at="2026-08-11T00:00:00Z",
@@ -841,6 +862,10 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     )
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
+    assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius" in script
+    assert "unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER" in script
     assert script.count("--lock-fd 9") == 4
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'

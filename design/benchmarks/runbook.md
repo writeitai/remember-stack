@@ -33,10 +33,10 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocol (`--protocol`, prepare-time only): `full-v12`. Both the answer
+- Protocol (`--protocol`, prepare-time only): `full-v13`. Both the answer
   agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
   `none` for both. It is the sole executable protocol and is not comparable with
-  historical v1–v11 runs.
+  historical v1–v12 runs.
 - The answer agent can use the complete public read plane: the four assured
   operations (`testimony_context`, `fact_context`, `answer_context`, and
   `resolve_entity`), direct primitives, open SQL and Cypher, saved queries,
@@ -52,23 +52,21 @@ Exported in the shell that invokes the CLI (values live in the host's
 
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
-REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER  # prefer nebius,deepinfra,siliconflow (see design/operations/openrouter-embedding-routing.md)
-# REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER     # hard pin only; avoid for long drains
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # allow long compound retrieval requests
+REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V13 transport budget
 ```
 
-Engine-side model bindings come from the checked-out Compose file plus its
-environment. Freeze that environment for the run and inspect the non-secret
-bindings reported by `GET /deployment`; the current stock E1-prefix, E2, E3,
-P1-label, and small adjudicator seats use `openai/gpt-5.6-luna`.
+`run_shard.sh` sets every non-secret V13 ingest binding itself: Luna for the
+generative seats, Qwen3-Embedding-8B for vector seats, and Nebius as the pinned
+embedding host. It overrides ambient self-host defaults, and ingest compares
+the complete `GET /deployment` binding map before uploading any document.
 
 ## 4. Running a single conversation (smoke or one shard)
 
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v12
+export LOCOMO_PROTOCOL=full-v13
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
@@ -135,7 +133,7 @@ numbers: such runs measured different systems.
 ## 7. Historical sizing estimate
 
 These figures came from the pre-v12 GLM-5.2 extraction path and are only useful
-for rough capacity planning. V12 uses the current `main` bindings and must record
+for rough capacity planning. V13 uses the current `main` bindings and must record
 its own actual cost and duration; the provider account cap remains the hard
 monetary boundary.
 
@@ -154,6 +152,6 @@ The score is the least valuable output. Keep:
   claims were retrieved per question.
 - The run log, which records stage progress and failures.
 
-The per-sample database is disposable and is not backed up before the next
-isolated sample. Inspect it in place if a stage fails; preserve it only when a
-specific investigation needs database-level evidence.
+Each completed sample's PostgreSQL, P1, P2, P3, run state, and mount state is
+uploaded to its immutable GCS prefix and verified before the next isolated
+sample may wipe the local store.

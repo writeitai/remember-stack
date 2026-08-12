@@ -141,11 +141,17 @@ read-back failure exits non-zero with the stack stopped and volumes intact.
 
 The following environment variables tune the driver without changing its arguments:
 
+The driver itself freezes the complete non-secret V13 ingest identity before
+Compose starts: Luna generation seats, Qwen3-Embedding-8B vector seats, Nebius
+embedding host, unset provider-order fallback, and the protocol's reasoning and
+completion-token settings. Ambient values for those bindings are deliberately
+overridden, and ingest verifies the resulting deployment map before upload.
+
 | Variable | Default | Meaning |
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v12` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v13` | prepare-time protocol key |
 | `LOCOMO_MOUNT_ROOT` | `$RUN_DIR/.mounts` | host/container-identical P3 mount root |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
 | `LOCOMO_MAX_QUESTIONS` | `1540` | run-absolute answer item authorization |

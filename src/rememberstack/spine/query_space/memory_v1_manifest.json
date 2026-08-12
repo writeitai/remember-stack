@@ -9600,6 +9600,1414 @@
               },
               {
                 "@": "String",
+                "sval": "doc_id"
+              },
+              {
+                "@": "String",
+                "sval": "stance"
+              },
+              {
+                "@": "String",
+                "sval": "source_kind"
+              },
+              {
+                "@": "String",
+                "sval": "source_handle"
+              },
+              {
+                "@": "String",
+                "sval": "claim_count"
+              },
+              {
+                "@": "String",
+                "sval": "representative_claim_id"
+              },
+              {
+                "@": "String",
+                "sval": "asserted_from"
+              },
+              {
+                "@": "String",
+                "sval": "asserted_to"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "RangeVar",
+                  "alias": {
+                    "@": "Alias",
+                    "aliasname": "evidence"
+                  },
+                  "inh": true,
+                  "relname": "v_memory_fact_claim_live",
+                  "relpersistence": "p"
+                }
+              ],
+              "groupClause": [
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "deployment_id"
+                    }
+                  ]
+                },
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "fact_kind"
+                    }
+                  ]
+                },
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "fact_id"
+                    }
+                  ]
+                },
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "doc_id"
+                    }
+                  ]
+                },
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "stance"
+                    }
+                  ]
+                },
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "source_kind"
+                    }
+                  ]
+                },
+                {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "evidence"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "source_handle"
+                    }
+                  ]
+                }
+              ],
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "deployment_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "fact_kind"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "fact_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "doc_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "stance"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "source_kind"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "evidence"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "source_handle"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "FuncCall",
+                      "agg_distinct": false,
+                      "agg_star": true,
+                      "agg_within_group": false,
+                      "func_variadic": false,
+                      "funcformat": {
+                        "#": "CoercionForm",
+                        "name": "COERCE_EXPLICIT_CALL"
+                      },
+                      "funcname": [
+                        {
+                          "@": "String",
+                          "sval": "count"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "pg_catalog"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "int8"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "A_Indirection",
+                    "arg": {
+                      "@": "FuncCall",
+                      "agg_distinct": false,
+                      "agg_order": [
+                        {
+                          "@": "SortBy",
+                          "node": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "asserted_at"
+                              }
+                            ]
+                          },
+                          "sortby_dir": {
+                            "#": "SortByDir",
+                            "name": "SORTBY_DESC"
+                          },
+                          "sortby_nulls": {
+                            "#": "SortByNulls",
+                            "name": "SORTBY_NULLS_LAST"
+                          }
+                        },
+                        {
+                          "@": "SortBy",
+                          "node": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_id"
+                              }
+                            ]
+                          },
+                          "sortby_dir": {
+                            "#": "SortByDir",
+                            "name": "SORTBY_DEFAULT"
+                          },
+                          "sortby_nulls": {
+                            "#": "SortByNulls",
+                            "name": "SORTBY_NULLS_DEFAULT"
+                          }
+                        }
+                      ],
+                      "agg_star": false,
+                      "agg_within_group": false,
+                      "args": [
+                        {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "evidence"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "claim_id"
+                            }
+                          ]
+                        }
+                      ],
+                      "func_variadic": false,
+                      "funcformat": {
+                        "#": "CoercionForm",
+                        "name": "COERCE_EXPLICIT_CALL"
+                      },
+                      "funcname": [
+                        {
+                          "@": "String",
+                          "sval": "array_agg"
+                        }
+                      ]
+                    },
+                    "indirection": [
+                      {
+                        "@": "A_Indices",
+                        "is_slice": false,
+                        "uidx": {
+                          "@": "A_Const",
+                          "isnull": false,
+                          "val": {
+                            "@": "Integer",
+                            "ival": 1
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "FuncCall",
+                    "agg_distinct": false,
+                    "agg_star": false,
+                    "agg_within_group": false,
+                    "args": [
+                      {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "evidence"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "asserted_at"
+                          }
+                        ]
+                      }
+                    ],
+                    "func_variadic": false,
+                    "funcformat": {
+                      "#": "CoercionForm",
+                      "name": "COERCE_EXPLICIT_CALL"
+                    },
+                    "funcname": [
+                      {
+                        "@": "String",
+                        "sval": "min"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "FuncCall",
+                    "agg_distinct": false,
+                    "agg_star": false,
+                    "agg_within_group": false,
+                    "args": [
+                      {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "evidence"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "asserted_at"
+                          }
+                        ]
+                      }
+                    ],
+                    "func_variadic": false,
+                    "funcformat": {
+                      "#": "CoercionForm",
+                      "name": "COERCE_EXPLICIT_CALL"
+                    },
+                    "funcname": [
+                      {
+                        "@": "String",
+                        "sval": "max"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "v_memory_evidence_lineage_live",
+              "relpersistence": "p"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "qualified_name": "public.v_memory_evidence_lineage_live"
+        },
+        {
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "fact_kind"
+              },
+              {
+                "@": "String",
+                "sval": "fact_id"
+              },
+              {
+                "@": "String",
+                "sval": "claim_id"
+              },
+              {
+                "@": "String",
+                "sval": "stance"
+              },
+              {
+                "@": "String",
+                "sval": "doc_id"
+              },
+              {
+                "@": "String",
+                "sval": "source_kind"
+              },
+              {
+                "@": "String",
+                "sval": "source_handle"
+              },
+              {
+                "@": "String",
+                "sval": "asserted_at"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_from"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_until"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_precision"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_kind"
+              },
+              {
+                "@": "String",
+                "sval": "linked_at"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": true,
+              "groupDistinct": false,
+              "larg": {
+                "@": "SelectStmt",
+                "all": false,
+                "fromClause": [
+                  {
+                    "@": "JoinExpr",
+                    "isNatural": false,
+                    "jointype": {
+                      "#": "JoinType",
+                      "name": "JOIN_INNER"
+                    },
+                    "larg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "evidence"
+                      },
+                      "inh": true,
+                      "relname": "relation_evidence",
+                      "relpersistence": "p"
+                    },
+                    "quals": {
+                      "@": "BoolExpr",
+                      "args": [
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "claim"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "claim"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_id"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "claim"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "doc_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "doc_id"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "boolop": {
+                        "#": "BoolExprType",
+                        "name": "AND_EXPR"
+                      }
+                    },
+                    "rarg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "claim"
+                      },
+                      "inh": true,
+                      "relname": "claims_live",
+                      "relpersistence": "p",
+                      "schemaname": "memory_v1"
+                    },
+                    "rtindex": 0
+                  }
+                ],
+                "groupDistinct": false,
+                "limitOption": {
+                  "#": "LimitOption",
+                  "name": "LIMIT_OPTION_DEFAULT"
+                },
+                "op": {
+                  "#": "SetOperation",
+                  "name": "SETOP_NONE"
+                },
+                "targetList": [
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "deployment_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "A_Const",
+                      "isnull": false,
+                      "val": {
+                        "@": "String",
+                        "sval": "relation"
+                      }
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "relation_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "TypeCast",
+                      "arg": {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "evidence"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "stance"
+                          }
+                        ]
+                      },
+                      "typeName": {
+                        "@": "TypeName",
+                        "names": [
+                          {
+                            "@": "String",
+                            "sval": "text"
+                          }
+                        ],
+                        "pct_type": false,
+                        "setof": false,
+                        "typemod": -1
+                      }
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "doc_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "source_kind"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "source_handle"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "asserted_at"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_from"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_until"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_precision"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_kind"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "created_at"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_UNION"
+              },
+              "rarg": {
+                "@": "SelectStmt",
+                "all": false,
+                "fromClause": [
+                  {
+                    "@": "JoinExpr",
+                    "isNatural": false,
+                    "jointype": {
+                      "#": "JoinType",
+                      "name": "JOIN_INNER"
+                    },
+                    "larg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "evidence"
+                      },
+                      "inh": true,
+                      "relname": "observation_evidence",
+                      "relpersistence": "p"
+                    },
+                    "quals": {
+                      "@": "BoolExpr",
+                      "args": [
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "claim"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "claim"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_id"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "claim"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "doc_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "evidence"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "doc_id"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "boolop": {
+                        "#": "BoolExprType",
+                        "name": "AND_EXPR"
+                      }
+                    },
+                    "rarg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "claim"
+                      },
+                      "inh": true,
+                      "relname": "claims_live",
+                      "relpersistence": "p",
+                      "schemaname": "memory_v1"
+                    },
+                    "rtindex": 0
+                  }
+                ],
+                "groupDistinct": false,
+                "limitOption": {
+                  "#": "LimitOption",
+                  "name": "LIMIT_OPTION_DEFAULT"
+                },
+                "op": {
+                  "#": "SetOperation",
+                  "name": "SETOP_NONE"
+                },
+                "targetList": [
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "deployment_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "A_Const",
+                      "isnull": false,
+                      "val": {
+                        "@": "String",
+                        "sval": "observation"
+                      }
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "observation_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "TypeCast",
+                      "arg": {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "evidence"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "stance"
+                          }
+                        ]
+                      },
+                      "typeName": {
+                        "@": "TypeName",
+                        "names": [
+                          {
+                            "@": "String",
+                            "sval": "text"
+                          }
+                        ],
+                        "pct_type": false,
+                        "setof": false,
+                        "typemod": -1
+                      }
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "doc_id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "source_kind"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "source_handle"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "asserted_at"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_from"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_until"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_precision"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "claim"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_kind"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "@": "ResTarget",
+                    "val": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "evidence"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "created_at"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "v_memory_fact_claim_live",
+              "relpersistence": "p"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "qualified_name": "public.v_memory_fact_claim_live"
+        },
+        {
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "fact_kind"
+              },
+              {
+                "@": "String",
+                "sval": "fact_id"
+              },
+              {
+                "@": "String",
                 "sval": "subject_entity_id"
               },
               {
@@ -25257,108 +26665,159 @@
               "all": false,
               "fromClause": [
                 {
-                  "@": "RangeVar",
-                  "alias": {
-                    "@": "Alias",
-                    "aliasname": "e"
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_INNER"
                   },
-                  "inh": true,
-                  "relname": "fact_claim_evidence_live",
-                  "relpersistence": "p",
-                  "schemaname": "memory_v1"
-                }
-              ],
-              "groupClause": [
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
+                  "larg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "lineage"
                     },
-                    {
-                      "@": "String",
-                      "sval": "deployment_id"
+                    "inh": true,
+                    "relname": "v_memory_evidence_lineage_live",
+                    "relpersistence": "p"
+                  },
+                  "quals": {
+                    "@": "BoolExpr",
+                    "args": [
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "fact"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "lineage"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "fact"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_kind"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "lineage"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_kind"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "fact"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "lineage"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_id"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "boolop": {
+                      "#": "BoolExprType",
+                      "name": "AND_EXPR"
                     }
-                  ]
-                },
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
+                  },
+                  "rarg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "fact"
                     },
-                    {
-                      "@": "String",
-                      "sval": "fact_kind"
-                    }
-                  ]
-                },
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "fact_id"
-                    }
-                  ]
-                },
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "doc_id"
-                    }
-                  ]
-                },
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "stance"
-                    }
-                  ]
-                },
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "source_kind"
-                    }
-                  ]
-                },
-                {
-                  "@": "ColumnRef",
-                  "fields": [
-                    {
-                      "@": "String",
-                      "sval": "e"
-                    },
-                    {
-                      "@": "String",
-                      "sval": "source_handle"
-                    }
-                  ]
+                    "inh": true,
+                    "relname": "v_memory_fact_visible",
+                    "relpersistence": "p"
+                  },
+                  "rtindex": 0
                 }
               ],
               "groupDistinct": false,
@@ -25378,325 +26837,17 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "e"
+                        "sval": "lineage"
                       },
                       {
-                        "@": "String",
-                        "sval": "deployment_id"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "fact_kind"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "fact_id"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "doc_id"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "stance"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "source_kind"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "source_handle"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "TypeCast",
-                    "arg": {
-                      "@": "FuncCall",
-                      "agg_distinct": false,
-                      "agg_star": true,
-                      "agg_within_group": false,
-                      "func_variadic": false,
-                      "funcformat": {
-                        "#": "CoercionForm",
-                        "name": "COERCE_EXPLICIT_CALL"
-                      },
-                      "funcname": [
-                        {
-                          "@": "String",
-                          "sval": "count"
-                        }
-                      ]
-                    },
-                    "typeName": {
-                      "@": "TypeName",
-                      "names": [
-                        {
-                          "@": "String",
-                          "sval": "pg_catalog"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "int8"
-                        }
-                      ],
-                      "pct_type": false,
-                      "setof": false,
-                      "typemod": -1
-                    }
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "A_Indirection",
-                    "arg": {
-                      "@": "FuncCall",
-                      "agg_distinct": false,
-                      "agg_order": [
-                        {
-                          "@": "SortBy",
-                          "node": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "e"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "asserted_at"
-                              }
-                            ]
-                          },
-                          "sortby_dir": {
-                            "#": "SortByDir",
-                            "name": "SORTBY_DESC"
-                          },
-                          "sortby_nulls": {
-                            "#": "SortByNulls",
-                            "name": "SORTBY_NULLS_LAST"
-                          }
-                        },
-                        {
-                          "@": "SortBy",
-                          "node": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "e"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "claim_id"
-                              }
-                            ]
-                          },
-                          "sortby_dir": {
-                            "#": "SortByDir",
-                            "name": "SORTBY_DEFAULT"
-                          },
-                          "sortby_nulls": {
-                            "#": "SortByNulls",
-                            "name": "SORTBY_NULLS_DEFAULT"
-                          }
-                        }
-                      ],
-                      "agg_star": false,
-                      "agg_within_group": false,
-                      "args": [
-                        {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "e"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "claim_id"
-                            }
-                          ]
-                        }
-                      ],
-                      "func_variadic": false,
-                      "funcformat": {
-                        "#": "CoercionForm",
-                        "name": "COERCE_EXPLICIT_CALL"
-                      },
-                      "funcname": [
-                        {
-                          "@": "String",
-                          "sval": "array_agg"
-                        }
-                      ]
-                    },
-                    "indirection": [
-                      {
-                        "@": "A_Indices",
-                        "is_slice": false,
-                        "uidx": {
-                          "@": "A_Const",
-                          "isnull": false,
-                          "val": {
-                            "@": "Integer",
-                            "ival": 1
-                          }
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "FuncCall",
-                    "agg_distinct": false,
-                    "agg_star": false,
-                    "agg_within_group": false,
-                    "args": [
-                      {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "e"
-                          },
-                          {
-                            "@": "String",
-                            "sval": "asserted_at"
-                          }
-                        ]
-                      }
-                    ],
-                    "func_variadic": false,
-                    "funcformat": {
-                      "#": "CoercionForm",
-                      "name": "COERCE_EXPLICIT_CALL"
-                    },
-                    "funcname": [
-                      {
-                        "@": "String",
-                        "sval": "min"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "FuncCall",
-                    "agg_distinct": false,
-                    "agg_star": false,
-                    "agg_within_group": false,
-                    "args": [
-                      {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "e"
-                          },
-                          {
-                            "@": "String",
-                            "sval": "asserted_at"
-                          }
-                        ]
-                      }
-                    ],
-                    "func_variadic": false,
-                    "funcformat": {
-                      "#": "CoercionForm",
-                      "name": "COERCE_EXPLICIT_CALL"
-                    },
-                    "funcname": [
-                      {
-                        "@": "String",
-                        "sval": "max"
+                        "@": "A_Star"
                       }
                     ]
                   }
                 }
               ]
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -25929,1110 +27080,190 @@
             ],
             "query": {
               "@": "SelectStmt",
-              "all": true,
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_INNER"
+                  },
+                  "larg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "evidence"
+                    },
+                    "inh": true,
+                    "relname": "v_memory_fact_claim_live",
+                    "relpersistence": "p"
+                  },
+                  "quals": {
+                    "@": "BoolExpr",
+                    "args": [
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "fact"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "evidence"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "fact"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_kind"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "evidence"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_kind"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "fact"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "evidence"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "fact_id"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "boolop": {
+                      "#": "BoolExprType",
+                      "name": "AND_EXPR"
+                    }
+                  },
+                  "rarg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "fact"
+                    },
+                    "inh": true,
+                    "relname": "v_memory_fact_visible",
+                    "relpersistence": "p"
+                  },
+                  "rtindex": 0
+                }
+              ],
               "groupDistinct": false,
-              "larg": {
-                "@": "SelectStmt",
-                "all": false,
-                "fromClause": [
-                  {
-                    "@": "JoinExpr",
-                    "isNatural": false,
-                    "jointype": {
-                      "#": "JoinType",
-                      "name": "JOIN_INNER"
-                    },
-                    "larg": {
-                      "@": "JoinExpr",
-                      "isNatural": false,
-                      "jointype": {
-                        "#": "JoinType",
-                        "name": "JOIN_INNER"
-                      },
-                      "larg": {
-                        "@": "RangeVar",
-                        "alias": {
-                          "@": "Alias",
-                          "aliasname": "evidence"
-                        },
-                        "inh": true,
-                        "relname": "relation_evidence",
-                        "relpersistence": "p"
-                      },
-                      "quals": {
-                        "@": "BoolExpr",
-                        "args": [
-                          {
-                            "@": "A_Expr",
-                            "kind": {
-                              "#": "A_Expr_Kind",
-                              "name": "AEXPR_OP"
-                            },
-                            "lexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "fact"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "deployment_id"
-                                }
-                              ]
-                            },
-                            "name": [
-                              {
-                                "@": "String",
-                                "sval": "="
-                              }
-                            ],
-                            "rexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "evidence"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "deployment_id"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "@": "A_Expr",
-                            "kind": {
-                              "#": "A_Expr_Kind",
-                              "name": "AEXPR_OP"
-                            },
-                            "lexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "fact"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "fact_kind"
-                                }
-                              ]
-                            },
-                            "name": [
-                              {
-                                "@": "String",
-                                "sval": "="
-                              }
-                            ],
-                            "rexpr": {
-                              "@": "A_Const",
-                              "isnull": false,
-                              "val": {
-                                "@": "String",
-                                "sval": "relation"
-                              }
-                            }
-                          },
-                          {
-                            "@": "A_Expr",
-                            "kind": {
-                              "#": "A_Expr_Kind",
-                              "name": "AEXPR_OP"
-                            },
-                            "lexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "fact"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "fact_id"
-                                }
-                              ]
-                            },
-                            "name": [
-                              {
-                                "@": "String",
-                                "sval": "="
-                              }
-                            ],
-                            "rexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "evidence"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "relation_id"
-                                }
-                              ]
-                            }
-                          }
-                        ],
-                        "boolop": {
-                          "#": "BoolExprType",
-                          "name": "AND_EXPR"
-                        }
-                      },
-                      "rarg": {
-                        "@": "RangeVar",
-                        "alias": {
-                          "@": "Alias",
-                          "aliasname": "fact"
-                        },
-                        "inh": true,
-                        "relname": "v_memory_fact_visible",
-                        "relpersistence": "p"
-                      },
-                      "rtindex": 0
-                    },
-                    "quals": {
-                      "@": "BoolExpr",
-                      "args": [
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "claim"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "evidence"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "claim"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "claim_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "evidence"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "claim_id"
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "claim"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "doc_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "evidence"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "doc_id"
-                              }
-                            ]
-                          }
-                        }
-                      ],
-                      "boolop": {
-                        "#": "BoolExprType",
-                        "name": "AND_EXPR"
-                      }
-                    },
-                    "rarg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "claim"
-                      },
-                      "inh": true,
-                      "relname": "claims_live",
-                      "relpersistence": "p",
-                      "schemaname": "memory_v1"
-                    },
-                    "rtindex": 0
-                  }
-                ],
-                "groupDistinct": false,
-                "limitOption": {
-                  "#": "LimitOption",
-                  "name": "LIMIT_OPTION_DEFAULT"
-                },
-                "op": {
-                  "#": "SetOperation",
-                  "name": "SETOP_NONE"
-                },
-                "targetList": [
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "deployment_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "A_Const",
-                      "isnull": false,
-                      "val": {
-                        "@": "String",
-                        "sval": "relation"
-                      }
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "relation_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "TypeCast",
-                      "arg": {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "evidence"
-                          },
-                          {
-                            "@": "String",
-                            "sval": "stance"
-                          }
-                        ]
-                      },
-                      "typeName": {
-                        "@": "TypeName",
-                        "names": [
-                          {
-                            "@": "String",
-                            "sval": "text"
-                          }
-                        ],
-                        "pct_type": false,
-                        "setof": false,
-                        "typemod": -1
-                      }
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "doc_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "source_kind"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "source_handle"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "asserted_at"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_from"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_until"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_precision"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_kind"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "created_at"
-                        }
-                      ]
-                    }
-                  }
-                ]
-              },
               "limitOption": {
                 "#": "LimitOption",
                 "name": "LIMIT_OPTION_DEFAULT"
               },
               "op": {
                 "#": "SetOperation",
-                "name": "SETOP_UNION"
+                "name": "SETOP_NONE"
               },
-              "rarg": {
-                "@": "SelectStmt",
-                "all": false,
-                "fromClause": [
-                  {
-                    "@": "JoinExpr",
-                    "isNatural": false,
-                    "jointype": {
-                      "#": "JoinType",
-                      "name": "JOIN_INNER"
-                    },
-                    "larg": {
-                      "@": "JoinExpr",
-                      "isNatural": false,
-                      "jointype": {
-                        "#": "JoinType",
-                        "name": "JOIN_INNER"
-                      },
-                      "larg": {
-                        "@": "RangeVar",
-                        "alias": {
-                          "@": "Alias",
-                          "aliasname": "evidence"
-                        },
-                        "inh": true,
-                        "relname": "observation_evidence",
-                        "relpersistence": "p"
-                      },
-                      "quals": {
-                        "@": "BoolExpr",
-                        "args": [
-                          {
-                            "@": "A_Expr",
-                            "kind": {
-                              "#": "A_Expr_Kind",
-                              "name": "AEXPR_OP"
-                            },
-                            "lexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "fact"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "deployment_id"
-                                }
-                              ]
-                            },
-                            "name": [
-                              {
-                                "@": "String",
-                                "sval": "="
-                              }
-                            ],
-                            "rexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "evidence"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "deployment_id"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "@": "A_Expr",
-                            "kind": {
-                              "#": "A_Expr_Kind",
-                              "name": "AEXPR_OP"
-                            },
-                            "lexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "fact"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "fact_kind"
-                                }
-                              ]
-                            },
-                            "name": [
-                              {
-                                "@": "String",
-                                "sval": "="
-                              }
-                            ],
-                            "rexpr": {
-                              "@": "A_Const",
-                              "isnull": false,
-                              "val": {
-                                "@": "String",
-                                "sval": "observation"
-                              }
-                            }
-                          },
-                          {
-                            "@": "A_Expr",
-                            "kind": {
-                              "#": "A_Expr_Kind",
-                              "name": "AEXPR_OP"
-                            },
-                            "lexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "fact"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "fact_id"
-                                }
-                              ]
-                            },
-                            "name": [
-                              {
-                                "@": "String",
-                                "sval": "="
-                              }
-                            ],
-                            "rexpr": {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "evidence"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "observation_id"
-                                }
-                              ]
-                            }
-                          }
-                        ],
-                        "boolop": {
-                          "#": "BoolExprType",
-                          "name": "AND_EXPR"
-                        }
-                      },
-                      "rarg": {
-                        "@": "RangeVar",
-                        "alias": {
-                          "@": "Alias",
-                          "aliasname": "fact"
-                        },
-                        "inh": true,
-                        "relname": "v_memory_fact_visible",
-                        "relpersistence": "p"
-                      },
-                      "rtindex": 0
-                    },
-                    "quals": {
-                      "@": "BoolExpr",
-                      "args": [
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "claim"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "evidence"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "deployment_id"
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "claim"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "claim_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "evidence"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "claim_id"
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "@": "A_Expr",
-                          "kind": {
-                            "#": "A_Expr_Kind",
-                            "name": "AEXPR_OP"
-                          },
-                          "lexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "claim"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "doc_id"
-                              }
-                            ]
-                          },
-                          "name": [
-                            {
-                              "@": "String",
-                              "sval": "="
-                            }
-                          ],
-                          "rexpr": {
-                            "@": "ColumnRef",
-                            "fields": [
-                              {
-                                "@": "String",
-                                "sval": "evidence"
-                              },
-                              {
-                                "@": "String",
-                                "sval": "doc_id"
-                              }
-                            ]
-                          }
-                        }
-                      ],
-                      "boolop": {
-                        "#": "BoolExprType",
-                        "name": "AND_EXPR"
-                      }
-                    },
-                    "rarg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "claim"
-                      },
-                      "inh": true,
-                      "relname": "claims_live",
-                      "relpersistence": "p",
-                      "schemaname": "memory_v1"
-                    },
-                    "rtindex": 0
-                  }
-                ],
-                "groupDistinct": false,
-                "limitOption": {
-                  "#": "LimitOption",
-                  "name": "LIMIT_OPTION_DEFAULT"
-                },
-                "op": {
-                  "#": "SetOperation",
-                  "name": "SETOP_NONE"
-                },
-                "targetList": [
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "deployment_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "A_Const",
-                      "isnull": false,
-                      "val": {
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
                         "@": "String",
-                        "sval": "observation"
-                      }
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "observation_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "TypeCast",
-                      "arg": {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "evidence"
-                          },
-                          {
-                            "@": "String",
-                            "sval": "stance"
-                          }
-                        ]
+                        "sval": "evidence"
                       },
-                      "typeName": {
-                        "@": "TypeName",
-                        "names": [
-                          {
-                            "@": "String",
-                            "sval": "text"
-                          }
-                        ],
-                        "pct_type": false,
-                        "setof": false,
-                        "typemod": -1
+                      {
+                        "@": "A_Star"
                       }
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "doc_id"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "source_kind"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "source_handle"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "asserted_at"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_from"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_until"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_precision"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "claim"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "claim_valid_kind"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "@": "ResTarget",
-                    "val": {
-                      "@": "ColumnRef",
-                      "fields": [
-                        {
-                          "@": "String",
-                          "sval": "evidence"
-                        },
-                        {
-                          "@": "String",
-                          "sval": "created_at"
-                        }
-                      ]
-                    }
+                    ]
                   }
-                ]
-              }
+                }
+              ]
             },
             "replace": true,
             "view": {
@@ -28133,9 +28364,8 @@
                             "aliasname": "lineage"
                           },
                           "inh": true,
-                          "relname": "evidence_lineage",
-                          "relpersistence": "p",
-                          "schemaname": "memory_v1"
+                          "relname": "v_memory_evidence_lineage_live",
+                          "relpersistence": "p"
                         }
                       ],
                       "groupDistinct": false,
@@ -28716,7 +28946,7 @@
                                 "@": "RangeVar",
                                 "alias": {
                                   "@": "Alias",
-                                  "aliasname": "q"
+                                  "aliasname": "queue"
                                 },
                                 "inh": true,
                                 "relname": "review_queue",
@@ -28759,7 +28989,7 @@
                                     "fields": [
                                       {
                                         "@": "String",
-                                        "sval": "q"
+                                        "sval": "queue"
                                       },
                                       {
                                         "@": "String",
@@ -28798,7 +29028,7 @@
                                     "fields": [
                                       {
                                         "@": "String",
-                                        "sval": "q"
+                                        "sval": "queue"
                                       },
                                       {
                                         "@": "String",
@@ -28832,7 +29062,7 @@
                                     "fields": [
                                       {
                                         "@": "String",
-                                        "sval": "q"
+                                        "sval": "queue"
                                       },
                                       {
                                         "@": "String",
@@ -28882,7 +29112,7 @@
                                       "fields": [
                                         {
                                           "@": "String",
-                                          "sval": "q"
+                                          "sval": "queue"
                                         },
                                         {
                                           "@": "String",
@@ -28942,7 +29172,7 @@
                                       "fields": [
                                         {
                                           "@": "String",
-                                          "sval": "q"
+                                          "sval": "queue"
                                         },
                                         {
                                           "@": "String",
@@ -36977,5 +37207,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "b9ef94b71f10d8ad03ad6e3dc959daa747882ea929c62ff58c7384497886c168"
+  "surface_manifest_hash": "2cd5f80c0dab258d82dc3fb2129a47a3624132887a4397e776d44090b85d4853"
 }

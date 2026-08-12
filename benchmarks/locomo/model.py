@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v12 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v13 protocol."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v12"]
-ProtocolName = Literal["RS-LoCoMo-Full-v12"]
+ProtocolKey = Literal["full-v13"]
+ProtocolName = Literal["RS-LoCoMo-Full-v13"]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
@@ -120,7 +120,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v12"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v13"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -136,6 +136,7 @@ class RunConfiguration(FrozenModel):
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
     answer_reader_retry_budget: Literal[2] = 2
+    api_timeout_seconds: float = Field(default=60.0, gt=0)
     knowledge_mode: Literal["not_composed"] = "not_composed"
     answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
     answer_agent_reasoning_effort: Literal["none"] = "none"
@@ -385,7 +386,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v12"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v13"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

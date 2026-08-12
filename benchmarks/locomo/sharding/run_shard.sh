@@ -25,7 +25,7 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v12}
+protocol=${LOCOMO_PROTOCOL:-full-v13}
 mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
@@ -45,6 +45,29 @@ compose=(docker compose --project-name "$compose_project")
 export GOOGLE_APPLICATION_CREDENTIALS=${LOCOMO_GCP_CREDENTIALS_FILE:-/etc/rememberstack/locomo-gcs/credentials.json}
 export GOOGLE_API_CERTIFICATE_CONFIG=${LOCOMO_GCP_CERTIFICATE_CONFIG_FILE:-/etc/rememberstack/locomo-gcs/certificate-config.json}
 export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
+
+# RS-LoCoMo-Full-v13's non-secret ingest identity. Override ambient self-host
+# defaults so every shard runs the exact Luna/Qwen pipeline the protocol checks.
+export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_ROLE_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_SUMMARY_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_E1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+export REMEMBERSTACK_E1_PREFIX_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_E3_NORMALIZE_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_OBS_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+export REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+export REMEMBERSTACK_P1_LABEL_MODEL=openai/gpt-5.6-luna
+export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
+unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
+export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
+unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
+export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
 
 [[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"

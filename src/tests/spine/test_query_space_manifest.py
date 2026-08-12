@@ -400,6 +400,8 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     assert names == {f"memory_v1.{contract.name}" for contract in VIEW_CONTRACTS} | {
         "public.v_graph_survivor",
         "public.v_memory_entity_survivor",
+        "public.v_memory_evidence_lineage_live",
+        "public.v_memory_fact_claim_live",
         "public.v_memory_fact_visible",
         "public.v_memory_mention_current_content",
         "public.v_memory_page_citation_visible",
@@ -409,11 +411,11 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
         for surface in surfaces
         if isinstance(surface, dict) and not surface["caller_reachable"]
     ]
-    # All five helpers are unreachable to a caller; three of them additionally
+    # All seven helpers are unreachable to a caller; five of them additionally
     # compile a deletion rule, so their cells execute rather than resting on
     # non-reachability alone.
-    assert len(private) == 5
-    assert sum(1 for surface in private if surface["compiles_deletion"]) == 3
+    assert len(private) == 7
+    assert sum(1 for surface in private if surface["compiles_deletion"]) == 5
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
     assert {target.target_id for target in deferred} == {"p1_candidate", "corpus_body"}

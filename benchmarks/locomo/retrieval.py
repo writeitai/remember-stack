@@ -1,4 +1,4 @@
-"""Complete public-read catalog and bounded P3 adapter for LoCoMo v12."""
+"""Complete public-read catalog and bounded P3 adapter for LoCoMo v13."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def assured_tool_catalog() -> tuple[ToolDescriptor, ...]:
 
 
 def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact 23-tool read catalog exposed to the v12 answer seat."""
+    """Return the exact 23-tool read catalog exposed to the v13 answer seat."""
     tools = (
         *assured_tool_catalog(),
         *_primitive_tool_descriptors(),

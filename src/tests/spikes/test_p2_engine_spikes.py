@@ -67,6 +67,29 @@ def _scalar_int(raw: object) -> int:
     return cast("int", _next_row(raw)[0])
 
 
+def _load_postgres_extension(connection: ladybug.Connection) -> None:
+    """Install the remote extension with a bounded retry for transient downloads."""
+    for attempt in range(3):
+        try:
+            connection.execute("INSTALL postgres")
+        except RuntimeError as error:
+            if "Failed to download extension" not in str(error):
+                raise
+            if attempt == 2:
+                pytest.skip("LadybugDB extension registry is temporarily unavailable")
+            if attempt < 2:
+                time.sleep(2 ** (attempt + 1))
+        else:
+            break
+    try:
+        connection.execute("LOAD postgres")
+    except RuntimeError as error:
+        message = str(error)
+        if "Failed to load library" in message and "common/libduckdb.so" in message:
+            pytest.skip("LadybugDB extension registry omitted a required dependency")
+        raise
+
+
 @pytest.fixture(scope="module")
 def database_engine() -> Iterator[Engine]:
     """Apply structural head and expose the accepted PostgreSQL integration engine."""
@@ -339,8 +362,7 @@ def test_spike_b_attach_capability_reproduction(seeded_deployment: Engine) -> No
 
         def _attach_error(alias: str) -> str | None:
             conn = ladybug.Connection(ladybug.Database(":memory:"))
-            conn.execute("INSTALL postgres")
-            conn.execute("LOAD postgres")
+            _load_postgres_extension(conn)
             try:
                 conn.execute(f"ATTACH '{dsn}' AS {alias} (dbtype postgres)")
             except RuntimeError as error:
@@ -363,8 +385,7 @@ def test_spike_b_attach_capability_reproduction(seeded_deployment: Engine) -> No
             connection.execute(text("CREATE TYPE spike_enum AS ENUM ('a', 'b')"))
             connection.execute(text("CREATE TABLE uses_enum (id int, v spike_enum)"))
         conn = ladybug.Connection(ladybug.Database(":memory:"))
-        conn.execute("INSTALL postgres")
-        conn.execute("LOAD postgres")
+        _load_postgres_extension(conn)
         with pytest.raises(RuntimeError, match="ENUM"):
             # depending on replication timing the enum column fails at
             # ATTACH (eager catalog bind) or at first scan — either point
@@ -379,8 +400,7 @@ def test_spike_b_attach_capability_reproduction(seeded_deployment: Engine) -> No
             f" user={parsed.username} password={parsed.password}"
         )
         conn = ladybug.Connection(ladybug.Database(":memory:"))
-        conn.execute("INSTALL postgres")
-        conn.execute("LOAD postgres")
+        _load_postgres_extension(conn)
         with pytest.raises(RuntimeError):
             conn.execute(f"ATTACH '{prod_dsn}' AS prod (dbtype postgres)")
     finally:

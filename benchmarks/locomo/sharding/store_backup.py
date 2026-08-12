@@ -31,8 +31,10 @@ from google.cloud import storage
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifests")
+RUN_CHECKPOINT_FILES = ("run.json", "manifest.json", "documents.json", "state.json")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
 RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
@@ -128,7 +130,7 @@ class RunIdentity(FrozenModel):
 class BackupManifest(FrozenModel):
     """Describe one complete, restorable LoCoMo recovery unit."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     kind: Literal["rememberstack-locomo-store-backup"] = (
         "rememberstack-locomo-store-backup"
     )
@@ -137,7 +139,15 @@ class BackupManifest(FrozenModel):
     deployment_id: NonEmpty
     compose_project: NonEmpty
     run: RunIdentity
+    run_files_sha256: dict[str, Sha256]
     archives: Annotated[tuple[ArchiveRecord, ...], Field(min_length=6, max_length=6)]
+
+    @model_validator(mode="after")
+    def _checkpoint_file_inventory_is_exact(self) -> "BackupManifest":
+        """Require hashes for every immutable or checkpoint run file."""
+        if set(self.run_files_sha256) != set(RUN_CHECKPOINT_FILES):
+            raise ValueError("backup run-file hash inventory is incomplete")
+        return self
 
 
 class BackupReceipt(FrozenModel):
@@ -310,6 +320,15 @@ def _run_identity(run_dir: Path) -> RunIdentity:
     )
 
 
+def _run_file_hashes(run_dir: Path) -> dict[str, str]:
+    """Hash the exact benchmark files protected inside the run archive."""
+
+    try:
+        return {name: _sha256(run_dir / name) for name in RUN_CHECKPOINT_FILES}
+    except OSError as exc:
+        raise StoreBackupError("benchmark checkpoint files are incomplete") from exc
+
+
 def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
     """Derive one sample's deployment identity from its ingest checkpoints."""
 
@@ -342,6 +361,15 @@ def _require_manifest_deployment(*, manifest: BackupManifest, run_dir: Path) -> 
         raise StoreBackupError(
             "backup deployment differs from the sample ingest checkpoints"
         )
+
+
+def _require_manifest_checkpoint_files(
+    *, manifest: BackupManifest, run_dir: Path
+) -> None:
+    """Require the local run checkpoint to be the one stored in the backup."""
+
+    if manifest.run_files_sha256 != _run_file_hashes(run_dir):
+        raise StoreBackupError("local run checkpoint differs from the verified backup")
 
 
 def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
@@ -935,6 +963,7 @@ def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
     if manifest.compose_project != compose_project:
         raise StoreBackupError("verified backup belongs to a different Compose project")
     _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
+    _require_manifest_checkpoint_files(manifest=manifest, run_dir=run_dir)
     _log(f"sample={marker.sample_id} wipe-authorized receipt=verified")
 
 
@@ -1039,20 +1068,22 @@ def backup_store(
 
     _log(f"sample={sample_id} backup-stage=upload status=starting")
     uploaded_archives: list[ArchiveRecord] = []
-    for archive in archives:
+    for archive_record in archives:
         metadata = _upload_file(
-            source=staging / archive.relative_path,
-            remote_path=_remote_join(prefix=remote_prefix, name=archive.relative_path),
+            source=staging / archive_record.relative_path,
+            remote_path=_remote_join(
+                prefix=remote_prefix, name=archive_record.relative_path
+            ),
             project_id=gcp_project,
         )
         uploaded_archives.append(
             ArchiveRecord(
-                kind=archive.kind,
-                logical_name=archive.logical_name,
-                docker_volume=archive.docker_volume,
-                relative_path=archive.relative_path,
-                byte_size=archive.byte_size,
-                sha256=archive.sha256,
+                kind=archive_record.kind,
+                logical_name=archive_record.logical_name,
+                docker_volume=archive_record.docker_volume,
+                relative_path=archive_record.relative_path,
+                byte_size=archive_record.byte_size,
+                sha256=archive_record.sha256,
                 gcs_generation=metadata.generation,
                 gcs_crc32c=metadata.crc32c,
             )
@@ -1063,6 +1094,7 @@ def backup_store(
         deployment_id=deployment_id,
         compose_project=compose_project,
         run=identity,
+        run_files_sha256=_run_file_hashes(run_dir),
         archives=tuple(uploaded_archives),
     )
     manifest_path = staging / "manifest.json"
@@ -1309,6 +1341,7 @@ def restore_store(
         archive=staging / by_name["run-directory"].relative_path, destination=run_dir
     )
     _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
+    _require_manifest_checkpoint_files(manifest=manifest, run_dir=run_dir)
     for logical_name in EXPECTED_VOLUMES:
         archive = by_name[logical_name]
         _extract_directory(

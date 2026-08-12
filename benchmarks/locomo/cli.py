@@ -8,6 +8,7 @@ from decimal import InvalidOperation
 from pathlib import Path
 import sys
 
+from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.runner import answer_sample
@@ -38,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
             print(configuration.model_dump_json())
             return 0
         if args.command == "ingest":
-            with MemoryClient.from_settings() as client:
+            with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                 records = ingest_sample(
                     run_dir=args.run,
                     sample_id=args.sample,
@@ -54,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "answer":
             provider = _provider()
-            with MemoryClient.from_settings() as client:
+            with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                 records = answer_sample(
                     run_dir=args.run,
                     sample_id=args.sample,
@@ -113,11 +114,11 @@ def _positive_decimal(value: str) -> Decimal:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Build the five deliberately staged command surfaces."""
+    """Build the deliberately staged command surfaces."""
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v12: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v13: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )

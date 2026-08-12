@@ -101,7 +101,7 @@ D54, D80, and D87 remain controlling.*
     examples, and `surface_manifest_hash`. Raw `pg_catalog`
     discovery is not exposed.
 12. **No benchmark-specific product behavior exists.** The separately
-    fingerprinted v12 protocol consumes the customer surface unchanged.
+    fingerprinted v13 protocol consumes the customer surface unchanged.
     Dataset names, question classes,
     benchmark-only views, prompts, functions, branches, or limits are forbidden
     in product code.
@@ -441,6 +441,19 @@ labeled orientation text, never evidence.
 | `changes_visible` | one externally visible change event; `(deployment_id, object_kind, event_id)` | Referenced object remains visible; deletion events and labels cannot become a tombstone side channel |
 | `pages_live` | one visible K artifact; `(deployment_id, artifact_id)` | Kind/path, orientation summary, compilation clock, stale/status/open-flag/redaction state; compiled grain only |
 | `page_evidence_visible` | one visible K artifact-to-target association; `(deployment_id, artifact_id, role, target_kind, target_id)` | Target passes its own visibility gate; chunk hash is a locator, not an authorization bypass |
+
+The fact relations share three private PostgreSQL authorities which are not
+caller-reachable and are not additions to the 24-relation public surface.
+`v_memory_fact_visible` owns historical fact membership;
+`v_memory_fact_claim_live` owns the fully coordinate-bound current-testimony
+claim association without asserting fact membership; and
+`v_memory_evidence_lineage_live` owns the D54 fact × document-lineage × stance
+aggregation. `fact_claim_evidence_live`, `evidence_lineage`, and
+`facts_visible_history` compose those authorities and add fact membership once.
+They MUST NOT independently reconstruct these rules from base evidence tables.
+This factoring is semantic, not merely a planner hint: it keeps all consumers
+on one D41/D48/D54 authority while avoiding recursive expansion of the same
+visibility tree.
 
 **Complete public facts-layer surface.** For the `memory_v1` query space it is
 exactly `facts_current`, `facts_visible_history`, `facts_as_of`,
@@ -1424,10 +1437,11 @@ signature, confirmation option, allowed/rejected construct, cap, P2 graph type,
 or exposed property-set change changes the hash; a property-set change also
 increments the P2 projection contract version.
 
-`RS-LoCoMo-Full-v12` pins `surface_manifest_hash`, the four assured-operation
+`RS-LoCoMo-Full-v13` pins `surface_manifest_hash`, the four assured-operation
 descriptors, and the complete 23-tool answer catalog. V9–v11 runs remain
-self-describing historical evidence and are explicitly noncomparable to v12;
-there is no compatibility or migration arm. V12 traces record manifest hash,
+self-describing historical evidence; the aborted v12 answer pass remains
+self-describing operational evidence and is not a v13 score. There is no
+surface compatibility arm. V13 traces record manifest hash,
 assured-operation calls, SQL/Cypher hashes, P2 snapshot provenance, errors,
 caps, latency/cost, and projection-confirmation statistics. Raw SQL/Cypher and
 parameters follow §7 retention. The answer agent receives only product behavior
@@ -1520,7 +1534,7 @@ protect nobody while preserving duplicate invariant logic.
    counters, removal-denominator telemetry, or a product gate whose only
    purpose is preserving/removing the 17 adapters.
 5. The paid benchmark remains operator-invoked. Full-v9 through v11 are
-   immutable historical evidence over their pinned catalogs; v12 is the D87
+   immutable historical evidence over their pinned catalogs; v13 is the D87/D89
    protocol identity but this design does not authorize running it. Any result
    informs quality, not compatibility permission.
 

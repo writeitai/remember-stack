@@ -875,7 +875,7 @@ def _psycopg_url() -> str:
 
 
 def _expected_components() -> dict[PipelineStage, str]:
-    """The exact ten continuous generations composed by this profile."""
+    """The exact eleven continuous generations composed by this profile."""
     from rememberstack.spine import ADJUDICATOR_VERSION
     from rememberstack.workers import E0_CONVERT_VERSION
     from rememberstack.workers import E0_STRUCTURE_VERSION
