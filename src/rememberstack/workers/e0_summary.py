@@ -191,6 +191,24 @@ class _CallResult:
     events: tuple[_MeterEvent, ...] = ()
 
 
+class _SummaryAccountingFailure(Exception):
+    """Carry already-accounted calls to the main thread before failing closed."""
+
+    def __init__(
+        self, *, error: ProviderAccountingError, events: tuple[_MeterEvent, ...]
+    ) -> None:
+        """Keep the public accounting error and every preceding paid call together."""
+        super().__init__(str(error))
+        self.error = error
+        self.events = events
+
+
+def _record_events(*, meter: CostMeterPort, events: tuple[_MeterEvent, ...]) -> None:
+    """Persist completed calls before success, degradation, or terminal failure."""
+    for event in events:
+        meter.record(call_key=event.call_key, tier=event.tier, usage=event.usage)
+
+
 class SectionSummarizer:
     """Bounded provider orchestration plus sidecar-backed cross-version cache."""
 
@@ -292,14 +310,18 @@ class SectionSummarizer:
             results: dict[str, _CallResult] = {}
             if len(missing) == 1:
                 section, _, child_lines = missing[0]
-                results[section.node_path] = self._summarize_uncached(
-                    source=source,
-                    section=section,
-                    direct_blocks=direct[section.node_path],
-                    child_sections=children.get(section.node_path, ()),
-                    child_summaries=child_lines,
-                    markdown=markdown,
-                )
+                try:
+                    results[section.node_path] = self._summarize_uncached(
+                        source=source,
+                        section=section,
+                        direct_blocks=direct[section.node_path],
+                        child_sections=children.get(section.node_path, ()),
+                        child_summaries=child_lines,
+                        markdown=markdown,
+                    )
+                except _SummaryAccountingFailure as failure:
+                    _record_events(meter=meter, events=failure.events)
+                    raise failure.error from failure
             else:
                 with ThreadPoolExecutor(
                     max_workers=min(SUMMARY_PARALLELISM, len(missing))
@@ -316,15 +338,22 @@ class SectionSummarizer:
                         )
                         for section, _, child_lines in missing
                     }
+                    failures: list[_SummaryAccountingFailure] = []
                     for path, future in futures.items():
-                        results[path] = future.result()
+                        try:
+                            results[path] = future.result()
+                        except _SummaryAccountingFailure as failure:
+                            failures.append(failure)
+                if failures:
+                    for result in results.values():
+                        _record_events(meter=meter, events=result.events)
+                    for failure in failures:
+                        _record_events(meter=meter, events=failure.events)
+                    raise failures[0].error from failures[0]
 
             for section, key, _ in missing:
                 result = results[section.node_path]
-                for event in result.events:
-                    meter.record(
-                        call_key=event.call_key, tier=event.tier, usage=event.usage
-                    )
+                _record_events(meter=meter, events=result.events)
                 summaries[section.node_path] = result.summary
                 placements[section.node_path] = result.placement_path
                 if result.summary is not None:
@@ -453,11 +482,16 @@ class SectionSummarizer:
                 markdown=markdown,
                 shard_index=shard_index,
             )
-            partial = self._invoke_summary(
-                prompt=prompt,
-                call_key=f"summary:{section.node_path}:shard:{shard_index}",
-                tier="section_summary_shard",
-            )
+            try:
+                partial = self._invoke_summary(
+                    prompt=prompt,
+                    call_key=f"summary:{section.node_path}:shard:{shard_index}",
+                    tier="section_summary_shard",
+                )
+            except _SummaryAccountingFailure as failure:
+                raise _SummaryAccountingFailure(
+                    error=failure.error, events=tuple(events) + failure.events
+                ) from failure
             events.extend(partial.events)
             if partial.summary is None:
                 return _CallResult(None, None, tuple(events))
@@ -519,11 +553,18 @@ class SectionSummarizer:
                 prompt = _render_reduce_prompt(
                     section=section, lines=group, call_kind=call_kind
                 )
-                result = self._invoke_summary(
-                    prompt=prompt,
-                    call_key=(f"{call_key_prefix}:level:{level}:group:{group_index}"),
-                    tier="section_summary_reduction",
-                )
+                try:
+                    result = self._invoke_summary(
+                        prompt=prompt,
+                        call_key=(
+                            f"{call_key_prefix}:level:{level}:group:{group_index}"
+                        ),
+                        tier="section_summary_reduction",
+                    )
+                except _SummaryAccountingFailure as failure:
+                    raise _SummaryAccountingFailure(
+                        error=failure.error, events=tuple(events) + failure.events
+                    ) from failure
                 events.extend(result.events)
                 if result.summary is None:
                     return None
@@ -580,8 +621,10 @@ class SectionSummarizer:
             if normalized_summary is None:
                 return _CallResult(None, None, tuple(events))
             return _CallResult(normalized_summary, None, tuple(events))
-        except ProviderAccountingError:
-            raise
+        except ProviderAccountingError as error:
+            raise _SummaryAccountingFailure(
+                error=error, events=tuple(events)
+            ) from error
         except ProviderCallError as error:
             if error.usage is not None:
                 events.append(
@@ -611,8 +654,8 @@ class SectionSummarizer:
             if normalized_summary is None:
                 return _CallResult(None, None, (event,))
             return _CallResult(normalized_summary, None, (event,))
-        except ProviderAccountingError:
-            raise
+        except ProviderAccountingError as error:
+            raise _SummaryAccountingFailure(error=error, events=()) from error
         except ProviderCallError as error:
             if error.usage is not None:
                 return _CallResult(

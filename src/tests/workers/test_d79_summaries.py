@@ -1,6 +1,7 @@
 """D79 bottom-up summary composition and hard request bounds."""
 
 from pathlib import Path
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -16,6 +17,7 @@ from rememberstack.model import ProviderAccountingError
 from rememberstack.model import RootSummaryPlacementResponse
 from rememberstack.model import SectionSummaryResponse
 from rememberstack.model import StructureSource
+from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.workers.e0_summary import _render_child_lines
 from rememberstack.workers.e0_summary import _summary_cache_key
 from rememberstack.workers.e0_summary import SectionSummarizer
@@ -52,7 +54,13 @@ def _source() -> StructureSource:
     )
 
 
-def _summarize(*, tmp_path: Path, markdown: str, provider: FakeModelProvider):
+def _summarize(
+    *,
+    tmp_path: Path,
+    markdown: str,
+    provider: FakeModelProvider,
+    meter: CostMeterPort | None = None,
+):
     blocks = blockize(document_md=markdown)
     sections = parse_heading_skeleton(
         blocks=blocks, title="Composition proof", markdown_chars=len(markdown)
@@ -67,7 +75,7 @@ def _summarize(*, tmp_path: Path, markdown: str, provider: FakeModelProvider):
         sections=sections,
         blocks=blocks,
         markdown=markdown,
-        meter=NoopCostMeter(),
+        meter=meter or NoopCostMeter(),
     )
     return result, provider.generated_requests
 
@@ -84,6 +92,38 @@ def test_summary_does_not_swallow_unaccounted_paid_response(tmp_path: Path) -> N
             markdown="# Paid call\n\nBody.",
             provider=FakeModelProvider(generate_router=unaccounted),
         )
+
+
+def test_summary_records_prior_calls_before_terminal_accounting_error(
+    tmp_path: Path,
+) -> None:
+    """A later unaccounted call cannot erase preceding known provider usage."""
+    paragraphs = [
+        f"BLOCK-{index} " + " ".join(f"word-{index}-{word}" for word in range(90))
+        for index in range(80)
+    ]
+    call_count = 0
+
+    def success_then_unaccounted(
+        *_args: object, **_kwargs: object
+    ) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise ProviderAccountingError("provider accounting unavailable")
+        return {"summary": "One accounted shard."}
+
+    meter = Mock(spec=CostMeterPort)
+    with pytest.raises(ProviderAccountingError):
+        _summarize(
+            tmp_path=tmp_path,
+            markdown="\n\n".join(("# Giant", *paragraphs)),
+            provider=FakeModelProvider(generate_router=success_then_unaccounted),
+            meter=meter,
+        )
+
+    assert call_count == 2
+    assert meter.record.call_count == 1
 
 
 def test_leaf_parent_root_read_exactly_their_composition_inputs(tmp_path: Path) -> None:
