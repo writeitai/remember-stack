@@ -219,13 +219,20 @@ Instead:
    statement + claim_id + doc_id + asserted_at) in spine tables or a dedicated
    staging structure that is claim-idempotent.
 2. After normalize barrier (same txn edge or immediately chained stage
-   `flush_observations` on the version), flush **per entity** with assertions
-   sorted by `(asserted_at, claim_id)` and apply D43 **in that order** under the
-   entity lock.
+   `flush_observations` / `adjudicate_observations` on the version), flush
+   **per entity** with assertions sorted by `(asserted_at, claim_id)` and apply
+   D43 **in that order** under the entity lock.
 
 This preserves D43’s “apply in order” contract while allowing parallel LLM
 normalize. A future D43 redesign for true commutative insert may remove the
 flush stage; that is a separate design.
+
+**Ledger grain for that flush (D90):** D88 binds per-entity ordered apply under
+the entity lock. D90 binds the **ledger work unit** for that flush as a
+**version-scoped entity unit** (durable membership + `target_kind=entity` with
+`target_id=unit_id`) so multiple entities flush in parallel without collapsing
+shared entities across document versions. See
+[e3_entity_obs_flush_fanout_design.md](e3_entity_obs_flush_fanout_design.md).
 
 ### 5.7 Readiness, connector-cycle, cutover
 

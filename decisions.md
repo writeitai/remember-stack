@@ -3572,3 +3572,54 @@ for an unused benchmark harness.
 `plan/designs/locomo_benchmark_design.md` §§2, 9.
 
 **Analysis.** `plan/analysis/fact_context_authority_performance.md`.
+
+## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
+
+**Decision (2026-08-12).** Stage `adjudicate_observations` under the entity
+fan-out generation is addressed at **version-scoped entity flush units**, not
+bare canonical entity ids. A durable membership table records each unit as
+`(deployment_id, version_id, normalizer_version, subject_entity_id)` with a
+generated `unit_id`. The ledger row uses `target_kind = entity`,
+`target_id = unit_id`, and component version
+`e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1`. When the claim-normalize barrier would open observation
+flush, that transaction materializes the complete membership set and processing
+rows (or records durable empty completion). Each worker applies D43 **serially
+within the unit** in total order `(asserted_at NULLS LAST, claim_id, statement)`
+under the entity advisory lock for the unit. **Relation supersession** and
+**embed_claim** are enqueued as **sibling** follow-ups only when every unit for
+that version + normalizer generation has terminal success. Legacy version-serial
+flush at the pre-fanout component version remains until drained and is mutually
+exclusive with unit fan-out for the same version.
+
+**Context.** After D88, claim normalize scales; observation flush remained one
+version lease. On BEAM 1M (~2.4k entities / ~6.2k staged assertions), residue
+path ~3 assertions/min made multi-day wall clock. Dual design review (Claude +
+Codex, 2026-08-12) rejected bare `target_id = subject_entity_id` because D12
+work identity has no version dimension and entities are deployment-global.
+Analysis: `plan/analysis/e3_entity_obs_flush_fanout_analysis.md`. Binding design:
+`plan/designs/e3_entity_obs_flush_fanout_design.md`.
+
+**Consequences.** Queue depth approximates unfinished **units**. Continuous
+multi-doc ingest stays version-scoped without silent cross-version observation
+loss. Membership carries representation/chunker/extractor coordinates for
+barrier lock and supersession reconstruction. Same-entity units share one apply stream that drains all unapplied
+staging for that entity in global `(asserted_at NULLS LAST, claim_id, statement)`
+order (not per-unit min_asserted_at slices), so overlapping version slices cannot
+evidence-collapse away intermediate state. Empty completion uses `obs_flush_version_state` only.
+Within-unit order uses `(asserted_at NULLS LAST, claim_id, statement)`.
+Readiness, lifecycle, and forget join membership by version. Handlers load
+coordinates from membership, not payload alone. Entity lock spans the unit
+apply so writers do not interleave mid-sequence.
+
+**Design review.** Claude and Codex both REQUEST_CHANGES on the first draft;
+blocking findings absorbed into the design revision (reviews under
+`design/reviews/REVIEW_*_e3_entity_obs_flush_fanout_design_2026-08-12.md`).
+
+**Rejected.** Scale version-level flush only; bare entity target_id; in-process
+pool without ledger grain; parallel assertion apply within one unit;
+assertion-grain jobs; payload-only membership; mixed legacy+fan-out on one
+version; unlock-for-LLM without revalidation.
+
+**Amends.** D88 §5.6 ledger grain for the post-barrier flush (product rule of
+per-entity ordered apply preserved; lease identity becomes version-scoped unit).
+Does not amend D43 ladder semantics, `hub_top_k`, or claim-normalize fan-out.
