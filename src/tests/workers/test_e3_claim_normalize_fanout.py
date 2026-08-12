@@ -232,9 +232,9 @@ def test_cycle_wait_does_not_block_on_missing_claim_rows() -> None:
     sql = str(lifecycle._SELECT_READY_CYCLES)
     # Presence-only wait for D88 claim grain: JOIN processing_state, not LEFT JOIN.
     # Stop before the D90 entity-unit wait (which intentionally LEFT JOINs).
-    claim_wait = sql.split("claim-grain normalize")[1].split(
-        "entity-grain obs flush"
-    )[0]
+    claim_wait = sql.split("claim-grain normalize")[1].split("entity-grain obs flush")[
+        0
+    ]
     assert "LEFT JOIN processing_state" not in claim_wait
     assert "w.processing_id IS NULL" not in claim_wait
     assert "w.status IN ('pending', 'running', 'failed', 'dead_letter')" in claim_wait
