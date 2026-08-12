@@ -962,7 +962,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
     assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     assert (
         load_manifest()["surface_manifest_hash"]
-            == "2cd5f80c0dab258d82dc3fb2129a47a3624132887a4397e776d44090b85d4853"
+        == "2cd5f80c0dab258d82dc3fb2129a47a3624132887a4397e776d44090b85d4853"
     )
 
 

@@ -341,6 +341,24 @@ def test_manifest_deployment_must_match_ingest_checkpoints(tmp_path: Path) -> No
         store_backup._require_manifest_deployment(manifest=manifest, run_dir=tmp_path)
 
 
+def test_manifest_checkpoint_hashes_must_match_local_run(tmp_path: Path) -> None:
+    """A receipt for older checkpoint bytes cannot authorize this run's wipe."""
+
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    manifest = store_backup.BackupManifest.model_construct(
+        run_files_sha256=store_backup._run_file_hashes(run_dir)
+    )
+    store_backup._require_manifest_checkpoint_files(manifest=manifest, run_dir=run_dir)
+
+    (run_dir / "state.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(store_backup.StoreBackupError, match="checkpoint differs"):
+        store_backup._require_manifest_checkpoint_files(
+            manifest=manifest, run_dir=run_dir
+        )
+
+
 def test_archive_identity_is_required() -> None:
     """A size-only legacy archive cannot satisfy the current wipe contract."""
 

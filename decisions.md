@@ -3547,12 +3547,12 @@ fails the operation and releases the connection instead of multiplying the
 transport timeout by the number of refill batches.
 
 The manifest and benchmark identity roll to `RS-LoCoMo-Full-v13`. V13 retains
-the v12 dataset, Luna models, ingest pipeline, answer prompt, call budgets, and
-complete 23-tool retrieval plane. A completed v12 ingest may be adopted into a
-fresh v13 run only when tooling verifies an ingest-only fingerprint over the
-dataset, rendered sessions, deployment/sample mapping, component generations,
-model bindings, and store receipts. Answer and judge checkpoints are never
-adopted across protocol or repository revisions.
+the v12 dataset, Luna models, answer prompt, call budgets, and complete 23-tool
+retrieval plane, while binding the current D88 11-stage ingest contract with
+claim-level normalize fan-out and a distinct observation-adjudication stage.
+Verified backups can restore the exact run they protect, but ingest, answer,
+and judge checkpoints are never adopted across pipeline or repository
+revisions.
 
 **Context.** During the first v12 answer pass, timed-out
 `facts_visible_history` expansions continued in PostgreSQL, filled all 15 API
@@ -3565,8 +3565,8 @@ ingested LoCoMo store.
 **Rejected.** Rebuild D54 and support state in `QueryEngine`; planner settings
 without changing the repeated authority expansion; increase the HTTP or pool
 timeouts; add a new public query-space relation; silently keep the v12 name
-with a different pinned manifest; re-ingest identical source sessions solely
-because answer-time code changed.
+with a different pinned manifest; preserve cross-revision ingest compatibility
+for an unused benchmark harness.
 
 **Design.** `plan/designs/open_query_space_design.md` §3.2 and
 `plan/designs/locomo_benchmark_design.md` §§2, 9.

@@ -10,7 +10,7 @@ The adapter is repository tooling around the public `MemoryClient`. Every real
 run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
-- the stock self-host profile composes all ten continuous handlers;
+- the stock self-host profile composes all eleven continuous handlers;
 - P2/P3 can be built explicitly over the same stores the API reads;
 - readiness is machine-verifiable through the public API;
 - the answer agent can use the complete shipped read plane: assured operations,
@@ -52,15 +52,16 @@ adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
 
-**v12 → v13 (2026-08-11 — bounded single-source fact authority):** D89 keeps
-the v12 dataset, models, prompts, budgets, ingest pipeline, and complete 23-tool
-answer catalog. It rolls the query-space manifest and protocol identity because
+**v12 → v13 (2026-08-11 — current-main ingest and bounded fact authority):**
+D89 keeps the v12 dataset, models, prompts, budgets, and complete 23-tool answer
+catalog. It rolls the query-space manifest and protocol identity because
 the fact views now share private current-evidence and D54 lineage authorities,
 and `fact_context` applies one operation-level PostgreSQL deadline. This fixes
 the pool-exhaustion failure observed during the v12 answer pass without adding
-an answer tool or changing the fact/testimony mental model. A completed v12
-ingest may be adopted only through the guarded ingest-fingerprint procedure in
-§9; failed or partial answer/judge records are never adopted.
+an answer tool or changing the fact/testimony mental model. V13 also binds the
+current D88 claim-level normalize fan-out and distinct observation-adjudication
+stage. Because that changes the ingest contract, a v12 store is not adopted;
+v13 performs a fresh ingest at its recorded repository revision.
 
 **v11 → v12 (2026-08-10 — authority-aligned context operations):** D87
 replaces the assured-operation subset with `resolve_entity`,
@@ -639,25 +640,14 @@ the deployment.
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically
 replaced after each ingestion, readiness checkpoint, answer, and judge.
 
-### Guarded ingest adoption
+### No cross-revision ingest adoption
 
-`adopt-ingest` is the only cross-run reuse path. It accepts a normally prepared
-target run and a completed source sample, leaves the source untouched, and
-copies only the ingest checkpoint after verifying source readiness and an
-ingest-only fingerprint. That fingerprint covers the dataset commit and hash, rendered
-session/document hashes, sample-to-deployment mapping, source-timezone basis,
-ingest model bindings and component generations, and the identities of the
-PostgreSQL/P1/P2/P3 stores being adopted. Answer prompt, retrieval manifest,
-answer model, judge model, and repository revision are deliberately excluded:
-they are downstream of completed ingest.
-
-The command requires a durable backup receipt for the source stores and run
-metadata before it mutates target state. The target records the source run,
-source protocol fingerprint, ingest fingerprint, and backup receipt. It does
-not copy readiness, answer records, judge records, evaluator spend, failures,
-or live-store markers. A mismatch, partial ingest, missing readiness proof, or
-missing receipt fails closed. The subsequent target API readiness
-check and P2/P3 build/verification still run at the target repository revision.
+One protocol run is produced by the exact repository revision, component
+generations, model bindings, and 11-stage readiness contract recorded in its
+`run.json`. Checkpoints may resume that same run, and verified store backups may
+restore it. They must not be copied into a run with a different pipeline or
+repository identity. This keeps the scored system unambiguous and avoids a
+second compatibility surface for an unused benchmark harness.
 
 Transport/server errors, invalid tool decisions, schema failures, provider accounting failures,
 step exhaustion, and missing records remain explicit and score zero. Typed

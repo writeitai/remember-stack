@@ -1,6 +1,6 @@
 """Factor current fact evidence so public authorities expand visibility once.
 
-revision: p9_08_0029
+revision: p9_09_0030
 
 The public ``memory_v1`` contract is unchanged.  Two ungranted helpers own the
 current claim association and D54 lineage aggregation; public fact views add
@@ -23,8 +23,8 @@ from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding impor
     MEMORY_V1_CORRECTION_DDL,
 )
 
-revision: str = "p9_08_0029"
-down_revision: str | None = "p9_07_0028"
+revision: str = "p9_09_0030"
+down_revision: str | None = "p9_08_0029"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -256,7 +256,9 @@ def _prior_view_definitions() -> dict[str, str]:
         for statement in _split_sql(sql=block):
             normalized = " ".join(statement.split())
             for qualified_name in _RESTORED_VIEWS:
-                if normalized.startswith(f"CREATE VIEW {qualified_name} (") or normalized.startswith(
+                if normalized.startswith(
+                    f"CREATE VIEW {qualified_name} ("
+                ) or normalized.startswith(
                     f"CREATE OR REPLACE VIEW {qualified_name} ("
                 ):
                     definitions[qualified_name] = statement

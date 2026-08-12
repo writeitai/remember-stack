@@ -46,10 +46,10 @@ from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding impor
 from rememberstack.spine.migrations.versions.p9_05_0026_graph_helpers import (
     GRAPH_EDGE_VIEW_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_08_0029_fact_authority_performance import (
+from rememberstack.spine.migrations.versions.p9_09_0030_fact_authority_performance import (
     FACT_AUTHORITY_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_08_0029_fact_authority_performance import (
+from rememberstack.spine.migrations.versions.p9_09_0030_fact_authority_performance import (
     FACT_AUTHORITY_HELPER_VIEWS,
 )
 from rememberstack.spine.query_space.ast_serializer import serialize_definition

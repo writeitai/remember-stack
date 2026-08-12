@@ -8,7 +8,6 @@ from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sys
 from types import ModuleType
 from typing import Self
@@ -46,7 +45,6 @@ from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from benchmarks.locomo.runner import _answer_one
 from benchmarks.locomo.runner import _judge_one
-from benchmarks.locomo.runner import adopt_ingest_sample
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ExecutionGuardError
@@ -56,7 +54,6 @@ from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import ProviderPreflightError
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
-from benchmarks.locomo.sharding import store_backup
 import httpx
 import pytest
 
@@ -1785,170 +1782,6 @@ def test_prepared_protocol_pins_current_surface_and_luna(
     ):
         changed = {**identity, field: changed_value}
         assert runner._canonical_hash(changed) != prepared.protocol_fingerprint
-
-
-def test_v13_adopts_only_receipt_backed_complete_v12_ingest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Cross-version reuse keeps E/P identity but drops answer-time checkpoints."""
-    _patch_prepared_inputs(monkeypatch=monkeypatch)
-    target = tmp_path / "target"
-    source = tmp_path / "source"
-    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=target)
-    shutil.copytree(target, source)
-    document = json.loads((source / "documents.json").read_text(encoding="utf-8"))[0]
-    source_ref = document["source_ref"]
-    source_run = json.loads((source / "run.json").read_text(encoding="utf-8"))
-    source_run.update(
-        {
-            "protocol_name": "RS-LoCoMo-Full-v12",
-            "adapter_version": "locomo-full-adapter-2026.08-authority-context-v12",
-        }
-    )
-    source_run.pop("api_timeout_seconds")
-    source_run["protocol_fingerprint"] = runner._canonical_hash(
-        {
-            field: value
-            for field, value in source_run.items()
-            if field not in {"dataset_path", "prepared_at", "protocol_fingerprint"}
-        }
-    )
-    (source / "run.json").write_text(json.dumps(source_run), encoding="utf-8")
-    readiness = _complete_readiness_payload()
-    source_state = {
-        "protocol_name": "RS-LoCoMo-Full-v12",
-        "protocol_fingerprint": source_run["protocol_fingerprint"],
-        "ingests": {
-            source_ref: {
-                "sample_id": "conv-test",
-                "session_id": document["session_id"],
-                "source_ref": source_ref,
-                "content_sha256": document["content_sha256"],
-                "source_modified_at": document["source_modified_at"],
-                "source_timezone_basis": document["source_timezone_basis"],
-                "deployment_id": "57000000-0000-0000-0000-000000000001",
-                "doc_id": "57000000-0000-0000-0000-000000000002",
-                "version_id": "57000000-0000-0000-0000-000000000003",
-                "created": True,
-            }
-        },
-        "readiness": {"conv-test": readiness},
-        "answers": {"ignored": {"failure": "not copied"}},
-        "judges": {"ignored": {"failure": "not copied"}},
-        "preflight_usages": [{"cost": "not copied"}],
-        "evaluator_cost_usd": "9",
-    }
-    (source / "state.json").write_text(json.dumps(source_state), encoding="utf-8")
-    receipt, backup = _synthetic_backup(
-        source_run=source_run, source_run_dir=source, sample_id="conv-test"
-    )
-    monkeypatch.setattr(store_backup, "verify_receipt", lambda _path: (receipt, backup))
-
-    adoption = adopt_ingest_sample(
-        target_run_dir=target,
-        source_run_dir=source,
-        sample_id="conv-test",
-        receipt_path=tmp_path / "receipt.json",
-    )
-
-    state = RunState.model_validate_json(
-        (target / "state.json").read_text(encoding="utf-8")
-    )
-    assert adoption.source_protocol_name == "RS-LoCoMo-Full-v12"
-    assert state.ingest_adoptions["conv-test"] == adoption
-    assert tuple(state.ingests) == (source_ref,)
-    assert state.readiness == {}
-    assert state.answers == {}
-    assert state.judges == {}
-    assert state.preflight_usages == []
-    assert state.evaluator_cost_usd == 0
-    assert runner._load_run(run_dir=target).state == state
-
-
-def test_ingest_adoption_mismatch_leaves_target_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A source-input mismatch fails before the target state is mutated."""
-    _patch_prepared_inputs(monkeypatch=monkeypatch)
-    target = tmp_path / "target"
-    source = tmp_path / "source"
-    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=target)
-    shutil.copytree(target, source)
-    source_run = json.loads((source / "run.json").read_text(encoding="utf-8"))
-    source_run.update(
-        {
-            "protocol_name": "RS-LoCoMo-Full-v12",
-            "adapter_version": "locomo-full-adapter-2026.08-authority-context-v12",
-            "dataset_sha256": "0" * 64,
-        }
-    )
-    source_run.pop("api_timeout_seconds")
-    (source / "run.json").write_text(json.dumps(source_run), encoding="utf-8")
-    before = (target / "state.json").read_bytes()
-
-    with pytest.raises(BenchmarkRunError, match="dataset_sha256 differ"):
-        adopt_ingest_sample(
-            target_run_dir=target,
-            source_run_dir=source,
-            sample_id="conv-test",
-            receipt_path=tmp_path / "receipt.json",
-        )
-
-    assert (target / "state.json").read_bytes() == before
-
-
-def _synthetic_backup(
-    *, source_run: dict[str, object], source_run_dir: Path, sample_id: str
-) -> tuple[store_backup.BackupReceipt, store_backup.BackupManifest]:
-    """Build verified-backup metadata for the synthetic adoption fixture."""
-    archive_names = (
-        ("volume", "postgres-data"),
-        ("volume", "minio-data"),
-        ("volume", "app-state"),
-        ("volume", "forget-manifests"),
-        ("run", "run-directory"),
-        ("mounts", "published-mount-root"),
-    )
-    archives = tuple(
-        store_backup.ArchiveRecord(
-            kind=kind,
-            logical_name=name,
-            docker_volume=f"test-{name}" if kind == "volume" else None,
-            relative_path=f"{name}.tar.zst",
-            byte_size=1,
-            sha256=str(index) * 64,
-            gcs_generation=index,
-            gcs_crc32c=f"crc-{index}",
-        )
-        for index, (kind, name) in enumerate(archive_names, start=1)
-    )
-    backup = store_backup.BackupManifest(
-        created_at="2026-08-11T00:00:00Z",
-        sample_id=sample_id,
-        deployment_id="57000000-0000-0000-0000-000000000001",
-        compose_project="test",
-        run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v12",
-            protocol_fingerprint=str(source_run["protocol_fingerprint"]),
-            repository_revision=str(source_run["repository_revision"]),
-            prepared_at=str(source_run["prepared_at"]),
-            dataset_sha256=str(source_run["dataset_sha256"]),
-            item_ids_sha256=str(source_run["item_ids_sha256"]),
-        ),
-        run_files_sha256={
-            name: hashlib.sha256((source_run_dir / name).read_bytes()).hexdigest()
-            for name in store_backup.RUN_CHECKPOINT_FILES
-        },
-        archives=archives,
-    )
-    receipt = store_backup.BackupReceipt(
-        sample_id=sample_id,
-        gcp_project="test-project",
-        remote_prefix="gs://test/conv-test",
-        manifest_sha256="f" * 64,
-        verified_at="2026-08-11T00:01:00Z",
-    )
-    return receipt, backup
 
 
 def test_protocol_mutation_is_rejected(

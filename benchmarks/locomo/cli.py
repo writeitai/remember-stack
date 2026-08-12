@@ -11,7 +11,6 @@ import sys
 from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
-from benchmarks.locomo.runner import adopt_ingest_sample
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ingest_sample
@@ -53,15 +52,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
             for record in records:
                 print(record.model_dump_json())
-            return 0
-        if args.command == "adopt-ingest":
-            record = adopt_ingest_sample(
-                target_run_dir=args.target_run,
-                source_run_dir=args.source_run,
-                sample_id=args.sample,
-                receipt_path=args.receipt,
-            )
-            print(record.model_dump_json())
             return 0
         if args.command == "answer":
             provider = _provider()
@@ -145,15 +135,6 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument(
         "--protocol", choices=tuple(PROTOCOL_REGISTRY), default=DEFAULT_PROTOCOL_KEY
     )
-
-    adopt = commands.add_parser(
-        "adopt-ingest",
-        help="reuse one receipt-backed completed v12 ingest in a prepared v13 run",
-    )
-    adopt.add_argument("--target-run", type=Path, required=True)
-    adopt.add_argument("--source-run", type=Path, required=True)
-    adopt.add_argument("--sample", required=True)
-    adopt.add_argument("--receipt", type=Path, required=True)
 
     ingest = commands.add_parser(
         "ingest", help="upload one sample to a clean isolated deployment"

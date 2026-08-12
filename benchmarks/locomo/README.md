@@ -26,21 +26,10 @@ current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
-When a completed v12 ingest is already present, adopt its checkpoint only after
-the store backup has a verified GCS receipt:
-
-```bash
-uv run --extra benchmark python -m benchmarks.locomo adopt-ingest \
-  --target-run .benchmark-runs/locomo-v13 \
-  --source-run .benchmark-runs/locomo-v12 \
-  --sample conv-47 \
-  --receipt .benchmark-runs/locomo-v12/.locomo-backups/receipts/conv-47.json
-```
-
-The command verifies the remote receipt, deterministic input bytes, complete
-source E/P readiness, model/component identities, and exact ingest records. It
-copies no readiness, answer, judge, cost, or failure checkpoint; the v13 answer
-stage re-attests those against the v13 API.
+V13 must ingest into a fresh store built from the repository revision recorded
+in `run.json`. Store backups protect interrupted work and allow restoration of
+that exact run; they are not a license to carry ingestion across a changed
+pipeline contract.
 
 LoCoMo supplies session wall times without a timezone. The current adapter treats those values
 as UTC in this adapter only, records `source_timezone_basis=assumed_utc` in
@@ -77,7 +66,7 @@ docker compose up --detach
 authorization guards and before any upload, so a bad credential fails in seconds
 instead of surfacing later as per-stage dead-letters.
 
-The stock Compose deployment now includes all ten continuous E/P1 workers. After ingesting one
+The stock Compose deployment now includes all eleven continuous E/P1 workers. After ingesting one
 isolated conversation and waiting for them to settle, publish the aggregate projections once:
 
 ```bash

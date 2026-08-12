@@ -2867,7 +2867,7 @@ def _fact_context_evidence(
     fact_rows: tuple[RowMapping, ...],
     evidence_per_fact: int,
     deadline: float,
-) -> list[RowMapping]:
+) -> Sequence[RowMapping]:
     """Read representative D54 evidence within the shared operation budget."""
     _configure_fact_context_connection(connection=connection, deadline=deadline)
     return (

@@ -136,7 +136,7 @@ class RunConfiguration(FrozenModel):
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
     answer_reader_retry_budget: Literal[2] = 2
-    api_timeout_seconds: Literal[60.0] = 60.0
+    api_timeout_seconds: float = Field(default=60.0, gt=0)
     knowledge_mode: Literal["not_composed"] = "not_composed"
     answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
     answer_agent_reasoning_effort: Literal["none"] = "none"
@@ -186,20 +186,6 @@ class IngestRecord(FrozenModel):
     doc_id: UUID
     version_id: UUID
     created: bool
-
-
-class IngestAdoptionRecord(FrozenModel):
-    """Audit record for one verified cross-protocol ingest checkpoint reuse."""
-
-    sample_id: NonEmpty
-    source_run: NonEmpty
-    source_protocol_name: NonEmpty
-    source_protocol_fingerprint: NonEmpty
-    source_repository_revision: NonEmpty
-    ingest_fingerprint: NonEmpty
-    backup_manifest_sha256: NonEmpty
-    backup_remote_prefix: NonEmpty
-    adopted_at: UTCDateTime
 
 
 class RetrievedClaim(FrozenModel):
@@ -368,7 +354,6 @@ class RunState(BaseModel):
     protocol_name: ProtocolName
     protocol_fingerprint: NonEmpty
     ingests: dict[str, IngestRecord] = Field(default_factory=dict)
-    ingest_adoptions: dict[str, IngestAdoptionRecord] = Field(default_factory=dict)
     preflight_usages: list[ProviderCallUsage] = Field(default_factory=list)
     readiness: dict[str, PipelineReadinessReport] = Field(default_factory=dict)
     answers: dict[str, AnswerRecord] = Field(default_factory=dict)
