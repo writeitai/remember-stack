@@ -144,43 +144,19 @@ class ObservationAdjudicator:
         applied staging row is retired by its own primary key — required when
         the stream spans multiple versions of the same entity.
         """
-        if not assertions:
+        if not assertions and clear_staging is None and clear_staging_rows is None:
             return ()
         with self._engine.begin() as connection:
             connection.execute(
                 _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{subject_entity_id}"}
             )
-            claim_ids = list(dict.fromkeys(item.claim_id for item in assertions))
-            asserted_by_claim = {
-                row["claim_id"]: row["asserted_at"]
-                for row in connection.execute(
-                    _CLAIMS_ASSERTED, {"claim_ids": claim_ids}
-                ).mappings()
-            }
-            candidates = [
-                dict(row)
-                for row in connection.execute(
-                    _BLOCK_ENTITY,
-                    {
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                    },
-                )
-                .mappings()
-                .all()
-            ]
-            results = tuple(
-                self._add_with_block(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    subject_entity_id=subject_entity_id,
-                    assertion=assertion,
-                    asserted_at=asserted_by_claim.get(assertion.claim_id),
-                    candidates=candidates,
-                    meter=meter,
-                    call_key=f"{call_key}:{assertion_index}",
-                )
-                for assertion_index, assertion in enumerate(assertions)
+            results = self._apply_assertions_locked(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
+                assertions=assertions,
+                meter=meter,
+                call_key=call_key,
             )
             if clear_staging_rows is not None:
                 for row in clear_staging_rows:
@@ -188,6 +164,111 @@ class ObservationAdjudicator:
             elif clear_staging is not None:
                 connection.execute(_DELETE_OBS_STAGING_ENTITY, clear_staging)
             return results
+
+    def flush_entity_global_staging(
+        self,
+        *,
+        deployment_id: UUID,
+        subject_entity_id: UUID,
+        meter: CostMeterPort | None = None,
+        call_key: str = "observation_flush",
+    ) -> tuple[UUID, ...]:
+        """D90: load + apply + retire all unapplied entity staging under one lock.
+
+        The entity advisory lock is taken before the staging snapshot so two
+        co-present unit workers cannot both materialize the same stream and
+        double-apply after serializing on the lock.
+        """
+        with self._engine.begin() as connection:
+            connection.execute(
+                _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{subject_entity_id}"}
+            )
+            staged_rows = (
+                connection.execute(
+                    _SELECT_UNAPPLIED_OBS_STAGING_FOR_ENTITY,
+                    {
+                        "deployment_id": deployment_id,
+                        "subject_entity_id": subject_entity_id,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+            assertions = tuple(
+                ObservationAssertion(
+                    statement=str(row["statement"]),
+                    claim_id=UUID(str(row["claim_id"])),
+                    doc_id=UUID(str(row["doc_id"])),
+                )
+                for row in staged_rows
+            )
+            results = self._apply_assertions_locked(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
+                assertions=assertions,
+                meter=meter,
+                call_key=call_key,
+            )
+            for row in staged_rows:
+                connection.execute(
+                    _DELETE_OBS_STAGING_ROW,
+                    {
+                        "deployment_id": deployment_id,
+                        "version_id": UUID(str(row["version_id"])),
+                        "claim_id": UUID(str(row["claim_id"])),
+                        "subject_entity_id": subject_entity_id,
+                        "statement": str(row["statement"]),
+                        "normalizer_version": str(row["normalizer_version"]),
+                    },
+                )
+            return results
+
+    def _apply_assertions_locked(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        subject_entity_id: UUID,
+        assertions: tuple[ObservationAssertion, ...],
+        meter: CostMeterPort | None,
+        call_key: str,
+    ) -> tuple[UUID, ...]:
+        """Apply assertions in order against a front-loaded block (lock held)."""
+        if not assertions:
+            return ()
+        claim_ids = list(dict.fromkeys(item.claim_id for item in assertions))
+        asserted_by_claim = {
+            row["claim_id"]: row["asserted_at"]
+            for row in connection.execute(
+                _CLAIMS_ASSERTED, {"claim_ids": claim_ids}
+            ).mappings()
+        }
+        candidates = [
+            dict(row)
+            for row in connection.execute(
+                _BLOCK_ENTITY,
+                {
+                    "deployment_id": deployment_id,
+                    "subject_entity_id": subject_entity_id,
+                },
+            )
+            .mappings()
+            .all()
+        ]
+        return tuple(
+            self._add_with_block(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
+                assertion=assertion,
+                asserted_at=asserted_by_claim.get(assertion.claim_id),
+                candidates=candidates,
+                meter=meter,
+                call_key=f"{call_key}:{assertion_index}",
+            )
+            for assertion_index, assertion in enumerate(assertions)
+        )
 
     def _add_with_block(
         self,
@@ -556,6 +637,7 @@ class ObservationAdjudicator:
                     capped_statement=str(candidate["statement"]),
                     boundary=asserted_at,
                     candidates=candidates,
+                    meter=meter,
                 )
                 return new_id
             if verdict.outcome is ObservationOutcome.CONTRADICT:
@@ -810,12 +892,14 @@ class ObservationAdjudicator:
         capped_statement: str,
         boundary: object,
         candidates: list[dict[str, object]],
+        meter: CostMeterPort | None,
     ) -> None:
-        """Re-open post-boundary evidence that collapsed onto a capped row (D90).
+        """Re-apply post-boundary evidence that collapsed onto a capped row (D90).
 
         When unit A applied ``{t1:A, t3:A}`` first and unit B later caps at
-        ``t2:B``, evidence for ``t3`` must become ``A[t3, ∞)`` rather than
-        remaining only on the capped ``A[t1, t2)`` row.
+        ``t2:B``, evidence for ``t3`` must re-enter the D43 ladder so open B is
+        capped and ``A[t3, ∞)`` reopens — not a blind insert that leaves B open
+        forever alongside A.
         """
         later_rows = (
             connection.execute(
@@ -846,56 +930,19 @@ class ObservationAdjudicator:
                 },
             )
             moved_any = True
-            open_same = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if candidate["statement"] == capped_statement
-                    and bool(candidate["is_open"])
-                ),
-                None,
-            )
-            if open_same is not None:
-                self._evidence(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    observation_id=UUID(str(open_same["observation_id"])),
-                    claim_id=claim_id,
-                    doc_id=doc_id,
-                )
-                self._pull_valid_from_earlier(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    subject_entity_id=subject_entity_id,
-                    observation_id=UUID(str(open_same["observation_id"])),
-                    candidate=open_same,
-                    asserted_at=claim_asserted,
-                )
-                continue
-            reopened_id = self._insert_new(
+            # Re-enter the full ladder so a different open successor (B) is
+            # capped at t3 when A@t3 reasserts (design §5.5.3 acceptance).
+            self._add_with_block(
                 connection=connection,
                 deployment_id=deployment_id,
                 subject_entity_id=subject_entity_id,
-                statement=capped_statement,
-                claim_id=claim_id,
-                doc_id=doc_id,
-                valid_from=claim_asserted,
-                outcome="add",
-                method="d90_late_arrival_resplit",
-                confidence=1.0,
-                features={
-                    "reason": "re-materialize post-cap evidence (D90 §5.5.3)",
-                    "capped_observation_id": str(capped_observation_id),
-                    "boundary": str(boundary),
-                },
-                related=capped_observation_id,
-                contradiction_group=None,
-            )
-            _remember_candidate(
+                assertion=ObservationAssertion(
+                    statement=capped_statement, claim_id=claim_id, doc_id=doc_id
+                ),
+                asserted_at=claim_asserted,
                 candidates=candidates,
-                observation_id=reopened_id,
-                statement=capped_statement,
-                valid_from=claim_asserted,
+                meter=meter,
+                call_key="d90_late_arrival_resplit",
             )
         if moved_any:
             connection.execute(_RECOUNT, {"observation_id": capped_observation_id})
@@ -1097,6 +1144,29 @@ _DELETE_OBS_STAGING_ROW = text(
       AND subject_entity_id = :subject_entity_id
       AND statement = :statement
       AND normalizer_version = :normalizer_version
+    """
+)
+
+_SELECT_UNAPPLIED_OBS_STAGING_FOR_ENTITY = text(
+    """
+    SELECT s.version_id, s.normalizer_version, s.claim_id, s.statement, s.doc_id,
+           c.asserted_at
+    FROM normalize_observation_staging s
+    JOIN claims c ON c.claim_id = s.claim_id
+    JOIN obs_flush_entity_units u
+      ON u.deployment_id = s.deployment_id
+     AND u.version_id = s.version_id
+     AND u.normalizer_version = s.normalizer_version
+     AND u.subject_entity_id = s.subject_entity_id
+    LEFT JOIN processing_state p
+      ON p.deployment_id = u.deployment_id
+     AND p.target_kind = 'entity'
+     AND p.target_id = u.unit_id
+     AND p.stage = 'adjudicate_observations'
+    WHERE s.deployment_id = :deployment_id
+      AND s.subject_entity_id = :subject_entity_id
+      AND (p.status IS NULL OR p.status <> 'dead_letter')
+    ORDER BY c.asserted_at NULLS LAST, s.claim_id, s.statement
     """
 )
 

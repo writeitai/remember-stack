@@ -765,42 +765,14 @@ class AdjudicateObservationsHandler:
         representation_id = UUID(str(unit["representation_id"]))
         chunker_version = str(unit["chunker_version"])
         extractor_version = str(unit["extractor_version"])
-        # D90 §5.5: entity-global unapplied staging among materialized units,
-        # ordered. Co-present versions must merge-apply; never per-unit slice.
-        staged_rows = self._facts.load_unapplied_obs_staging_for_entity(
-            deployment_id=work.deployment_id, subject_entity_id=entity_id
+        # D90 §5.5–§5.6: lock entity, then load+apply+retire unapplied staging
+        # (entity-global total order). Snapshot-before-lock is forbidden.
+        self._observation_adjudicator.flush_entity_global_staging(
+            deployment_id=work.deployment_id,
+            subject_entity_id=entity_id,
+            meter=meter,
+            call_key=f"observation_flush:{entity_id}",
         )
-        assertions = tuple(
-            ObservationAssertion(
-                statement=str(row["statement"]),
-                claim_id=UUID(str(row["claim_id"])),
-                doc_id=UUID(str(row["doc_id"])),
-            )
-            for row in staged_rows
-        )
-        if assertions:
-            # Apply the full ordered stream under the entity lock. Retire each
-            # staging row by its own PK (version-scoped clear is forbidden for
-            # the entity path — design §5.7).
-            clear_rows = tuple(
-                {
-                    "deployment_id": work.deployment_id,
-                    "version_id": UUID(str(row["version_id"])),
-                    "subject_entity_id": entity_id,
-                    "normalizer_version": str(row["normalizer_version"]),
-                    "claim_id": UUID(str(row["claim_id"])),
-                    "statement": str(row["statement"]),
-                }
-                for row in staged_rows
-            )
-            self._observation_adjudicator.add_observations(
-                deployment_id=work.deployment_id,
-                subject_entity_id=entity_id,
-                assertions=assertions,
-                meter=meter,
-                call_key=f"observation_flush:{entity_id}",
-                clear_staging_rows=clear_rows,
-            )
         raw_doc_id = unit.get("doc_id")
         doc_id = UUID(str(raw_doc_id)) if raw_doc_id is not None else None
         membership_hash = unit.get("content_hash")
