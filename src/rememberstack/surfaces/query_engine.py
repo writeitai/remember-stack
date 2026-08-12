@@ -129,7 +129,7 @@ FACT_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
 """Maximum fact nominations confirmed by PostgreSQL in one interactive query."""
 
 FACT_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
-"""Total PostgreSQL time allowed while one fact-context connection is held."""
+"""Operation wall-clock budget; each PostgreSQL statement gets the remainder."""
 
 MULTI_HOP_CONTEXT_EVIDENCE_BUDGET: Final = 60
 """Hard maximum associations and returned claim/chunk content records."""

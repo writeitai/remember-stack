@@ -33,10 +33,10 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocol (`--protocol`, prepare-time only): `full-v12`. Both the answer
+- Protocol (`--protocol`, prepare-time only): `full-v13`. Both the answer
   agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
   `none` for both. It is the sole executable protocol and is not comparable with
-  historical v1–v11 runs.
+  historical v1–v12 runs.
 - The answer agent can use the complete public read plane: the four assured
   operations (`testimony_context`, `fact_context`, `answer_context`, and
   `resolve_entity`), direct primitives, open SQL and Cypher, saved queries,
@@ -68,7 +68,7 @@ P1-label, and small adjudicator seats use `openai/gpt-5.6-luna`.
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v12
+export LOCOMO_PROTOCOL=full-v13
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
