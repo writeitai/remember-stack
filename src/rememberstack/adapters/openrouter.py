@@ -402,7 +402,9 @@ class OpenRouterModelProvider:
         """
         try:
             return _usage(
-                body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
+                body=body,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                require_output_tokens=True,
             )
         except ProviderAccountingError as inline_error:
             generation_id = body.get("id")
@@ -667,8 +669,10 @@ def _safe_finish_reason(*, body: dict[str, Any], key: str) -> str | None:
     return "unexpected"
 
 
-def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
-    """Validate OpenRouter accounting; missing usage must not silently disable budgets."""
+def _usage(
+    *, body: dict[str, Any], latency_ms: int, require_output_tokens: bool = False
+) -> ProviderCallUsage:
+    """Validate accounting; chat requires output tokens while embeddings do not."""
     raw = body.get("usage")
     if not isinstance(raw, dict):
         raise ProviderAccountingError("OpenRouter response carries no usage accounting")
@@ -676,6 +680,10 @@ def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
     if not isinstance(model_name, str) or not model_name.strip():
         raise ProviderAccountingError(
             "OpenRouter response carries no resolved model identity"
+        )
+    if require_output_tokens and "completion_tokens" not in raw:
+        raise ProviderAccountingError(
+            "OpenRouter response carries incomplete completion usage accounting"
         )
     try:
         return ProviderCallUsage(
@@ -715,4 +723,5 @@ def _generation_usage(
             },
         },
         latency_ms=latency_ms,
+        require_output_tokens=True,
     )

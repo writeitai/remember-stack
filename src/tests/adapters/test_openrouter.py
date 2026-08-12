@@ -53,6 +53,19 @@ def test_usage_keeps_exact_cost_and_defaults_embedding_output_tokens() -> None:
     assert usage.latency_ms == 9
 
 
+def test_chat_usage_requires_completion_tokens() -> None:
+    """A completed chat call cannot borrow the embedding-only zero default."""
+    with pytest.raises(ProviderAccountingError, match="incomplete completion usage"):
+        _usage(
+            body={
+                "model": "resolved/provider-model",
+                "usage": {"prompt_tokens": 17, "cost": "0.000123"},
+            },
+            latency_ms=9,
+            require_output_tokens=True,
+        )
+
+
 @pytest.mark.parametrize(
     "body",
     (
