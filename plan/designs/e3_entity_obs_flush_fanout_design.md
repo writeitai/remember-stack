@@ -1,6 +1,6 @@
 # Design: entity-grain observation flush fan-out
 
-**Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS; Codex
+**Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS (r3+r4); Codex
 r3 ordering gap closed in this revision — binding once landed on `main`  
 **Date:** 2026-08-12  
 **Decision log:** D90  
@@ -230,6 +230,26 @@ and undated/tied assertions split across units.
 Entity-local validity recompute after writes remains allowed as defense in depth,
 but **does not** replace global ordered apply of unapplied staging.
 
+#### 5.5.3 Late-arriving unit after a peer already completed (binding)
+
+Entity-global merge only sees **unapplied** staging. If unit A fully applied
+`{t1:A, t3:A}` first (t3 collapsed as evidence on open A), then unit B later
+materializes `{t2:B}`, a plain supersede of open A at t2 yields
+`A[t1,t2), B[t2,∞)` and loses A-at-t3.
+
+**Required:** when an apply caps open observation O at boundary T, any **evidence
+claims** (or reassertions) already attached to O with `asserted_at > T` (total
+order) must be re-materialized as subsequent open slices after the cap — not left
+only as evidence on a capped row. Concretely the staggered acceptance case:
+
+1. Fully succeed unit A `{t1:A, t3:A}` alone.  
+2. Later materialize/apply unit B `{t2:B}`.  
+3. Final slices must still be `A[t1,t2), B[t2,t3), A[t3,∞)`.
+
+Impl may walk evidence claim `asserted_at` on O after cap, or rebuild open
+history for E from durable adjudications + claim times. This is a D43 co-requisite
+of multi-version continuous flush under D90.
+
 ### 5.6 LLM and locking (binding)
 
 **Chosen pattern:** **session / transaction-scoped entity lock held for the whole
@@ -341,7 +361,8 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 | Two versions, same subject entity | 2 distinct unit_ids; both can succeed |
 | V2 after V1 succeeded for same entity | V2 still gets its own unit and apply |
 | Same entity, two pending units | single apply stream; global assertion order |
-| Unit A {t1:A,t3:A} + unit B {t2:B} | final slices A[t1,t2), B[t2,t3), A[t3,∞) |
+| Unit A {t1:A,t3:A} + unit B {t2:B} co-present | final slices A[t1,t2), B[t2,t3), A[t3,∞) |
+| Unit A completes alone then B {t2:B} arrives | same final slices via §5.5.3 re-split |
 | Supersession payload fields | reconstruction fields always present from membership/state |
 | Zero-chunk empty path | no document_version row at fan-out component version |
 | Empty staging | empty signal + supersession + embed_claim |
@@ -356,7 +377,7 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 
 ## 10. Out of scope
 
-- D43 ladder / `hub_top_k` / model seats (except reverse-arrival recompute §5.5.1).  
+- D43 ladder / `hub_top_k` / model seats (except §5.5.3 late-arrival re-split).  
 - Parallel ladder pair judgments.  
 - Relation supersession fan-out.
 

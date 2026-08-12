@@ -3580,8 +3580,8 @@ fan-out generation is addressed at **version-scoped entity flush units**, not
 bare canonical entity ids. A durable membership table records each unit as
 `(deployment_id, version_id, normalizer_version, subject_entity_id)` with a
 generated `unit_id`. The ledger row uses `target_kind = entity`,
-`target_id = unit_id`, and `OBS_FLUSH_VERSION` with an `:entity-fanout-1`
-generation suffix. When the claim-normalize barrier would open observation
+`target_id = unit_id`, and component version
+`e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1`. When the claim-normalize barrier would open observation
 flush, that transaction materializes the complete membership set and processing
 rows (or records durable empty completion). Each worker applies D43 **serially
 within the unit** in total order `(asserted_at NULLS LAST, claim_id, statement)`
