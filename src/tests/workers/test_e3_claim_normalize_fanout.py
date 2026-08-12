@@ -230,13 +230,26 @@ def test_cycle_wait_does_not_block_on_missing_claim_rows() -> None:
     from rememberstack.spine import lifecycle
 
     sql = str(lifecycle._SELECT_READY_CYCLES)
-    # Presence-only wait: JOIN processing_state, not LEFT JOIN + IS NULL.
-    claim_wait = sql.split("claim-grain normalize")[1].split("ORDER BY")[0]
+    # Presence-only wait for D88 claim grain: JOIN processing_state, not LEFT JOIN.
+    # Stop before the D90 entity-unit wait (which intentionally LEFT JOINs).
+    claim_wait = sql.split("claim-grain normalize")[1].split(
+        "entity-grain obs flush"
+    )[0]
     assert "LEFT JOIN processing_state" not in claim_wait
     assert "w.processing_id IS NULL" not in claim_wait
     assert "w.status IN ('pending', 'running', 'failed', 'dead_letter')" in claim_wait
     # D56 reused claims are visible through the occurrence map.
     assert "chunk_claims" in claim_wait
+
+
+def test_cycle_wait_blocks_on_missing_entity_obs_flush_units() -> None:
+    """D90 membership without a succeeded unit processing row stalls cycles."""
+    from rememberstack.spine import lifecycle
+
+    sql = str(lifecycle._SELECT_READY_CYCLES)
+    assert "entity-grain obs flush" in sql or "obs_flush_entity_units" in sql
+    assert "entity-fanout" in sql
+    assert "w.status IS NULL OR w.status <> 'succeeded'" in sql
 
 
 def test_claim_handler_rejects_coordinate_mismatches() -> None:
