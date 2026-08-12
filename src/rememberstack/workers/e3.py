@@ -11,6 +11,7 @@ lineage-distinct evidence counts.
 
 import logging
 from typing import Final
+from typing import cast
 from uuid import UUID
 
 from pydantic import Field

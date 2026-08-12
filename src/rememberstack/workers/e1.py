@@ -628,7 +628,9 @@ def _extract_follow_up(
     if not chunks:
         # D88: no claims ⇒ skip claim-grain normalize; open ordered obs flush
         # (no-op) which chains supersession + embed_claim.
-        from rememberstack.workers.e3 import OBS_FLUSH_LEGACY_VERSION as OBS_FLUSH_VERSION
+        from rememberstack.workers.e3 import (
+            OBS_FLUSH_LEGACY_VERSION as OBS_FLUSH_VERSION,
+        )
 
         return HandlerOutcome(
             follow_up=(

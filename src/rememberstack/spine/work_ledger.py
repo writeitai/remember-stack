@@ -1599,7 +1599,7 @@ _BARRIER_READY_CHUNKS = text(
 _SELECT_STAGING_ENTITIES_FOR_FANOUT = text(
     """
     SELECT s.subject_entity_id,
-           min(s.doc_id) AS doc_id,
+           (array_agg(s.doc_id ORDER BY s.claim_id))[1] AS doc_id,
            min(c.asserted_at) AS min_asserted_at
     FROM normalize_observation_staging s
     JOIN claims c ON c.claim_id = s.claim_id

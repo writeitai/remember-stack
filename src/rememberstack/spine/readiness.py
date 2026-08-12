@@ -74,6 +74,14 @@ class PipelineReadinessCatalog:
             ),
             None,
         )
+        obs_flush_version = next(
+            (
+                version
+                for stage, version in self._expected
+                if stage is PipelineStage.ADJUDICATE_OBSERVATIONS
+            ),
+            None,
+        )
         # Packing generation on chunk rows includes params (D58); the CHUNK
         # processing_state component_version is the bare algorithm pin. Use the
         # default pack params for the active grid filter (compose/selfhost default).
@@ -122,6 +130,20 @@ class PipelineReadinessCatalog:
                     .mappings()
                     .all()
                 )
+            obs_flush_rows = ()
+            if obs_flush_version is not None:
+                obs_flush_rows = (
+                    connection.execute(
+                        _ENTITY_OBS_FLUSH_STATUS,
+                        {
+                            "deployment_id": deployment_id,
+                            "version_ids": version_ids,
+                            "obs_flush_version": obs_flush_version,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
         by_key = {
             (
                 UUID(str(row["target_id"])),
@@ -151,6 +173,14 @@ class PipelineReadinessCatalog:
             key = (
                 UUID(str(row["target_id"])),
                 PipelineStage.NORMALIZE_RELATIONS,
+                str(row["component_version"]),
+            )
+            by_key[key] = row
+        # D90: entity-unit obs flush status replaces version-level coordinator.
+        for row in obs_flush_rows:
+            key = (
+                UUID(str(row["target_id"])),
+                PipelineStage.ADJUDICATE_OBSERVATIONS,
                 str(row["component_version"]),
             )
             by_key[key] = row
@@ -387,6 +417,47 @@ _NORMALIZE_CLAIM_STATUS = text(
      AND embed.target_id = v.version_id
      AND embed.stage = 'embed_chunk'
      AND embed.status = 'succeeded'
+    WHERE v.version_id IN :version_ids
+    GROUP BY v.version_id
+    ) derived
+    """
+).bindparams(bindparam("version_ids", expanding=True))
+
+# D90: derive adjudicate_observations from entity units / version_state.
+_ENTITY_OBS_FLUSH_STATUS = text(
+    """
+    SELECT target_id, stage, component_version, status,
+           CASE WHEN status IN ('succeeded', 'dead_letter') THEN finished_at END AS finished_at
+    FROM (
+    SELECT v.version_id AS target_id,
+           'adjudicate_observations'::text AS stage,
+           :obs_flush_version AS component_version,
+           CASE
+             WHEN bool_or(s.fanout_status IN ('empty_complete', 'barrier_complete'))
+               THEN 'succeeded'
+             WHEN count(u.unit_id) = 0 THEN 'missing'
+             WHEN count(u.unit_id) FILTER (WHERE p.status = 'succeeded') = count(u.unit_id)
+               THEN 'succeeded'
+             WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
+             WHEN bool_or(p.status = 'running') THEN 'running'
+             WHEN bool_or(p.status = 'failed') THEN 'failed'
+             WHEN bool_or(p.status = 'pending') THEN 'pending'
+             ELSE 'missing'
+           END AS status,
+           max(p.finished_at) AS finished_at
+    FROM document_versions v
+    LEFT JOIN obs_flush_version_state s
+      ON s.deployment_id = :deployment_id
+     AND s.version_id = v.version_id
+    LEFT JOIN obs_flush_entity_units u
+      ON u.deployment_id = :deployment_id
+     AND u.version_id = v.version_id
+    LEFT JOIN processing_state p
+      ON p.deployment_id = u.deployment_id
+     AND p.target_kind = 'entity'
+     AND p.target_id = u.unit_id
+     AND p.stage = 'adjudicate_observations'
+     AND p.component_version = :obs_flush_version
     WHERE v.version_id IN :version_ids
     GROUP BY v.version_id
     ) derived

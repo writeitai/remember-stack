@@ -120,7 +120,7 @@ def test_advisory_lock_uses_one_postgres_bigint_signature() -> None:
 
 def test_extract_follow_up_zero_chunks_enqueues_obs_flush() -> None:
     """Empty representations skip claim-grain normalize and open obs flush (D88)."""
-    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+    from rememberstack.workers.e3 import OBS_FLUSH_LEGACY_VERSION as OBS_FLUSH_VERSION
 
     version_id = uuid4()
     deployment_id = uuid4()
