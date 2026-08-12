@@ -398,6 +398,7 @@ def ingest_sample(
             serving=build.build_revision,
             when=_INGEST_STAGE,
         )
+        _require_current_ingest_bindings(model_bindings=build.model_bindings)
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
             client=client,
@@ -1394,6 +1395,22 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
             f"the deployment serves revision {serving} at {when} but the run was"
             f" prepared at {prepared}; rebuild the image from the prepared"
             f" revision{remedy}"
+        )
+
+
+def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
+    """Fail before upload unless the deployment serves the pinned ingest models."""
+
+    expected = dict(EXPECTED_INGEST_MODEL_BINDINGS)
+    if model_bindings != expected:
+        mismatches = sorted(
+            name
+            for name in set(model_bindings) | set(expected)
+            if model_bindings.get(name) != expected.get(name)
+        )
+        raise ExecutionGuardError(
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v13: "
+            + ", ".join(mismatches)
         )
 
 

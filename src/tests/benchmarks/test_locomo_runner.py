@@ -1381,6 +1381,50 @@ def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
     assert uploads == 0
 
 
+def test_ingest_refuses_model_binding_drift_before_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Current code with different ingest models is not the prepared system."""
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    uploads = 0
+
+    def drifted_binding(request: httpx.Request) -> httpx.Response:
+        nonlocal uploads
+        if request.url.path == "/deployment":
+            payload = _deployment_payload()
+            payload["model_bindings"] = {
+                **EXPECTED_INGEST_MODEL_BINDINGS,
+                "claim_extraction": "openai/another-model",
+            }
+            return httpx.Response(200, json=payload)
+        if request.url.path == "/ingest":
+            uploads += 1
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(drifted_binding)
+    )
+    try:
+        with pytest.raises(ExecutionGuardError, match="claim_extraction"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=MemoryClient(client=raw_client),
+                provider=_PreflightProvider(),
+            )
+    finally:
+        raw_client.close()
+
+    assert uploads == 0
+
+
 def test_ingest_refuses_a_deduplicated_document_as_not_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2232,7 +2276,7 @@ def _deployment_payload(*, build_revision: str = "a" * 40) -> dict[str, object]:
     """Provenance the deployment reports before any work is submitted."""
     return {
         "build_revision": build_revision,
-        "model_bindings": {"chunk_embedding": "qwen/qwen3-embedding-8b"},
+        "model_bindings": dict(EXPECTED_INGEST_MODEL_BINDINGS),
     }
 
 

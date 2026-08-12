@@ -682,7 +682,7 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
   response says a new version was created; before answering, the same exact
   checkpointed tuples equal the complete prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
-- All ten workers are running.
+- All eleven workers are running.
 - Every prepared session has an ingest record.
 - P2/P3 one-shot build completed.
 - The ordinary mount publisher completed and its P3 `.snapshot-version` equals
