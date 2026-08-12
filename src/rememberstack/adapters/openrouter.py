@@ -39,6 +39,7 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
 )
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
 _GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (0.0, 0.25, 0.75)
+_GENERATION_USAGE_TIMEOUT_S: Final[float] = 10.0
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
 )
@@ -494,7 +495,11 @@ class OpenRouterModelProvider:
 
     def _get_generation(self, *, generation_id: str) -> dict[str, Any]:
         """Fetch metadata for one already-created generation without its content."""
-        response = self._client.get("/generation", params={"id": generation_id})
+        response = self._client.get(
+            "/generation",
+            params={"id": generation_id},
+            timeout=min(self._settings.timeout_s, _GENERATION_USAGE_TIMEOUT_S),
+        )
         if response.status_code >= 400:
             raise OpenRouterProviderError(
                 f"OpenRouter /generation returned {response.status_code}"

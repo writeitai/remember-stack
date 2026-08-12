@@ -5,6 +5,7 @@ import json
 import stat
 from typing import Annotated
 
+import httpx
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import ValidationError
@@ -154,6 +155,33 @@ def test_generation_accounting_fallback_polls_but_stays_fail_closed(
         provider._client.close()
 
     assert metadata_requests == ["gen-no-accounting"] * 3
+
+
+def test_generation_accounting_lookup_uses_exact_bounded_metadata_request() -> None:
+    """The fallback is a bounded GET for one existing id, never another POST."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key", timeout_s=120.0)
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/generation"
+        assert request.url.params["id"] == "gen-existing"
+        assert request.extensions["timeout"]["read"] == 10.0
+        return httpx.Response(200, json={"data": {"id": "gen-existing"}})
+
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        headers={"Authorization": "Bearer test-key"},
+        transport=httpx.MockTransport(handle),
+    )
+    try:
+        body = provider._get_generation(generation_id="gen-existing")
+    finally:
+        provider._client.close()
+
+    assert body == {"data": {"id": "gen-existing"}}
 
 
 @pytest.mark.parametrize(
