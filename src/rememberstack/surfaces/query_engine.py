@@ -17,6 +17,7 @@ from datetime import datetime
 from datetime import UTC
 from itertools import batched
 import math
+from time import monotonic
 from typing import cast
 from typing import Final
 from typing import Literal
@@ -123,6 +124,12 @@ FACT_CONTEXT_EVIDENCE_BUDGET: Final = 60
 
 FACT_CONTEXT_CANDIDATE_K: Final = 200
 """Descriptor-pinned fact nomination depth; deliberately not a public knob."""
+
+FACT_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
+"""Maximum fact nominations confirmed by PostgreSQL in one interactive query."""
+
+FACT_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
+"""Total PostgreSQL time allowed while one fact-context connection is held."""
 
 MULTI_HOP_CONTEXT_EVIDENCE_BUDGET: Final = 60
 """Hard maximum associations and returned claim/chunk content records."""
@@ -524,19 +531,24 @@ class QueryEngine:
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
+        database_deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
         with self._engine.connect() as connection:
-            if entity_ids and not _context_entities_are_current(
-                connection=connection,
-                deployment_id=deployment_id,
-                entity_ids=entity_ids,
-            ):
-                return _unknown_context_entity(
-                    grain=Grain.FACT,
-                    evaluated_at=evaluation,
-                    temporal_scope=_fact_temporal_scope(
-                        time=selected_time, evaluated_at=evaluation
-                    ),
+            if entity_ids:
+                _configure_fact_context_connection(
+                    connection=connection, deadline=database_deadline
                 )
+                if not _context_entities_are_current(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=entity_ids,
+                ):
+                    return _unknown_context_entity(
+                        grain=Grain.FACT,
+                        evaluated_at=evaluation,
+                        temporal_scope=_fact_temporal_scope(
+                            time=selected_time, evaluated_at=evaluation
+                        ),
+                    )
             eligibility = (
                 _fact_eligibility(
                     connection=connection,
@@ -544,6 +556,7 @@ class QueryEngine:
                     entity_ids=entity_ids,
                     time=selected_time,
                     evaluated_at=evaluation,
+                    deadline=database_deadline,
                 )
                 if entity_ids
                 else {}
@@ -566,26 +579,34 @@ class QueryEngine:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
-            fact_rows = _confirm_fact_context(
-                connection=connection,
-                deployment_id=deployment_id,
-                candidate_keys=candidate_keys,
-                time=selected_time,
-                evaluated_at=evaluation,
-                entity_ids=entity_ids,
-            )
-            evidence_rows = (
-                connection.execute(
-                    _CURRENT_FACT_EVIDENCE,
-                    {
-                        "deployment_id": deployment_id,
-                        "fact_ids": [row["fact_id"] for row in fact_rows],
-                        "fact_kinds": [row["kind"] for row in fact_rows],
-                        "per_stance_limit": evidence_per_fact,
-                    },
+            confirmed_rows: list[RowMapping] = []
+            visited_candidates = 0
+            for batch in batched(candidate_keys, FACT_CONTEXT_CONFIRMATION_BATCH_SIZE):
+                batch_rows = _confirm_fact_context(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    candidate_keys=tuple(batch),
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    entity_ids=entity_ids,
+                    deadline=database_deadline,
                 )
-                .mappings()
-                .all()
+                visited_candidates += len(batch)
+                confirmed_rows.extend(batch_rows)
+                # Confirm one extra row so truncation stays truthful without
+                # forcing all 200 semantic nominations through the deep gate.
+                if len(confirmed_rows) > k:
+                    break
+            has_more_confirmed = len(confirmed_rows) > k
+            fact_rows = tuple(confirmed_rows[:k])
+            evidence_rows = (
+                _fact_context_evidence(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    fact_rows=fact_rows,
+                    evidence_per_fact=evidence_per_fact,
+                    deadline=database_deadline,
+                )
                 if fact_rows
                 else []
             )
@@ -599,6 +620,7 @@ class QueryEngine:
                 rows=fact_rows,
                 time=selected_time,
                 evaluated_at=evaluation,
+                deadline=database_deadline,
             )
         facts = confirmed_facts[:k]
         selected = _select_fact_evidence(
@@ -652,7 +674,9 @@ class QueryEngine:
             for fact in facts
             for stance in _EVIDENCE_STANCES
         )
-        dropped = len(candidate_keys) - len(confirmed_facts)
+        # Only candidates that reached PostgreSQL and failed confirmation are
+        # hydration drops. Unvisited nominations are disclosed by truncation.
+        dropped = visited_candidates - len(confirmed_rows)
         candidate_depth_exhausted = len(nominated) > FACT_CONTEXT_CANDIDATE_K
         return _envelope(
             grain=Grain.FACT,
@@ -665,10 +689,12 @@ class QueryEngine:
             evidence_totals=exact_totals,
             freshness=_freshness(at=evaluation),
             truncation=Truncation(
-                truncated=(len(confirmed_facts) > k or candidate_depth_exhausted),
+                truncated=(has_more_confirmed or candidate_depth_exhausted),
                 returned=len(facts),
                 estimated_total=len(nominated),
-                total_is_exact=not candidate_depth_exhausted,
+                total_is_exact=(
+                    not candidate_depth_exhausted and not has_more_confirmed
+                ),
             ),
             dropped_by_hydration=dropped,
             negative=None
@@ -2378,6 +2404,7 @@ class QueryEngine:
         rows: tuple[RowMapping, ...],
         time: FactTime,
         evaluated_at: datetime,
+        deadline: float,
     ) -> tuple[FactResult, ...]:
         """Build and enrich a mixed fact nomination under the selected scope."""
         if not rows:
@@ -2406,6 +2433,7 @@ class QueryEngine:
         )
         members_by_kind_group: dict[tuple[str, UUID], list[dict[str, object]]] = {}
         if groups:
+            _configure_fact_context_connection(connection=connection, deadline=deadline)
             params = _fact_time_parameters(time=time, evaluated_at=evaluated_at)
             member_rows = connection.execute(
                 _FACT_CONTEXT_CONTRADICTION_MEMBERS,
@@ -2773,13 +2801,31 @@ def _fact_eligibility(
     entity_ids: tuple[UUID, ...],
     time: FactTime,
     evaluated_at: datetime,
+    deadline: float,
 ) -> dict[tuple[str, UUID], int]:
-    """Enumerate exact eligible composite facts before bounded P1 ranking."""
-    _configure_fact_context_connection(connection=connection)
+    """Nominate scoped IDs, then confirm visibility through ``memory_v1``."""
+    _configure_fact_context_connection(connection=connection, deadline=deadline)
+    candidates = (
+        connection.execute(
+            _FACT_CONTEXT_ELIGIBILITY,
+            {
+                "deployment_id": deployment_id,
+                "entity_ids": list(entity_ids),
+                **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    if not candidates:
+        return {}
+    _configure_fact_context_connection(connection=connection, deadline=deadline)
     rows = connection.execute(
-        _FACT_CONTEXT_ELIGIBILITY,
+        _CONFIRM_FACT_ELIGIBILITY,
         {
             "deployment_id": deployment_id,
+            "fact_ids": [row["fact_id"] for row in candidates],
+            "fact_kinds": [row["kind"] for row in candidates],
             "entity_ids": list(entity_ids),
             **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
         },
@@ -2795,11 +2841,12 @@ def _confirm_fact_context(
     time: FactTime,
     evaluated_at: datetime,
     entity_ids: tuple[UUID, ...],
+    deadline: float,
 ) -> tuple[RowMapping, ...]:
     """Re-confirm exact nominated identities, time, and anchors in PostgreSQL."""
     if not candidate_keys:
         return ()
-    _configure_fact_context_connection(connection=connection)
+    _configure_fact_context_connection(connection=connection, deadline=deadline)
     rows = connection.execute(
         _CONFIRM_FACT_CONTEXT,
         {
@@ -2813,8 +2860,42 @@ def _confirm_fact_context(
     return tuple(rows)
 
 
-def _configure_fact_context_connection(*, connection: Connection) -> None:
-    """Bound planning work for the deep coordinate-complete fact authority."""
+def _fact_context_evidence(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    fact_rows: tuple[RowMapping, ...],
+    evidence_per_fact: int,
+    deadline: float,
+) -> list[RowMapping]:
+    """Read representative D54 evidence within the shared operation budget."""
+    _configure_fact_context_connection(connection=connection, deadline=deadline)
+    return (
+        connection.execute(
+            _CURRENT_FACT_EVIDENCE,
+            {
+                "deployment_id": deployment_id,
+                "fact_ids": [row["fact_id"] for row in fact_rows],
+                "fact_kinds": [row["kind"] for row in fact_rows],
+                "per_stance_limit": evidence_per_fact,
+            },
+        )
+        .mappings()
+        .all()
+    )
+
+
+def _configure_fact_context_connection(
+    *, connection: Connection, deadline: float, now: float | None = None
+) -> None:
+    """Apply planner controls and the remaining whole-operation time budget."""
+    remaining = deadline - (monotonic() if now is None else now)
+    if remaining <= 0:
+        raise TimeoutError("fact_context exhausted its PostgreSQL operation budget")
+    timeout_ms = max(1, math.floor(remaining * 1_000))
+    connection.exec_driver_sql(
+        f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
+    )
     connection.exec_driver_sql("SET LOCAL jit = off")
     connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
     connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
@@ -3504,12 +3585,56 @@ _FACT_CONTEXT_COVERAGE = """
 
 _FACT_CONTEXT_ELIGIBILITY = text(
     f"""
+    WITH candidates AS (
+        SELECT relation.deployment_id, 'relation'::text AS fact_kind,
+               relation.relation_id AS fact_id,
+               subject.survivor_entity_id AS subject_entity_id,
+               object.survivor_entity_id AS object_entity_id,
+               relation.valid_from, relation.valid_until,
+               relation.ingested_at, relation.invalidated_at
+        FROM relations AS relation
+        JOIN v_memory_entity_survivor AS subject
+          ON subject.deployment_id = relation.deployment_id
+         AND subject.entity_id = relation.subject_entity_id
+        JOIN v_memory_entity_survivor AS object
+          ON object.deployment_id = relation.deployment_id
+         AND object.entity_id = relation.object_entity_id
+        UNION ALL
+        SELECT observation.deployment_id, 'observation'::text,
+               observation.observation_id,
+               subject.survivor_entity_id, NULL::uuid,
+               observation.valid_from, observation.valid_until,
+               observation.ingested_at, observation.invalidated_at
+        FROM observations AS observation
+        JOIN v_memory_entity_survivor AS subject
+          ON subject.deployment_id = observation.deployment_id
+         AND subject.entity_id = observation.subject_entity_id
+    )
     SELECT fact.fact_kind AS kind, fact.fact_id,
            {_FACT_CONTEXT_COVERAGE} AS coverage
-    FROM memory_v1.facts_visible_history AS fact
+    FROM candidates AS fact
     WHERE fact.deployment_id = :deployment_id
       {_FACT_CONTEXT_TIME_PREDICATE}
       {_FACT_CONTEXT_ENTITY_PREDICATE}
+    ORDER BY coverage DESC, kind, fact.fact_id
+    """  # noqa: S608 -- interpolated fragments are module constants
+)
+
+_CONFIRM_FACT_ELIGIBILITY = text(
+    f"""
+    WITH requested AS (
+        SELECT fact_id, kind
+        FROM unnest(CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[]))
+             AS candidate(fact_id, kind)
+    )
+    SELECT fact.fact_kind AS kind, fact.fact_id,
+           {_FACT_CONTEXT_COVERAGE} AS coverage
+    FROM requested
+    JOIN memory_v1.facts_visible_history AS fact
+      ON fact.deployment_id = :deployment_id
+     AND fact.fact_kind = requested.kind
+     AND fact.fact_id = requested.fact_id
+    WHERE true {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
     ORDER BY coverage DESC, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants
 )
@@ -3560,67 +3685,45 @@ _CURRENT_FACT_EVIDENCE = text(
         FROM unnest(
             CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[])
         ) WITH ORDINALITY AS confirmed(fact_id, kind, nomination_rank)
-    ), links AS MATERIALIZED (
-        SELECT requested.fact_id, requested.kind, requested.nomination_rank,
-               e.claim_id, e.doc_id, e.stance::text AS stance
+    ), representative AS MATERIALIZED (
+        SELECT requested.fact_id, requested.kind,
+               requested.nomination_rank, lineage.stance,
+               count(*) OVER (
+                   PARTITION BY requested.kind, requested.fact_id, lineage.stance
+               )::bigint AS evidence_total,
+               row_number() OVER (
+                   PARTITION BY requested.kind, requested.fact_id, lineage.stance
+                   ORDER BY lineage.asserted_to DESC NULLS LAST,
+                            lineage.doc_id, lineage.representative_claim_id
+               ) AS stance_rank,
+               claim.claim_id, claim.doc_id, claim.chunk_id, claim.claim_text,
+               claim.source_span, claim.char_start, claim.char_end,
+               claim.is_attributed, true AS is_current_testimony,
+               claim.asserted_at, claim.claim_valid_from,
+               claim.claim_valid_until,
+               claim.claim_valid_precision::text AS claim_valid_precision,
+               claim.claim_valid_kind::text AS claim_valid_kind,
+               claim.ingested_at AS evidence_ingested_at,
+               document.title AS document_title, document.source_kind
         FROM requested
-        JOIN memory_v1.fact_claim_evidence_live e
-          ON e.deployment_id = :deployment_id
-         AND e.fact_kind = requested.kind
-         AND e.fact_id = requested.fact_id
-    ), totals AS MATERIALIZED (
-        SELECT requested.fact_id, requested.kind, lineage.stance,
-               count(*)::bigint AS evidence_total
-        FROM requested
-        JOIN memory_v1.evidence_lineage lineage
+        JOIN memory_v1.evidence_lineage AS lineage
           ON lineage.deployment_id = :deployment_id
          AND lineage.fact_kind = requested.kind
          AND lineage.fact_id = requested.fact_id
-        GROUP BY requested.fact_id, requested.kind, lineage.stance
-    ), eligible AS (
-        SELECT links.fact_id, links.kind, links.nomination_rank, links.stance,
-               c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-               c.char_start, c.char_end, c.is_attributed,
-               true AS is_current_testimony, c.asserted_at, c.claim_valid_from,
-               c.claim_valid_until, c.claim_valid_precision::text,
-               c.claim_valid_kind::text, d.title AS document_title,
-               d.source_kind, c.ingested_at AS evidence_ingested_at,
-               totals.evidence_total,
-               row_number() OVER (
-                   PARTITION BY links.kind, links.fact_id,
-                                links.stance, links.doc_id
-                   ORDER BY c.asserted_at DESC NULLS LAST,
-                            c.ingested_at DESC, c.claim_id
-               ) AS lineage_claim_rank
-        FROM links
-        JOIN memory_v1.claims_live c
-          ON c.deployment_id = :deployment_id
-         AND c.claim_id = links.claim_id
-         AND c.doc_id = links.doc_id
-        JOIN memory_v1.documents_live d
-          ON d.deployment_id = c.deployment_id
-         AND d.doc_id = c.doc_id
-        JOIN totals
-          ON totals.fact_id = links.fact_id
-         AND totals.kind = links.kind
-         AND totals.stance = links.stance
-    ), diverse AS (
-        SELECT eligible.*,
-               row_number() OVER (
-                   PARTITION BY kind, fact_id, stance
-                   ORDER BY lineage_claim_rank,
-                            asserted_at DESC NULLS LAST,
-                            evidence_ingested_at DESC, doc_id, claim_id
-               ) AS stance_rank
-        FROM eligible
-        WHERE lineage_claim_rank = 1
+        JOIN memory_v1.claims_live AS claim
+          ON claim.deployment_id = lineage.deployment_id
+         AND claim.claim_id = lineage.representative_claim_id
+         AND claim.doc_id = lineage.doc_id
+        JOIN memory_v1.documents_live AS document
+          ON document.deployment_id = claim.deployment_id
+         AND document.doc_id = claim.doc_id
     )
     SELECT fact_id, kind, stance, evidence_total, stance_rank,
            claim_id, doc_id, chunk_id, claim_text, source_span,
            char_start, char_end, is_attributed, is_current_testimony,
            asserted_at, claim_valid_from, claim_valid_until,
            claim_valid_precision, claim_valid_kind, document_title, source_kind
-    FROM diverse
+    FROM representative
     WHERE stance_rank <= :per_stance_limit
     ORDER BY nomination_rank,
              CASE stance WHEN 'supports' THEN 0 ELSE 1 END,

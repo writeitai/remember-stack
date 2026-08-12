@@ -1,8 +1,8 @@
 # LoCoMo full-system benchmark design
 
 > **Status:** binding current-system protocol contract. Real provider execution
-> remains operator-invoked. The 2026-08-07 authorization covered v11 only; this
-> design does not authorize a paid v12 run.
+> remains operator-invoked. Accepting this design does not itself authorize a
+> paid v13 run.
 
 ## 1. Acceptance boundary
 
@@ -27,7 +27,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v12
+protocol                RS-LoCoMo-Full-v13
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -51,6 +51,16 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v12 → v13 (2026-08-11 — bounded single-source fact authority):** D89 keeps
+the v12 dataset, models, prompts, budgets, ingest pipeline, and complete 23-tool
+answer catalog. It rolls the query-space manifest and protocol identity because
+the fact views now share private current-evidence and D54 lineage authorities,
+and `fact_context` applies one operation-level PostgreSQL deadline. This fixes
+the pool-exhaustion failure observed during the v12 answer pass without adding
+an answer tool or changing the fact/testimony mental model. A completed v12
+ingest may be adopted only through the guarded ingest-fingerprint procedure in
+§9; failed or partial answer/judge records are never adopted.
 
 **v11 → v12 (2026-08-10 — authority-aligned context operations):** D87
 replaces the assured-operation subset with `resolve_entity`,
@@ -229,7 +239,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and v11 instead measure the
-owner-selected Luna agent against their pinned surfaces; v12 retains that model
+owner-selected Luna agent against their pinned surfaces; v13 retains that model
 choice for the D87 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -430,7 +440,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v12; no benchmark-specific
+an integrity requirement and an answer channel in v13; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -527,7 +537,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v12 leaves it unset.
+   prepared protocol's `answer_word_cap` is set; v13 leaves it unset.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
@@ -550,7 +560,7 @@ respect grain, validity, freshness, truncation, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside
 retrieval.
 
-Loop guards in the frozen answer prompt (v12): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v13): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". These are prompt discipline, not harness enforcement
@@ -577,11 +587,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v12 \
+  --protocol full-v13 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v12`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v13`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
@@ -628,6 +638,26 @@ the deployment.
 
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically
 replaced after each ingestion, readiness checkpoint, answer, and judge.
+
+### Guarded ingest adoption
+
+`adopt-ingest` is the only cross-run reuse path. It accepts a normally prepared
+target run and a completed source sample, leaves the source untouched, and
+copies only the ingest checkpoint after verifying source readiness and an
+ingest-only fingerprint. That fingerprint covers the dataset commit and hash, rendered
+session/document hashes, sample-to-deployment mapping, source-timezone basis,
+ingest model bindings and component generations, and the identities of the
+PostgreSQL/P1/P2/P3 stores being adopted. Answer prompt, retrieval manifest,
+answer model, judge model, and repository revision are deliberately excluded:
+they are downstream of completed ingest.
+
+The command requires a durable backup receipt for the source stores and run
+metadata before it mutates target state. The target records the source run,
+source protocol fingerprint, ingest fingerprint, and backup receipt. It does
+not copy readiness, answer records, judge records, evaluator spend, failures,
+or live-store markers. A mismatch, partial ingest, missing readiness proof, or
+missing receipt fails closed. The subsequent target API readiness
+check and P2/P3 build/verification still run at the target repository revision.
 
 Transport/server errors, invalid tool decisions, schema failures, provider accounting failures,
 step exhaustion, and missing records remain explicit and score zero. Typed

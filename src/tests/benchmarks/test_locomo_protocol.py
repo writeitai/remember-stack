@@ -222,10 +222,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v12_and_answer_prompt_has_loop_guards() -> None:
-    """The current v12 identity and answer-loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v12"
-    assert DEFAULT_PROTOCOL_KEY == "full-v12"
+def test_protocol_is_v13_and_answer_prompt_has_loop_guards() -> None:
+    """The current v13 identity and answer-loop discipline are locked."""
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v13"
+    assert DEFAULT_PROTOCOL_KEY == "full-v13"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -247,10 +247,10 @@ def test_protocol_is_v12_and_answer_prompt_has_loop_guards() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v12",)
-    protocol = PROTOCOL_REGISTRY["full-v12"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v13",)
+    protocol = PROTOCOL_REGISTRY["full-v13"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v12"
+    assert protocol.name == "RS-LoCoMo-Full-v13"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
@@ -288,7 +288,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v12"]
+    assert selected == ["full-v13"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(

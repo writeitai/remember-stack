@@ -42,6 +42,7 @@ from benchmarks.locomo.model import AnswerRecord
 from benchmarks.locomo.model import BenchmarkFailure
 from benchmarks.locomo.model import CategorySummary
 from benchmarks.locomo.model import FailureKind
+from benchmarks.locomo.model import IngestAdoptionRecord
 from benchmarks.locomo.model import IngestRecord
 from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import JudgeRecord
@@ -62,7 +63,10 @@ from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
+from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
+from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
 from benchmarks.locomo.protocol import JUDGE_MODEL
@@ -117,6 +121,8 @@ _DOCUMENTS_FILE: Final = "documents.json"
 _STATE_FILE: Final = "state.json"
 _SUMMARY_FILE: Final = "summary.json"
 _DOCUMENTS_ADAPTER: Final = TypeAdapter(tuple[PreparedDocument, ...])
+_V12_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v12"
+_V12_ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-authority-context-v12"
 
 
 class BenchmarkRunError(RuntimeError):
@@ -195,6 +201,7 @@ def prepare_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
+        "api_timeout_seconds": API_TIMEOUT_SECONDS,
         "knowledge_mode": "not_composed",
         "answer_agent_model": selected_protocol.answer_agent_model,
         "answer_agent_reasoning_effort": (
@@ -234,6 +241,264 @@ def prepare_run(
         ),
     )
     return configuration
+
+
+def adopt_ingest_sample(
+    *, target_run_dir: Path, source_run_dir: Path, sample_id: str, receipt_path: Path
+) -> IngestAdoptionRecord:
+    """Adopt one verified v12 ingest checkpoint into a prepared v13 run."""
+    target = _load_run(run_dir=target_run_dir)
+    if sample_id not in target.configuration.sample_ids:
+        raise BenchmarkRunError(f"unknown target sample: {sample_id}")
+    if sample_id in target.state.ingest_adoptions:
+        raise BenchmarkRunError(f"sample already has an ingest adoption: {sample_id}")
+    if any(record.sample_id == sample_id for record in target.state.ingests.values()):
+        raise BenchmarkRunError(
+            f"target sample already has ingest records: {sample_id}"
+        )
+    if any(record.sample_id == sample_id for record in target.state.answers.values()):
+        raise BenchmarkRunError(
+            f"target sample already has answer records: {sample_id}"
+        )
+    if sample_id in target.state.readiness:
+        raise BenchmarkRunError(
+            f"target sample already has readiness state: {sample_id}"
+        )
+
+    source_configuration = _read_json_object(path=source_run_dir / _RUN_FILE)
+    if source_configuration.get("protocol_name") != _V12_PROTOCOL_NAME:
+        raise BenchmarkRunError("ingest adoption source is not the pinned v12 protocol")
+    if source_configuration.get("adapter_version") != _V12_ADAPTER_VERSION:
+        raise BenchmarkRunError("ingest adoption source is not the pinned v12 adapter")
+    _require_matching_ingest_inputs(
+        target=target.configuration, source=source_configuration
+    )
+    _require_valid_v12_fingerprint(source=source_configuration)
+
+    source_documents = _DOCUMENTS_ADAPTER.validate_json(
+        (source_run_dir / _DOCUMENTS_FILE).read_text(encoding="utf-8")
+    )
+    target_documents = tuple(
+        document for document in target.documents if document.sample_id == sample_id
+    )
+    adopted_documents = tuple(
+        document for document in source_documents if document.sample_id == sample_id
+    )
+    if adopted_documents != target_documents:
+        raise BenchmarkRunError("source and target rendered documents differ")
+
+    source_state = _read_json_object(path=source_run_dir / _STATE_FILE)
+    if source_state.get("protocol_name") != _V12_PROTOCOL_NAME or source_state.get(
+        "protocol_fingerprint"
+    ) != source_configuration.get("protocol_fingerprint"):
+        raise BenchmarkRunError("source state protocol pin differs from its run")
+    raw_ingests = source_state.get("ingests")
+    if not isinstance(raw_ingests, dict):
+        raise BenchmarkRunError("source state has no ingest checkpoint map")
+    source_ingests = {
+        str(source_ref): IngestRecord.model_validate_json(json.dumps(value))
+        for source_ref, value in raw_ingests.items()
+        if isinstance(value, dict) and value.get("sample_id") == sample_id
+    }
+    expected_refs = {document.source_ref for document in adopted_documents}
+    if set(source_ingests) != expected_refs:
+        raise BenchmarkRunError("source sample ingest checkpoint is incomplete")
+    for document in adopted_documents:
+        record = source_ingests[document.source_ref]
+        if (
+            record.source_ref != document.source_ref
+            or record.session_id != document.session_id
+            or record.content_sha256 != document.content_sha256
+            or record.source_modified_at != document.source_modified_at
+            or record.source_timezone_basis != document.source_timezone_basis
+            or not record.created
+        ):
+            raise BenchmarkRunError(
+                f"source ingest differs from rendered document: {document.source_ref}"
+            )
+    deployment_ids = {record.deployment_id for record in source_ingests.values()}
+    if len(deployment_ids) != 1:
+        raise BenchmarkRunError("source sample ingest spans multiple deployments")
+
+    raw_readiness = source_state.get("readiness")
+    if not isinstance(raw_readiness, dict) or sample_id not in raw_readiness:
+        raise BenchmarkRunError("source sample has no readiness proof")
+    readiness = PipelineReadinessReport.model_validate_json(
+        json.dumps(raw_readiness[sample_id])
+    )
+    _require_adoptable_readiness(
+        readiness=readiness,
+        version_ids={record.version_id for record in source_ingests.values()},
+        source_revision=str(source_configuration.get("repository_revision", "")),
+    )
+
+    from benchmarks.locomo.sharding.store_backup import StoreBackupError
+    from benchmarks.locomo.sharding.store_backup import verify_receipt
+
+    try:
+        receipt, backup = verify_receipt(receipt_path)
+    except StoreBackupError as error:
+        raise BenchmarkRunError(
+            f"source backup receipt is not valid: {error}"
+        ) from error
+    source_protocol_fingerprint = str(
+        source_configuration.get("protocol_fingerprint", "")
+    )
+    source_repository_revision = str(
+        source_configuration.get("repository_revision", "")
+    )
+    if (
+        receipt.sample_id != sample_id
+        or backup.sample_id != sample_id
+        or backup.deployment_id != str(next(iter(deployment_ids)))
+        or backup.run.protocol_name != _V12_PROTOCOL_NAME
+        or backup.run.protocol_fingerprint != source_protocol_fingerprint
+        or backup.run.repository_revision != source_repository_revision
+        or backup.run.dataset_sha256 != source_configuration.get("dataset_sha256")
+        or backup.run.item_ids_sha256 != source_configuration.get("item_ids_sha256")
+        or backup.run_files_sha256 != _run_file_hashes(run_dir=source_run_dir)
+    ):
+        raise BenchmarkRunError("backup receipt does not identify the source ingest")
+
+    ingest_fingerprint = _canonical_hash(
+        {
+            "dataset_commit": source_configuration.get("dataset_commit"),
+            "dataset_sha256": source_configuration.get("dataset_sha256"),
+            "documents": [
+                document.model_dump(mode="json") for document in adopted_documents
+            ],
+            "ingests": [
+                source_ingests[source_ref].model_dump(mode="json")
+                for source_ref in sorted(source_ingests)
+            ],
+            "readiness": readiness.model_dump(mode="json"),
+            "store_archives": [
+                archive.model_dump(mode="json")
+                for archive in sorted(backup.archives, key=lambda row: row.logical_name)
+            ],
+        }
+    )
+    adoption = IngestAdoptionRecord(
+        sample_id=sample_id,
+        source_run=str(source_run_dir.resolve()),
+        source_protocol_name=_V12_PROTOCOL_NAME,
+        source_protocol_fingerprint=source_protocol_fingerprint,
+        source_repository_revision=source_repository_revision,
+        ingest_fingerprint=ingest_fingerprint,
+        backup_manifest_sha256=receipt.manifest_sha256,
+        backup_remote_prefix=receipt.remote_prefix,
+        adopted_at=datetime.now(timezone.utc),
+    )
+    target.state.ingests.update(source_ingests)
+    target.state.ingest_adoptions[sample_id] = adoption
+    _save_state(run_dir=target_run_dir, state=target.state)
+    return adoption
+
+
+def _read_json_object(*, path: Path) -> dict[str, object]:
+    """Read one required JSON object with a useful boundary error."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BenchmarkRunError(f"cannot read benchmark state: {path}") from error
+    if not isinstance(value, dict):
+        raise BenchmarkRunError(f"benchmark state is not an object: {path}")
+    return value
+
+
+def _require_matching_ingest_inputs(
+    *, target: RunConfiguration, source: dict[str, object]
+) -> None:
+    """Require every deterministic ingest input to match across the two runs."""
+    expected = {
+        "dataset_commit": target.dataset_commit,
+        "dataset_sha256": target.dataset_sha256,
+        "tier": target.tier,
+        "manifest_sha256": target.manifest_sha256,
+        "item_ids_sha256": target.item_ids_sha256,
+        "documents_sha256": target.documents_sha256,
+        "sample_ids": list(target.sample_ids),
+    }
+    for field, value in expected.items():
+        if source.get(field) != value:
+            raise BenchmarkRunError(f"source and target {field} differ")
+
+
+def _require_adoptable_readiness(
+    *, readiness: PipelineReadinessReport, version_ids: set[UUID], source_revision: str
+) -> None:
+    """Require complete source E/P work at the exact source build revision."""
+    if not _readiness_matches_protocol(
+        readiness=readiness,
+        version_ids=version_ids,
+        repository_revision=source_revision,
+    ):
+        raise BenchmarkRunError("source sample readiness proof is incomplete")
+
+
+def _require_valid_v12_fingerprint(*, source: dict[str, object]) -> None:
+    """Recompute the exact historical v12 run identity before adoption."""
+    expected_fields = set(RunConfiguration.model_fields) - {"api_timeout_seconds"}
+    if set(source) != expected_fields:
+        raise BenchmarkRunError("v12 source run fields differ from the pinned schema")
+    fingerprint = source.get("protocol_fingerprint")
+    base = {
+        field: value
+        for field, value in source.items()
+        if field not in {"dataset_path", "prepared_at", "protocol_fingerprint"}
+    }
+    if not isinstance(fingerprint, str) or _canonical_hash(base) != fingerprint:
+        raise BenchmarkRunError("v12 source protocol fingerprint is invalid")
+
+
+def _run_file_hashes(*, run_dir: Path) -> dict[str, str]:
+    """Hash the four immutable/checkpoint files protected by a store receipt."""
+    names = ("run.json", "manifest.json", "documents.json", "state.json")
+    try:
+        return {
+            name: hashlib.sha256((run_dir / name).read_bytes()).hexdigest()
+            for name in names
+        }
+    except OSError as error:
+        raise BenchmarkRunError("source run checkpoint files are incomplete") from error
+
+
+def _readiness_matches_protocol(
+    *,
+    readiness: PipelineReadinessReport,
+    version_ids: set[UUID],
+    repository_revision: str,
+) -> bool:
+    """Check exact E/P generations, model bindings, completion, and code identity."""
+    versions_ready = all(
+        version.ready
+        and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
+        and {stage.stage: stage.component_version for stage in version.stages}
+        == dict(EXPECTED_INGEST_COMPONENT_VERSIONS)
+        and all(
+            stage.status in {"succeeded", "skipped"} and stage.finished_at is not None
+            for stage in version.stages
+        )
+        for version in readiness.versions
+    )
+    projections_ready = tuple(
+        projection.plane for projection in readiness.projections
+    ) == EXPECTED_PROJECTION_PLANES and all(
+        projection.ready
+        and projection.version
+        and projection.built_at is not None
+        and projection.published_at is not None
+        for projection in readiness.projections
+    )
+    return bool(
+        readiness.ready
+        and {version.version_id for version in readiness.versions} == version_ids
+        and versions_ready
+        and projections_ready
+        and readiness.model_bindings == dict(EXPECTED_INGEST_MODEL_BINDINGS)
+        and repository_revision
+        and readiness.build_revision == repository_revision
+    )
 
 
 _PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
@@ -503,26 +768,16 @@ def answer_sample(
     readiness = client.pipeline_readiness(
         version_ids=version_ids, require_projections=True
     )
-    reported_versions = {version.version_id for version in readiness.versions}
-    complete_versions = all(
-        version.ready
-        and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
-        and all(stage.status in {"succeeded", "skipped"} for stage in version.stages)
-        for version in readiness.versions
-    )
-    reported_planes = tuple(projection.plane for projection in readiness.projections)
-    complete_projections = reported_planes == EXPECTED_PROJECTION_PLANES and all(
-        projection.ready for projection in readiness.projections
-    )
-    if (
-        not readiness.ready
-        or reported_versions != set(version_ids)
-        or not complete_versions
-        or not complete_projections
+    if readiness.build_revision:
+        _require_serving_revision(context=context, readiness=readiness)
+    if not _readiness_matches_protocol(
+        readiness=readiness,
+        version_ids=set(version_ids),
+        repository_revision=context.configuration.repository_revision,
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v12 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v13 pipeline and fresh P2/P3 projections"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1109,7 +1364,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v12")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v13")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1119,7 +1374,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v12")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v13")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1148,6 +1403,7 @@ def _validate_run(
         "max_tool_calls_per_question": configuration.max_tool_calls_per_question,
         "max_agent_calls_per_question": configuration.max_agent_calls_per_question,
         "answer_reader_retry_budget": configuration.answer_reader_retry_budget,
+        "api_timeout_seconds": configuration.api_timeout_seconds,
         "knowledge_mode": configuration.knowledge_mode,
         "answer_agent_model": configuration.answer_agent_model,
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
@@ -1175,6 +1431,7 @@ def _validate_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
+        "api_timeout_seconds": API_TIMEOUT_SECONDS,
         "answer_agent_reasoning_effort": (
             selected_protocol.answer_agent_reasoning_effort
         ),
@@ -1271,6 +1528,8 @@ def _validate_state(
         raise BenchmarkRunError("run state contains an unknown judge item")
     if not set(state.judges) <= set(state.answers):
         raise BenchmarkRunError("run state contains a judge without an answer")
+    if not set(state.ingest_adoptions) <= set(configuration.sample_ids):
+        raise BenchmarkRunError("run state contains an unknown ingest adoption")
     for source_ref, record in state.ingests.items():
         document = document_map[source_ref]
         if (
@@ -1282,6 +1541,16 @@ def _validate_state(
             or record.source_timezone_basis != document.source_timezone_basis
         ):
             raise BenchmarkRunError(f"ingest state changed for {source_ref}")
+    for sample_id, adoption in state.ingest_adoptions.items():
+        adopted = tuple(
+            record for record in state.ingests.values() if record.sample_id == sample_id
+        )
+        if adoption.sample_id != sample_id or not adopted:
+            raise BenchmarkRunError(f"ingest adoption is incomplete for {sample_id}")
+        if len({record.deployment_id for record in adopted}) != 1:
+            raise BenchmarkRunError(
+                f"ingest adoption spans deployments for {sample_id}"
+            )
     for item_id, answer in state.answers.items():
         question = question_map[item_id]
         if (

@@ -23,7 +23,7 @@ def _run_json(path: Path) -> None:
     (path / "run.json").write_text(
         json.dumps(
             {
-                "protocol_name": "RS-LoCoMo-Full-v12",
+                "protocol_name": "RS-LoCoMo-Full-v13",
                 "protocol_fingerprint": "p" * 64,
                 "repository_revision": "r" * 40,
                 "prepared_at": "2026-08-11T00:00:00Z",
@@ -46,6 +46,8 @@ def _run_json(path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    for name in ("manifest.json", "documents.json"):
+        (path / name).write_text("{}\n", encoding="utf-8")
 
 
 @overload
@@ -518,13 +520,14 @@ def test_restore_validates_every_archive_before_running_docker(
         deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v12",
+            protocol_name="RS-LoCoMo-Full-v13",
             protocol_fingerprint="p" * 64,
             repository_revision="r" * 40,
             prepared_at="2026-08-11T00:00:00Z",
             dataset_sha256="d" * 64,
             item_ids_sha256="e" * 64,
         ),
+        run_files_sha256={name: "f" * 64 for name in store_backup.RUN_CHECKPOINT_FILES},
         archives=tuple(records),
     )
     manifest_bytes = store_backup._write_model(
@@ -779,7 +782,7 @@ def test_runtime_validation_uses_the_image_revision_stamp(
         sample_id="conv-1",
         deployment_id=deployment_id,
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v12",
+            protocol_name="RS-LoCoMo-Full-v13",
             protocol_fingerprint="p" * 64,
             repository_revision=revision,
             prepared_at="2026-08-11T00:00:00Z",

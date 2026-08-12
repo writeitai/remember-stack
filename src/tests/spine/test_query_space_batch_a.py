@@ -37,9 +37,6 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
-    AUTHORIZATION_HELPER_VIEWS,
-)
 from rememberstack.spine.query_space import build_manifest
 from rememberstack.spine.query_space import DELETION_TARGETS
 from rememberstack.spine.query_space import EXECUTED_TARGETS
@@ -56,6 +53,9 @@ from rememberstack.spine.query_space import VIEW_CONTRACTS
 from rememberstack.spine.query_space.manifest import deployed_definition_differences
 from rememberstack.spine.query_space.manifest import deployed_definitions
 from rememberstack.spine.query_space.manifest import MANIFEST_PATH
+from rememberstack.spine.query_space.source_definitions import (
+    AUTHORIZATION_HELPER_VIEWS,
+)
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -1872,8 +1872,8 @@ def test_the_private_helper_cells_prove_their_own_non_reachability(
     """A `not_caller_reachable` cell names a relation a caller cannot read.
 
     Every private helper is checked, not only the one the matrix crosses with
-        each target: all five carry rules the public relations depend on, and all
-    five would be a way around those rules if a grant ever appeared on them.
+        each target: all seven carry rules the public relations depend on, and all
+    seven would be a way around those rules if a grant ever appeared on them.
     """
     helpers = {
         surface.name for surface in MATRIX_SURFACES if not surface.caller_reachable

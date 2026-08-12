@@ -38,13 +38,19 @@ from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space im
     MEMORY_V1_AUTHORED_DDL,
 )
 from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
-    AUTHORIZATION_HELPER_VIEWS,
+    AUTHORIZATION_HELPER_VIEWS as COORDINATE_AUTHORIZATION_HELPER_VIEWS,
 )
 from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
     MEMORY_V1_CORRECTION_DDL,
 )
 from rememberstack.spine.migrations.versions.p9_05_0026_graph_helpers import (
     GRAPH_EDGE_VIEW_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_08_0029_fact_authority_performance import (
+    FACT_AUTHORITY_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_08_0029_fact_authority_performance import (
+    FACT_AUTHORITY_HELPER_VIEWS,
 )
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
@@ -53,6 +59,13 @@ from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
 
 class SourceDefinitionError(RuntimeError):
     """Raised when the authored DDL cannot be read as a complete contract."""
+
+
+AUTHORIZATION_HELPER_VIEWS: Final = (
+    *COORDINATE_AUTHORIZATION_HELPER_VIEWS,
+    *FACT_AUTHORITY_HELPER_VIEWS,
+)
+"""Every private helper whose semantics affect a public query-space relation."""
 
 
 class AuthoredView(BaseModel):
@@ -129,6 +142,7 @@ def _authored_parts() -> tuple[
         *MEMORY_V1_AUTHORED_DDL,
         MEMORY_V1_CORRECTION_DDL,
         GRAPH_EDGE_VIEW_DDL,
+        FACT_AUTHORITY_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

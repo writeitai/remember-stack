@@ -309,6 +309,8 @@ EXPECTED_VIEWS: Final = (
     "v_graph_relates",
     "v_graph_survivor",
     "v_memory_entity_survivor",
+    "v_memory_evidence_lineage_live",
+    "v_memory_fact_claim_live",
     "v_memory_fact_visible",
     "v_memory_mention_current_content",
     "v_memory_page_citation_visible",

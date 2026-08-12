@@ -31,8 +31,10 @@ from google.cloud import storage
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifests")
+RUN_CHECKPOINT_FILES = ("run.json", "manifest.json", "documents.json", "state.json")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
 RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
@@ -128,7 +130,7 @@ class RunIdentity(FrozenModel):
 class BackupManifest(FrozenModel):
     """Describe one complete, restorable LoCoMo recovery unit."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     kind: Literal["rememberstack-locomo-store-backup"] = (
         "rememberstack-locomo-store-backup"
     )
@@ -137,7 +139,15 @@ class BackupManifest(FrozenModel):
     deployment_id: NonEmpty
     compose_project: NonEmpty
     run: RunIdentity
+    run_files_sha256: dict[str, Sha256]
     archives: Annotated[tuple[ArchiveRecord, ...], Field(min_length=6, max_length=6)]
+
+    @model_validator(mode="after")
+    def _checkpoint_file_inventory_is_exact(self) -> "BackupManifest":
+        """Require hashes for every run file that adoption reads."""
+        if set(self.run_files_sha256) != set(RUN_CHECKPOINT_FILES):
+            raise ValueError("backup run-file hash inventory is incomplete")
+        return self
 
 
 class BackupReceipt(FrozenModel):
@@ -308,6 +318,15 @@ def _run_identity(run_dir: Path) -> RunIdentity:
             value=value.get("item_ids_sha256"), field="item_ids_sha256"
         ),
     )
+
+
+def _run_file_hashes(run_dir: Path) -> dict[str, str]:
+    """Hash the exact benchmark files protected inside the run archive."""
+
+    try:
+        return {name: _sha256(run_dir / name) for name in RUN_CHECKPOINT_FILES}
+    except OSError as exc:
+        raise StoreBackupError("benchmark checkpoint files are incomplete") from exc
 
 
 def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
@@ -1063,6 +1082,7 @@ def backup_store(
         deployment_id=deployment_id,
         compose_project=compose_project,
         run=identity,
+        run_files_sha256=_run_file_hashes(run_dir),
         archives=tuple(uploaded_archives),
     )
     manifest_path = staging / "manifest.json"
