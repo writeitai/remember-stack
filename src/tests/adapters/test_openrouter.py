@@ -880,9 +880,15 @@ def test_invalid_completion_capture_handles_unpaired_unicode_surrogate(
 
 
 def test_invalid_completion_capture_failure_preserves_provider_error(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch, tmp_path
+    monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """Capture failure cannot mask the typed error or log raw completion text."""
+    warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def warning(*args: object, **kwargs: object) -> None:
+        warnings.append((args, kwargs))
+
+    monkeypatch.setattr("rememberstack.adapters.openrouter._logger.warning", warning)
     capture_dir = tmp_path / "not-a-directory"
     capture_dir.write_text("occupied", encoding="utf-8")
     provider = OpenRouterModelProvider(
@@ -906,8 +912,8 @@ def test_invalid_completion_capture_failure_preserves_provider_error(
 
     assert raised.value.__cause__ is None
     assert capture_dir.read_text(encoding="utf-8") == "occupied"
-    assert "could not capture invalid OpenRouter completion" in caplog.text
-    assert "source-derived secret" not in caplog.text
+    assert warnings == [(("could not capture invalid OpenRouter completion",), {})]
+    assert "source-derived secret" not in repr(warnings)
 
 
 def test_schema_failure_traceback_does_not_repeat_completion_content(
