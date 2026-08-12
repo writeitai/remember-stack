@@ -1,6 +1,8 @@
 """Provider-accounting proofs for the shipped OpenRouter adapter."""
 
 from decimal import Decimal
+import json
+import stat
 from typing import Annotated
 
 from pydantic import BaseModel
@@ -776,6 +778,165 @@ def test_non_json_completion_fails_once_with_fingerprint_only(
     assert "I cannot answer that." not in message
     assert "sha256_12=" in message
     assert "len=21" in message
+    assert "finish_reason='stop'" in message
+    assert "completion_tokens=2" in message
+    assert "requested_model='openai/gpt-4o-mini'" in message
+
+
+def test_invalid_completion_diagnostics_sanitize_provider_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider-controlled metadata cannot smuggle source text into logs."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        body = _completion(content="not JSON", finish="source-derived secret")
+        body["model"] = "resolved-source-derived-secret"
+        body["choices"][0]["native_finish_reason"] = "another secret"
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="not JSON") as raised:
+            provider.generate(
+                request=ModelRequest(model="configured/model", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    message = str(raised.value)
+    assert "source-derived secret" not in message
+    assert "another secret" not in message
+    assert "resolved-source-derived-secret" not in message
+    assert "finish_reason='unexpected'" in message
+    assert "native_finish_reason='unexpected'" in message
+    assert "requested_model='configured/model'" in message
+
+
+def test_invalid_completion_capture_is_explicit_private_and_inspectable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Opt-in debug capture retains the example without putting it in logs."""
+    capture_dir = tmp_path / "invalid-completions"
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key", invalid_completion_capture_dir=capture_dir
+        )
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(content='{"answer":"unfinished"', finish="length")
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="not JSON"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    captures = list(capture_dir.glob("*.json"))
+    assert len(captures) == 1
+    artifact = json.loads(captures[0].read_text(encoding="utf-8"))
+    assert artifact["failure_kind"] == "json_decode"
+    assert artifact["response_type"] == "_Answer"
+    assert artifact["finish_reason"] == "length"
+    assert artifact["tokens_out"] == 2
+    assert artifact["content"] == '{"answer":"unfinished"'
+    assert artifact["content_length"] == 22
+    assert len(artifact["content_sha256"]) == 64
+    assert stat.S_IMODE(captures[0].stat().st_mode) == 0o600
+
+
+def test_invalid_completion_capture_handles_unpaired_unicode_surrogate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Debug capture cannot replace the original typed provider failure."""
+    capture_dir = tmp_path / "invalid-completions"
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key", invalid_completion_capture_dir=capture_dir
+        )
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(content='{"wrong":"\ud800"}')
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="validation"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    artifact = json.loads(next(capture_dir.glob("*.json")).read_text(encoding="utf-8"))
+    assert artifact["content"] == '{"wrong":"\ud800"}'
+
+
+def test_invalid_completion_capture_failure_preserves_provider_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Capture failure cannot mask the typed error or log raw completion text."""
+    warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def warning(*args: object, **kwargs: object) -> None:
+        warnings.append((args, kwargs))
+
+    monkeypatch.setattr("rememberstack.adapters.openrouter._logger.warning", warning)
+    capture_dir = tmp_path / "not-a-directory"
+    capture_dir.write_text("occupied", encoding="utf-8")
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key", invalid_completion_capture_dir=capture_dir
+        )
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(content='{"wrong":"source-derived secret"}')
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="validation") as raised:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert raised.value.__cause__ is None
+    assert capture_dir.read_text(encoding="utf-8") == "occupied"
+    assert warnings == [(("could not capture invalid OpenRouter completion",), {})]
+    assert "source-derived secret" not in repr(warnings)
+
+
+def test_schema_failure_traceback_does_not_repeat_completion_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The normal failure ledger must never receive Pydantic's input echo."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(content='{"wrong":"source-derived secret"}')
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="validation") as raised:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert raised.value.__cause__ is None
+    assert "source-derived secret" not in str(raised.value)
 
 
 def test_schema_failure_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
