@@ -507,8 +507,13 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         outcome = rig.worker.run_one(
             deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
         ).outcome
-        if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.NORMALIZE_RELATIONS):
-            # No chunks → no extract/claim jobs; D88 hops embed→obs-flush.
+        if stage in (
+            PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.NORMALIZE_RELATIONS,
+            # D90: empty path is durable empty_complete — no document_version
+            # adjudicate_observations work row at the entity-fanout generation.
+            PipelineStage.ADJUDICATE_OBSERVATIONS,
+        ):
             assert outcome is RunResultOutcome.NO_WORK, stage
         else:
             assert outcome is RunResultOutcome.SUCCEEDED, stage
@@ -532,10 +537,19 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             ),
             {"version_id": ingested.version_id},
         ).scalar_one()
+        empty_complete = connection.execute(
+            text(
+                "SELECT fanout_status FROM obs_flush_version_state"
+                " WHERE deployment_id = :deployment_id"
+                " AND version_id = :version_id"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "version_id": ingested.version_id},
+        ).scalar_one()
 
     assert chunk_count == 0
-    # D84 zero-chunk hop: no version-grain extract. D88 empty extract opens
-    # obs-flush (not claim normalize) then supersession at version grain.
+    assert empty_complete == "empty_complete"
+    # D84/D88/D90: zero-chunk hop → durable empty_complete (no version-grain
+    # extract, claim normalize, or adjudicate_observations processing row).
     assert {stage for stage, _status in rows} == {
         stage.value
         for stage in (
@@ -543,14 +557,13 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
-            PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
             PipelineStage.EMBED_CLAIM,
             PipelineStage.RECONCILE,
             PipelineStage.LABEL_RELATION,
         )
     }
-    assert len(rows) == 9
+    assert len(rows) == 8
     assert {status for _stage, status in rows} == {"succeeded"}
     assert rig.provider.generated_prompts == []
 
