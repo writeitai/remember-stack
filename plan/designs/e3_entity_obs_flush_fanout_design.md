@@ -1,7 +1,7 @@
 # Design: entity-grain observation flush fan-out
 
-**Status:** revised after dual design review (Claude REQUEST_CHANGES, Codex
-REQUEST_CHANGES) — binding once this revision lands on `main`  
+**Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS; Codex
+r3 ordering gap closed in this revision — binding once landed on `main`  
 **Date:** 2026-08-12  
 **Decision log:** D90  
 **Analysis:** [e3_entity_obs_flush_fanout_analysis.md](../analysis/e3_entity_obs_flush_fanout_analysis.md)  
@@ -29,7 +29,8 @@ ids are not version-scoped
    - Ledger row: `target_kind = entity`, `target_id = unit_id` (the membership
      PK — **not** the bare canonical `subject_entity_id`),  
      `stage = adjudicate_observations`,  
-     `component_version = OBS_FLUSH_VERSION` with suffix **`:entity-fanout-1`**.
+     `component_version = "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"`  
+     (literal; extends D88 `e3-obs-flush-2026.08a:claim-fanout-1`).
 2. **Why not `target_id = subject_entity_id`:** D12 work identity is
    `(deployment_id, target_kind, target_id, stage, component_version)` with no
    version column. Canonical entities are deployment-global. Two versions that
@@ -53,22 +54,22 @@ ids are not version-scoped
    under the entity advisory lock for the whole unit apply (§5.7).
 6. **Across different `subject_entity_id` values:** concurrent units are allowed.
 7. **Across different versions of the same entity:** units may exist
-   concurrently in the ledger, but **at most one unit for a given
-   `subject_entity_id` may be `running` at a time**, and pending units for that
-   entity are claimed in order of  
-   `(min_asserted_at of the unit’s staging slice, version_id, unit_id)`  
-   with `min_asserted_at` treating NULL as last (§5.5). In addition, D43 reverse
-   arrival must **recompute open windows for that entity from durable
-   observations ordered by the same total order** after each applied assertion
-   that lands earlier than an existing open slice (§5.5.1) — today’s predecessor
-   repair alone is not enough for three-or-more out-of-order state changes.
+   concurrently in the ledger, but **at most one apply stream for a given
+   `subject_entity_id` may run at a time**. When a worker holds that exclusive
+   apply, it applies **all unapplied staging for that entity** across every
+   non-dead-letter unit (all versions) in the **global** total order
+   `(asserted_at NULLS LAST, claim_id, statement)` — not one version slice at a
+   time by `min_asserted_at` (§5.5). Unit rows remain version-scoped for barrier
+   membership; apply order is entity-global. After the stream, every unit whose
+   staging slice is empty is completed (idempotent no-op complete if another
+   stream already drained it).
 8. **Empty staging:** no units; durable empty completion **only** via
    `obs_flush_version_state` (or equivalent), **never** via a
    `document_version` processing row at the fan-out component version (§5.1,
-   §5.8). Enqueue supersession **and** `embed_claim` as sibling follow-ups.
+   §5.7). Enqueue supersession **and** `embed_claim` as sibling follow-ups.
 9. **Legacy** version-serial flush at pre-`:entity-fanout-1` component version
    remains until drained. Fan-out and legacy for the **same** version must not
-   both run (§5.8). Zero-chunk / empty-extract call sites must not insert
+   both run (§5.7). Zero-chunk / empty-extract call sites must not insert
    `document_version` rows at the fan-out component version (§5.8).
 10. **LLM / TX:** bind per-assertion durable writes **without** releasing the
     entity lock mid-unit in a way that allows another writer to interleave
@@ -187,11 +188,14 @@ One transaction:
 4. If ready → enqueue **once** (idempotent), loading coordinates from
    `obs_flush_version_state` + membership (`representation_id`,
    `chunker_version`, `normalizer_version`, `extractor_version`, `doc_id`):
-   - `adjudicate_supersession` at existing adjudicator version (payload may omit
-     `relation_ids` only when all reconstruction fields are present — membership
-     + version_state guarantee that), and
-   - `embed_claim` at existing P1 embed version  
-   as **sibling** follow-ups (preserve today’s topology). Set
+   - `adjudicate_supersession` with `target_kind=document_version`,
+     `target_id=version_id` (never `unit_id`), existing adjudicator component
+     version (payload may omit `relation_ids` only when all reconstruction
+     fields are present), and
+   - `embed_claim` with `target_kind=document_version`, `target_id=version_id`,
+     existing P1 embed component version  
+   as **sibling** follow-ups (preserve today’s topology; readiness/lifecycle
+   only see version-level work for these stages). Set
    `obs_flush_version_state.fanout_status=barrier_complete`.
 
 Barrier advisory lock: reuse the exact `complete_claim_normalize`
@@ -202,25 +206,29 @@ representation barrier key family with `representation_id` from
 
 | Scope | Rule |
 | --- | --- |
-| Within unit | `(asserted_at NULLS LAST, claim_id, statement)` only |
-| Across different entities | Any completion order |
-| Across units sharing `subject_entity_id` | At most one `running`; claim pending units in order `(min_asserted_at NULLS LAST, version_id, unit_id)` |
+| Assertions for one `subject_entity_id` | Global total order `(asserted_at NULLS LAST, claim_id, statement)` across **all** unapplied staging for that entity among non-dead-letter units |
+| Across different entities | Any completion order (true parallel) |
+| Unit claim / single-flight | At most one apply stream per `subject_entity_id`; claiming any unit for E starts the entity-global drain |
 | Undated `asserted_at` | Sort last (`NULLS LAST`); supersede boundary uses existing D43 undated rules (`now()` where already coded) — not redefined here |
 
-#### 5.5.1 Reverse-arrival / multi-version recompute (binding)
+#### 5.5.1 Why not per-unit `min_asserted_at` ordering alone
 
-After each durable apply of an assertion whose `asserted_at` is strictly earlier
-than an existing open observation’s `valid_from` (or undated rules require
-repair), D43 must leave the entity’s open windows consistent with the **full**
-durable observation set for that entity ordered by
-`(asserted_at NULLS LAST, claim_id, statement)`, not only with the single
-“current open” predecessor. Concretely, three changing states at
-`t1 < t2 < t3` applied in order `t3, t1, t2` must not leave overlapping open
-windows such as both `[t1,t3)` and `[t2,t3)`. Impl may re-cap along the ordered
-chain after each reverse-arrival insert or run an entity-local pure recompute of
-`valid_from` / `valid_until` from stored outcomes + timestamps after each write,
-as long as the post-condition holds. This is a required co-requisite of D90 for
-continuous multi-version ingest.
+Ordering **units** by minimum assertion time is insufficient. Example (Codex r3):
+
+- Unit A: `t1: value=A`, `t3: value=A` (same statement → evidence collapse on open A)
+- Unit B: `t2: value=B`, with `t1 < t2 < t3`
+- If A runs as a whole before B: result `A[t1,t2), B[t2,∞)`  
+- Source order requires: `A[t1,t2), B[t2,t3), A[t3,∞)`
+
+Window re-cap cannot recreate the missing A-at-`t3` slice after evidence collapse.
+Therefore the binding rule is **entity-global merge-apply** of unapplied staging
+(§5.5 table), not unit-at-a-time apply. Acceptance tests must include this case
+and undated/tied assertions split across units.
+
+#### 5.5.2 Optional safety net (not a substitute for §5.5)
+
+Entity-local validity recompute after writes remains allowed as defense in depth,
+but **does not** replace global ordered apply of unapplied staging.
 
 ### 5.6 LLM and locking (binding)
 
@@ -322,8 +330,8 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 | In-process pool without ledger | Reject (D67) |
 | Parallel apply within entity | Reject (D43) |
 | Assertion-grain ledger jobs | Reject (row explosion; order still serial) |
-| Bare concurrent same-entity units without claim order | Rejected (Codex r2) |
-| Rely only on today’s predecessor repair for 3+ reverse arrivals | Rejected (§5.5.1) |
+| Per-unit apply ordered only by min_asserted_at | Rejected (Codex r3 evidence-collapse case) |
+| Window-only recompute without global ordered apply | Rejected (§5.5.1) |
 
 ## 9. Test plan (minimum)
 
@@ -332,8 +340,8 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 | Claim barrier, 3 staging entities | 3 units + 3 processing rows |
 | Two versions, same subject entity | 2 distinct unit_ids; both can succeed |
 | V2 after V1 succeeded for same entity | V2 still gets its own unit and apply |
-| Same entity, two pending units | only one running; claim order by min_asserted_at |
-| Reverse arrival t3 then t1 then t2 | no overlapping open windows after recompute |
+| Same entity, two pending units | single apply stream; global assertion order |
+| Unit A {t1:A,t3:A} + unit B {t2:B} | final slices A[t1,t2), B[t2,t3), A[t3,∞) |
 | Supersession payload fields | reconstruction fields always present from membership/state |
 | Zero-chunk empty path | no document_version row at fan-out component version |
 | Empty staging | empty signal + supersession + embed_claim |

@@ -3602,10 +3602,10 @@ Analysis: `plan/analysis/e3_entity_obs_flush_fanout_analysis.md`. Binding design
 **Consequences.** Queue depth approximates unfinished **units**. Continuous
 multi-doc ingest stays version-scoped without silent cross-version observation
 loss. Membership carries representation/chunker/extractor coordinates for
-barrier lock and supersession reconstruction. Same-entity units are
-single-flight and claimed in `(min_asserted_at, version_id, unit_id)` order;
-D43 must recompute open windows on reverse arrival so `t3,t1,t2` cannot leave
-overlapping opens. Empty completion uses `obs_flush_version_state` only.
+barrier lock and supersession reconstruction. Same-entity units share one apply stream that drains all unapplied
+staging for that entity in global `(asserted_at NULLS LAST, claim_id, statement)`
+order (not per-unit min_asserted_at slices), so overlapping version slices cannot
+evidence-collapse away intermediate state. Empty completion uses `obs_flush_version_state` only.
 Within-unit order uses `(asserted_at NULLS LAST, claim_id, statement)`.
 Readiness, lifecycle, and forget join membership by version. Handlers load
 coordinates from membership, not payload alone. Entity lock spans the unit
