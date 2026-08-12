@@ -4,6 +4,9 @@ from decimal import Decimal
 from decimal import InvalidOperation
 import hashlib
 import json
+import logging
+import os
+from pathlib import Path
 import time
 from typing import Any
 from typing import Final
@@ -35,6 +38,10 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
     ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 )
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
+_SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
+    ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
+)
+_logger = logging.getLogger(__name__)
 
 
 def _parse_provider_name_list(*, value: object, field_name: str) -> object:
@@ -115,14 +122,34 @@ class OpenRouterSettings(BaseSettings):
     absent entries fall back to the global pin (or the model default when the
     global pin is also unset). Values must be one of the allowed effort
     literals."""
+    invalid_completion_capture_dir: Path | None = None
+    """Private opt-in directory for raw schema-invalid chat completions.
 
-    @field_validator("embedding_provider", "reasoning_effort", mode="before")
+    Disabled by default because a completion can repeat source material. Files
+    are created mode 0600 and contain no prompt, but operators must still treat
+    the directory as customer data.
+    """
+
+    @field_validator(
+        "embedding_provider",
+        "reasoning_effort",
+        "invalid_completion_capture_dir",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_string(cls, value: object) -> object:
         """Treat Compose's empty optional values as unset."""
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @field_validator("invalid_completion_capture_dir")
+    @classmethod
+    def require_absolute_capture_dir(cls, value: Path | None) -> Path | None:
+        """Keep debug artifacts in one explicit, predictable private location."""
+        if value is not None and not value.is_absolute():
+            raise ValueError("invalid_completion_capture_dir must be absolute")
+        return value
 
     @field_validator("embedding_provider_order", mode="before")
     @classmethod
@@ -228,26 +255,100 @@ class OpenRouterModelProvider:
         if effort is not None:
             payload["reasoning"] = {"effort": effort}
 
-        content, usage = self._completion_text(
+        content, usage, body = self._completion_text(
             payload=payload, response_type=response_type, started_ns=started_ns
         )
 
         try:
             decoded = json.loads(content)
         except json.JSONDecodeError as err:
+            self._capture_invalid_completion(
+                body=body,
+                content=content,
+                failure_kind="json_decode",
+                request=request,
+                response_type=response_type,
+                usage=usage,
+            )
             raise OpenRouterInvalidResponseError(
                 f"{response_type.__name__}: completion content is not JSON"
-                f" ({_content_fingerprint(content=content)})",
+                " ("
+                f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
+                ")",
                 usage=usage,
             ) from err
         try:
             output = response_type.model_validate(decoded)
-        except ValidationError as error:
-            raise OpenRouterInvalidResponseError(
-                f"completion body failed {response_type.__name__} validation",
+        except ValidationError:
+            self._capture_invalid_completion(
+                body=body,
+                content=content,
+                failure_kind="schema_validation",
+                request=request,
+                response_type=response_type,
                 usage=usage,
-            ) from error
+            )
+            raise OpenRouterInvalidResponseError(
+                f"completion body failed {response_type.__name__} validation"
+                " ("
+                f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
+                ")",
+                usage=usage,
+            ) from None
         return GeneratedResponse(output=output, usage=usage)
+
+    def _capture_invalid_completion(
+        self,
+        *,
+        body: dict[str, Any],
+        content: str,
+        failure_kind: str,
+        request: ModelRequest,
+        response_type: type[ResponseT],
+        usage: ProviderCallUsage,
+    ) -> None:
+        """Persist one raw invalid completion only when explicitly enabled."""
+        capture_dir = self._settings.invalid_completion_capture_dir
+        if capture_dir is None:
+            return
+        captured_at_ns = time.time_ns()
+        digest = _content_sha256(content=content)
+        artifact = {
+            "captured_at_unix_ns": captured_at_ns,
+            "failure_kind": failure_kind,
+            "response_type": response_type.__name__,
+            "requested_model": request.model,
+            "resolved_model": usage.model_name,
+            "finish_reason": _choice_value(body=body, key="finish_reason"),
+            "native_finish_reason": _choice_value(
+                body=body, key="native_finish_reason"
+            ),
+            "tokens_in": usage.tokens_in,
+            "tokens_out": usage.tokens_out,
+            "cost_usd": str(usage.cost_usd),
+            "content_length": len(content),
+            "content_sha256": digest,
+            "content": content,
+        }
+        target: Path | None = None
+        created = False
+        try:
+            capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target = capture_dir / (
+                f"{captured_at_ns}-{os.getpid()}-{digest[:12]}.json"
+            )
+            descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            created = True
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(artifact, stream, ensure_ascii=True, indent=2)
+                stream.write("\n")
+        except (OSError, TypeError, ValueError):
+            if created and target is not None:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            _logger.warning("could not capture invalid OpenRouter completion")
 
     def _reasoning_effort_for(self, *, request: ModelRequest) -> ReasoningEffort | None:
         """Resolve explicit request effort before deployment-level defaults.
@@ -269,7 +370,7 @@ class OpenRouterModelProvider:
         payload: dict[str, object],
         response_type: type[ResponseT],
         started_ns: int,
-    ) -> tuple[str, ProviderCallUsage]:
+    ) -> tuple[str, ProviderCallUsage, dict[str, Any]]:
         """Post once and return usable completion text, or raise saying why.
 
         One provider call per logical call: usage accounting stays one-to-one and
@@ -287,7 +388,7 @@ class OpenRouterModelProvider:
                 f" content ({_completion_diagnosis(body=body)})",
                 usage=usage,
             )
-        return content, usage
+        return content, usage, body
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.
@@ -451,8 +552,54 @@ def _content_fingerprint(*, content: str) -> str:
     "different prose each time" and correlate occurrences across runs, while
     keeping possibly-customer-derived model output out of errors and logs.
     """
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+    digest = _content_sha256(content=content)[:12]
     return f"len={len(content)}, sha256_12={digest}"
+
+
+def _content_sha256(*, content: str) -> str:
+    """Hash any provider string, including an unpaired Unicode surrogate."""
+    return hashlib.sha256(content.encode("utf-8", errors="surrogatepass")).hexdigest()
+
+
+def _choice_value(*, body: dict[str, Any], key: str) -> object:
+    """Read one non-content completion-choice field for safe diagnostics."""
+    try:
+        choice = body["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    if not isinstance(choice, dict):
+        return None
+    return choice.get(key)
+
+
+def _invalid_completion_diagnosis(
+    *,
+    body: dict[str, Any],
+    content: str,
+    request: ModelRequest,
+    usage: ProviderCallUsage,
+) -> str:
+    """Describe malformed content without copying source-derived text to logs."""
+    return ", ".join(
+        (
+            _content_fingerprint(content=content),
+            f"finish_reason={_safe_finish_reason(body=body, key='finish_reason')!r}",
+            "native_finish_reason="
+            f"{_safe_finish_reason(body=body, key='native_finish_reason')!r}",
+            f"completion_tokens={usage.tokens_out}",
+            f"requested_model={request.model!r}",
+        )
+    )
+
+
+def _safe_finish_reason(*, body: dict[str, Any], key: str) -> str | None:
+    """Return a known finish reason without logging arbitrary provider text."""
+    value = _choice_value(body=body, key=key)
+    if value is None:
+        return None
+    if isinstance(value, str) and value in _SAFE_FINISH_REASONS:
+        return value
+    return "unexpected"
 
 
 def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
