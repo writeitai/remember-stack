@@ -196,8 +196,13 @@ def test_obs_flush_retires_staging_in_same_txn_as_apply() -> None:
     from rememberstack.spine import observation_adjudication
     from rememberstack.workers import e3
 
-    handler_source = inspect.getsource(e3.AdjudicateObservationsHandler.handle)
-    assert "clear_staging=" in handler_source
+    entity_source = inspect.getsource(
+        e3.AdjudicateObservationsHandler._handle_entity_unit
+    )
+    legacy_source = inspect.getsource(
+        e3.AdjudicateObservationsHandler._handle_version_serial_legacy
+    )
+    assert "clear_staging=" in entity_source or "clear_staging=" in legacy_source
     apply_source = inspect.getsource(
         observation_adjudication.ObservationAdjudicator.add_observations
     )

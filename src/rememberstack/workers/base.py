@@ -73,6 +73,25 @@ class ClaimNormalizeBarrier(BaseModel):
     obs_flush_component_version: str
 
 
+class EntityObsFlushBarrier(BaseModel):
+    """D90: after an entity obs-flush unit succeeds, complete+barrier in one txn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deployment_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    unit_id: UUID
+    subject_entity_id: UUID
+    normalizer_version: str
+    chunker_version: str
+    extractor_version: str
+    content_hash: str
+    lane: ProcessingLane | None
+    obs_flush_component_version: str
+    doc_id: UUID | None = None
+
+
 class HandlerOutcome(BaseModel):
     """What a successful handler produced: the chain follow-ups to enqueue."""
 
@@ -81,6 +100,7 @@ class HandlerOutcome(BaseModel):
     follow_up: tuple[EnqueueWork, ...] = ()
     extract_chunk_barrier: ExtractChunkBarrier | None = None
     claim_normalize_barrier: ClaimNormalizeBarrier | None = None
+    entity_obs_flush_barrier: EntityObsFlushBarrier | None = None
 
 
 @runtime_checkable
@@ -299,6 +319,12 @@ class Worker:
             self._ledger.complete_claim_normalize(
                 processing_id=claimed.processing_id,
                 barrier=outcome.claim_normalize_barrier,
+                follow_up=outcome.follow_up,
+            )
+        elif outcome.entity_obs_flush_barrier is not None:
+            self._ledger.complete_entity_obs_flush(
+                processing_id=claimed.processing_id,
+                barrier=outcome.entity_obs_flush_barrier,
                 follow_up=outcome.follow_up,
             )
         else:

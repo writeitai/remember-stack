@@ -1064,7 +1064,7 @@ def _claimify_omitted_decision(
 
 def _normalize_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcome:
     """Continue an extracted version even when it contains no chunks (D88)."""
-    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+    from rememberstack.workers.e3 import OBS_FLUSH_LEGACY_VERSION as OBS_FLUSH_VERSION
 
     return HandlerOutcome(
         follow_up=(
