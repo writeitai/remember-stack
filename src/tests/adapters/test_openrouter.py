@@ -5,6 +5,7 @@ import json
 import stat
 from typing import Annotated
 
+import httpx
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import ValidationError
@@ -52,6 +53,19 @@ def test_usage_keeps_exact_cost_and_defaults_embedding_output_tokens() -> None:
     assert usage.latency_ms == 9
 
 
+def test_chat_usage_requires_completion_tokens() -> None:
+    """A completed chat call cannot borrow the embedding-only zero default."""
+    with pytest.raises(ProviderAccountingError, match="incomplete completion usage"):
+        _usage(
+            body={
+                "model": "resolved/provider-model",
+                "usage": {"prompt_tokens": 17, "cost": "0.000123"},
+            },
+            latency_ms=9,
+            require_output_tokens=True,
+        )
+
+
 @pytest.mark.parametrize(
     "body",
     (
@@ -67,6 +81,169 @@ def test_usage_fails_closed_when_required_accounting_is_unusable(
     """Never let a worker interpret absent or malformed provider cost as zero."""
     with pytest.raises(ProviderAccountingError):
         _usage(body=body, latency_ms=1)
+
+
+def test_generation_recovers_missing_inline_usage_from_generation_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the completed generation's accounting without generating twice."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    metadata_requests: list[str] = []
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/chat/completions"
+        assert payload["model"] == "openai/gpt-5.6-luna"
+        return {
+            "id": "gen-accounting-fallback",
+            "model": "openai/gpt-5.6-luna",
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    def get_generation(*, generation_id: str) -> dict[str, object]:
+        metadata_requests.append(generation_id)
+        return {
+            "data": {
+                "id": "gen-accounting-fallback",
+                "model": "openai/gpt-5.6-luna",
+                "tokens_prompt": 17,
+                "tokens_completion": 4,
+                "total_cost": "0.00021",
+            }
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    monkeypatch.setattr(provider, "_get_generation", get_generation)
+    try:
+        generated = provider.generate(
+            request=ModelRequest(
+                model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+            ),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert generated.output.answer == "Prague"
+    assert generated.usage.tokens_in == 17
+    assert generated.usage.tokens_out == 4
+    assert generated.usage.cost_usd == Decimal("0.00021")
+    assert metadata_requests == ["gen-accounting-fallback"]
+
+
+def test_generation_accounting_fallback_polls_but_stays_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Briefly poll asynchronous metadata, then reject unusable accounting."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    metadata_requests: list[str] = []
+
+    monkeypatch.setattr(
+        provider,
+        "_post",
+        lambda **_kwargs: {
+            "id": "gen-no-accounting",
+            "model": "openai/gpt-5.6-luna",
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        },
+    )
+
+    def get_generation(*, generation_id: str) -> dict[str, object]:
+        metadata_requests.append(generation_id)
+        return {"data": {"id": "gen-no-accounting", "model": "openai/gpt-5.6-luna"}}
+
+    monkeypatch.setattr(provider, "_get_generation", get_generation)
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda _delay: None
+    )
+    try:
+        with pytest.raises(
+            ProviderAccountingError, match="generation metadata did not recover"
+        ):
+            provider.generate(
+                request=ModelRequest(
+                    model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+                ),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert metadata_requests == ["gen-no-accounting"] * 3
+
+
+@pytest.mark.parametrize(
+    "data",
+    (
+        {
+            "id": "different-generation",
+            "model": "openai/gpt-5.6-luna",
+            "tokens_prompt": 17,
+            "tokens_completion": 4,
+            "total_cost": "0.00021",
+        },
+        {
+            "id": "gen-incomplete-accounting",
+            "model": "openai/gpt-5.6-luna",
+            "tokens_prompt": 17,
+            "total_cost": "0.00021",
+        },
+    ),
+)
+def test_generation_metadata_must_match_and_include_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch, data: dict[str, object]
+) -> None:
+    """Never attribute another generation or partial token counts to this call."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    monkeypatch.setattr(
+        provider,
+        "_post",
+        lambda **_kwargs: {
+            "id": "gen-incomplete-accounting",
+            "model": "openai/gpt-5.6-luna",
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        },
+    )
+    monkeypatch.setattr(provider, "_get_generation", lambda **_kwargs: {"data": data})
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda _delay: None
+    )
+    try:
+        with pytest.raises(ProviderAccountingError):
+            provider.generate(
+                request=ModelRequest(
+                    model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+                ),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+
+def test_generation_accounting_lookup_uses_exact_bounded_metadata_request() -> None:
+    """The fallback is a bounded GET for one existing id, never another POST."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key", timeout_s=120.0)
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/generation"
+        assert request.url.params["id"] == "gen-existing"
+        assert request.extensions["timeout"]["read"] == 10.0
+        return httpx.Response(200, json={"data": {"id": "gen-existing"}})
+
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        headers={"Authorization": "Bearer test-key"},
+        transport=httpx.MockTransport(handle),
+    )
+    try:
+        body = provider._get_generation(generation_id="gen-existing")
+    finally:
+        provider._client.close()
+
+    assert body == {"data": {"id": "gen-existing"}}
 
 
 @pytest.mark.parametrize(

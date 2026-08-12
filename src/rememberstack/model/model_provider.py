@@ -23,7 +23,7 @@ ReasoningEffort: TypeAlias = Literal[
 
 
 class ProviderAccountingError(Exception):
-    """A provider response omitted or malformed required usage accounting."""
+    """A paid response lacks accounting and must not be generated again automatically."""
 
 
 class ProviderCallUsage(BaseModel):
