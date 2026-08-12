@@ -866,6 +866,24 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
     assert "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius" in script
     assert "unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER" in script
+    assert (
+        "REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR="
+        "/var/lib/rememberstack/invalid-completions"
+    ) in script
+    assert 'extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}' in script
+    assert (
+        'adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}'
+        in script
+    )
+    assert "REMEMBERSTACK_BUILD_REVISION" in script[
+        script.index("attest_worker_environment") :
+    ]
+    assert script.count("attest_worker_environment") == 3
+    assert script.index("attest_worker_environment") < script.index(
+        'log "sample=$sample_id stage=ingest status=starting"'
+    )
+    drain = script[script.index("wait_for_drain()") :]
+    assert drain.index("attest_worker_environment") < drain.index("SELECT count(*)")
     assert script.count("--lock-fd 9") == 4
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'

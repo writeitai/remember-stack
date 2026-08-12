@@ -73,9 +73,10 @@ bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt
 
 Per sample it: acquires the host lock, verifies the previous live sample's
 complete-plane GCS receipt and archive identities, then wipes the explicitly
-bound Compose project. It starts the empty stack with worker scaling (`--scale worker-extract-claims=3
---scale worker-normalize-relations=6 --scale worker-embed-claim=2`),
-ingests, waits for a **true drain** (6 h budget, aborts on dead-letter),
+bound Compose project. It starts the empty stack with worker scaling
+(extract-claims ×8, normalize-relations ×6, adjudicate-observations ×4,
+embed-claim ×2), attests the protocol-frozen environment inside every app
+container, ingests, waits for a **true drain** (6 h budget, aborts on dead-letter),
 publishes projections, answers, judges, and creates a new verified GCS backup
 before the next sample may begin. See
 `benchmarks/locomo/sharding/README.md` for the binding backup/restore contract.
@@ -96,8 +97,8 @@ Manual equivalents, when you need them:
 | --- | --- | --- |
 | `answer` refuses: "deployment did not report the exact completed pipeline and fresh P2/P3 projections" | Drain not actually complete (pending rows, or dead-letter rows which pending/running counts miss), or projections published *before* the last ingest event | Finish the true drain, re-run projections, then answer. Order matters: projections after ingest. |
 | Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api python -m rememberstack.surfaces.cli ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
-| Extract still slow with many extract workers | Pre-D84 extract was one job per document; with D84, scale `worker-extract-claims` against **pending chunk** depth for `stage=extract_claims` | `docker compose up -d --no-recreate --scale worker-extract-claims=8` on a single large doc now fans out Claimify per E1 chunk. Deploy **all** engine workers from one image revision (mixed old E2 + new chunk rows is unsafe). |
-| Drain "stuck" with busy count barely moving | Relation-normalize is a single sequential worker by default; 400-claim conversations generate hours of tail | Scale workers (lease-based ledger makes this safe): `docker compose up -d --no-recreate --scale worker-normalize-relations=6 ...`. Remember `down -v` resets replica counts — re-apply scaling on every stack start. |
+| A worker reports a model different from `state.json` | A separate post-launch `docker compose up --scale` read stale ambient `.env` values and created a mixed-model fleet | Stop the invalid run. Relaunch through `run_shard.sh` only; set its `LOCOMO_*_WORKERS` variables if different replica counts are needed. The runner attests every app container before ingest and during every drain poll. |
+| Extract or normalize remains slow | Replica counts are too low for the current chunk/claim fan-out | Set `LOCOMO_EXTRACT_CLAIM_WORKERS`, `LOCOMO_NORMALIZE_RELATION_WORKERS`, `LOCOMO_ADJUDICATE_OBSERVATION_WORKERS`, or `LOCOMO_EMBED_CLAIM_WORKERS` on the original `run_shard.sh` invocation. Never scale the benchmark with a second Compose command. |
 | run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | If the stack matches the checkpoint, run the incomplete stage directly; `ingest` first proves the exact public live-lineage/visible-version join. If it does not match and the sample has no answer/judge records, rerun that sample in a new run directory and merge it with the old run. If any answer/judge record exists, restart every sample assigned to that run directory; merging a replacement sample would correctly fail as overlap. Never edit or force a checkpoint forward. |
 | Item failures recorded in run state | Per-item failures are terminal in that run | Missing items (never attempted, e.g. after a stage-level refusal) can be answered in the same run dir. A terminal failed item requires a fresh deployment and restarting every sample assigned to that run directory; a replacement sample cannot be merged over existing records. |
 | Preflight/answer/judge cost cap hit | Caps are run-cumulative, not per-invocation | Pass a positive finite run-absolute cap (`--max-evaluator-cost-usd`), sized from §7. |

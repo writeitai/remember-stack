@@ -39,6 +39,10 @@ backup_project=${LOCOMO_GCP_PROJECT:-}
 backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-backups}
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
 runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
+extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}
+normalize_relation_workers=${LOCOMO_NORMALIZE_RELATION_WORKERS:-6}
+adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}
+embed_claim_workers=${LOCOMO_EMBED_CLAIM_WORKERS:-2}
 backup_tool=benchmarks/locomo/sharding/store_backup.py
 compose=(docker compose --project-name "$compose_project")
 
@@ -68,6 +72,7 @@ unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
 export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
 unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
 export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
+export REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR=/var/lib/rememberstack/invalid-completions
 
 [[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"
@@ -101,9 +106,65 @@ for value in \
   "$max_agent_calls" \
   "$max_judge_calls" \
   "$drain_timeout_seconds" \
-  "$drain_poll_seconds"; do
+  "$drain_poll_seconds" \
+  "$extract_claim_workers" \
+  "$normalize_relation_workers" \
+  "$adjudicate_observation_workers" \
+  "$embed_claim_workers"; do
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "integer caps must be positive"
 done
+
+attest_worker_environment() {
+  local app_count=0
+  local container_id
+  local environment
+  local service
+  local variable
+  local expected
+  local actual
+  local -a frozen_variables=(
+    REMEMBERSTACK_BUILD_REVISION
+    REMEMBERSTACK_STRUCTURER_MODEL
+    REMEMBERSTACK_SKELETON_CHECK_MODEL
+    REMEMBERSTACK_ROLE_MODEL
+    REMEMBERSTACK_SUMMARY_MODEL
+    REMEMBERSTACK_E1_EMBEDDING_MODEL
+    REMEMBERSTACK_E1_PREFIX_MODEL
+    REMEMBERSTACK_E2_EXTRACT_MODEL
+    REMEMBERSTACK_E3_NORMALIZE_MODEL
+    REMEMBERSTACK_OBS_EMBEDDING_MODEL
+    REMEMBERSTACK_OBS_SMALL_MODEL
+    REMEMBERSTACK_OBS_FRONTIER_MODEL
+    REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL
+    REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL
+    REMEMBERSTACK_P1_EMBEDDING_MODEL
+    REMEMBERSTACK_P1_LABEL_MODEL
+    REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER
+    REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
+    REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS
+    REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
+    REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP
+    REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR
+  )
+
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] || continue
+    environment=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_id")
+    if ! grep -q '^REMEMBERSTACK_E2_EXTRACT_MODEL=' <<<"$environment"; then
+      continue
+    fi
+    app_count=$((app_count + 1))
+    service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container_id")
+    for variable in "${frozen_variables[@]}"; do
+      expected=${!variable-}
+      actual=$(sed -n "s/^${variable}=//p" <<<"$environment")
+      [[ "$actual" == "$expected" ]] ||
+        die "runtime binding mismatch service=$service variable=$variable"
+    done
+  done < <("${compose[@]}" ps --status running --quiet)
+  ((app_count > 0)) || die "runtime binding attestation found no app containers"
+  log "runtime-bindings status=verified app_containers=$app_count"
+}
 
 IFS=',' read -r -a requested_samples <<<"$sample_csv"
 [[ ${#requested_samples[@]} -gt 0 ]] || die "the shard sample list is empty"
@@ -234,6 +295,7 @@ wait_for_drain() {
   local dead
   started_at=$(date +%s)
   while true; do
+    attest_worker_environment
     counts=$(
       "${compose[@]}" exec -T postgres sh -c \
         'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "$1"' \
@@ -268,9 +330,11 @@ for sample_id in "${pending_samples[@]}"; do
   "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
   log "sample=$sample_id stage=stack status=starting"
   "${compose[@]}" up --detach --wait \
-    --scale worker-extract-claims=3 \
-    --scale worker-normalize-relations=6 \
-    --scale worker-embed-claim=2
+    --scale "worker-extract-claims=$extract_claim_workers" \
+    --scale "worker-normalize-relations=$normalize_relation_workers" \
+    --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
+    --scale "worker-embed-claim=$embed_claim_workers"
+  attest_worker_environment
   "$python_bin" "$backup_tool" record-live \
     --run-dir "$run_dir" \
     --sample "$sample_id" \
