@@ -240,13 +240,22 @@ _VERSION_WORK = text(
 # for the version's current representation only.
 _EXTRACT_CHUNK_STATUS = text(
     """
-    -- The aggregate is wrapped so `finished_at` can depend on the derived
-    -- status. Only a terminal SUCCESS carries a completion time: a
-    -- `missing` row previously fell through to `now()`, reporting a
-    -- completion instant for work that never completed — and a different
-    -- one on every inspection.
+    -- `finished_at` mirrors the ledger's own invariant: it is stamped exactly
+    -- on the terminal transitions (`succeeded`, `dead_letter`) and cleared
+    -- again when a row leaves terminal (`_REPLAY_DEAD_LETTER` sets it NULL).
+    -- Two things broke that here. The `now()` fallback below fabricated a
+    -- completion instant for work that never completed — a different one on
+    -- every inspection — so it is gone; a stage with no observed completion
+    -- now reports none. And because the status is DERIVED by aggregating over
+    -- chunks, a still-running stage can hold real timestamps from the chunks
+    -- that already succeeded, so the outer CASE suppresses those. It admits
+    -- `dead_letter`: that is terminal and its ledger timestamp is the honest
+    -- answer to "when did this stop", which an operator needs most precisely
+    -- when the stage has died.
     SELECT target_id, stage, component_version, status,
-           CASE WHEN status = 'succeeded' THEN finished_at END AS finished_at
+           CASE
+             WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
+           END AS finished_at
     FROM (
         SELECT v.version_id AS target_id,
                'extract_claims'::text AS stage,
@@ -277,10 +286,15 @@ _EXTRACT_CHUNK_STATUS = text(
                  WHEN bool_or(p.status = 'pending') THEN 'pending'
                  ELSE 'missing'
                END AS status,
+               -- No `now()` fallback: for the D84 empty-document arm the honest
+               -- completion time is the version's embed_chunk success, which the
+               -- worker stamps even when there are zero chunks. If that row is
+               -- absent, embed never ran, so extraction cannot be complete and
+               -- this correctly yields NULL rather than inventing a timestamp
+               -- that would make the version report ready.
                COALESCE(
                  max(p.finished_at),
-                 max(embed.finished_at),
-                 now()
+                 max(embed.finished_at)
                ) AS finished_at
         FROM document_versions v
         LEFT JOIN document_representations r
@@ -320,6 +334,16 @@ _EXTRACT_CHUNK_STATUS = text(
 # dead_letter blocks readiness. Version-level coordinator success is ignored.
 _NORMALIZE_CLAIM_STATUS = text(
     """
+    -- Same terminal gate as the extract block above, for the same reason: the
+    -- status is derived by aggregating over claims, so a stage still running
+    -- can hold real timestamps from claims that already succeeded. Normalize
+    -- never had the `now()` fabrication, so this only suppresses a misleading
+    -- completion time; it never invents one.
+    SELECT target_id, stage, component_version, status,
+           CASE
+             WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
+           END AS finished_at
+    FROM (
     SELECT v.version_id AS target_id,
            'normalize_relations'::text AS stage,
            :normalize_version AS component_version,
@@ -365,5 +389,6 @@ _NORMALIZE_CLAIM_STATUS = text(
      AND embed.status = 'succeeded'
     WHERE v.version_id IN :version_ids
     GROUP BY v.version_id
+    ) derived
     """
 ).bindparams(bindparam("version_ids", expanding=True))

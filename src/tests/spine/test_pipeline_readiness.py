@@ -28,6 +28,8 @@ from rememberstack.spine.settings import load_database_settings
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("59000000-0000-0000-0000-000000000001")
 _EXTRACTOR_VERSION = "extract-v1"
+# The readiness embed join keys on stage and status only, not component_version.
+_EMBEDDER_VERSION = "embed-v1"
 # Readiness hard-codes the default packing grid; a non-default generation is
 # what exposes the false-empty extract status (issue #251).
 _DEFAULT_CHUNKER_VERSION = packing_generation(params=ChunkerParams())
@@ -313,6 +315,67 @@ def _seed_version_representation(
             )
 
 
+def _seed_embed_succeeded(
+    engine: Engine, *, version_id: UUID, finished_at: datetime
+) -> None:
+    """Version-level embed_chunk success, which the worker stamps even at zero chunks.
+
+    Production always has this row for a converted version: the embed_chunk work
+    item runs, finds no chunks to embed, and completes. It is what supplies the
+    honest completion time for the D84 empty-document arm now that the readiness
+    aggregate no longer falls back to now().
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO processing_state (processing_id, deployment_id,"
+                " target_kind, target_id, stage, component_version, content_hash,"
+                " lane, status, attempts, finished_at)"
+                " VALUES (:p, :d, 'document_version', :v,"
+                " CAST('embed_chunk' AS pipeline_stage), :c, 'hash', 'steady',"
+                " 'succeeded', 1, :finished)"
+            ),
+            {
+                "p": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "v": version_id,
+                "c": _EMBEDDER_VERSION,
+                "finished": finished_at,
+            },
+        )
+
+
+def _seed_chunk_extract_dead_letter(
+    engine: Engine, *, version_id: UUID, finished_at: datetime
+) -> None:
+    """Dead-letter the extract_claims row for the version's single default-grid chunk."""
+    with engine.begin() as connection:
+        chunk_id = connection.execute(
+            text(
+                "SELECT chunk_id FROM chunks WHERE deployment_id = :d"
+                " AND version_id = :v AND chunker_version = :chunker"
+            ),
+            {"d": _DEPLOYMENT_ID, "v": version_id, "chunker": _DEFAULT_CHUNKER_VERSION},
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO processing_state (processing_id, deployment_id,"
+                " target_kind, target_id, stage, component_version, content_hash,"
+                " lane, status, attempts, finished_at)"
+                " VALUES (:p, :d, 'chunk', :t,"
+                " CAST('extract_claims' AS pipeline_stage), :c, 'hash', 'steady',"
+                " 'dead_letter', 1, :finished)"
+            ),
+            {
+                "p": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "t": chunk_id,
+                "c": _EXTRACTOR_VERSION,
+                "finished": finished_at,
+            },
+        )
+
+
 def _seed_coordinator_extract_succeeded(
     engine: Engine, *, version_id: UUID, finished_at: datetime
 ) -> None:
@@ -385,11 +448,63 @@ def test_genuinely_empty_representation_extract_is_succeeded(
     """D84: a representation with no chunks at all is extract-terminal."""
     engine, version_id = ready_rows
     _seed_version_representation(engine, version_id=version_id, chunker_version=None)
+    _seed_embed_succeeded(
+        engine,
+        version_id=version_id,
+        finished_at=datetime.now(tz=UTC) - timedelta(minutes=1),
+    )
 
     ready, extract_status, _ = _extract_stage_status(engine, version_id=version_id)
 
     assert extract_status == "succeeded"
     assert ready is True
+
+
+def test_empty_representation_without_embed_is_not_ready(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """An empty document claims readiness only from an observed embed completion.
+
+    The aggregate used to fall back to now(), so this case reported ready off a
+    timestamp that was fabricated at inspection time and differed on every call.
+    Without the version's embed_chunk success there is no evidence the pipeline
+    ever reached this version, so it must not report ready.
+    """
+    engine, version_id = ready_rows
+    _seed_version_representation(engine, version_id=version_id, chunker_version=None)
+
+    ready, extract_status, finished_at = _extract_stage_status(
+        engine, version_id=version_id
+    )
+
+    assert extract_status == "succeeded"
+    assert finished_at is None
+    assert ready is False
+
+
+def test_dead_letter_extract_keeps_its_completion_timestamp(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """dead_letter is terminal, so its ledger timestamp survives the status gate.
+
+    The ledger stamps finished_at on the dead-letter transition and clears it
+    again on replay, so the timestamp is real. Suppressing it would drop the
+    answer to "when did this stop" exactly when an operator needs it most.
+    """
+    engine, version_id = ready_rows
+    _seed_version_representation(
+        engine, version_id=version_id, chunker_version=_DEFAULT_CHUNKER_VERSION
+    )
+    died_at = datetime.now(tz=UTC) - timedelta(minutes=3)
+    _seed_chunk_extract_dead_letter(engine, version_id=version_id, finished_at=died_at)
+
+    ready, extract_status, finished_at = _extract_stage_status(
+        engine, version_id=version_id
+    )
+
+    assert extract_status == "dead_letter"
+    assert finished_at is not None
+    assert ready is False
 
 
 def test_coordinator_succeeded_does_not_mask_chunk_derived_missing(
@@ -467,6 +582,11 @@ def test_non_succeeded_extract_carries_no_finished_at(
     succeeded_version_id = uuid4()
     _seed_version_representation(
         engine, version_id=succeeded_version_id, chunker_version=None
+    )
+    _seed_embed_succeeded(
+        engine,
+        version_id=succeeded_version_id,
+        finished_at=datetime.now(tz=UTC) - timedelta(minutes=1),
     )
     ready, extract_status, finished_at = _extract_stage_status(
         engine, version_id=succeeded_version_id
