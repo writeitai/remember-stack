@@ -243,9 +243,9 @@ _EXTRACT_CHUNK_STATUS = text(
     -- `finished_at` mirrors the ledger's own invariant: it is stamped exactly
     -- on the terminal transitions (`succeeded`, `dead_letter`) and cleared
     -- again when a row leaves terminal (`_REPLAY_DEAD_LETTER` sets it NULL).
-    -- Two things broke that here. The `now()` fallback below fabricated a
-    -- completion instant for work that never completed — a different one on
-    -- every inspection — so it is gone; a stage with no observed completion
+    -- Two things broke that here. A `now()` fallback in the COALESCE fabricated
+    -- a completion instant for work that never completed — a different one on
+    -- every inspection — so it was removed; a stage with no observed completion
     -- now reports none. And because the status is DERIVED by aggregating over
     -- chunks, a still-running stage can hold real timestamps from the chunks
     -- that already succeeded, so the outer CASE suppresses those. It admits

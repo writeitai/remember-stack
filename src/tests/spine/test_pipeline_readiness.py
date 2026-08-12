@@ -560,11 +560,12 @@ def test_version_without_current_representation_extract_is_missing(
 def test_non_succeeded_extract_carries_no_finished_at(
     ready_rows: tuple[Engine, UUID],
 ) -> None:
-    """Only terminal extract success carries a completion timestamp.
+    """Non-terminal extract carries no completion timestamp.
 
     The aggregate previously fell through to now() for missing rows, reporting
     a completion instant for work that never completed — and a different one
-    on every inspection.
+    on every inspection. Terminal states do carry one; dead_letter is covered
+    by test_dead_letter_extract_keeps_its_completion_timestamp.
     """
     engine, missing_version_id = ready_rows
     assert _OTHER_CHUNKER_VERSION != _DEFAULT_CHUNKER_VERSION
