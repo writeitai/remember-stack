@@ -870,14 +870,15 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
         "REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR="
         "/var/lib/rememberstack/invalid-completions"
     ) in script
-    assert 'extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}' in script
+    assert "extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}" in script
     assert (
-        'adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}'
+        "adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}"
         in script
     )
-    assert "REMEMBERSTACK_BUILD_REVISION" in script[
-        script.index("attest_worker_environment") :
-    ]
+    assert (
+        "REMEMBERSTACK_BUILD_REVISION"
+        in script[script.index("attest_worker_environment") :]
+    )
     assert script.count("attest_worker_environment") == 3
     assert script.index("attest_worker_environment") < script.index(
         'log "sample=$sample_id stage=ingest status=starting"'
