@@ -224,17 +224,9 @@ def test_terminal_status_without_a_completion_timestamp_fails_closed(
     assert report.versions[0].stages[1].finished_at is None
 
 
-def _seed_version_representation(
-    engine: Engine, *, version_id: UUID, chunker_version: str | None
-) -> None:
-    """Attach a current representation, optionally with one chunk under a grid.
-
-    When ``chunker_version`` is set, one chunk is written under that packing
-    generation and no ``extract_claims`` processing_state rows are inserted.
-    When it is ``None``, the representation is genuinely empty (D84).
-    """
+def _seed_document_version(engine: Engine, *, version_id: UUID) -> UUID:
+    """Insert a document_versions row (no representation) and return its doc_id."""
     doc_id = uuid4()
-    representation_id = uuid4()
     content_hash = f"readiness-{version_id}"
     with engine.begin() as connection:
         connection.execute(
@@ -264,6 +256,22 @@ def _seed_version_representation(
                 "hash": content_hash,
             },
         )
+    return doc_id
+
+
+def _seed_version_representation(
+    engine: Engine, *, version_id: UUID, chunker_version: str | None
+) -> None:
+    """Attach a current representation, optionally with one chunk under a grid.
+
+    When ``chunker_version`` is set, one chunk is written under that packing
+    generation and no ``extract_claims`` processing_state rows are inserted.
+    When it is ``None``, the representation is genuinely empty (D84).
+    """
+    doc_id = _seed_document_version(engine, version_id=version_id)
+    representation_id = uuid4()
+    content_hash = f"readiness-{version_id}"
+    with engine.begin() as connection:
         connection.execute(
             text(
                 "INSERT INTO document_representations (representation_id,"
@@ -305,10 +313,34 @@ def _seed_version_representation(
             )
 
 
+def _seed_coordinator_extract_succeeded(
+    engine: Engine, *, version_id: UUID, finished_at: datetime
+) -> None:
+    """Version-level extract_claims succeeded row (D84 fan-out coordinator only)."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO processing_state (processing_id, deployment_id,"
+                " target_kind, target_id, stage, component_version, content_hash,"
+                " lane, status, attempts, finished_at)"
+                " VALUES (:p, :d, 'document_version', :v,"
+                " CAST('extract_claims' AS pipeline_stage), :c, 'hash', 'steady',"
+                " 'succeeded', 1, :finished)"
+            ),
+            {
+                "p": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "v": version_id,
+                "c": _EXTRACTOR_VERSION,
+                "finished": finished_at,
+            },
+        )
+
+
 def _extract_stage_status(
     engine: Engine, *, version_id: UUID
-) -> tuple[bool, str | None]:
-    """Inspect extract_claims readiness only; return (ready, extract status)."""
+) -> tuple[bool, str, datetime | None]:
+    """Inspect extract_claims readiness only; return (ready, status, finished_at)."""
     report = PipelineReadinessCatalog(
         engine=engine,
         expected_components={PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION},
@@ -321,7 +353,7 @@ def _extract_stage_status(
     stages = report.versions[0].stages
     assert len(stages) == 1
     assert stages[0].stage == PipelineStage.EXTRACT_CLAIMS.value
-    return report.versions[0].ready, stages[0].status
+    return report.versions[0].ready, stages[0].status, stages[0].finished_at
 
 
 def test_chunks_under_non_default_grid_without_extract_are_not_ready(
@@ -340,7 +372,7 @@ def test_chunks_under_non_default_grid_without_extract_are_not_ready(
         engine, version_id=version_id, chunker_version=_OTHER_CHUNKER_VERSION
     )
 
-    ready, extract_status = _extract_stage_status(engine, version_id=version_id)
+    ready, extract_status, _ = _extract_stage_status(engine, version_id=version_id)
 
     assert ready is False
     assert extract_status != "succeeded"
@@ -354,7 +386,91 @@ def test_genuinely_empty_representation_extract_is_succeeded(
     engine, version_id = ready_rows
     _seed_version_representation(engine, version_id=version_id, chunker_version=None)
 
-    ready, extract_status = _extract_stage_status(engine, version_id=version_id)
+    ready, extract_status, _ = _extract_stage_status(engine, version_id=version_id)
 
     assert extract_status == "succeeded"
+    assert ready is True
+
+
+def test_coordinator_succeeded_does_not_mask_chunk_derived_missing(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Version-level extract_claims success is only the D84 fan-out coordinator.
+
+    Under D84 that row succeeds once one job per chunk is enqueued — not once
+    extraction finishes. Preferring it over a chunk-derived missing status
+    (the previous merge) let coordinator success report ready while no chunk
+    had been extracted. Chunks under a non-default grid with no per-chunk
+    extract rows are the same false-ready the grid filter catches; the
+    coordinator row must not re-mask it.
+    """
+    engine, version_id = ready_rows
+    assert _OTHER_CHUNKER_VERSION != _DEFAULT_CHUNKER_VERSION
+    _seed_version_representation(
+        engine, version_id=version_id, chunker_version=_OTHER_CHUNKER_VERSION
+    )
+    _seed_coordinator_extract_succeeded(
+        engine,
+        version_id=version_id,
+        finished_at=datetime.now(tz=UTC) - timedelta(minutes=1),
+    )
+
+    ready, extract_status, _ = _extract_stage_status(engine, version_id=version_id)
+
+    assert ready is False
+    assert extract_status != "succeeded"
+    assert extract_status == "missing"
+
+
+def test_version_without_current_representation_extract_is_missing(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """No current representation is extract-missing, not empty-document success.
+
+    Counting chunks against a NULL representation yields zero — the same shape
+    as a genuinely empty document. They are different: empty HAS a
+    representation and yields no chunks; without one, convert/structure have
+    not produced a representation, so extraction cannot have happened.
+    """
+    engine, version_id = ready_rows
+    _seed_document_version(engine, version_id=version_id)
+
+    ready, extract_status, _ = _extract_stage_status(engine, version_id=version_id)
+
+    assert ready is False
+    assert extract_status == "missing"
+    assert extract_status != "succeeded"
+
+
+def test_non_succeeded_extract_carries_no_finished_at(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Only terminal extract success carries a completion timestamp.
+
+    The aggregate previously fell through to now() for missing rows, reporting
+    a completion instant for work that never completed — and a different one
+    on every inspection.
+    """
+    engine, missing_version_id = ready_rows
+    assert _OTHER_CHUNKER_VERSION != _DEFAULT_CHUNKER_VERSION
+    _seed_version_representation(
+        engine, version_id=missing_version_id, chunker_version=_OTHER_CHUNKER_VERSION
+    )
+
+    ready, extract_status, finished_at = _extract_stage_status(
+        engine, version_id=missing_version_id
+    )
+    assert ready is False
+    assert extract_status == "missing"
+    assert finished_at is None
+
+    succeeded_version_id = uuid4()
+    _seed_version_representation(
+        engine, version_id=succeeded_version_id, chunker_version=None
+    )
+    ready, extract_status, finished_at = _extract_stage_status(
+        engine, version_id=succeeded_version_id
+    )
+    assert extract_status == "succeeded"
+    assert finished_at is not None
     assert ready is True

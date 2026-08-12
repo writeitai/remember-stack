@@ -240,69 +240,79 @@ _VERSION_WORK = text(
 # for the version's current representation only.
 _EXTRACT_CHUNK_STATUS = text(
     """
-    SELECT v.version_id AS target_id,
-           'extract_claims'::text AS stage,
-           :extractor_version AS component_version,
-           CASE
-             -- No current representation at all: convert/structure have not
-             -- produced one, so extraction cannot have happened. This is NOT
-             -- the D84 empty-document case — an empty document still HAS a
-             -- representation, it just yields zero chunks. Collapsing the two
-             -- reported `succeeded` for a version that had not been converted.
-             WHEN count(r.representation_id) = 0 THEN 'missing'
-             -- A representation with no chunks AT ALL is genuinely terminal
-             -- (D84: embed hops straight to normalize for an empty document).
-             WHEN COALESCE(max(any_chunks.total), 0) = 0 THEN 'succeeded'
-             -- Chunks exist, but none under the grid this readiness check is
-             -- asking about. That is NOT terminal: it means extraction for the
-             -- generation we can see never ran, and reporting 'succeeded' here
-             -- told an agent its memory was queryable when nothing had been
-             -- extracted. Refuse to claim success we cannot observe.
-             WHEN count(c.chunk_id) = 0 THEN 'missing'
-             WHEN count(c.chunk_id) FILTER (
-                    WHERE p.status = 'succeeded'
-                  ) = count(c.chunk_id)
-               THEN 'succeeded'
-             WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
-             WHEN bool_or(p.status = 'running') THEN 'running'
-             WHEN bool_or(p.status = 'failed') THEN 'failed'
-             WHEN bool_or(p.status = 'pending') THEN 'pending'
-             ELSE 'missing'
-           END AS status,
-           COALESCE(
-             max(p.finished_at),
-             max(embed.finished_at),
-             now()
-           ) AS finished_at
-    FROM document_versions v
-    LEFT JOIN document_representations r
-      ON r.representation_id = v.current_representation_id
-    -- Grid-independent chunk presence, as a LATERAL scalar rather than a
-    -- second join on `chunks`: joining twice would multiply this row set by the
-    -- chunk count (a 1k-chunk representation becomes 1M rows) for a number we
-    -- only need once per version.
-    LEFT JOIN LATERAL (
-      SELECT count(*) AS total
-      FROM chunks ac
-      WHERE ac.representation_id = r.representation_id
-    ) any_chunks ON TRUE
-    LEFT JOIN chunks c
-      ON c.representation_id = r.representation_id
-     AND c.chunker_version = :chunker_version
-    LEFT JOIN processing_state p
-      ON p.deployment_id = :deployment_id
-     AND p.target_kind = 'chunk'
-     AND p.target_id = c.chunk_id
-     AND p.stage = 'extract_claims'
-     AND p.component_version = :extractor_version
-    LEFT JOIN processing_state embed
-      ON embed.deployment_id = :deployment_id
-     AND embed.target_kind = 'document_version'
-     AND embed.target_id = v.version_id
-     AND embed.stage = 'embed_chunk'
-     AND embed.status = 'succeeded'
-    WHERE v.version_id IN :version_ids
-    GROUP BY v.version_id
+    -- The aggregate is wrapped so `finished_at` can depend on the derived
+    -- status. Only a terminal SUCCESS carries a completion time: a
+    -- `missing` row previously fell through to `now()`, reporting a
+    -- completion instant for work that never completed — and a different
+    -- one on every inspection.
+    SELECT target_id, stage, component_version, status,
+           CASE WHEN status = 'succeeded' THEN finished_at END AS finished_at
+    FROM (
+        SELECT v.version_id AS target_id,
+               'extract_claims'::text AS stage,
+               :extractor_version AS component_version,
+               CASE
+                 -- No current representation at all: convert/structure have not
+                 -- produced one, so extraction cannot have happened. This is NOT
+                 -- the D84 empty-document case — an empty document still HAS a
+                 -- representation, it just yields zero chunks. Collapsing the two
+                 -- reported `succeeded` for a version that had not been converted.
+                 WHEN count(r.representation_id) = 0 THEN 'missing'
+                 -- A representation with no chunks AT ALL is genuinely terminal
+                 -- (D84: embed hops straight to normalize for an empty document).
+                 WHEN COALESCE(max(any_chunks.total), 0) = 0 THEN 'succeeded'
+                 -- Chunks exist, but none under the grid this readiness check is
+                 -- asking about. That is NOT terminal: it means extraction for the
+                 -- generation we can see never ran, and reporting 'succeeded' here
+                 -- told an agent its memory was queryable when nothing had been
+                 -- extracted. Refuse to claim success we cannot observe.
+                 WHEN count(c.chunk_id) = 0 THEN 'missing'
+                 WHEN count(c.chunk_id) FILTER (
+                        WHERE p.status = 'succeeded'
+                      ) = count(c.chunk_id)
+                   THEN 'succeeded'
+                 WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
+                 WHEN bool_or(p.status = 'running') THEN 'running'
+                 WHEN bool_or(p.status = 'failed') THEN 'failed'
+                 WHEN bool_or(p.status = 'pending') THEN 'pending'
+                 ELSE 'missing'
+               END AS status,
+               COALESCE(
+                 max(p.finished_at),
+                 max(embed.finished_at),
+                 now()
+               ) AS finished_at
+        FROM document_versions v
+        LEFT JOIN document_representations r
+          ON r.representation_id = v.current_representation_id
+        -- Grid-independent chunk presence, as a LATERAL scalar rather than a
+        -- second join on `chunks`: joining twice would multiply this row set by the
+        -- chunk count (a 1k-chunk representation becomes 1M rows) for a number we
+        -- only need once per version.
+        LEFT JOIN LATERAL (
+          SELECT count(*) AS total
+          FROM chunks ac
+          WHERE ac.representation_id = r.representation_id
+        ) any_chunks ON TRUE
+        LEFT JOIN chunks c
+          ON c.representation_id = r.representation_id
+         AND c.chunker_version = :chunker_version
+        LEFT JOIN processing_state p
+          ON p.deployment_id = :deployment_id
+         AND p.target_kind = 'chunk'
+         AND p.target_id = c.chunk_id
+         AND p.stage = 'extract_claims'
+         AND p.component_version = :extractor_version
+        LEFT JOIN processing_state embed
+          ON embed.deployment_id = :deployment_id
+         AND embed.target_kind = 'document_version'
+         AND embed.target_id = v.version_id
+         AND embed.stage = 'embed_chunk'
+         AND embed.status = 'succeeded'
+        WHERE v.version_id IN :version_ids
+        GROUP BY v.version_id
+    
+    ) derived
     """
 ).bindparams(bindparam("version_ids", expanding=True))
 
