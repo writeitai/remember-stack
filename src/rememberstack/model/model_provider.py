@@ -13,6 +13,8 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
+from rememberstack.model.processing import NonRetryableHandlerError
+
 _NonEmptyText = Annotated[str, Field(min_length=1)]
 _EmbeddingVector = Annotated[tuple[float, ...], Field(min_length=1)]
 StructuredResponseModel: TypeAlias = BaseModel
@@ -22,8 +24,8 @@ ReasoningEffort: TypeAlias = Literal[
 ]
 
 
-class ProviderAccountingError(Exception):
-    """A provider response omitted or malformed required usage accounting."""
+class ProviderAccountingError(NonRetryableHandlerError):
+    """A paid response lacks accounting and must not be generated again automatically."""
 
 
 class ProviderCallUsage(BaseModel):

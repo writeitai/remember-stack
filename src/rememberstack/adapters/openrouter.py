@@ -418,6 +418,7 @@ class OpenRouterModelProvider:
                 return _generation_usage(
                     body=metadata,
                     fallback_model=body.get("model"),
+                    generation_id=generation_id,
                     latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
                 )
             except (
@@ -691,7 +692,7 @@ def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
 
 
 def _generation_usage(
-    *, body: dict[str, Any], fallback_model: object, latency_ms: int
+    *, body: dict[str, Any], fallback_model: object, generation_id: str, latency_ms: int
 ) -> ProviderCallUsage:
     """Normalize OpenRouter generation metadata into the ordinary usage proof."""
     data = body.get("data")
@@ -699,13 +700,17 @@ def _generation_usage(
         raise ProviderAccountingError(
             "OpenRouter generation metadata carries no usage accounting"
         )
+    if data.get("id") != generation_id:
+        raise ProviderAccountingError(
+            "OpenRouter generation metadata does not match the requested generation"
+        )
     model_name = data.get("model") or fallback_model
     return _usage(
         body={
             "model": model_name,
             "usage": {
                 "prompt_tokens": data.get("tokens_prompt"),
-                "completion_tokens": data.get("tokens_completion", 0),
+                "completion_tokens": data.get("tokens_completion"),
                 "cost": data.get("total_cost"),
             },
         },

@@ -90,6 +90,7 @@ def test_generation_recovers_missing_inline_usage_from_generation_metadata(
         metadata_requests.append(generation_id)
         return {
             "data": {
+                "id": "gen-accounting-fallback",
                 "model": "openai/gpt-5.6-luna",
                 "tokens_prompt": 17,
                 "tokens_completion": 4,
@@ -135,7 +136,7 @@ def test_generation_accounting_fallback_polls_but_stays_fail_closed(
 
     def get_generation(*, generation_id: str) -> dict[str, object]:
         metadata_requests.append(generation_id)
-        return {"data": {"model": "openai/gpt-5.6-luna"}}
+        return {"data": {"id": "gen-no-accounting", "model": "openai/gpt-5.6-luna"}}
 
     monkeypatch.setattr(provider, "_get_generation", get_generation)
     monkeypatch.setattr(
@@ -155,6 +156,54 @@ def test_generation_accounting_fallback_polls_but_stays_fail_closed(
         provider._client.close()
 
     assert metadata_requests == ["gen-no-accounting"] * 3
+
+
+@pytest.mark.parametrize(
+    "data",
+    (
+        {
+            "id": "different-generation",
+            "model": "openai/gpt-5.6-luna",
+            "tokens_prompt": 17,
+            "tokens_completion": 4,
+            "total_cost": "0.00021",
+        },
+        {
+            "id": "gen-incomplete-accounting",
+            "model": "openai/gpt-5.6-luna",
+            "tokens_prompt": 17,
+            "total_cost": "0.00021",
+        },
+    ),
+)
+def test_generation_metadata_must_match_and_include_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch, data: dict[str, object]
+) -> None:
+    """Never attribute another generation or partial token counts to this call."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    monkeypatch.setattr(
+        provider,
+        "_post",
+        lambda **_kwargs: {
+            "id": "gen-incomplete-accounting",
+            "model": "openai/gpt-5.6-luna",
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        },
+    )
+    monkeypatch.setattr(provider, "_get_generation", lambda **_kwargs: {"data": data})
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda _delay: None
+    )
+    try:
+        with pytest.raises(ProviderAccountingError):
+            provider.generate(
+                request=ModelRequest(
+                    model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+                ),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
 
 
 def test_generation_accounting_lookup_uses_exact_bounded_metadata_request() -> None:
