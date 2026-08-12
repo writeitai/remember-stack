@@ -462,6 +462,20 @@ class WorkLedger:
                 obs_flush_version=barrier.obs_flush_component_version,
             ):
                 return tuple(outcomes)
+            # Durable expected-set marker must already exist from fan-out.
+            # Do not invent barrier_complete from handler-supplied coordinates.
+            existing_status = connection.execute(
+                _SELECT_OBS_FLUSH_VERSION_STATE,
+                {
+                    "deployment_id": barrier.deployment_id,
+                    "version_id": barrier.version_id,
+                    "normalizer_version": barrier.normalizer_version,
+                },
+            ).scalar_one_or_none()
+            if existing_status is None:
+                return tuple(outcomes)
+            if existing_status not in ("materialized", "barrier_complete"):
+                return tuple(outcomes)
             connection.execute(
                 _UPSERT_OBS_FLUSH_VERSION_STATE,
                 {

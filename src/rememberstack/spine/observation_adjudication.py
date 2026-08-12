@@ -1178,6 +1178,8 @@ _SELECT_EVIDENCE_FOR_OBS = text(
     WHERE e.deployment_id = :deployment_id
       AND e.observation_id = :observation_id
       AND e.stance = 'supports'
+      -- D54: withdrawn testimony must not re-open open slices after a cap.
+      AND c.is_current_testimony
     ORDER BY c.asserted_at NULLS LAST, e.claim_id
     """
 )

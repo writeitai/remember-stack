@@ -189,6 +189,123 @@ def _add(
     )
 
 
+def test_d90_staggered_late_arrival_resplit_shapes(database_engine: Engine) -> None:
+    """D90 §5.5.3: A{t1,t3} first then B{t2} yields A[t1,t2), B[t2,t3), A[t3,∞)."""
+    adjudicator, _provider = _adjudicator(engine=database_engine)
+    acme = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=acme,
+        statement="Acme's headcount is 500",
+        engine=database_engine,
+        asserted_at="2026-01-01T00:00:00Z",
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=acme,
+        statement="Acme's headcount is 500",
+        engine=database_engine,
+        asserted_at="2026-03-01T00:00:00Z",
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=acme,
+        statement="Acme's headcount is 600",
+        engine=database_engine,
+        asserted_at="2026-02-01T00:00:00Z",
+    )
+    with database_engine.connect() as connection:
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    "SELECT statement, valid_from, valid_until"
+                    " FROM observations"
+                    " WHERE subject_entity_id = :e"
+                    " ORDER BY valid_from NULLS LAST, statement"
+                ),
+                {"e": acme},
+            ).mappings()
+        ]
+    assert len(rows) == 3
+    assert rows[0]["statement"] == "Acme's headcount is 500"
+    assert rows[0]["valid_from"] is not None and rows[0]["valid_from"].month == 1
+    assert rows[0]["valid_until"] is not None and rows[0]["valid_until"].month == 2
+    assert rows[1]["statement"] == "Acme's headcount is 600"
+    assert rows[1]["valid_from"] is not None and rows[1]["valid_from"].month == 2
+    assert rows[1]["valid_until"] is not None and rows[1]["valid_until"].month == 3
+    assert rows[2]["statement"] == "Acme's headcount is 500"
+    assert rows[2]["valid_from"] is not None and rows[2]["valid_from"].month == 3
+    assert rows[2]["valid_until"] is None
+
+
+def test_d90_copresent_global_order_shapes(database_engine: Engine) -> None:
+    """D90 §5.5.1: co-present t1:A, t2:B, t3:A in one batch match source order."""
+    adjudicator, _provider = _adjudicator(engine=database_engine)
+    acme = _entity(engine=database_engine)
+    claim_a1, claim_b, claim_a3 = uuid4(), uuid4(), uuid4()
+    doc_id = uuid4()
+    with database_engine.begin() as connection:
+        for claim_id, statement, asserted_at in (
+            (claim_a1, "Acme's headcount is 500", "2026-01-01T00:00:00Z"),
+            (claim_b, "Acme's headcount is 600", "2026-02-01T00:00:00Z"),
+            (claim_a3, "Acme's headcount is 500", "2026-03-01T00:00:00Z"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO claims (claim_id, deployment_id, doc_id,"
+                    " chunk_id, claim_text, source_span, char_start, char_end,"
+                    " anchor_ok, window_membership_ok, extractor_version,"
+                    " asserted_at)"
+                    " VALUES (:c, :d, :doc, :ch, :s, :s, 0, 1, true, true,"
+                    " 'test', CAST(:a AS timestamptz))"
+                ),
+                {
+                    "c": claim_id,
+                    "d": _DEPLOYMENT_ID,
+                    "doc": doc_id,
+                    "ch": uuid4(),
+                    "s": statement,
+                    "a": asserted_at,
+                },
+            )
+    adjudicator.add_observations(
+        deployment_id=_DEPLOYMENT_ID,
+        subject_entity_id=acme,
+        assertions=(
+            ObservationAssertion(
+                statement="Acme's headcount is 500", claim_id=claim_a1, doc_id=doc_id
+            ),
+            ObservationAssertion(
+                statement="Acme's headcount is 600", claim_id=claim_b, doc_id=doc_id
+            ),
+            ObservationAssertion(
+                statement="Acme's headcount is 500", claim_id=claim_a3, doc_id=doc_id
+            ),
+        ),
+    )
+    with database_engine.connect() as connection:
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    "SELECT statement, valid_from, valid_until"
+                    " FROM observations"
+                    " WHERE subject_entity_id = :e"
+                    " ORDER BY valid_from NULLS LAST, statement"
+                ),
+                {"e": acme},
+            ).mappings()
+        ]
+    assert len(rows) == 3
+    assert rows[0]["statement"] == "Acme's headcount is 500"
+    assert rows[0]["valid_until"] is not None and rows[0]["valid_until"].month == 2
+    assert rows[1]["statement"] == "Acme's headcount is 600"
+    assert rows[1]["valid_until"] is not None and rows[1]["valid_until"].month == 3
+    assert rows[2]["statement"] == "Acme's headcount is 500"
+    assert rows[2]["valid_until"] is None
+
+
 def test_headcount_supersession_caps_and_preserves_the_time_slice(
     database_engine: Engine,
 ) -> None:
