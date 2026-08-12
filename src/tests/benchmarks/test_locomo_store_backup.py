@@ -866,6 +866,8 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
     assert "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius" in script
     assert "unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER" in script
+    assert 'published=$("${compose[@]}" port api 8000 | head -n 1)' in script
+    assert 'REMEMBERSTACK_API_URL="http://127.0.0.1:$port"' in script
     assert (
         "REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR="
         "/var/lib/rememberstack/invalid-completions"
