@@ -121,8 +121,10 @@ publication manifest locally. For every assigned sample the driver:
 
 1. verifies that an existing store has a readable off-host backup receipt,
    then and only then runs `docker compose down --volumes`;
-2. starts every service with extract-claims ×3, normalize-relations ×6, and
-   embed-claim ×2, then records which sample owns the new volumes;
+2. starts every service with extract-claims ×8, normalize-relations ×6,
+   adjudicate-observations ×4, and embed-claim ×2; verifies every app
+   container has the protocol-frozen model environment; then records which
+   sample owns the new volumes;
 3. ingests only that sample with the isolated-deployment confirmation;
 4. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
    six-hour default budget, and stops immediately on a dead letter;
@@ -145,7 +147,18 @@ The driver itself freezes the complete non-secret V13 ingest identity before
 Compose starts: Luna generation seats, Qwen3-Embedding-8B vector seats, Nebius
 embedding host, unset provider-order fallback, and the protocol's reasoning and
 completion-token settings. Ambient values for those bindings are deliberately
-overridden, and ingest verifies the resulting deployment map before upload.
+overridden. The driver verifies the source revision and environment of every
+running app container before ingest and during every drain poll, while ingest
+independently verifies the deployment map before upload. Do not scale this benchmark with a separate
+`docker compose up --scale` command: it can read a different ambient `.env`
+and silently create workers with different models. Set the replica variables
+below on the original driver invocation instead.
+
+Malformed OpenRouter completions are captured under the private `app-state`
+volume at `/var/lib/rememberstack/invalid-completions`. The directory is empty
+unless schema validation fails. Its files are mode 0600, contain model output
+but no prompt, and are included in the sample's complete GCS backup. Treat them
+as source-derived data.
 
 | Variable | Default | Meaning |
 | --- | ---: | --- |
@@ -165,6 +178,10 @@ overridden, and ingest verifies the resulting deployment map before upload.
 | `LOCOMO_BACKUP_STAGING_ROOT` | `/var/lib/rememberstack-locomo-backups` | local staging retained on failure |
 | `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
 | `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
+| `LOCOMO_EXTRACT_CLAIM_WORKERS` | `8` | chunk-level Claimify worker replicas |
+| `LOCOMO_NORMALIZE_RELATION_WORKERS` | `6` | claim-level E3 normalize worker replicas |
+| `LOCOMO_ADJUDICATE_OBSERVATION_WORKERS` | `4` | post-barrier observation-flush worker replicas |
+| `LOCOMO_EMBED_CLAIM_WORKERS` | `2` | P1 claim/fact embedding worker replicas |
 | `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |
 | `LOCOMO_GCP_CERTIFICATE_CONFIG_FILE` | `/etc/rememberstack/locomo-gcs/certificate-config.json` | public client-certificate path configuration |
 
