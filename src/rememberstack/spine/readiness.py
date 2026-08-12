@@ -130,20 +130,21 @@ class PipelineReadinessCatalog:
             ): row
             for row in rows
         }
-        # Chunk-grain extract (D84) wins over a missing version-level extract row.
+        # Chunk-grain extract (D84): the derived status REPLACES a version-level
+        # row, exactly as D88 normalize does below. The version-level
+        # extract_claims row is the fan-out coordinator — under D84 it succeeds
+        # once it has enqueued one job per chunk, which says nothing about
+        # whether those jobs ran. Preferring it whenever it read `succeeded`
+        # (the previous behaviour) let coordinator success mask a chunk-derived
+        # `missing`, which is the same false-ready this aggregate exists to
+        # prevent. Coordinator alone is not extract-complete.
         for row in extract_rows:
             key = (
                 UUID(str(row["target_id"])),
                 PipelineStage.EXTRACT_CLAIMS,
                 str(row["component_version"]),
             )
-            existing = by_key.get(key)
-            if existing is None or str(existing["status"]) == "missing":
-                by_key[key] = row
-            elif str(existing["status"]) != "succeeded" and str(row["status"]) == (
-                "succeeded"
-            ):
-                by_key[key] = row
+            by_key[key] = row
         # Claim-grain normalize (D88): derived status replaces version-level
         # coordinator success (coordinator alone is not normalize-complete).
         for row in normalize_rows:
@@ -239,46 +240,93 @@ _VERSION_WORK = text(
 # for the version's current representation only.
 _EXTRACT_CHUNK_STATUS = text(
     """
-    SELECT v.version_id AS target_id,
-           'extract_claims'::text AS stage,
-           :extractor_version AS component_version,
+    -- `finished_at` mirrors the ledger's own invariant: it is stamped exactly
+    -- on the terminal transitions (`succeeded`, `dead_letter`) and cleared
+    -- again when a row leaves terminal (`_REPLAY_DEAD_LETTER` sets it NULL).
+    -- Two things broke that here. A `now()` fallback in the COALESCE fabricated
+    -- a completion instant for work that never completed — a different one on
+    -- every inspection — so it was removed; a stage with no observed completion
+    -- now reports none. And because the status is DERIVED by aggregating over
+    -- chunks, a still-running stage can hold real timestamps from the chunks
+    -- that already succeeded, so the outer CASE suppresses those. It admits
+    -- `dead_letter`: that is terminal and its ledger timestamp is the honest
+    -- answer to "when did this stop", which an operator needs most precisely
+    -- when the stage has died.
+    SELECT target_id, stage, component_version, status,
            CASE
-             WHEN count(c.chunk_id) = 0 THEN 'succeeded'
-             WHEN count(c.chunk_id) FILTER (
-                    WHERE p.status = 'succeeded'
-                  ) = count(c.chunk_id)
-               THEN 'succeeded'
-             WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
-             WHEN bool_or(p.status = 'running') THEN 'running'
-             WHEN bool_or(p.status = 'failed') THEN 'failed'
-             WHEN bool_or(p.status = 'pending') THEN 'pending'
-             ELSE 'missing'
-           END AS status,
-           COALESCE(
-             max(p.finished_at),
-             max(embed.finished_at),
-             now()
-           ) AS finished_at
-    FROM document_versions v
-    LEFT JOIN document_representations r
-      ON r.representation_id = v.current_representation_id
-    LEFT JOIN chunks c
-      ON c.representation_id = r.representation_id
-     AND c.chunker_version = :chunker_version
-    LEFT JOIN processing_state p
-      ON p.deployment_id = :deployment_id
-     AND p.target_kind = 'chunk'
-     AND p.target_id = c.chunk_id
-     AND p.stage = 'extract_claims'
-     AND p.component_version = :extractor_version
-    LEFT JOIN processing_state embed
-      ON embed.deployment_id = :deployment_id
-     AND embed.target_kind = 'document_version'
-     AND embed.target_id = v.version_id
-     AND embed.stage = 'embed_chunk'
-     AND embed.status = 'succeeded'
-    WHERE v.version_id IN :version_ids
-    GROUP BY v.version_id
+             WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
+           END AS finished_at
+    FROM (
+        SELECT v.version_id AS target_id,
+               'extract_claims'::text AS stage,
+               :extractor_version AS component_version,
+               CASE
+                 -- No current representation at all: convert/structure have not
+                 -- produced one, so extraction cannot have happened. This is NOT
+                 -- the D84 empty-document case — an empty document still HAS a
+                 -- representation, it just yields zero chunks. Collapsing the two
+                 -- reported `succeeded` for a version that had not been converted.
+                 WHEN count(r.representation_id) = 0 THEN 'missing'
+                 -- A representation with no chunks AT ALL is genuinely terminal
+                 -- (D84: embed hops straight to normalize for an empty document).
+                 WHEN COALESCE(max(any_chunks.total), 0) = 0 THEN 'succeeded'
+                 -- Chunks exist, but none under the grid this readiness check is
+                 -- asking about. That is NOT terminal: it means extraction for the
+                 -- generation we can see never ran, and reporting 'succeeded' here
+                 -- told an agent its memory was queryable when nothing had been
+                 -- extracted. Refuse to claim success we cannot observe.
+                 WHEN count(c.chunk_id) = 0 THEN 'missing'
+                 WHEN count(c.chunk_id) FILTER (
+                        WHERE p.status = 'succeeded'
+                      ) = count(c.chunk_id)
+                   THEN 'succeeded'
+                 WHEN bool_or(p.status = 'dead_letter') THEN 'dead_letter'
+                 WHEN bool_or(p.status = 'running') THEN 'running'
+                 WHEN bool_or(p.status = 'failed') THEN 'failed'
+                 WHEN bool_or(p.status = 'pending') THEN 'pending'
+                 ELSE 'missing'
+               END AS status,
+               -- No `now()` fallback: for the D84 empty-document arm the honest
+               -- completion time is the version's embed_chunk success, which the
+               -- worker stamps even when there are zero chunks. If that row is
+               -- absent, embed never ran, so extraction cannot be complete and
+               -- this correctly yields NULL rather than inventing a timestamp
+               -- that would make the version report ready.
+               COALESCE(
+                 max(p.finished_at),
+                 max(embed.finished_at)
+               ) AS finished_at
+        FROM document_versions v
+        LEFT JOIN document_representations r
+          ON r.representation_id = v.current_representation_id
+        -- Grid-independent chunk presence, as a LATERAL scalar rather than a
+        -- second join on `chunks`: joining twice would multiply this row set by the
+        -- chunk count (a 1k-chunk representation becomes 1M rows) for a number we
+        -- only need once per version.
+        LEFT JOIN LATERAL (
+          SELECT count(*) AS total
+          FROM chunks ac
+          WHERE ac.representation_id = r.representation_id
+        ) any_chunks ON TRUE
+        LEFT JOIN chunks c
+          ON c.representation_id = r.representation_id
+         AND c.chunker_version = :chunker_version
+        LEFT JOIN processing_state p
+          ON p.deployment_id = :deployment_id
+         AND p.target_kind = 'chunk'
+         AND p.target_id = c.chunk_id
+         AND p.stage = 'extract_claims'
+         AND p.component_version = :extractor_version
+        LEFT JOIN processing_state embed
+          ON embed.deployment_id = :deployment_id
+         AND embed.target_kind = 'document_version'
+         AND embed.target_id = v.version_id
+         AND embed.stage = 'embed_chunk'
+         AND embed.status = 'succeeded'
+        WHERE v.version_id IN :version_ids
+        GROUP BY v.version_id
+    
+    ) derived
     """
 ).bindparams(bindparam("version_ids", expanding=True))
 
@@ -286,6 +334,16 @@ _EXTRACT_CHUNK_STATUS = text(
 # dead_letter blocks readiness. Version-level coordinator success is ignored.
 _NORMALIZE_CLAIM_STATUS = text(
     """
+    -- Same terminal gate as the extract block above, for the same reason: the
+    -- status is derived by aggregating over claims, so a stage still running
+    -- can hold real timestamps from claims that already succeeded. Normalize
+    -- never had the `now()` fabrication, so this only suppresses a misleading
+    -- completion time; it never invents one.
+    SELECT target_id, stage, component_version, status,
+           CASE
+             WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
+           END AS finished_at
+    FROM (
     SELECT v.version_id AS target_id,
            'normalize_relations'::text AS stage,
            :normalize_version AS component_version,
@@ -331,5 +389,6 @@ _NORMALIZE_CLAIM_STATUS = text(
      AND embed.status = 'succeeded'
     WHERE v.version_id IN :version_ids
     GROUP BY v.version_id
+    ) derived
     """
 ).bindparams(bindparam("version_ids", expanding=True))
