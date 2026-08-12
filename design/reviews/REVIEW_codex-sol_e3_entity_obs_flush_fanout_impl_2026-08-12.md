@@ -1,9 +1,9 @@
 # Implementation review: D90 entity-grain observation flush fan-out
 
-**AGENT:** `codex-sol`  
-**Date:** 2026-08-12  
-**PR:** #265  
-**Branch:** `feat/d90-entity-obs-flush-fanout` @ `ab16d241`  
+**AGENT:** `codex-sol`
+**Date:** 2026-08-12
+**PR:** #265
+**Branch:** `feat/d90-entity-obs-flush-fanout` @ `ab16d241`
 **Binding design:** `plan/designs/e3_entity_obs_flush_fanout_design.md`
 
 ## Verdict

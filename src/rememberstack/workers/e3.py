@@ -10,8 +10,8 @@ lineage-distinct evidence counts.
 """
 
 import logging
-from typing import Final
 from typing import cast
+from typing import Final
 from uuid import UUID
 
 from pydantic import Field
@@ -760,9 +760,12 @@ class AdjudicateObservationsHandler:
             raise NonRetryableHandlerError(
                 f"obs flush unit deployment mismatch for work {work.processing_id}"
             )
-        entity_id = unit["subject_entity_id"]
-        version_id = unit["version_id"]
-        normalizer_version = unit["normalizer_version"]
+        entity_id = cast(UUID, unit["subject_entity_id"])
+        version_id = cast(UUID, unit["version_id"])
+        normalizer_version = cast(str, unit["normalizer_version"])
+        representation_id = cast(UUID, unit["representation_id"])
+        chunker_version = cast(str, unit["chunker_version"])
+        extractor_version = cast(str, unit["extractor_version"])
         # Entity-global unapplied staging among materialized units, ordered.
         # Same-version BEAM: equals this unit's slice. Multi-version: global order.
         staged_rows = self._facts.load_unapplied_obs_staging_for_entity(
@@ -815,12 +818,12 @@ class AdjudicateObservationsHandler:
             entity_obs_flush_barrier=EntityObsFlushBarrier(
                 deployment_id=work.deployment_id,
                 version_id=version_id,
-                representation_id=unit["representation_id"],
+                representation_id=representation_id,
                 unit_id=work.target_id,
                 subject_entity_id=entity_id,
                 normalizer_version=normalizer_version,
-                chunker_version=unit["chunker_version"],
-                extractor_version=unit["extractor_version"],
+                chunker_version=chunker_version,
+                extractor_version=extractor_version,
                 content_hash=work.content_hash,
                 lane=work.lane,
                 obs_flush_component_version=OBS_FLUSH_VERSION,
