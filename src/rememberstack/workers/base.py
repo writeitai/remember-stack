@@ -92,6 +92,22 @@ class EntityObsFlushBarrier(BaseModel):
     doc_id: UUID | None = None
 
 
+class EmptyObsFlushComplete(BaseModel):
+    """D90: true-empty observation set — durable empty_complete + super/embed."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deployment_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    doc_id: UUID | None
+    normalizer_version: str
+    chunker_version: str
+    extractor_version: str
+    content_hash: str
+    lane: ProcessingLane | None
+
+
 class HandlerOutcome(BaseModel):
     """What a successful handler produced: the chain follow-ups to enqueue."""
 
@@ -101,6 +117,7 @@ class HandlerOutcome(BaseModel):
     extract_chunk_barrier: ExtractChunkBarrier | None = None
     claim_normalize_barrier: ClaimNormalizeBarrier | None = None
     entity_obs_flush_barrier: EntityObsFlushBarrier | None = None
+    empty_obs_flush: EmptyObsFlushComplete | None = None
 
 
 @runtime_checkable
@@ -325,6 +342,12 @@ class Worker:
             self._ledger.complete_entity_obs_flush(
                 processing_id=claimed.processing_id,
                 barrier=outcome.entity_obs_flush_barrier,
+                follow_up=outcome.follow_up,
+            )
+        elif outcome.empty_obs_flush is not None:
+            self._ledger.complete_empty_obs_flush(
+                processing_id=claimed.processing_id,
+                empty=outcome.empty_obs_flush,
                 follow_up=outcome.follow_up,
             )
         else:

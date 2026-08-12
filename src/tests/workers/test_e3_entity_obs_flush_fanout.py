@@ -44,6 +44,24 @@ def test_entity_handler_returns_barrier() -> None:
     assert "entity_obs_flush_barrier" in source
 
 
+def test_entity_handler_applies_global_stream_and_row_clear() -> None:
+    """D90 §5.5: apply entity-global staging; retire each staging row by PK."""
+    source = inspect.getsource(e3.AdjudicateObservationsHandler._handle_entity_unit)
+    assert "load_unapplied_obs_staging_for_entity" in source
+    assert "clear_staging_rows" in source
+    assert "unit_assertions" not in source
+    assert 'row["version_id"] == version_id' not in source
+
+
+def test_adjudicator_resplit_late_arrival() -> None:
+    """D90 §5.5.3 re-split must exist on the forward supersede path."""
+    from rememberstack.spine import observation_adjudication
+
+    source = inspect.getsource(observation_adjudication.ObservationAdjudicator)
+    assert "_resplit_later_evidence" in source
+    assert "d90_late_arrival_resplit" in source
+
+
 def test_entity_obs_flush_barrier_fields() -> None:
     """Barrier carries version-scoped unit identity for ledger complete."""
     fields = EntityObsFlushBarrier.model_fields

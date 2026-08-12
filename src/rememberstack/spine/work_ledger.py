@@ -517,6 +517,104 @@ class WorkLedger:
             )
             return tuple(outcomes)
 
+    def complete_empty_obs_flush(
+        self,
+        *,
+        processing_id: UUID,
+        empty: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """D90: complete upstream work and durable-empty obs flush for a version."""
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+        from rememberstack.workers.base import EmptyObsFlushComplete
+        from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
+
+        if not isinstance(empty, EmptyObsFlushComplete):
+            raise TypeError("empty must be EmptyObsFlushComplete")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            connection.execute(
+                _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                {"representation_id": empty.representation_id},
+            )
+            updated = connection.execute(
+                _COMPLETE, {"processing_id": processing_id}
+            ).rowcount
+            if updated == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            existing = connection.execute(
+                _SELECT_OBS_FLUSH_VERSION_STATE,
+                {
+                    "deployment_id": empty.deployment_id,
+                    "version_id": empty.version_id,
+                    "normalizer_version": empty.normalizer_version,
+                },
+            ).first()
+            if existing is None:
+                connection.execute(
+                    _UPSERT_OBS_FLUSH_VERSION_STATE,
+                    {
+                        "deployment_id": empty.deployment_id,
+                        "version_id": empty.version_id,
+                        "normalizer_version": empty.normalizer_version,
+                        "representation_id": empty.representation_id,
+                        "chunker_version": empty.chunker_version,
+                        "extractor_version": empty.extractor_version,
+                        "content_hash": empty.content_hash,
+                        "fanout_status": "empty_complete",
+                    },
+                )
+            # Always ensure supersession + embed are present for empty paths.
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=empty.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=empty.version_id,
+                        stage=PipelineStage.ADJUDICATE_SUPERSESSION,
+                        component_version=ADJUDICATOR_VERSION,
+                        content_hash=empty.content_hash,
+                        lane=empty.lane,
+                        payload={
+                            "version_id": str(empty.version_id),
+                            "representation_id": str(empty.representation_id),
+                            "doc_id": (
+                                str(empty.doc_id) if empty.doc_id is not None else None
+                            ),
+                            "normalizer_version": empty.normalizer_version,
+                            "chunker_version": empty.chunker_version,
+                        },
+                    ),
+                )
+            )
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=empty.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=empty.version_id,
+                        stage=PipelineStage.EMBED_CLAIM,
+                        component_version=P1_EMBED_CLAIMS_VERSION,
+                        content_hash=empty.content_hash,
+                        lane=empty.lane,
+                        payload={
+                            "version_id": str(empty.version_id),
+                            "representation_id": str(empty.representation_id),
+                        },
+                    ),
+                )
+            )
+            return tuple(outcomes)
+
     def fail(
         self, *, processing_id: UUID, error: str, retryable: bool
     ) -> datetime | None:

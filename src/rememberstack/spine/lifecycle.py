@@ -1068,6 +1068,23 @@ _SELECT_READY_CYCLES = text(
           WHERE v.sync_cycle_id = y.cycle_id
             AND w.status IN ('pending', 'running', 'failed', 'dead_letter')
       )
+      AND NOT EXISTS (
+          -- D90: entity-grain obs flush units must finish (incl. dead_letter)
+          -- before cycle finalization. Absence of membership means pre-fanout
+          -- or true-empty path — not incomplete.
+          SELECT 1
+          FROM document_versions v
+          JOIN obs_flush_entity_units u
+            ON u.deployment_id = y.deployment_id
+           AND u.version_id = v.version_id
+          JOIN processing_state w
+            ON w.deployment_id = u.deployment_id
+           AND w.target_kind = 'entity'
+           AND w.target_id = u.unit_id
+           AND w.stage = 'adjudicate_observations'
+          WHERE v.sync_cycle_id = y.cycle_id
+            AND w.status IN ('pending', 'running', 'failed', 'dead_letter')
+      )
     ORDER BY y.started_at
     """
 )

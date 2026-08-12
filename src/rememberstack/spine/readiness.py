@@ -131,7 +131,7 @@ class PipelineReadinessCatalog:
                     .all()
                 )
             obs_flush_rows = ()
-            if obs_flush_version is not None:
+            if obs_flush_version is not None and normalize_version is not None:
                 obs_flush_rows = (
                     connection.execute(
                         _ENTITY_OBS_FLUSH_STATUS,
@@ -139,6 +139,7 @@ class PipelineReadinessCatalog:
                             "deployment_id": deployment_id,
                             "version_ids": version_ids,
                             "obs_flush_version": obs_flush_version,
+                            "normalizer_version": normalize_version,
                         },
                     )
                     .mappings()
@@ -424,6 +425,8 @@ _NORMALIZE_CLAIM_STATUS = text(
 ).bindparams(bindparam("version_ids", expanding=True))
 
 # D90: derive adjudicate_observations from entity units / version_state.
+# State and membership are pinned to the active normalizer generation so an
+# older empty_complete cannot satisfy a newer composed generation.
 _ENTITY_OBS_FLUSH_STATUS = text(
     """
     SELECT target_id, stage, component_version, status,
@@ -444,14 +447,16 @@ _ENTITY_OBS_FLUSH_STATUS = text(
              WHEN bool_or(p.status = 'pending') THEN 'pending'
              ELSE 'missing'
            END AS status,
-           max(p.finished_at) AS finished_at
+           COALESCE(max(s.completed_at), max(p.finished_at)) AS finished_at
     FROM document_versions v
     LEFT JOIN obs_flush_version_state s
       ON s.deployment_id = :deployment_id
      AND s.version_id = v.version_id
+     AND s.normalizer_version = :normalizer_version
     LEFT JOIN obs_flush_entity_units u
       ON u.deployment_id = :deployment_id
      AND u.version_id = v.version_id
+     AND u.normalizer_version = :normalizer_version
     LEFT JOIN processing_state p
       ON p.deployment_id = u.deployment_id
      AND p.target_kind = 'entity'

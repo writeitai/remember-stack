@@ -127,6 +127,7 @@ class ObservationAdjudicator:
         meter: CostMeterPort | None = None,
         call_key: str = "observation",
         clear_staging: dict[str, object] | None = None,
+        clear_staging_rows: Sequence[dict[str, object]] | None = None,
     ) -> tuple[UUID, ...]:
         """Adjudicate one document/entity batch against one front-loaded block.
 
@@ -135,9 +136,13 @@ class ObservationAdjudicator:
         an observation created or closed earlier in the same batch. The batch
         commits in one transaction and retries remain evidence-PK idempotent.
 
-        When ``clear_staging`` is provided (D88 flush), staging rows for the
-        entity are deleted in the same transaction as the D43 writes so a crash
-        cannot leave applied-but-still-staged rows for retry re-apply.
+        When ``clear_staging`` is provided (D88 version-serial flush), staging
+        rows for one version/entity slice are deleted in the same transaction
+        as the D43 writes so a crash cannot leave applied-but-still-staged rows.
+
+        When ``clear_staging_rows`` is provided (D90 entity-global flush), each
+        applied staging row is retired by its own primary key — required when
+        the stream spans multiple versions of the same entity.
         """
         if not assertions:
             return ()
@@ -177,7 +182,10 @@ class ObservationAdjudicator:
                 )
                 for assertion_index, assertion in enumerate(assertions)
             )
-            if clear_staging is not None:
+            if clear_staging_rows is not None:
+                for row in clear_staging_rows:
+                    connection.execute(_DELETE_OBS_STAGING_ROW, row)
+            elif clear_staging is not None:
                 connection.execute(_DELETE_OBS_STAGING_ENTITY, clear_staging)
             return results
 
@@ -538,6 +546,17 @@ class ObservationAdjudicator:
                     statement=statement,
                     valid_from=asserted_at,
                 )
+                # D90 §5.5.3: evidence already on O with asserted_at > boundary
+                # must re-open as subsequent slices (staggered multi-version).
+                self._resplit_later_evidence(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    subject_entity_id=subject_entity_id,
+                    capped_observation_id=candidate_id,
+                    capped_statement=str(candidate["statement"]),
+                    boundary=asserted_at,
+                    candidates=candidates,
+                )
                 return new_id
             if verdict.outcome is ObservationOutcome.CONTRADICT:
                 stored_group = candidate["contradiction_group"]
@@ -781,6 +800,106 @@ class ObservationAdjudicator:
             )
         return observation_id
 
+    def _resplit_later_evidence(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        subject_entity_id: UUID,
+        capped_observation_id: UUID,
+        capped_statement: str,
+        boundary: object,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        """Re-open post-boundary evidence that collapsed onto a capped row (D90).
+
+        When unit A applied ``{t1:A, t3:A}`` first and unit B later caps at
+        ``t2:B``, evidence for ``t3`` must become ``A[t3, ∞)`` rather than
+        remaining only on the capped ``A[t1, t2)`` row.
+        """
+        later_rows = (
+            connection.execute(
+                _SELECT_EVIDENCE_FOR_OBS,
+                {
+                    "deployment_id": deployment_id,
+                    "observation_id": capped_observation_id,
+                },
+            )
+            .mappings()
+            .all()
+        )
+        moved_any = False
+        for row in later_rows:
+            claim_asserted = row["asserted_at"]
+            # Keep evidence that is not strictly later than the cap boundary
+            # (including undated/undated pairs and equal timestamps).
+            if not _is_strictly_later(claim_asserted, boundary):
+                continue
+            claim_id = UUID(str(row["claim_id"]))
+            doc_id = UUID(str(row["doc_id"]))
+            connection.execute(
+                _DELETE_EVIDENCE_CLAIM,
+                {
+                    "deployment_id": deployment_id,
+                    "observation_id": capped_observation_id,
+                    "claim_id": claim_id,
+                },
+            )
+            moved_any = True
+            open_same = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate["statement"] == capped_statement
+                    and bool(candidate["is_open"])
+                ),
+                None,
+            )
+            if open_same is not None:
+                self._evidence(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    observation_id=UUID(str(open_same["observation_id"])),
+                    claim_id=claim_id,
+                    doc_id=doc_id,
+                )
+                self._pull_valid_from_earlier(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    subject_entity_id=subject_entity_id,
+                    observation_id=UUID(str(open_same["observation_id"])),
+                    candidate=open_same,
+                    asserted_at=claim_asserted,
+                )
+                continue
+            reopened_id = self._insert_new(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
+                statement=capped_statement,
+                claim_id=claim_id,
+                doc_id=doc_id,
+                valid_from=claim_asserted,
+                outcome="add",
+                method="d90_late_arrival_resplit",
+                confidence=1.0,
+                features={
+                    "reason": "re-materialize post-cap evidence (D90 §5.5.3)",
+                    "capped_observation_id": str(capped_observation_id),
+                    "boundary": str(boundary),
+                },
+                related=capped_observation_id,
+                contradiction_group=None,
+            )
+            _remember_candidate(
+                candidates=candidates,
+                observation_id=reopened_id,
+                statement=capped_statement,
+                valid_from=claim_asserted,
+            )
+        if moved_any:
+            connection.execute(_RECOUNT, {"observation_id": capped_observation_id})
+
     def _evidence(
         self,
         *,
@@ -881,6 +1000,24 @@ def _is_strictly_earlier(left: object, right: object) -> bool:
         return False
 
 
+def _is_strictly_later(left: object, right: object) -> bool:
+    """True when ``left`` is strictly after ``right`` in source total order.
+
+    Dated values sort before undated (NULLS LAST). An undated left is later
+    than any dated right; two undated values are not strictly ordered.
+    """
+    if left is None and right is None:
+        return False
+    if left is None:
+        return right is not None
+    if right is None:
+        return False
+    try:
+        return left > right  # type: ignore[operator]
+    except TypeError:
+        return False
+
+
 _LOCK_ENTITY = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
 _BLOCK_ENTITY = text(
@@ -948,6 +1085,39 @@ _DELETE_OBS_STAGING_ENTITY = text(
       AND version_id = :version_id
       AND subject_entity_id = :subject_entity_id
       AND normalizer_version = :normalizer_version
+    """
+)
+
+_DELETE_OBS_STAGING_ROW = text(
+    """
+    DELETE FROM normalize_observation_staging
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND claim_id = :claim_id
+      AND subject_entity_id = :subject_entity_id
+      AND statement = :statement
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_SELECT_EVIDENCE_FOR_OBS = text(
+    """
+    SELECT e.claim_id, e.doc_id, c.asserted_at
+    FROM observation_evidence e
+    JOIN claims c ON c.claim_id = e.claim_id
+    WHERE e.deployment_id = :deployment_id
+      AND e.observation_id = :observation_id
+      AND e.stance = 'supports'
+    ORDER BY c.asserted_at NULLS LAST, e.claim_id
+    """
+)
+
+_DELETE_EVIDENCE_CLAIM = text(
+    """
+    DELETE FROM observation_evidence
+    WHERE deployment_id = :deployment_id
+      AND observation_id = :observation_id
+      AND claim_id = :claim_id
     """
 )
 

@@ -179,7 +179,12 @@ class EmbedChunksHandler:
             chunker_version=self._chunker_version,
         )
         if not chunks:
-            return _extract_follow_up(work=work, source=source, chunks=())
+            return _extract_follow_up(
+                work=work,
+                source=source,
+                chunks=(),
+                chunker_version=self._chunker_version,
+            )
         document_md = self._artifact_store.read_bytes(
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
@@ -339,7 +344,12 @@ class EmbedChunksHandler:
                 "embed_chunk readiness incomplete; missing vectors for "
                 f"{len(missing)} chunk(s)"
             )
-        return _extract_follow_up(work=work, source=source, chunks=chunks)
+        return _extract_follow_up(
+            work=work,
+            source=source,
+            chunks=chunks,
+            chunker_version=self._chunker_version,
+        )
 
     def _embed_batch_with_poison_split(
         self,
@@ -620,37 +630,33 @@ def _embed_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcom
 
 
 def _extract_follow_up(
-    *, work: ClaimedWork, source: ChunkSource, chunks: tuple[ChunkForEmbedding, ...]
+    *,
+    work: ClaimedWork,
+    source: ChunkSource,
+    chunks: tuple[ChunkForEmbedding, ...],
+    chunker_version: str,
 ) -> HandlerOutcome:
     """D84: fan out one extract_claims job per chunk (or normalize if none)."""
+    from rememberstack.workers.base import EmptyObsFlushComplete
     from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 
     if not chunks:
-        # D88: no claims ⇒ skip claim-grain normalize; open ordered obs flush
-        # (no-op) which chains supersession + embed_claim.
-        from rememberstack.workers.e3 import (
-            OBS_FLUSH_LEGACY_VERSION as OBS_FLUSH_VERSION,
-        )
-
+        # D90: no claims ⇒ durable empty_complete + supersession + embed_claim.
+        # Never insert a document_version adjudicate_observations row at the
+        # entity-fanout component version (§5.7 / §5.8).
         return HandlerOutcome(
-            follow_up=(
-                EnqueueWork(
-                    deployment_id=work.deployment_id,
-                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                    target_id=source.version_id,
-                    stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                    component_version=OBS_FLUSH_VERSION,
-                    content_hash=work.content_hash,
-                    lane=work.lane,
-                    payload={
-                        "version_id": str(source.version_id),
-                        "representation_id": str(source.representation_id),
-                        "doc_id": str(source.doc_id),
-                        "normalizer_version": E3_NORMALIZER_VERSION,
-                        "chunker_version": work.component_version,
-                    },
-                ),
-            )
+            follow_up=(),
+            empty_obs_flush=EmptyObsFlushComplete(
+                deployment_id=work.deployment_id,
+                version_id=source.version_id,
+                representation_id=source.representation_id,
+                doc_id=source.doc_id,
+                normalizer_version=E3_NORMALIZER_VERSION,
+                chunker_version=chunker_version,
+                extractor_version=E2_EXTRACTOR_VERSION,
+                content_hash=work.content_hash,
+                lane=work.lane,
+            ),
         )
     return HandlerOutcome(
         follow_up=tuple(

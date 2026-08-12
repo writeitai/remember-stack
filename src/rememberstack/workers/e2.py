@@ -256,7 +256,9 @@ class ExtractClaimsHandler:
             chunker_version=self._chunker_version,
         )
         if not chunk_ids:
-            return _normalize_follow_up(work=work, source=source)
+            return _normalize_follow_up(
+                work=work, source=source, chunker_version=self._chunker_version
+            )
         return HandlerOutcome(
             follow_up=tuple(
                 EnqueueWork(
@@ -1062,28 +1064,25 @@ def _claimify_omitted_decision(
     )
 
 
-def _normalize_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcome:
-    """Continue an extracted version even when it contains no chunks (D88)."""
-    from rememberstack.workers.e3 import OBS_FLUSH_LEGACY_VERSION as OBS_FLUSH_VERSION
+def _normalize_follow_up(
+    *, work: ClaimedWork, source: ChunkSource, chunker_version: str
+) -> HandlerOutcome:
+    """Continue an extracted version even when it contains no chunks (D90 empty)."""
+    from rememberstack.workers.base import EmptyObsFlushComplete
 
     return HandlerOutcome(
-        follow_up=(
-            EnqueueWork(
-                deployment_id=work.deployment_id,
-                target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                target_id=source.version_id,
-                stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                component_version=OBS_FLUSH_VERSION,
-                content_hash=work.content_hash,
-                lane=work.lane,
-                payload={
-                    "version_id": str(source.version_id),
-                    "representation_id": str(source.representation_id),
-                    "doc_id": str(source.doc_id),
-                    "normalizer_version": E3_NORMALIZER_VERSION,
-                },
-            ),
-        )
+        follow_up=(),
+        empty_obs_flush=EmptyObsFlushComplete(
+            deployment_id=work.deployment_id,
+            version_id=source.version_id,
+            representation_id=source.representation_id,
+            doc_id=source.doc_id,
+            normalizer_version=E3_NORMALIZER_VERSION,
+            chunker_version=chunker_version,
+            extractor_version=E2_EXTRACTOR_VERSION,
+            content_hash=work.content_hash,
+            lane=work.lane,
+        ),
     )
 
 

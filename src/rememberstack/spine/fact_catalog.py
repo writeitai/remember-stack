@@ -486,6 +486,31 @@ class FactCatalog:
             )
         return dict(row) if row is not None else None
 
+    def has_obs_flush_fanout(
+        self, *, deployment_id: UUID, version_id: UUID, normalizer_version: str
+    ) -> bool:
+        """True when D90 version state or membership already exists for V."""
+        with self._engine.connect() as connection:
+            state = connection.execute(
+                _SELECT_OBS_FLUSH_VERSION_STATE_EXISTS,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "normalizer_version": normalizer_version,
+                },
+            ).scalar_one()
+            if bool(state):
+                return True
+            units = connection.execute(
+                _COUNT_OBS_FLUSH_UNITS,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "normalizer_version": normalizer_version,
+                },
+            ).scalar_one()
+        return int(units) > 0
+
     def load_unapplied_obs_staging_for_entity(
         self, *, deployment_id: UUID, subject_entity_id: UUID
     ) -> tuple[dict[str, object], ...]:
@@ -713,6 +738,27 @@ _SELECT_OBS_FLUSH_UNIT = text(
            subject_entity_id, doc_id, content_hash, min_asserted_at
     FROM obs_flush_entity_units
     WHERE unit_id = :unit_id
+    """
+)
+
+_SELECT_OBS_FLUSH_VERSION_STATE_EXISTS = text(
+    """
+    SELECT EXISTS (
+      SELECT 1 FROM obs_flush_version_state
+      WHERE deployment_id = :deployment_id
+        AND version_id = :version_id
+        AND normalizer_version = :normalizer_version
+    )
+    """
+)
+
+_COUNT_OBS_FLUSH_UNITS = text(
+    """
+    SELECT count(*)::bigint
+    FROM obs_flush_entity_units
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
     """
 )
 

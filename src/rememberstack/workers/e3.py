@@ -10,7 +10,6 @@ lineage-distinct evidence counts.
 """
 
 import logging
-from typing import cast
 from typing import Final
 from uuid import UUID
 
@@ -760,59 +759,54 @@ class AdjudicateObservationsHandler:
             raise NonRetryableHandlerError(
                 f"obs flush unit deployment mismatch for work {work.processing_id}"
             )
-        entity_id = cast(UUID, unit["subject_entity_id"])
-        version_id = cast(UUID, unit["version_id"])
-        normalizer_version = cast(str, unit["normalizer_version"])
-        representation_id = cast(UUID, unit["representation_id"])
-        chunker_version = cast(str, unit["chunker_version"])
-        extractor_version = cast(str, unit["extractor_version"])
-        # Entity-global unapplied staging among materialized units, ordered.
-        # Same-version BEAM: equals this unit's slice. Multi-version: global order.
+        entity_id = UUID(str(unit["subject_entity_id"]))
+        version_id = UUID(str(unit["version_id"]))
+        normalizer_version = str(unit["normalizer_version"])
+        representation_id = UUID(str(unit["representation_id"]))
+        chunker_version = str(unit["chunker_version"])
+        extractor_version = str(unit["extractor_version"])
+        # D90 §5.5: entity-global unapplied staging among materialized units,
+        # ordered. Co-present versions must merge-apply; never per-unit slice.
         staged_rows = self._facts.load_unapplied_obs_staging_for_entity(
             deployment_id=work.deployment_id, subject_entity_id=entity_id
         )
         assertions = tuple(
             ObservationAssertion(
-                statement=row["statement"],
-                claim_id=row["claim_id"],
-                doc_id=row["doc_id"],
+                statement=str(row["statement"]),
+                claim_id=UUID(str(row["claim_id"])),
+                doc_id=UUID(str(row["doc_id"])),
             )
             for row in staged_rows
         )
         if assertions:
-            # Apply all co-present unapplied rows for E in total order; clear
-            # this unit's version slice after (other versions clear when their
-            # units run or when their rows were included and deleted via PK
-            # deletes in load scope — entity clear is version-scoped so only
-            # clear rows we own for this unit after global apply of this unit's
-            # rows). When multi-version rows are mixed, apply only this unit's
-            # version first for clear_staging correctness; other units complete
-            # their slices on their own leases (single-flight preferred ops).
-            unit_assertions = tuple(
-                ObservationAssertion(
-                    statement=row["statement"],
-                    claim_id=row["claim_id"],
-                    doc_id=row["doc_id"],
-                )
+            # Apply the full ordered stream under the entity lock. Retire each
+            # staging row by its own PK (version-scoped clear is forbidden for
+            # the entity path — design §5.7).
+            clear_rows = tuple(
+                {
+                    "deployment_id": work.deployment_id,
+                    "version_id": UUID(str(row["version_id"])),
+                    "subject_entity_id": entity_id,
+                    "normalizer_version": str(row["normalizer_version"]),
+                    "claim_id": UUID(str(row["claim_id"])),
+                    "statement": str(row["statement"]),
+                }
                 for row in staged_rows
-                if row["version_id"] == version_id
-                and row["normalizer_version"] == normalizer_version
             )
-            if unit_assertions:
-                self._observation_adjudicator.add_observations(
-                    deployment_id=work.deployment_id,
-                    subject_entity_id=entity_id,
-                    assertions=unit_assertions,
-                    meter=meter,
-                    call_key=f"observation_flush:{version_id}:{entity_id}",
-                    clear_staging={
-                        "deployment_id": work.deployment_id,
-                        "version_id": version_id,
-                        "subject_entity_id": entity_id,
-                        "normalizer_version": normalizer_version,
-                    },
-                )
-        doc_id = unit.get("doc_id")
+            self._observation_adjudicator.add_observations(
+                deployment_id=work.deployment_id,
+                subject_entity_id=entity_id,
+                assertions=assertions,
+                meter=meter,
+                call_key=f"observation_flush:{entity_id}",
+                clear_staging_rows=clear_rows,
+            )
+        raw_doc_id = unit.get("doc_id")
+        doc_id = UUID(str(raw_doc_id)) if raw_doc_id is not None else None
+        membership_hash = unit.get("content_hash")
+        content_hash = (
+            str(membership_hash) if membership_hash is not None else work.content_hash
+        )
         return HandlerOutcome(
             follow_up=(),
             entity_obs_flush_barrier=EntityObsFlushBarrier(
@@ -824,10 +818,10 @@ class AdjudicateObservationsHandler:
                 normalizer_version=normalizer_version,
                 chunker_version=chunker_version,
                 extractor_version=extractor_version,
-                content_hash=work.content_hash,
+                content_hash=content_hash,
                 lane=work.lane,
                 obs_flush_component_version=OBS_FLUSH_VERSION,
-                doc_id=doc_id if isinstance(doc_id, UUID) else None,
+                doc_id=doc_id,
             ),
         )
 
@@ -850,6 +844,16 @@ class AdjudicateObservationsHandler:
             chunker_version = self._chunker_version
         version_uuid = UUID(version_id)
         rep_uuid = UUID(representation_id)
+        # Fail closed if D90 membership/state already exists for this version.
+        if self._facts.has_obs_flush_fanout(
+            deployment_id=work.deployment_id,
+            version_id=version_uuid,
+            normalizer_version=normalizer_version,
+        ):
+            raise NonRetryableHandlerError(
+                f"legacy obs flush refused: D90 fan-out already materialized "
+                f"for version {version_uuid} work {work.processing_id}"
+            )
         staged = self._facts.load_staged_observations(
             deployment_id=work.deployment_id,
             version_id=version_uuid,
