@@ -135,7 +135,7 @@ numbers: such runs measured different systems.
 ## 7. Historical sizing estimate
 
 These figures came from the pre-v12 GLM-5.2 extraction path and are only useful
-for rough capacity planning. V12 uses the current `main` bindings and must record
+for rough capacity planning. V13 uses the current `main` bindings and must record
 its own actual cost and duration; the provider account cap remains the hard
 monetary boundary.
 
