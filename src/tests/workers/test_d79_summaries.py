@@ -3,6 +3,8 @@
 from pathlib import Path
 from uuid import UUID
 
+import pytest
+
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
@@ -10,6 +12,7 @@ from rememberstack.core import blockize
 from rememberstack.core import count_tokens
 from rememberstack.core import parse_heading_skeleton
 from rememberstack.model import ObjectKey
+from rememberstack.model import ProviderAccountingError
 from rememberstack.model import RootSummaryPlacementResponse
 from rememberstack.model import SectionSummaryResponse
 from rememberstack.model import StructureSource
@@ -67,6 +70,20 @@ def _summarize(*, tmp_path: Path, markdown: str, provider: FakeModelProvider):
         meter=NoopCostMeter(),
     )
     return result, provider.generated_requests
+
+
+def test_summary_does_not_swallow_unaccounted_paid_response(tmp_path: Path) -> None:
+    """Optional summary degradation cannot hide missing provider accounting."""
+
+    def unaccounted(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise ProviderAccountingError("provider accounting unavailable")
+
+    with pytest.raises(ProviderAccountingError):
+        _summarize(
+            tmp_path=tmp_path,
+            markdown="# Paid call\n\nBody.",
+            provider=FakeModelProvider(generate_router=unaccounted),
+        )
 
 
 def test_leaf_parent_root_read_exactly_their_composition_inputs(tmp_path: Path) -> None:

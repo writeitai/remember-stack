@@ -13,8 +13,6 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
-from rememberstack.model.processing import NonRetryableHandlerError
-
 _NonEmptyText = Annotated[str, Field(min_length=1)]
 _EmbeddingVector = Annotated[tuple[float, ...], Field(min_length=1)]
 StructuredResponseModel: TypeAlias = BaseModel
@@ -24,7 +22,7 @@ ReasoningEffort: TypeAlias = Literal[
 ]
 
 
-class ProviderAccountingError(NonRetryableHandlerError):
+class ProviderAccountingError(Exception):
     """A paid response lacks accounting and must not be generated again automatically."""
 
 

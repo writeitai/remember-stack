@@ -29,6 +29,7 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.model import ModelRequest
+from rememberstack.model import ProviderAccountingError
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.projection import ProjectionCatalog
 
@@ -229,6 +230,8 @@ class GraphAnalyticsWorker:
                 ),
                 response_type=CommunityLabels,
             )
+        except ProviderAccountingError:
+            raise
         except Exception:  # noqa: BLE001 — a label never fails the analytics
             return {}
         return {

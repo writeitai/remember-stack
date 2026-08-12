@@ -28,6 +28,7 @@ from rememberstack.core import LONG_TITLE
 from rememberstack.model import Block
 from rememberstack.model import ModelRequest
 from rememberstack.model import ObjectKey
+from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import RootSummaryPlacementResponse
@@ -579,6 +580,8 @@ class SectionSummarizer:
             if normalized_summary is None:
                 return _CallResult(None, None, tuple(events))
             return _CallResult(normalized_summary, None, tuple(events))
+        except ProviderAccountingError:
+            raise
         except ProviderCallError as error:
             if error.usage is not None:
                 events.append(
@@ -608,6 +611,8 @@ class SectionSummarizer:
             if normalized_summary is None:
                 return _CallResult(None, None, (event,))
             return _CallResult(normalized_summary, None, (event,))
+        except ProviderAccountingError:
+            raise
         except ProviderCallError as error:
             if error.usage is not None:
                 return _CallResult(
