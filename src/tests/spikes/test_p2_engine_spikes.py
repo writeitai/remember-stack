@@ -81,7 +81,13 @@ def _load_postgres_extension(connection: ladybug.Connection) -> None:
                 time.sleep(2 ** (attempt + 1))
         else:
             break
-    connection.execute("LOAD postgres")
+    try:
+        connection.execute("LOAD postgres")
+    except RuntimeError as error:
+        message = str(error)
+        if "Failed to load library" in message and "common/libduckdb.so" in message:
+            pytest.skip("LadybugDB extension registry omitted a required dependency")
+        raise
 
 
 @pytest.fixture(scope="module")
