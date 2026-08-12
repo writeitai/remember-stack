@@ -52,16 +52,14 @@ Exported in the shell that invokes the CLI (values live in the host's
 
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
-REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER  # prefer nebius,deepinfra,siliconflow (see design/operations/openrouter-embedding-routing.md)
-# REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER     # hard pin only; avoid for long drains
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
 REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # allow long compound retrieval requests
 ```
 
-Engine-side model bindings come from the checked-out Compose file plus its
-environment. Freeze that environment for the run and inspect the non-secret
-bindings reported by `GET /deployment`; the current stock E1-prefix, E2, E3,
-P1-label, and small adjudicator seats use `openai/gpt-5.6-luna`.
+`run_shard.sh` sets every non-secret V13 ingest binding itself: Luna for the
+generative seats, Qwen3-Embedding-8B for vector seats, and Nebius as the pinned
+embedding host. It overrides ambient self-host defaults, and ingest compares
+the complete `GET /deployment` binding map before uploading any document.
 
 ## 4. Running a single conversation (smoke or one shard)
 
@@ -154,6 +152,6 @@ The score is the least valuable output. Keep:
   claims were retrieved per question.
 - The run log, which records stage progress and failures.
 
-The per-sample database is disposable and is not backed up before the next
-isolated sample. Inspect it in place if a stage fails; preserve it only when a
-specific investigation needs database-level evidence.
+Each completed sample's PostgreSQL, P1, P2, P3, run state, and mount state is
+uploaded to its immutable GCS prefix and verified before the next isolated
+sample may wipe the local store.

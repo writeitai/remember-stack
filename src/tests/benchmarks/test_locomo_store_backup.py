@@ -862,6 +862,10 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
     )
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
+    assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius" in script
+    assert "unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER" in script
     assert script.count("--lock-fd 9") == 4
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'
