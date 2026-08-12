@@ -166,6 +166,17 @@ attest_worker_environment() {
   log "runtime-bindings status=verified app_containers=$app_count"
 }
 
+bind_benchmark_api() {
+  local published
+  local port
+  published=$("${compose[@]}" port api 8000 | head -n 1)
+  port=${published##*:}
+  [[ "$port" =~ ^[1-9][0-9]*$ ]] && ((port <= 65535)) ||
+    die "could not resolve the Compose API host port: $published"
+  export REMEMBERSTACK_API_URL="http://127.0.0.1:$port"
+  log "benchmark-api status=bound port=$port"
+}
+
 IFS=',' read -r -a requested_samples <<<"$sample_csv"
 [[ ${#requested_samples[@]} -gt 0 ]] || die "the shard sample list is empty"
 declare -A seen_samples=()
@@ -334,6 +345,7 @@ for sample_id in "${pending_samples[@]}"; do
     --scale "worker-normalize-relations=$normalize_relation_workers" \
     --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
     --scale "worker-embed-claim=$embed_claim_workers"
+  bind_benchmark_api
   attest_worker_environment
   "$python_bin" "$backup_tool" record-live \
     --run-dir "$run_dir" \

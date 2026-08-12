@@ -147,7 +147,9 @@ The driver itself freezes the complete non-secret V13 ingest identity before
 Compose starts: Luna generation seats, Qwen3-Embedding-8B vector seats, Nebius
 embedding host, unset provider-order fallback, and the protocol's reasoning and
 completion-token settings. Ambient values for those bindings are deliberately
-overridden. The driver verifies the source revision and environment of every
+overridden. It also asks the running Compose stack for its published API port
+and binds the host-side benchmark client to it; do not set a separate client
+URL for a sharded run. The driver verifies the source revision and environment of every
 running app container before ingest and during every drain poll, while ingest
 independently verifies the deployment map before upload. Do not scale this benchmark with a separate
 `docker compose up --scale` command: it can read a different ambient `.env`
