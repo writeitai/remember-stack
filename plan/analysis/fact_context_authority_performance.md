@@ -1,7 +1,8 @@
 # Fact-context authority and latency analysis
 
-**Status:** non-binding implementation analysis  
-**Date:** 2026-08-11  
+**Status:** non-binding implementation analysis
+
+**Date:** 2026-08-11
 **Scope:** the PostgreSQL confirmation and evidence reads used by the
 `fact_context` assured operation
 
@@ -95,4 +96,3 @@ surface do not grow.
 - Explicit proof that both helpers have no `PUBLIC` or query-role grants.
 - Focused assured-operation tests, including one operation-level deadline test.
 - Read-only production-plan timing before resuming the paused benchmark.
-

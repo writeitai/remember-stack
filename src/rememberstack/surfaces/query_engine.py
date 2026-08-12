@@ -678,6 +678,7 @@ class QueryEngine:
         # hydration drops. Unvisited nominations are disclosed by truncation.
         dropped = visited_candidates - len(confirmed_rows)
         candidate_depth_exhausted = len(nominated) > FACT_CONTEXT_CANDIDATE_K
+        confirmation_incomplete = visited_candidates < len(candidate_keys)
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=_fact_temporal_scope(
@@ -689,11 +690,15 @@ class QueryEngine:
             evidence_totals=exact_totals,
             freshness=_freshness(at=evaluation),
             truncation=Truncation(
-                truncated=(has_more_confirmed or candidate_depth_exhausted),
+                truncated=(
+                    has_more_confirmed
+                    or confirmation_incomplete
+                    or candidate_depth_exhausted
+                ),
                 returned=len(facts),
-                estimated_total=len(nominated),
+                estimated_total=len(confirmed_rows),
                 total_is_exact=(
-                    not candidate_depth_exhausted and not has_more_confirmed
+                    not candidate_depth_exhausted and not confirmation_incomplete
                 ),
             ),
             dropped_by_hydration=dropped,
