@@ -3573,44 +3573,49 @@ for an unused benchmark harness.
 
 **Analysis.** `plan/analysis/fact_context_authority_performance.md`.
 
-## D90. Observation flush work is leased per entity so post-barrier D43 can run in parallel
+## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
 
 **Decision (2026-08-12).** Stage `adjudicate_observations` under the entity
-fan-out generation is addressed primarily at **entity** grain:
-`target_kind = entity`, `target_id = subject_entity_id`, component version
-`OBS_FLUSH_VERSION` with an `:entity-fanout-1` generation suffix. When the
-claim-normalize barrier would enqueue a single version-level observation flush,
-the engine instead enqueues one flush job per distinct `subject_entity_id` in
-`normalize_observation_staging` for that version + normalizer generation
-(idempotent set insert in the barrier transaction). Each worker applies D43
-**serially within the entity** in `(asserted_at, claim_id)` order under the
-entity advisory lock. **Relation supersession** and the existing embed follow-up
-are enqueued only when every expected entity job has terminal success (strict
-barrier, same family as D84/D88). Empty staging skips entity grain and opens
-supersession as today. Legacy version-serial flush rows at the pre-fanout
-component version remain valid until drained.
+fan-out generation is addressed at **version-scoped entity flush units**, not
+bare canonical entity ids. A durable membership table records each unit as
+`(deployment_id, version_id, normalizer_version, subject_entity_id)` with a
+generated `unit_id`. The ledger row uses `target_kind = entity`,
+`target_id = unit_id`, and `OBS_FLUSH_VERSION` with an `:entity-fanout-1`
+generation suffix. When the claim-normalize barrier would open observation
+flush, that transaction materializes the complete membership set and processing
+rows (or records durable empty completion). Each worker applies D43 **serially
+within the unit** in total order `(asserted_at NULLS LAST, claim_id, statement)`
+under the entity advisory lock for the unit. **Relation supersession** and
+**embed_claim** are enqueued as **sibling** follow-ups only when every unit for
+that version + normalizer generation has terminal success. Legacy version-serial
+flush at the pre-fanout component version remains until drained and is mutually
+exclusive with unit fan-out for the same version.
 
-**Context.** After D88, claim normalize scales with workers; observation flush
-remained one version lease. On BEAM 1M (~2.4k entities / ~6.2k staged
-assertions), residue path ~3 assertions/min made multi-day wall clock and idle
-adj replicas. D43 is entity-anchored, so parallel flush across entities is
-safe; parallel apply within an entity is not. Analysis:
-`plan/analysis/e3_entity_obs_flush_fanout_analysis.md`. Binding design:
+**Context.** After D88, claim normalize scales; observation flush remained one
+version lease. On BEAM 1M (~2.4k entities / ~6.2k staged assertions), residue
+path ~3 assertions/min made multi-day wall clock. Dual design review (Claude +
+Codex, 2026-08-12) rejected bare `target_id = subject_entity_id` because D12
+work identity has no version dimension and entities are deployment-global.
+Analysis: `plan/analysis/e3_entity_obs_flush_fanout_analysis.md`. Binding design:
 `plan/designs/e3_entity_obs_flush_fanout_design.md`.
 
-**Consequences.** Queue depth for `adjudicate_observations` approximates
-unfinished **entities** — a correct scale signal. Continuous multi-doc ingest
-stays version-scoped. Within-entity order and fail-safe supersede rules are
-unchanged. Handlers must not hold multi-assertion DB transactions open across
-remote LLM/embed calls. Critical path remains the largest hub; fan-out drains
-the long tail. Postgres carries O(entities with staged observations) processing
-rows per large version.
+**Consequences.** Queue depth approximates unfinished **units**. Continuous
+multi-doc ingest stays version-scoped without silent cross-version observation
+loss. Within-unit order and D43 fail-safe rules are unchanged. Cross-version
+apply order for the same entity remains lock-scheduled (as with concurrent
+version-level flushes today). Readiness, lifecycle, and forget join membership
+by version. Handlers load coordinates from membership, not payload alone.
+Entity lock spans the unit apply so writers do not interleave mid-sequence.
 
-**Rejected.** Scale version-level flush only; in-process thread pool without
-ledger grain; parallel assertion apply within one entity; assertion-grain jobs
-as v1; rely on FIFO document order; enlarge expected entity set after claim
-barrier; treat version-level coordinator success as flush complete.
+**Design review.** Claude and Codex both REQUEST_CHANGES on the first draft;
+blocking findings absorbed into the design revision (reviews under
+`design/reviews/REVIEW_*_e3_entity_obs_flush_fanout_design_2026-08-12.md`).
 
-**Amends.** D88 §5.6 (flush remains per-entity ordered apply; **ledger grain**
-for that flush becomes entity-parallel under D90). Does not amend D43 ladder
-semantics, `hub_top_k`, or claim-normalize fan-out.
+**Rejected.** Scale version-level flush only; bare entity target_id; in-process
+pool without ledger grain; parallel assertion apply within one unit;
+assertion-grain jobs; payload-only membership; mixed legacy+fan-out on one
+version; unlock-for-LLM without revalidation.
+
+**Amends.** D88 §5.6 ledger grain for the post-barrier flush (product rule of
+per-entity ordered apply preserved; lease identity becomes version-scoped unit).
+Does not amend D43 ladder semantics, `hub_top_k`, or claim-normalize fan-out.

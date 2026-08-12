@@ -119,18 +119,33 @@ Parallel entity fan-out **does not** shrink the largest hub; it **drains the
 long tail concurrently**. That is still the right scale-out for 2k+ entities
 when one serial lease currently queues all of them.
 
-## 7. Recommendation
+## 7. Ledger identity trap (must not ship bare entity target_id)
 
-Bind **entity-grain** `adjudicate_observations` jobs after the claim normalize
-barrier, with:
+D12 work identity is
+`(deployment_id, target_kind, target_id, stage, component_version)` — **no
+version column**. Canonical `subject_entity_id` is deployment-global. If the
+ledger used `target_id = subject_entity_id`, two versions staging the same
+entity would collide (`ON CONFLICT DO NOTHING`), skip a version’s flush slice,
+and can open a false barrier. Chunk/claim fan-out avoid this because their
+structural path is version-tied and “do once” is correct; **entity flush is not
+version-idempotent**.
 
-1. Atomic set insert of expected entity jobs (D84/D88 protocol).  
-2. `complete_entity_obs_flush` + version/representation advisory lock + anti-join
-   barrier → supersession.  
-3. Within-entity serial ordered D43.  
-4. No remote LLM inside a multi-assertion open DB transaction (reliability).  
-5. Component version suffix on obs flush generation so legacy version-serial
-   flush rows are not confused with entity jobs.
+Therefore the solid unit is a durable membership row
+`(deployment_id, version_id, normalizer_version, subject_entity_id)` with a
+generated `unit_id` used as ledger `target_id` under `target_kind=entity`.
+
+## 8. Recommendation
+
+Bind **version-scoped entity flush units** after the claim normalize barrier:
+
+1. Membership table + atomic set insert (D84/D88 protocol).  
+2. `complete_entity_obs_flush` + shared representation barrier lock + anti-join
+   on membership → supersession **and** embed_claim (siblings).  
+3. Within unit: serial total order `(asserted_at NULLS LAST, claim_id, statement)`.  
+4. Entity lock held for the whole unit apply; no stale LLM apply after unlock
+   without revalidation.  
+5. Fan-out generation suffix; exclusive cutover vs legacy version-serial flush.  
+6. Forget/readiness join membership by version — never scrub by bare entity id alone.
 
 Binding design: `plan/designs/e3_entity_obs_flush_fanout_design.md` (decision
-log **D90**).
+log **D90**). Dual design review REQUEST_CHANGES absorbed into that revision.

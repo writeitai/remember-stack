@@ -227,10 +227,12 @@ This preserves D43’s “apply in order” contract while allowing parallel LLM
 normalize. A future D43 redesign for true commutative insert may remove the
 flush stage; that is a separate design.
 
-**Ledger grain for that flush (D90):** the v1 *product* rule above is per-entity
-ordered apply. The v1 *implementation* may still use a version-serial lease; D90
-binds **entity-grain** `adjudicate_observations` jobs so multiple entities flush
-in parallel. See [e3_entity_obs_flush_fanout_design.md](e3_entity_obs_flush_fanout_design.md).
+**Ledger grain for that flush (D90):** D88 binds per-entity ordered apply under
+the entity lock. D90 binds the **ledger work unit** for that flush as a
+**version-scoped entity unit** (durable membership + `target_kind=entity` with
+`target_id=unit_id`) so multiple entities flush in parallel without collapsing
+shared entities across document versions. See
+[e3_entity_obs_flush_fanout_design.md](e3_entity_obs_flush_fanout_design.md).
 
 ### 5.7 Readiness, connector-cycle, cutover
 

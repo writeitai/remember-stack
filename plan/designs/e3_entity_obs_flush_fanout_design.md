@@ -1,343 +1,309 @@
 # Design: entity-grain observation flush fan-out
 
-**Status:** design PR — binding once dual design review findings are absorbed
-and this lands on `main`  
+**Status:** revised after dual design review (Claude REQUEST_CHANGES, Codex
+REQUEST_CHANGES) — binding once this revision lands on `main`  
 **Date:** 2026-08-12  
 **Decision log:** D90  
 **Analysis:** [e3_entity_obs_flush_fanout_analysis.md](../analysis/e3_entity_obs_flush_fanout_analysis.md)  
-**Amends:** D88 §5.6 post-barrier flush grain (version-serial → entity-parallel);
-handoff after claim barrier in [e3_claim_level_normalize_fanout_design.md](e3_claim_level_normalize_fanout_design.md)  
-**Preserves:** D43 / [observations_design.md](observations_design.md) entity
-block + apply-in-order; D86 inside claim jobs; D88 claim normalize grain  
-**Pattern:** same family as D84 `complete_chunk_extract` and D88
-`complete_claim_normalize` (advisory lock + complete + anti-join barrier +
-enqueue in one transaction)
+**Reviews:**
+[REVIEW_claude-opus_e3_entity_obs_flush_fanout_design_2026-08-12.md](../../design/reviews/REVIEW_claude-opus_e3_entity_obs_flush_fanout_design_2026-08-12.md),
+[REVIEW_codex-sol_e3_entity_obs_flush_fanout_design_2026-08-12.md](../../design/reviews/REVIEW_codex-sol_e3_entity_obs_flush_fanout_design_2026-08-12.md)  
+**Amends:** D88 §5.6 flush **ledger grain** (version-serial lease →
+version-scoped entity units in parallel); handoff after claim barrier in
+[e3_claim_level_normalize_fanout_design.md](e3_claim_level_normalize_fanout_design.md)  
+**Preserves:** D43 entity block + apply-in-order;
+[observations_design.md](observations_design.md); D86 inside claim jobs; D88
+claim normalize grain  
+**Pattern:** D84/D88 advisory lock + complete + anti-join barrier + atomic
+expected-set insert — with a **durable version↔unit membership** because entity
+ids are not version-scoped
 
 ## 1. Decision
 
 1. **Primary work unit** for stage `adjudicate_observations` under the entity
-   fan-out generation is one **subject entity**:
-   - `target_kind = entity` (`ProcessingTarget.ENTITY` already exists)
-   - `target_id = subject_entity_id`
-   - `component_version = OBS_FLUSH_VERSION` with a **fan-out generation
-     suffix** (append `:entity-fanout-1` to the D88 obs-flush string) so legacy
-     version-serial flush rows are not confused with entity jobs at readiness.
-2. **Fan-out** when the **claim normalize barrier** would enqueue a single
-   version-level obs flush: enqueue **one obs-flush job per distinct
-   `subject_entity_id` in staging** for that version + normalizer generation,
-   via a **single set-based insert of the complete expected entity set in the
-   same transaction as the claim barrier handoff** (§5.2). Not open-ended
-   “discover entities later.”
-3. **Barrier:** enqueue version-level **downstream** work
-   (`adjudicate_supersession`, then existing embed chain) only when every
-   expected entity has `status=succeeded` at the **entity-fanout** obs-flush
-   component version. Soft D43 outcomes (evidence / new / contradict / supersede
-   under fail-safe rules) still yield job `succeeded`. `dead_letter` / `failed`
-   / missing entity rows **block**.
-4. **Within entity:** assertions apply **strictly serially** in
-   `(asserted_at, claim_id)` order under the entity advisory lock. Never
-   parallelize apply within one entity.
-5. **Across entities:** concurrent entity jobs are allowed and intended.
-6. **Legacy** version-level `adjudicate_observations` rows at the **pre-entity-fanout**
-   component version remain serial whole-version flush handlers until drained.
-   New images must not treat a **coordinator** version-level success (if any)
-   as “observations flushed.”
-7. **Empty staging:** skip entity grain; open supersession (and embed) from the
-   claim barrier path exactly as today’s empty-observation hop.
-8. **Reliability:** entity handlers must **not** hold one multi-assertion DB
-   transaction open across remote LLM/embed calls (§5.7).
+   fan-out generation is one **version-scoped entity flush unit**:
+   - Durable membership row in `obs_flush_entity_units` (name fixed in impl
+     migration) keyed  
+     `(deployment_id, version_id, normalizer_version, subject_entity_id)`  
+     with a generated `unit_id uuid` primary key.
+   - Ledger row: `target_kind = entity`, `target_id = unit_id` (the membership
+     PK — **not** the bare canonical `subject_entity_id`),  
+     `stage = adjudicate_observations`,  
+     `component_version = OBS_FLUSH_VERSION` with suffix **`:entity-fanout-1`**.
+2. **Why not `target_id = subject_entity_id`:** D12 work identity is
+   `(deployment_id, target_kind, target_id, stage, component_version)` with no
+   version column. Canonical entities are deployment-global. Two versions that
+   stage observations for the same entity would `ON CONFLICT DO NOTHING` onto
+   one row and either skip a version’s slice or open a false barrier. Chunk and
+   claim grains avoid this because their structural path to a version is durable
+   and “do once” is correct for the claim; flushing entity E for version V1 is
+   **not** correct for V2.
+3. **Fan-out** when the claim-normalize barrier would open obs flush: in **that
+   same transaction**, materialize the complete unit set + ledger rows for every
+   distinct staging entity for that version + normalizer generation (or take the
+   empty path). Mark fan-out materialized on a durable version-level flag/row so
+   “missing unit” is detectable.
+4. **Barrier:** supersession + embed follow-ups enqueue only when every unit in
+   the membership set for that version + normalizer generation has a terminal
+   `succeeded` processing row at the fan-out component version. `dead_letter` /
+   `failed` / missing processing row for a membership unit **blocks**.
+5. **Within unit (one entity, one version slice):** apply assertions **serially**
+   in total order  
+   `(asserted_at NULLS LAST, claim_id, statement)`  
+   under the entity advisory lock for the whole unit apply (§5.7).
+6. **Across different `subject_entity_id` values:** concurrent units are allowed.
+7. **Across different versions of the same entity:** concurrent units are allowed
+   and are serialized by the entity lock for writes. Cross-version **source-time
+   total order of apply** is **not** guaranteed by D90 and is **not worse than
+   today’s** concurrent version-level flushes (already multi-lease). Repair of
+   reverse arrival uses existing D43 `_pull_valid_from_earlier` / open-slice
+   rules. A schedule-independent multi-version recompute of open windows is
+   **out of scope** (separate design if product requires it).
+8. **Empty staging:** no units; durable empty completion for the version; enqueue
+   supersession **and** `embed_claim` as sibling follow-ups (same topology as
+   today’s flush handler — not supersession-only).
+9. **Legacy** version-serial flush at pre-`:entity-fanout-1` component version
+   remains until drained. Fan-out and legacy for the **same** version must not
+   both run (§5.8).
+10. **LLM / TX:** bind per-assertion durable writes **without** releasing the
+    entity lock mid-unit in a way that allows another writer to interleave
+    *inside* this unit’s ordered sequence (§5.7).
 
-## 2. Problem (why this exists)
+## 2. Problem
 
-D88 made claim normalize parallel. Observation flush stayed one version lease
-walking every entity serially. On BEAM-scale staging (~2k+ entities, hub
-residue at ~3 assertions/min), wall clock becomes multi-day and extra adj
-workers idle. Analysis §1–2.
+D88 parallelized claim normalize. Observation flush stayed one version lease.
+BEAM-scale staging (~2k+ entities) makes multi-day wall clock; extra adj workers
+idle. Analysis §1.
 
 ## 3. Rationale
 
-- D43 is **entity-keyed**. Open observation sets do not cross subject entities.
-- D88 already chose **stage then flush** so claim completion order is not document
-  order; the flush’s remaining serial bottleneck is **across entities**, not
-  “need one global queue.”
-- `ProcessingTarget.ENTITY` and stage `adjudicate_observations` already exist.
-- D84/D88 landed the only acceptable durability pattern for fan-out: **atomic
-  expected-set insert + barrier anti-join under advisory lock**.
-- In-process pools without ledger grain fail D67 ops truth (queue depth, DLQ,
-  replay).
+- D43 writes are entity-keyed → parallel **across entities** is sound.
+- D88 staging already isolates claim completion order from D43 apply order.
+- D12 requires a version-qualified lease identity for work that is not
+  version-idempotent → membership `unit_id`.
+- D84/D88 durability protocol is required; payload-only membership is not.
 
 ## 4. Continuous ingestion
 
-Expected entity set is fixed when the **claim normalize barrier** fires for a
-closed document version:
-
-```text
-expected_entity_ids(deployment_id, version_id, normalizer_version) =
-  DISTINCT subject_entity_id
-  FROM normalize_observation_staging
-  WHERE deployment_id / version_id / normalizer_version match
-```
-
 | Scenario | Behavior |
 | --- | --- |
-| New documents while V flushes | New trees; do not enlarge V’s set |
-| New version of same lineage | New staging + new expected set |
-| Entity `dead_letter` on V | V’s supersession/embed blocked; other entities proceed |
-| Empty staging | No entity jobs; supersession enqueued |
-
-Appending observations to a **closed** version’s staging after the claim barrier
-without a new normalize generation is out of model for this barrier (same as
-D88 closed claim set).
+| New docs while V flushes | Separate membership sets / unit ids |
+| New version same lineage | New `version_id` → new units even for shared entities |
+| One unit DLQ | Only that version’s supersession/embed blocked |
+| Empty staging | Empty completion + supersession + embed_claim |
 
 ## 5. Contracts
 
-### 5.1 Expected entity set
+### 5.1 Membership table (`obs_flush_entity_units`)
 
-Membership is deployment-scoped via staging rows that claim normalize already
-wrote under that deployment. Fan-out **must** pin the set in the claim-barrier
-transaction (set insert). Re-query of staging for “who still has rows” is for
-handlers, not for growing the expected set.
+Binding columns (logical; exact SQL in migration):
 
-### 5.2 Fan-out durability (binding protocol)
+| Column | Role |
+| --- | --- |
+| `unit_id` | PK; ledger `target_id` |
+| `deployment_id` | tenant |
+| `version_id` | document version being flushed |
+| `normalizer_version` | claim-normalize generation that wrote staging |
+| `subject_entity_id` | D43 block key |
+| `doc_id` | optional; for forget / payload-free handler |
+| `content_hash` | copy from barrier parent |
+| `created_at` | audit |
 
-**Chosen protocol (v1):** in the same transaction that marks the last claim
-normalize succeeded and finds the claim barrier ready:
+**Unique:** `(deployment_id, version_id, normalizer_version, subject_entity_id)`.
 
-1. `SELECT DISTINCT subject_entity_id …` from staging for the version +
-   normalizer generation (or empty).
-2. If empty → enqueue `adjudicate_supersession` (and existing embed follow-up
-   policy) as today.
-3. If non-empty → set-based insert of **all** entity `adjudicate_observations`
-   jobs at `OBS_FLUSH_VERSION` with `target_kind=entity`.
+**Optional durable empty marker:** either a version-level processing row at
+fan-out component version with `target_kind=document_version` used **only** for
+empty completion / readiness timestamp, or a row in a small
+`obs_flush_version_state` table `{deployment_id, version_id, normalizer_version,
+fanout_status, completed_at}`. Impl picks one; design requires a **durable empty
+success signal** that readiness can read without scanning staging.
 
-Do **not** enqueue a separate version-level “coordinator” job for the happy
-path. (Optional: a legacy version-level row at the **old** component version may
-still exist for cutover drains — §5.8.)
+### 5.2 Fan-out (claim barrier transaction)
 
-`content_hash` and `lane` copy from the barrier parent work (claim complete /
-version content hash already used for obs flush today).
+When claim barrier is ready for version V + normalizer generation N:
 
-### 5.3 Entity job payload
+1. If a **non-terminal legacy** version-level `adjudicate_observations` row exists
+   for V at a **pre-entity-fanout** component version → **do not fan out**; leave
+   legacy to finish (or ops dead-letters legacy first). Mutual exclusion §5.8.
+2. If membership already materialized for (V, N) → do not re-insert units;
+   only ensure barrier evaluation can still fire (idempotent complete path).
+3. Else `SELECT DISTINCT subject_entity_id, doc_id …` from staging for (V, N).
+4. **Empty:** write empty completion signal; enqueue `adjudicate_supersession` +
+   `embed_claim` (sibling follow-ups, same stages/versions as
+   `AdjudicateObservationsHandler` today).
+5. **Non-empty:** insert one membership row + one processing_state row per
+   entity (`target_kind=entity`, `target_id=unit_id`, fan-out component version).
+   Set fan-out materialized.
 
-```json
-{
-  "version_id": "<uuid>",
-  "representation_id": "<uuid>",
-  "subject_entity_id": "<uuid>",
-  "doc_id": "<uuid|null>",
-  "normalizer_version": "<E3_NORMALIZER_VERSION string>",
-  "chunker_version": "<string>",
-  "extractor_version": "<string>"
-}
-```
+`content_hash` / `lane` from barrier parent work.
 
-`normalizer_version` is the **claim-normalize generation** that wrote staging
-(not the obs-flush component version). Required so the handler loads the correct
-staging slice.
+Payload on the processing row is **cache only**. Handler **must** load
+coordinates from membership by `unit_id` (target_id). Missing membership →
+non-retryable.
 
-### 5.4 Handler behavior (entity grain)
+### 5.3 Handler (entity unit)
 
-For `target_kind=entity` and fan-out `OBS_FLUSH_VERSION`:
+1. `unit_id = work.target_id`; load membership; validate deployment matches.
+2. Load staging for
+   `(deployment_id, version_id, subject_entity_id, normalizer_version)` ordered by  
+   **`(asserted_at NULLS LAST, claim_id, statement)`**.
+3. If no staging rows: succeed (slice already applied / cleared by **this**
+   unit’s prior progress only — see §5.8 exclusivity).
+4. Apply D43 for that entity only, total order from step 2, under entity lock
+   for the **entire unit apply** (§5.7).
+5. On full unit success: ensure no staging remains for that slice; return
+   success to worker (completion via `complete_entity_obs_flush`).
 
-1. Validate payload coordinates.
-2. Load staging rows for
-   `(deployment_id, version_id, subject_entity_id, normalizer_version)` ordered
-   by `(asserted_at, claim_id)` (join claims for `asserted_at`; undated claims
-   use the same tie-break as D88 undated supersession — **stable `claim_id`
-   order after nulls-last or documented sentinel**).
-3. If no rows remain (idempotent retry after success): treat as success path for
-   barrier participation (complete with no-op apply).
-4. Apply D43 for that entity only:
-   - Under entity advisory lock `deployment_id:obs:{entity_id}` for **write**
-     phases.
-   - **Serial** assertion order from step 2.
-   - Existing outcomes: evidence / new / contradict / supersede fail-safe.
-5. Delete staging rows for that entity + version + normalizer generation only
-   after successful apply for those rows (§5.7 commit shape).
-6. Return success to the worker; **do not** enqueue supersession here.
+Do **not** call version-wide `clear_staged_observations`. Only entity-scoped
+(or per-assertion-scoped) deletes for this unit’s slice.
 
-Systemic failures re-raise for ledger retry/DLQ. Soft D43 decisions are not
-job failures.
+### 5.4 Completion + barrier (`complete_entity_obs_flush`)
 
-### 5.5 Completion + barrier (`complete_entity_obs_flush`)
+One transaction:
 
-Mirror `complete_claim_normalize` / `complete_chunk_extract`:
+1. Acquire the **same representation barrier advisory lock family** used by
+   `complete_claim_normalize` (shared namespace preferred; if two keys exist,
+   acquire in a **fixed global order** documented in the impl PR). This serializes
+   last-unit barrier fire with claim-barrier fan-out edges.
+2. Mark this unit’s processing row `succeeded`.
+3. Ready iff every membership unit for `(deployment_id, version_id,
+   normalizer_version)` has a processing row at fan-out component version with
+   `status=succeeded`. Any membership unit without a row, or with
+   pending/running/failed/dead_letter, is **not** ready.
+4. If ready → enqueue **once** (idempotent):
+   - `adjudicate_supersession` at existing adjudicator version (payload may omit
+     `relation_ids`; handler reconstructs as today), and
+   - `embed_claim` at existing P1 embed version  
+   as **sibling** follow-ups (preserve today’s topology).
 
-**API:** `WorkLedger.complete_entity_obs_flush(...)` in **one** transaction:
-
-1. Take version/representation-scoped advisory lock (same family as claim
-   barrier; document the key namespace so claim-complete and entity-complete do
-   not deadlock — prefer **one shared representation barrier lock** ordered
-   consistently, or distinct locks with a fixed acquire order documented in
-   impl).
-2. Mark this entity processing row `succeeded`.
-3. Anti-join / count: every expected entity job at fan-out `OBS_FLUSH_VERSION`
-   is terminal `succeeded` (missing / failed / dead_letter / pending / running
-   → **not** ready).
-4. If ready → enqueue `adjudicate_supersession` (version target) with the same
-   payload fields today’s version flush uses for origin-claim supersession
-   selector (`version_id`, `representation_id`, `chunker_version`,
-   `normalizer_version`, `doc_id`, …), then existing embed follow-up policy.
-
-Expected entity membership for the anti-join is the set of **processing_state
-rows** inserted at fan-out (ledger is source of truth after insert), not a
-live re-DISTINCT of staging (staging rows disappear as entities finish).
-
-### 5.6 Ordering policy (binding)
+### 5.5 Ordering
 
 | Scope | Rule |
 | --- | --- |
-| Within entity | Apply in `(asserted_at, claim_id)` only |
+| Within unit | `(asserted_at NULLS LAST, claim_id, statement)` only |
 | Across entities | Any completion order |
-| Claim normalize vs flush | Claim barrier before any entity flush fan-out |
-| Supersession | Only after entity barrier |
-| Global staging sort | Optional implementer convenience when building per-entity lists; **not** a cross-entity schedule |
+| Across versions same entity | Entity lock serializes writes; apply order is lock schedule, not global source-time (same class as concurrent version flushes today) |
+| Undated `asserted_at` | Sort last (`NULLS LAST`); supersede boundary uses existing D43 undated rules (`now()` where already coded) — not redefined here |
 
-### 5.7 Commit shape and LLM boundaries (binding)
+### 5.6 LLM and locking (binding)
 
-**Problem today:** one `engine.begin()` around an entire entity batch including
-remote generate/embed.
+**Chosen pattern:** **session / transaction-scoped entity lock held for the whole
+unit apply**, with **short write transactions per assertion** only if the lock
+remains held across them (session-level advisory lock), **or** keep a single
+DB transaction for the unit’s writes after all LLM results for the unit are
+prepared **only if** the open block is revalidated under the lock immediately
+before apply and any change aborts prepare and restarts the unit (no silent
+stale apply).
 
-**v1 binding:**
+**Rejected as sole path:** “read under lock → unlock → LLM → lock → write
+without revalidation” (TOCTOU).
 
-1. **No remote model I/O inside a transaction that spans more than one
-   assertion’s durable write.**  
-   Allowed patterns (pick one in impl; document choice in PR):
-   - **Per-assertion transactions:** lock entity → read block → (optional
-     LLM outside TX) → write outcome + delete that assertion’s staging row →
-     commit; repeat.  
-   - **Prepare then apply:** under short locks, read; LLM outside; short TX
-     apply all prepared outcomes in order + clear staging (only if prepare is
-     pure function of locked snapshot — harder; default to per-assertion).
-2. **Idempotency:** re-running an entity job after partial progress must not
-   double-count evidence or corrupt open windows. Prefer deleting a staging row
-   only in the same TX as that assertion’s successful apply; evidence PK /
-   existing D43 idempotency remains the safety net.
-3. **Entity lock:** still required around any write that mutates open
-   observations for that entity (continuous ingest / concurrent versions).
+**Preferred concrete shape for impl (bind unless measured otherwise):**
 
-This is a reliability contract, not a performance optional.
+1. Take **session** advisory lock on entity (or xact lock spanning the unit).  
+2. For each assertion in order:  
+   - re-read open block under lock;  
+   - if ladder needed, **LLM while lock held** (latency cost) **or** release is
+     forbidden mid-unit without revalidate protocol above;  
+   - write outcome + delete that staging row (staging PK already includes
+     `statement`) in a short TX **still under the held session lock**.  
+3. Release lock; complete ledger row.
 
-### 5.8 Component version and legacy
+If session locks are undesirable, **single xact for the whole unit** (today’s
+shape) remains allowed for small entities; for large hubs, session lock +
+per-assertion commit is the scale path. Both keep **no other writer interleaving
+inside the unit**.
+
+Mid-unit partial visibility to readers is acceptable while version readiness
+still blocks “observations complete”; supersession/embed wait on the barrier.
+
+### 5.7 Component version, cutover, exclusivity
 
 | Generation | Behavior |
 | --- | --- |
-| Pre-`:entity-fanout-1` obs flush | Version-level serial handler (today) |
-| `:entity-fanout-1` | Entity jobs + barrier; claim barrier enqueues entity set |
+| Pre-`:entity-fanout-1` | Version-serial `AdjudicateObservationsHandler` only |
+| `:entity-fanout-1` | Unit fan-out only |
 
-Cutover:
+**Mutual exclusion for a given version V:**
 
-- Deploy code that understands both.
-- New claim barriers enqueue entity fan-out only.
-- In-flight version-serial flush jobs finish or are operator dead-lettered +
-  re-enqueued as entity set (ops runbook; same class as D88 serial normalize
-  cutover on BEAM).
+- If non-terminal **legacy** version-level flush exists for V → claim barrier
+  must not materialize unit fan-out for V.  
+- If unit membership is materialized for V → legacy handler must refuse to claim
+  work for V (or ops dead-letters legacy before enabling fan-out).  
+- Entity-path **must not** invoke version-wide staging clear.  
+- Mixed-image rollout: enable fan-out only when all workers understand entity
+  units (capability / stop-drain-restart), same class as D88 mixed-image rule.
 
-### 5.9 Readiness / lifecycle / forget
+### 5.8 Readiness, lifecycle, forget
 
 | Surface | Rule |
 | --- | --- |
-| Pipeline readiness for obs flush generation | Entity-grain rows at fan-out version; version-level success alone insufficient |
-| Connector-cycle / lifecycle waits | Wait on entity jobs (include `dead_letter`), same spirit as D88 claim wait |
-| Forget / scrub | Staging already scrubbed with version; entity processing rows follow existing processing_state scrub policy — extend if forget lists stages by grain |
+| Readiness | Join `obs_flush_entity_units` → `processing_state` by `unit_id` for the version; empty completion signal reports succeeded for obs stage |
+| Lifecycle / connector-cycle | Wait on unit rows for the version (include DLQ); not only document_version work |
+| Forget | Scrub **units and processing rows for forgotten versions** via membership `version_id` / `doc_id`. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
 
-### 5.10 Worker topology
+### 5.9 Workers and indexes
 
-- Stage remains `adjudicate_observations` (no new Postgres enum value required
-  for stage).
-- Compose already runs `worker-adjudicate-observations`; scale replicas for
-  queue depth.
-- Handler dispatches on `target_kind` + component version (entity vs legacy
-  document_version).
-
-### 5.11 Indexes / migrations
-
-- Partial index on `processing_state` for
-  `(deployment_id, stage, target_kind, component_version, status)` where
-  `stage = adjudicate_observations AND target_kind = entity` (mirror claim
-  normalize index).
-- Staging already keyed by entity; ensure load-by-entity query is indexed
-  (`deployment_id, version_id, normalizer_version, subject_entity_id`) if not
-  already covered by PK/prefix.
+- Stage name unchanged; scale `worker-adjudicate-observations`.  
+- Handler dispatches: entity unit (`target_kind=entity` + fan-out version) vs
+  legacy document_version + pre-fanout version.  
+- Indexes: membership by version; processing partial index on entity target_kind
+  + fan-out component version + status; staging load-by-entity already PK-friendly.
 
 ## 6. Failure and recovery
 
 | Failure | Behavior | Recovery |
 | --- | --- | --- |
-| Entity job DLQ | Barrier blocks supersession | `ops replay` that processing_id |
-| Partial entity progress then crash | Staging rows remain for unapplied assertions | Retry entity job; idempotent apply |
-| Worker kill mid-running | Ledger retry/backoff; avoid zombie running (existing reclaim rules) | Same as other stages |
-| Empty entity job (staging already clear) | Succeed no-op | Barrier counts success |
-| Claim barrier race | Fan-out only inside claim complete TX when barrier ready | D88 complete path |
-| Wrong `normalizer_version` in payload | Load empty or wrong slice | Non-retryable or fail loud in handler validation |
+| Unit DLQ | Barrier blocks version | `ops replay` processing_id; membership maps unit → entity/version |
+| Crash mid-unit | Staging remains for unapplied assertions | Retry unit; idempotent apply + per-row staging delete |
+| Wrong target without membership | Non-retryable | Fix data / do not empty-succeed |
+| Legacy + fan-out both live | Forbidden by §5.7 | Ops exclusive cutover |
 
 ## 7. Observability
 
-- Cost keys remain entity/assertion scoped (extend
-  `observation_flush:{entity_id}:{index}:…` as today).
-- Metrics (impl): entity jobs pending/running/succeeded/dlq; assertions applied
-  per entity; hub size histogram; barrier wait age.
-- Ops: queue depth ≈ unfinished **entities** for this stage generation — correct
-  scale signal.
+- Queue depth ≈ unfinished **units** for the fan-out generation.  
+- Cost keys: `observation_flush:{unit_id|entity_id}:{index}:…`.  
+- Ops UI: resolve `unit_id` → subject entity + version via membership.
 
-## 8. Alternatives (summary)
+## 8. Alternatives
 
 | Option | Outcome |
 | --- | --- |
-| Version-serial only | Status quo; reject for BEAM-scale |
-| In-process parallel entities | Reject as sole v1 (D67) |
-| Parallel within entity | Reject (D43) |
-| Assertion-grain jobs | Reject v1 (row explosion; order still serial per entity) |
-| Commutative D43 | Out of scope |
+| Bare `target_id=subject_entity_id` | **Rejected** (D12 collision; dual review B1) |
+| Version-serial only | Status quo; reject for scale |
+| In-process pool without ledger | Reject (D67) |
+| Parallel apply within entity | Reject (D43) |
+| Assertion-grain ledger jobs | Reject (row explosion; order still serial) |
+| Global cross-version source-time scheduler | Out of scope |
+| Commutative D43 recompute | Out of scope |
 
-## 9. Implementation sketch (non-binding detail)
-
-1. Bump `OBS_FLUSH_VERSION` → `…:entity-fanout-1`.  
-2. `_enqueue_entity_obs_flush_fanout` from claim barrier path (replace single
-   version enqueue when staging non-empty).  
-3. `ObservationFlushHandler` split: entity path + legacy version path.  
-4. `WorkLedger.complete_entity_obs_flush`.  
-5. Migration for index.  
-6. Tests: fan-out set size; barrier blocks on missing/dlq; two entities
-   concurrent apply order independence; within-entity order; empty staging;
-   cutover legacy version handler; no LLM inside multi-assert TX (unit/architecture
-   test or inspect harness).  
-7. BEAM cutover runbook: stop serial version flush if running; enqueue entity
-   set from staging DISTINCT; scale adj workers.
-
-## 10. Test plan (minimum)
+## 9. Test plan (minimum)
 
 | Case | Expect |
 | --- | --- |
-| Claim barrier, 3 entities in staging | 3 entity jobs, 0 version fan-out job |
-| Claim barrier, 0 staging | supersession enqueued, 0 entity jobs |
-| 2/3 entities succeeded | no supersession |
-| 3/3 succeeded | supersession once (idempotent) |
-| Entity DLQ | no supersession |
-| Within entity reverse staging insert order | apply still `(asserted_at, claim_id)` |
-| Two entities parallel | both succeed; no cross lock on different entity keys |
-| Replay entity job after success | no-op success / no duplicate corrupt caps |
-| Legacy component version version-job | serial path still works for cutover |
+| Claim barrier, 3 staging entities | 3 units + 3 processing rows |
+| Two versions, same subject entity | 2 distinct unit_ids; both can succeed |
+| V2 after V1 succeeded for same entity | V2 still gets its own unit and apply |
+| Empty staging | empty signal + supersession + embed_claim |
+| 2/3 units succeeded | no supersession |
+| 3/3 succeeded | supersession + embed_claim once |
+| Unit DLQ | no supersession |
+| Within-entity multi-statement same claim | order by statement tie-break stable |
+| Forget doc A entities | version B’s units for shared entity still runnable |
+| No version-wide staging clear on entity path | peer entities’ staging intact |
+| Legacy non-terminal blocks fan-out | no unit insert |
+| Partial unit retry | no double evidence corruption |
 
-## 11. Out of scope
+## 10. Out of scope
 
-- Changing D43 ladder logic, `hub_top_k`, or model seats.  
-- Parallelizing ladder pair judgments.  
-- Relation supersession fan-out.  
-- UMC control-plane autoscaling policies (consumes queue depth only).
+- D43 ladder / `hub_top_k` / model seats.  
+- Parallel ladder pair judgments.  
+- Schedule-independent multi-version open-window recompute.  
+- Relation supersession fan-out.
 
-## 12. Open implementation choices (ops only)
+## 11. Success criteria
 
-| Choice | Guidance |
-| --- | --- |
-| Per-assertion TX vs prepare/apply | Prefer per-assertion unless measured otherwise |
-| Shared vs separate advisory locks for claim vs entity barriers | Fixed acquire order; document in impl PR |
-| Whether extractor_version is required on entity payload | Include if supersession/embed payload needs it; else omit |
-
-## 13. Success criteria
-
-- BEAM-shaped staging: entity queue drains with **N** adj workers at roughly
-  min(N, entity_count) concurrency; wall clock no longer ≈ sum(all entities).  
-- Largest hub still bounds critical path (expected).  
-- No increase in D43 correctness incidents under dual-review tests.  
-- Ops can DLQ/replay a single entity without replaying the version.
+- Entity units drain concurrently under N workers; wall clock ≉ sum(all entities).  
+- Largest hub still bounds critical path.  
+- No silent cross-version observation loss (dual-review B1 closed).  
+- Ops can replay one unit without replaying the version.
