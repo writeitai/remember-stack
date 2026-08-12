@@ -43,6 +43,7 @@ from rememberstack.spine.resolver import UnregisteredEntityTypeError
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.workers.base import ClaimNormalizeBarrier
+from rememberstack.workers.base import EntityObsFlushBarrier
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.reconcile import RECONCILE_VERSION
@@ -61,8 +62,11 @@ E3_NORMALIZER_VERSION: Final = (
 Temperature=0.0 is part of provenance.
 """
 
-OBS_FLUSH_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1"
-"""Post-barrier ordered observation flush stage version (D88 §5.6)."""
+OBS_FLUSH_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"
+"""Post-barrier observation flush generation (D88 §5.6; D90 entity fan-out)."""
+
+OBS_FLUSH_LEGACY_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1"
+"""Pre-D90 version-serial obs flush component version (cutover only)."""
 
 _MAX_INNER_NORMALIZE_ATTEMPTS: Final = 2
 """First generate plus one type-gate retry (D86)."""
@@ -713,7 +717,7 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
 
 
 class AdjudicateObservationsHandler:
-    """D88: post-barrier ordered observation flush (D43 apply-in-order)."""
+    """D88/D90: post-barrier observation flush (entity units or legacy serial)."""
 
     def __init__(
         self,
@@ -732,7 +736,71 @@ class AdjudicateObservationsHandler:
         self._chunker_version = chunker_version
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Flush staged observations sorted by claim asserted_at, then supersession."""
+        """Flush observations: D90 entity unit or legacy version-serial path."""
+        if work.target_kind is ProcessingTarget.ENTITY:
+            return self._handle_entity_unit(work=work, meter=meter)
+        if "entity-fanout" in work.component_version:
+            raise NonRetryableHandlerError(
+                f"version-level obs flush at entity-fanout generation is "
+                f"coordinator-only; work {work.processing_id} is document_version"
+            )
+        return self._handle_version_serial_legacy(work=work, meter=meter)
+
+    def _handle_entity_unit(
+        self, *, work: ClaimedWork, meter: CostMeterPort
+    ) -> HandlerOutcome:
+        """D90: apply one entity unit's staging under entity lock; barrier on complete."""
+        unit = self._facts.load_obs_flush_unit(unit_id=work.target_id)
+        if unit is None:
+            raise NonRetryableHandlerError(
+                f"obs flush unit {work.target_id} missing for work {work.processing_id}"
+            )
+        if unit["deployment_id"] != work.deployment_id:
+            raise NonRetryableHandlerError(
+                f"obs flush unit deployment mismatch for work {work.processing_id}"
+            )
+        entity_id = UUID(str(unit["subject_entity_id"]))
+        version_id = UUID(str(unit["version_id"]))
+        normalizer_version = str(unit["normalizer_version"])
+        representation_id = UUID(str(unit["representation_id"]))
+        chunker_version = str(unit["chunker_version"])
+        extractor_version = str(unit["extractor_version"])
+        # D90 §5.5–§5.6: lock entity, then load+apply+retire unapplied staging
+        # (entity-global total order). Snapshot-before-lock is forbidden.
+        self._observation_adjudicator.flush_entity_global_staging(
+            deployment_id=work.deployment_id,
+            subject_entity_id=entity_id,
+            meter=meter,
+            call_key=f"observation_flush:{entity_id}",
+        )
+        raw_doc_id = unit.get("doc_id")
+        doc_id = UUID(str(raw_doc_id)) if raw_doc_id is not None else None
+        membership_hash = unit.get("content_hash")
+        content_hash = (
+            str(membership_hash) if membership_hash is not None else work.content_hash
+        )
+        return HandlerOutcome(
+            follow_up=(),
+            entity_obs_flush_barrier=EntityObsFlushBarrier(
+                deployment_id=work.deployment_id,
+                version_id=version_id,
+                representation_id=representation_id,
+                unit_id=work.target_id,
+                subject_entity_id=entity_id,
+                normalizer_version=normalizer_version,
+                chunker_version=chunker_version,
+                extractor_version=extractor_version,
+                content_hash=content_hash,
+                lane=work.lane,
+                obs_flush_component_version=OBS_FLUSH_VERSION,
+                doc_id=doc_id,
+            ),
+        )
+
+    def _handle_version_serial_legacy(
+        self, *, work: ClaimedWork, meter: CostMeterPort
+    ) -> HandlerOutcome:
+        """Pre-D90 version-serial flush (cutover only; no version-wide clear)."""
         payload = work.payload or {}
         version_id = payload.get("version_id")
         representation_id = payload.get("representation_id")
@@ -748,6 +816,16 @@ class AdjudicateObservationsHandler:
             chunker_version = self._chunker_version
         version_uuid = UUID(version_id)
         rep_uuid = UUID(representation_id)
+        # Fail closed if D90 membership/state already exists for this version.
+        if self._facts.has_obs_flush_fanout(
+            deployment_id=work.deployment_id,
+            version_id=version_uuid,
+            normalizer_version=normalizer_version,
+        ):
+            raise NonRetryableHandlerError(
+                f"legacy obs flush refused: D90 fan-out already materialized "
+                f"for version {version_uuid} work {work.processing_id}"
+            )
         staged = self._facts.load_staged_observations(
             deployment_id=work.deployment_id,
             version_id=version_uuid,
@@ -761,7 +839,6 @@ class AdjudicateObservationsHandler:
                 )
             )
         for entity_id, assertions in by_entity.items():
-            # D43 apply + staging retire in one transaction (retry-safe).
             self._observation_adjudicator.add_observations(
                 deployment_id=work.deployment_id,
                 subject_entity_id=entity_id,
@@ -775,13 +852,8 @@ class AdjudicateObservationsHandler:
                     "normalizer_version": normalizer_version,
                 },
             )
-        # Safety net: drop any residual staging for this version/generation.
-        self._facts.clear_staged_observations(
-            deployment_id=work.deployment_id,
-            version_id=version_uuid,
-            normalizer_version=normalizer_version,
-        )
-        # Origin-claim set for supersession selector (D88 §5.5).
+        # D90: do not version-wide clear (would wipe peer entity progress under
+        # mixed cutover). Residual rows remain for ops / entity units.
         chunks = self._chunk_catalog.chunks_for_embedding(
             representation_id=rep_uuid, chunker_version=chunker_version
         )

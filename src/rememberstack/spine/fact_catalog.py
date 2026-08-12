@@ -476,6 +476,59 @@ class FactCatalog:
                 },
             )
 
+    def load_obs_flush_unit(self, *, unit_id: UUID) -> dict[str, object] | None:
+        """Load one D90 obs flush membership unit by unit_id."""
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(_SELECT_OBS_FLUSH_UNIT, {"unit_id": unit_id})
+                .mappings()
+                .first()
+            )
+        return dict(row) if row is not None else None
+
+    def has_obs_flush_fanout(
+        self, *, deployment_id: UUID, version_id: UUID, normalizer_version: str
+    ) -> bool:
+        """True when D90 version state or membership already exists for V."""
+        with self._engine.connect() as connection:
+            state = connection.execute(
+                _SELECT_OBS_FLUSH_VERSION_STATE_EXISTS,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "normalizer_version": normalizer_version,
+                },
+            ).scalar_one()
+            if bool(state):
+                return True
+            units = connection.execute(
+                _COUNT_OBS_FLUSH_UNITS,
+                {
+                    "deployment_id": deployment_id,
+                    "version_id": version_id,
+                    "normalizer_version": normalizer_version,
+                },
+            ).scalar_one()
+        return int(units) > 0
+
+    def load_unapplied_obs_staging_for_entity(
+        self, *, deployment_id: UUID, subject_entity_id: UUID
+    ) -> tuple[dict[str, object], ...]:
+        """Unapplied staging for entity among materialized non-DLQ units (D90)."""
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_UNAPPLIED_OBS_STAGING_FOR_ENTITY,
+                    {
+                        "deployment_id": deployment_id,
+                        "subject_entity_id": subject_entity_id,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(dict(row) for row in rows)
+
     def relation_ids_for_origin_claims(
         self,
         *,
@@ -675,6 +728,60 @@ _DELETE_OBS_STAGING_ENTITY = text(
       AND version_id = :version_id
       AND subject_entity_id = :subject_entity_id
       AND normalizer_version = :normalizer_version
+    """
+)
+
+_SELECT_OBS_FLUSH_UNIT = text(
+    """
+    SELECT unit_id, deployment_id, version_id, representation_id,
+           normalizer_version, chunker_version, extractor_version,
+           subject_entity_id, doc_id, content_hash, min_asserted_at
+    FROM obs_flush_entity_units
+    WHERE unit_id = :unit_id
+    """
+)
+
+_SELECT_OBS_FLUSH_VERSION_STATE_EXISTS = text(
+    """
+    SELECT EXISTS (
+      SELECT 1 FROM obs_flush_version_state
+      WHERE deployment_id = :deployment_id
+        AND version_id = :version_id
+        AND normalizer_version = :normalizer_version
+    )
+    """
+)
+
+_COUNT_OBS_FLUSH_UNITS = text(
+    """
+    SELECT count(*)::bigint
+    FROM obs_flush_entity_units
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_SELECT_UNAPPLIED_OBS_STAGING_FOR_ENTITY = text(
+    """
+    SELECT s.version_id, s.normalizer_version, s.claim_id, s.statement, s.doc_id,
+           c.asserted_at
+    FROM normalize_observation_staging s
+    JOIN claims c ON c.claim_id = s.claim_id
+    JOIN obs_flush_entity_units u
+      ON u.deployment_id = s.deployment_id
+     AND u.version_id = s.version_id
+     AND u.normalizer_version = s.normalizer_version
+     AND u.subject_entity_id = s.subject_entity_id
+    LEFT JOIN processing_state p
+      ON p.deployment_id = u.deployment_id
+     AND p.target_kind = 'entity'
+     AND p.target_id = u.unit_id
+     AND p.stage = 'adjudicate_observations'
+    WHERE s.deployment_id = :deployment_id
+      AND s.subject_entity_id = :subject_entity_id
+      AND (p.status IS NULL OR p.status <> 'dead_letter')
+    ORDER BY c.asserted_at NULLS LAST, s.claim_id, s.statement
     """
 )
 

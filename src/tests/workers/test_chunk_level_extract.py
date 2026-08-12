@@ -91,7 +91,9 @@ def test_extract_follow_up_fans_out_one_job_per_chunk() -> None:
         _chunk(ordinal=1, version_id=version_id),
         _chunk(ordinal=2, version_id=version_id),
     )
-    outcome = _extract_follow_up(work=work, source=source, chunks=chunks)
+    outcome = _extract_follow_up(
+        work=work, source=source, chunks=chunks, chunker_version="chunker-v"
+    )
     assert len(outcome.follow_up) == 3
     assert all(item.stage is PipelineStage.EXTRACT_CLAIMS for item in outcome.follow_up)
     assert all(item.target_kind is ProcessingTarget.CHUNK for item in outcome.follow_up)
@@ -118,12 +120,11 @@ def test_advisory_lock_uses_one_postgres_bigint_signature() -> None:
     assert ":k2" not in statement
 
 
-def test_extract_follow_up_zero_chunks_enqueues_obs_flush() -> None:
-    """Empty representations skip claim-grain normalize and open obs flush (D88)."""
-    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
-
+def test_extract_follow_up_zero_chunks_empty_obs_flush() -> None:
+    """Empty representations skip claim normalize via durable D90 empty_complete."""
     version_id = uuid4()
     deployment_id = uuid4()
+    representation_id = uuid4()
     work = ClaimedWork(
         processing_id=uuid4(),
         deployment_id=deployment_id,
@@ -137,14 +138,16 @@ def test_extract_follow_up_zero_chunks_enqueues_obs_flush() -> None:
         payload={},
     )
     source = _source(
-        deployment_id=deployment_id, version_id=version_id, representation_id=uuid4()
+        deployment_id=deployment_id,
+        version_id=version_id,
+        representation_id=representation_id,
     )
-    outcome = _extract_follow_up(work=work, source=source, chunks=())
-    assert len(outcome.follow_up) == 1
-    job = outcome.follow_up[0]
-    assert job.stage is PipelineStage.ADJUDICATE_OBSERVATIONS
-    assert job.target_kind is ProcessingTarget.DOCUMENT_VERSION
-    assert job.target_id == version_id
-    assert job.component_version == OBS_FLUSH_VERSION
-    assert job.payload is not None
-    assert job.payload.get("normalizer_version") == E3_NORMALIZER_VERSION
+    outcome = _extract_follow_up(
+        work=work, source=source, chunks=(), chunker_version="chunker-v"
+    )
+    assert outcome.follow_up == ()
+    assert outcome.empty_obs_flush is not None
+    assert outcome.empty_obs_flush.version_id == version_id
+    assert outcome.empty_obs_flush.representation_id == representation_id
+    assert outcome.empty_obs_flush.normalizer_version == E3_NORMALIZER_VERSION
+    assert outcome.empty_obs_flush.chunker_version == "chunker-v"

@@ -321,7 +321,6 @@ class WorkLedger:
         D84). When every expected claim has succeeded at the fan-out normalizer
         version, enqueues the ordered observation flush stage for the version.
         """
-        from rememberstack.model import ProcessingTarget
         from rememberstack.workers.base import ClaimNormalizeBarrier
 
         if not isinstance(barrier, ClaimNormalizeBarrier):
@@ -402,30 +401,232 @@ class WorkLedger:
                         normalize_version=barrier.normalize_component_version,
                     ):
                         continue
-                    outcomes.append(
-                        enqueue_on(
+                    outcomes.extend(
+                        _enqueue_entity_obs_flush_fanout(
                             connection=connection,
-                            work=EnqueueWork(
-                                deployment_id=deployment_id,
-                                target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                                target_id=version_id,
-                                stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                                component_version=barrier.obs_flush_component_version,
-                                content_hash=barrier.content_hash,
-                                lane=barrier.lane,
-                                payload={
-                                    "version_id": str(version_id),
-                                    "representation_id": str(representation_id),
-                                    "doc_id": str(candidate["doc_id"]),
-                                    "normalizer_version": (
-                                        barrier.normalize_component_version
-                                    ),
-                                    "chunker_version": chunker_version,
-                                    "extractor_version": barrier.extractor_version,
-                                },
+                            deployment_id=deployment_id,
+                            version_id=version_id,
+                            representation_id=representation_id,
+                            chunker_version=chunker_version,
+                            extractor_version=barrier.extractor_version,
+                            normalize_component_version=(
+                                barrier.normalize_component_version
                             ),
+                            obs_flush_component_version=(
+                                barrier.obs_flush_component_version
+                            ),
+                            content_hash=barrier.content_hash,
+                            lane=barrier.lane,
+                            doc_id=UUID(str(candidate["doc_id"])),
                         )
                     )
+            return tuple(outcomes)
+
+    def complete_entity_obs_flush(
+        self,
+        *,
+        processing_id: UUID,
+        barrier: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """D90: mark one entity obs-flush unit succeeded; maybe open supersession."""
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+        from rememberstack.workers.base import EntityObsFlushBarrier
+        from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
+
+        if not isinstance(barrier, EntityObsFlushBarrier):
+            raise TypeError("barrier must be EntityObsFlushBarrier")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            connection.execute(
+                _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                {"representation_id": barrier.representation_id},
+            )
+            updated = connection.execute(
+                _COMPLETE, {"processing_id": processing_id}
+            ).rowcount
+            if updated == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            if not _entity_obs_flush_barrier_ready(
+                connection=connection,
+                deployment_id=barrier.deployment_id,
+                version_id=barrier.version_id,
+                normalizer_version=barrier.normalizer_version,
+                obs_flush_version=barrier.obs_flush_component_version,
+            ):
+                return tuple(outcomes)
+            # Durable expected-set marker must already exist from fan-out.
+            # Do not invent barrier_complete from handler-supplied coordinates.
+            existing_status = connection.execute(
+                _SELECT_OBS_FLUSH_VERSION_STATE,
+                {
+                    "deployment_id": barrier.deployment_id,
+                    "version_id": barrier.version_id,
+                    "normalizer_version": barrier.normalizer_version,
+                },
+            ).scalar_one_or_none()
+            if existing_status is None:
+                return tuple(outcomes)
+            if existing_status not in ("materialized", "barrier_complete"):
+                return tuple(outcomes)
+            connection.execute(
+                _UPSERT_OBS_FLUSH_VERSION_STATE,
+                {
+                    "deployment_id": barrier.deployment_id,
+                    "version_id": barrier.version_id,
+                    "normalizer_version": barrier.normalizer_version,
+                    "representation_id": barrier.representation_id,
+                    "chunker_version": barrier.chunker_version,
+                    "extractor_version": barrier.extractor_version,
+                    "content_hash": barrier.content_hash,
+                    "fanout_status": "barrier_complete",
+                },
+            )
+            doc_id = barrier.doc_id
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=barrier.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=barrier.version_id,
+                        stage=PipelineStage.ADJUDICATE_SUPERSESSION,
+                        component_version=ADJUDICATOR_VERSION,
+                        content_hash=barrier.content_hash,
+                        lane=barrier.lane,
+                        payload={
+                            "version_id": str(barrier.version_id),
+                            "representation_id": str(barrier.representation_id),
+                            "doc_id": str(doc_id) if doc_id is not None else None,
+                            "normalizer_version": barrier.normalizer_version,
+                            "chunker_version": barrier.chunker_version,
+                        },
+                    ),
+                )
+            )
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=barrier.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=barrier.version_id,
+                        stage=PipelineStage.EMBED_CLAIM,
+                        component_version=P1_EMBED_CLAIMS_VERSION,
+                        content_hash=barrier.content_hash,
+                        lane=barrier.lane,
+                        payload={
+                            "version_id": str(barrier.version_id),
+                            "representation_id": str(barrier.representation_id),
+                        },
+                    ),
+                )
+            )
+            return tuple(outcomes)
+
+    def complete_empty_obs_flush(
+        self,
+        *,
+        processing_id: UUID,
+        empty: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """D90: complete upstream work and durable-empty obs flush for a version."""
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+        from rememberstack.workers.base import EmptyObsFlushComplete
+        from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
+
+        if not isinstance(empty, EmptyObsFlushComplete):
+            raise TypeError("empty must be EmptyObsFlushComplete")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            connection.execute(
+                _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                {"representation_id": empty.representation_id},
+            )
+            updated = connection.execute(
+                _COMPLETE, {"processing_id": processing_id}
+            ).rowcount
+            if updated == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            existing = connection.execute(
+                _SELECT_OBS_FLUSH_VERSION_STATE,
+                {
+                    "deployment_id": empty.deployment_id,
+                    "version_id": empty.version_id,
+                    "normalizer_version": empty.normalizer_version,
+                },
+            ).first()
+            if existing is None:
+                connection.execute(
+                    _UPSERT_OBS_FLUSH_VERSION_STATE,
+                    {
+                        "deployment_id": empty.deployment_id,
+                        "version_id": empty.version_id,
+                        "normalizer_version": empty.normalizer_version,
+                        "representation_id": empty.representation_id,
+                        "chunker_version": empty.chunker_version,
+                        "extractor_version": empty.extractor_version,
+                        "content_hash": empty.content_hash,
+                        "fanout_status": "empty_complete",
+                    },
+                )
+            # Always ensure supersession + embed are present for empty paths.
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=empty.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=empty.version_id,
+                        stage=PipelineStage.ADJUDICATE_SUPERSESSION,
+                        component_version=ADJUDICATOR_VERSION,
+                        content_hash=empty.content_hash,
+                        lane=empty.lane,
+                        payload={
+                            "version_id": str(empty.version_id),
+                            "representation_id": str(empty.representation_id),
+                            "doc_id": (
+                                str(empty.doc_id) if empty.doc_id is not None else None
+                            ),
+                            "normalizer_version": empty.normalizer_version,
+                            "chunker_version": empty.chunker_version,
+                        },
+                    ),
+                )
+            )
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=empty.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=empty.version_id,
+                        stage=PipelineStage.EMBED_CLAIM,
+                        component_version=P1_EMBED_CLAIMS_VERSION,
+                        content_hash=empty.content_hash,
+                        lane=empty.lane,
+                        payload={
+                            "version_id": str(empty.version_id),
+                            "representation_id": str(empty.representation_id),
+                        },
+                    ),
+                )
+            )
             return tuple(outcomes)
 
     def fail(
@@ -693,7 +894,6 @@ def _enqueue_claim_normalize_fanout(
     # Lazy import: workers.e3 does not import WorkLedger at module load.
     from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 
-    obs_flush_version = OBS_FLUSH_VERSION
     rows = (
         connection.execute(
             _SELECT_CLAIMS_FOR_NORMALIZE_FANOUT,
@@ -709,29 +909,20 @@ def _enqueue_claim_normalize_fanout(
         .all()
     )
     if not rows:
-        # Empty extract: skip claim grain; open obs-flush → supersession → embed.
-        return [
-            enqueue_on(
-                connection=connection,
-                work=EnqueueWork(
-                    deployment_id=deployment_id,
-                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                    target_id=version_id,
-                    stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                    component_version=obs_flush_version,
-                    content_hash=content_hash,
-                    lane=lane,
-                    payload={
-                        "version_id": str(version_id),
-                        "representation_id": str(representation_id),
-                        "doc_id": None,
-                        "normalizer_version": normalize_component_version,
-                        "chunker_version": chunker_version,
-                        "extractor_version": extractor_version,
-                    },
-                ),
-            )
-        ]
+        # Empty extract: skip claim grain; open empty obs-flush → super + embed.
+        return _enqueue_entity_obs_flush_fanout(
+            connection=connection,
+            deployment_id=deployment_id,
+            version_id=version_id,
+            representation_id=representation_id,
+            chunker_version=chunker_version,
+            extractor_version=extractor_version,
+            normalize_component_version=normalize_component_version,
+            obs_flush_component_version=OBS_FLUSH_VERSION,
+            content_hash=content_hash,
+            lane=lane,
+            doc_id=None,
+        )
     outcomes: list[EnqueueOutcome] = []
     doc_id = rows[0]["doc_id"]
     for row in rows:
@@ -767,6 +958,89 @@ def _enqueue_claim_normalize_fanout(
         extractor_version=extractor_version,
         normalize_version=normalize_component_version,
     ):
+        outcomes.extend(
+            _enqueue_entity_obs_flush_fanout(
+                connection=connection,
+                deployment_id=deployment_id,
+                version_id=version_id,
+                representation_id=representation_id,
+                chunker_version=chunker_version,
+                extractor_version=extractor_version,
+                normalize_component_version=normalize_component_version,
+                obs_flush_component_version=OBS_FLUSH_VERSION,
+                content_hash=content_hash,
+                lane=lane,
+                doc_id=UUID(str(doc_id)),
+            )
+        )
+    return outcomes
+
+
+def _enqueue_entity_obs_flush_fanout(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    version_id: UUID,
+    representation_id: UUID,
+    chunker_version: str,
+    extractor_version: str,
+    normalize_component_version: str,
+    obs_flush_component_version: str,
+    content_hash: str,
+    lane: ProcessingLane | None,
+    doc_id: UUID | None,
+) -> list[EnqueueOutcome]:
+    """D90: materialize entity units + processing rows, or empty super+embed."""
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+    from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
+
+    # Refuse if legacy version-serial flush still active for this version.
+    legacy = connection.execute(
+        _COUNT_LEGACY_OBS_FLUSH,
+        {"deployment_id": deployment_id, "version_id": version_id},
+    ).scalar_one()
+    if int(legacy) > 0:
+        return []
+
+    existing = connection.execute(
+        _SELECT_OBS_FLUSH_VERSION_STATE,
+        {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "normalizer_version": normalize_component_version,
+        },
+    ).first()
+    if existing is not None:
+        return []
+
+    entity_rows = (
+        connection.execute(
+            _SELECT_STAGING_ENTITIES_FOR_FANOUT,
+            {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "normalizer_version": normalize_component_version,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    outcomes: list[EnqueueOutcome] = []
+    if not entity_rows:
+        connection.execute(
+            _UPSERT_OBS_FLUSH_VERSION_STATE,
+            {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "normalizer_version": normalize_component_version,
+                "representation_id": representation_id,
+                "chunker_version": chunker_version,
+                "extractor_version": extractor_version,
+                "content_hash": content_hash,
+                "fanout_status": "empty_complete",
+            },
+        )
         outcomes.append(
             enqueue_on(
                 connection=connection,
@@ -774,14 +1048,96 @@ def _enqueue_claim_normalize_fanout(
                     deployment_id=deployment_id,
                     target_kind=ProcessingTarget.DOCUMENT_VERSION,
                     target_id=version_id,
-                    stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
-                    component_version=obs_flush_version,
+                    stage=PipelineStage.ADJUDICATE_SUPERSESSION,
+                    component_version=ADJUDICATOR_VERSION,
                     content_hash=content_hash,
                     lane=lane,
                     payload={
                         "version_id": str(version_id),
                         "representation_id": str(representation_id),
-                        "doc_id": str(doc_id),
+                        "doc_id": str(doc_id) if doc_id is not None else None,
+                        "normalizer_version": normalize_component_version,
+                        "chunker_version": chunker_version,
+                    },
+                ),
+            )
+        )
+        outcomes.append(
+            enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
+                    deployment_id=deployment_id,
+                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                    target_id=version_id,
+                    stage=PipelineStage.EMBED_CLAIM,
+                    component_version=P1_EMBED_CLAIMS_VERSION,
+                    content_hash=content_hash,
+                    lane=lane,
+                    payload={
+                        "version_id": str(version_id),
+                        "representation_id": str(representation_id),
+                    },
+                ),
+            )
+        )
+        return outcomes
+
+    connection.execute(
+        _UPSERT_OBS_FLUSH_VERSION_STATE,
+        {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "normalizer_version": normalize_component_version,
+            "representation_id": representation_id,
+            "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
+            "content_hash": content_hash,
+            "fanout_status": "materialized",
+        },
+    )
+    for row in entity_rows:
+        unit_id = uuid4()
+        connection.execute(
+            _INSERT_OBS_FLUSH_UNIT,
+            {
+                "unit_id": unit_id,
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "representation_id": representation_id,
+                "normalizer_version": normalize_component_version,
+                "chunker_version": chunker_version,
+                "extractor_version": extractor_version,
+                "subject_entity_id": row["subject_entity_id"],
+                "doc_id": row["doc_id"],
+                "content_hash": content_hash,
+                "min_asserted_at": row["min_asserted_at"],
+            },
+        )
+        resolved_unit_id = connection.execute(
+            _SELECT_OBS_FLUSH_UNIT_ID,
+            {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "normalizer_version": normalize_component_version,
+                "subject_entity_id": row["subject_entity_id"],
+            },
+        ).scalar_one()
+        outcomes.append(
+            enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
+                    deployment_id=deployment_id,
+                    target_kind=ProcessingTarget.ENTITY,
+                    target_id=resolved_unit_id,
+                    stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
+                    component_version=obs_flush_component_version,
+                    content_hash=content_hash,
+                    lane=lane,
+                    payload={
+                        "unit_id": str(resolved_unit_id),
+                        "version_id": str(version_id),
+                        "representation_id": str(representation_id),
+                        "subject_entity_id": str(row["subject_entity_id"]),
                         "normalizer_version": normalize_component_version,
                         "chunker_version": chunker_version,
                         "extractor_version": extractor_version,
@@ -790,6 +1146,37 @@ def _enqueue_claim_normalize_fanout(
             )
         )
     return outcomes
+
+
+def _entity_obs_flush_barrier_ready(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    version_id: UUID,
+    normalizer_version: str,
+    obs_flush_version: str,
+) -> bool:
+    """True when every membership unit has a succeeded entity flush row."""
+    expected = connection.execute(
+        _COUNT_OBS_FLUSH_UNITS,
+        {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "normalizer_version": normalizer_version,
+        },
+    ).scalar_one()
+    if int(expected) == 0:
+        return False
+    ready = connection.execute(
+        _COUNT_OBS_FLUSH_UNITS_SUCCEEDED,
+        {
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "normalizer_version": normalizer_version,
+            "obs_flush_version": obs_flush_version,
+        },
+    ).scalar_one()
+    return int(ready) == int(expected)
 
 
 def _normalize_claim_barrier_ready(
@@ -1317,5 +1704,120 @@ _BARRIER_READY_CHUNKS = text(
                   AND cl.extractor_version = :extractor_version
             )
           )
+    """
+)
+
+
+_SELECT_STAGING_ENTITIES_FOR_FANOUT = text(
+    """
+    SELECT s.subject_entity_id,
+           (array_agg(s.doc_id ORDER BY s.claim_id))[1] AS doc_id,
+           min(c.asserted_at) AS min_asserted_at
+    FROM normalize_observation_staging s
+    JOIN claims c ON c.claim_id = s.claim_id
+    WHERE s.deployment_id = :deployment_id
+      AND s.version_id = :version_id
+      AND s.normalizer_version = :normalizer_version
+    GROUP BY s.subject_entity_id
+    ORDER BY s.subject_entity_id
+    """
+)
+
+_INSERT_OBS_FLUSH_UNIT = text(
+    """
+    INSERT INTO obs_flush_entity_units (
+      unit_id, deployment_id, version_id, representation_id,
+      normalizer_version, chunker_version, extractor_version,
+      subject_entity_id, doc_id, content_hash, min_asserted_at
+    ) VALUES (
+      :unit_id, :deployment_id, :version_id, :representation_id,
+      :normalizer_version, :chunker_version, :extractor_version,
+      :subject_entity_id, :doc_id, :content_hash, :min_asserted_at
+    )
+    ON CONFLICT (deployment_id, version_id, normalizer_version, subject_entity_id)
+    DO NOTHING
+    """
+)
+
+_SELECT_OBS_FLUSH_UNIT_ID = text(
+    """
+    SELECT unit_id
+    FROM obs_flush_entity_units
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
+      AND subject_entity_id = :subject_entity_id
+    """
+)
+
+_UPSERT_OBS_FLUSH_VERSION_STATE = text(
+    """
+    INSERT INTO obs_flush_version_state (
+      deployment_id, version_id, normalizer_version, representation_id,
+      chunker_version, extractor_version, content_hash, fanout_status,
+      completed_at
+    ) VALUES (
+      :deployment_id, :version_id, :normalizer_version, :representation_id,
+      :chunker_version, :extractor_version, :content_hash, :fanout_status,
+      CASE WHEN :fanout_status IN ('empty_complete', 'barrier_complete')
+           THEN now() ELSE NULL END
+    )
+    ON CONFLICT (deployment_id, version_id, normalizer_version) DO UPDATE
+    SET fanout_status = EXCLUDED.fanout_status,
+        completed_at = EXCLUDED.completed_at,
+        representation_id = EXCLUDED.representation_id,
+        chunker_version = EXCLUDED.chunker_version,
+        extractor_version = EXCLUDED.extractor_version,
+        content_hash = EXCLUDED.content_hash
+    """
+)
+
+_SELECT_OBS_FLUSH_VERSION_STATE = text(
+    """
+    SELECT fanout_status
+    FROM obs_flush_version_state
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_COUNT_LEGACY_OBS_FLUSH = text(
+    """
+    SELECT count(*)::bigint
+    FROM processing_state
+    WHERE deployment_id = :deployment_id
+      AND target_kind = 'document_version'
+      AND target_id = :version_id
+      AND stage = 'adjudicate_observations'
+      AND component_version NOT LIKE '%entity-fanout%'
+      AND status IN ('pending', 'running', 'failed')
+    """
+)
+
+_COUNT_OBS_FLUSH_UNITS = text(
+    """
+    SELECT count(*)::bigint
+    FROM obs_flush_entity_units
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND normalizer_version = :normalizer_version
+    """
+)
+
+_COUNT_OBS_FLUSH_UNITS_SUCCEEDED = text(
+    """
+    SELECT count(*)::bigint
+    FROM obs_flush_entity_units u
+    JOIN processing_state p
+      ON p.deployment_id = u.deployment_id
+     AND p.target_kind = 'entity'
+     AND p.target_id = u.unit_id
+     AND p.stage = 'adjudicate_observations'
+     AND p.component_version = :obs_flush_version
+     AND p.status = 'succeeded'
+    WHERE u.deployment_id = :deployment_id
+      AND u.version_id = :version_id
+      AND u.normalizer_version = :normalizer_version
     """
 )

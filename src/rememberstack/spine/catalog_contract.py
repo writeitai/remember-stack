@@ -143,6 +143,8 @@ EXPECTED_TABLES: Final = (
     "mentions",
     "normalize_observation_staging",
     "merge_events",
+    "obs_flush_entity_units",
+    "obs_flush_version_state",
     "observation_adjudications",
     "observation_evidence",
     "observations",
@@ -329,7 +331,7 @@ EMPTY_AT_HEAD: Final = (
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 53, "f": 128, "p": 67, "u": 34, "x": 1}
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 54, "f": 128, "p": 69, "u": 35, "x": 1}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),

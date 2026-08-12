@@ -1254,6 +1254,26 @@ _POSTGRES_SCRUB = (
     ),
     text(
         """
+        DELETE FROM obs_flush_entity_units
+        WHERE deployment_id = :deployment_id
+          AND (doc_id = :doc_id OR version_id IN (
+            SELECT version_id FROM document_versions
+            WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          ))
+        """
+    ),
+    text(
+        """
+        DELETE FROM obs_flush_version_state
+        WHERE deployment_id = :deployment_id
+          AND version_id IN (
+            SELECT version_id FROM document_versions
+            WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          )
+        """
+    ),
+    text(
+        """
         DELETE FROM relations
         WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)
         """
