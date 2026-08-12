@@ -53,7 +53,7 @@ Exported in the shell that invokes the CLI (values live in the host's
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=150     # allow long compound retrieval requests
+REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V13 transport budget
 ```
 
 `run_shard.sh` sets every non-secret V13 ingest binding itself: Luna for the
