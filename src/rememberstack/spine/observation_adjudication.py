@@ -627,15 +627,17 @@ class ObservationAdjudicator:
                     statement=statement,
                     valid_from=asserted_at,
                 )
-                # D90 §5.5.3: evidence already on O with asserted_at > boundary
-                # must re-open as subsequent slices (staggered multi-version).
+                # D90 §5.5.3: evidence already on O after the incoming order
+                # key must re-enter the ladder (staggered multi-version).
                 self._resplit_later_evidence(
                     connection=connection,
                     deployment_id=deployment_id,
                     subject_entity_id=subject_entity_id,
                     capped_observation_id=candidate_id,
                     capped_statement=str(candidate["statement"]),
-                    boundary=asserted_at,
+                    boundary_asserted_at=asserted_at,
+                    boundary_claim_id=claim_id,
+                    boundary_statement=statement,
                     candidates=candidates,
                     meter=meter,
                 )
@@ -890,7 +892,9 @@ class ObservationAdjudicator:
         subject_entity_id: UUID,
         capped_observation_id: UUID,
         capped_statement: str,
-        boundary: object,
+        boundary_asserted_at: object,
+        boundary_claim_id: UUID,
+        boundary_statement: str,
         candidates: list[dict[str, object]],
         meter: CostMeterPort | None,
     ) -> None:
@@ -900,6 +904,8 @@ class ObservationAdjudicator:
         ``t2:B``, evidence for ``t3`` must re-enter the D43 ladder so open B is
         capped and ``A[t3, ∞)`` reopens — not a blind insert that leaves B open
         forever alongside A.
+
+        Ordering matches staging: ``(asserted_at NULLS LAST, claim_id, statement)``.
         """
         later_rows = (
             connection.execute(
@@ -915,11 +921,16 @@ class ObservationAdjudicator:
         moved_any = False
         for row in later_rows:
             claim_asserted = row["asserted_at"]
-            # Keep evidence that is not strictly later than the cap boundary
-            # (including undated/undated pairs and equal timestamps).
-            if not _is_strictly_later(claim_asserted, boundary):
-                continue
             claim_id = UUID(str(row["claim_id"]))
+            if not _is_later_in_total_order(
+                left_at=claim_asserted,
+                left_claim_id=claim_id,
+                left_statement=capped_statement,
+                right_at=boundary_asserted_at,
+                right_claim_id=boundary_claim_id,
+                right_statement=boundary_statement,
+            ):
+                continue
             doc_id = UUID(str(row["doc_id"]))
             connection.execute(
                 _DELETE_EVIDENCE_CLAIM,
@@ -1047,22 +1058,35 @@ def _is_strictly_earlier(left: object, right: object) -> bool:
         return False
 
 
-def _is_strictly_later(left: object, right: object) -> bool:
-    """True when ``left`` is strictly after ``right`` in source total order.
+def _is_later_in_total_order(
+    *,
+    left_at: object,
+    left_claim_id: UUID,
+    left_statement: str,
+    right_at: object,
+    right_claim_id: UUID,
+    right_statement: str,
+) -> bool:
+    """True when left is strictly after right in staging total order.
 
-    Dated values sort before undated (NULLS LAST). An undated left is later
-    than any dated right; two undated values are not strictly ordered.
+    Order key: ``(asserted_at NULLS LAST, claim_id, statement)`` — same as
+    ``ORDER BY c.asserted_at NULLS LAST, s.claim_id, s.statement``.
     """
-    if left is None and right is None:
+    if left_at is None and right_at is not None:
+        return True
+    if left_at is not None and right_at is None:
         return False
-    if left is None:
-        return right is not None
-    if right is None:
-        return False
-    try:
-        return left > right  # type: ignore[operator]
-    except TypeError:
-        return False
+    if left_at is not None and right_at is not None:
+        try:
+            if left_at > right_at:  # type: ignore[operator]
+                return True
+            if left_at < right_at:  # type: ignore[operator]
+                return False
+        except TypeError:
+            return False
+    if left_claim_id != right_claim_id:
+        return left_claim_id > right_claim_id
+    return left_statement > right_statement
 
 
 _LOCK_ENTITY = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
