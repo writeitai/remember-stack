@@ -158,19 +158,21 @@ version. Missing membership → non-retryable.
 
 ### 5.3 Handler (entity unit)
 
-1. `unit_id = work.target_id`; load membership; validate deployment matches.
-2. Load staging for
-   `(deployment_id, version_id, subject_entity_id, normalizer_version)` ordered by  
-   **`(asserted_at NULLS LAST, claim_id, statement)`**.
-3. If no staging rows: succeed (slice already applied / cleared by **this**
-   unit’s prior progress only — see §5.7 exclusivity).
-4. Apply D43 for that entity only, total order from step 2, under entity lock
-   for the **entire unit apply** (§5.7).
-5. On full unit success: ensure no staging remains for that slice; return
-   success to worker (completion via `complete_entity_obs_flush`).
+1. `unit_id = work.target_id`; load membership; validate deployment matches;
+   note `subject_entity_id = E`.
+2. **Single-flight entity-global drain** under entity lock for E (§5.5–§5.6):
+   load **all unapplied staging** for E whose `(version_id, normalizer_version)`
+   has a non-dead-letter membership unit (not incomplete pre-barrier staging).
+   Order by **`(asserted_at NULLS LAST, claim_id, statement)`**.
+3. If no unapplied rows remain for this unit’s slice: succeed no-op for this
+   `unit_id` only (siblings drained earlier self-complete the same way when
+   claimed; do not force-complete foreign `pending` rows).
+4. Apply D43 for each staging row in that global order; after each cap of an
+   open observation, apply §5.5.3 late-arrival re-split if needed.
+5. Delete each staging row in the same durable write as its successful apply.
+6. Return success for the **claimed** `unit_id` via `complete_entity_obs_flush`.
 
-Do **not** call version-wide `clear_staged_observations`. Only entity-scoped
-(or per-assertion-scoped) deletes for this unit’s slice.
+Do **not** call version-wide `clear_staged_observations`.
 
 ### 5.4 Completion + barrier (`complete_entity_obs_flush`)
 
