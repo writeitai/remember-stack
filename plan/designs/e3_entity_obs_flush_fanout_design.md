@@ -52,22 +52,27 @@ ids are not version-scoped
    `(asserted_at NULLS LAST, claim_id, statement)`  
    under the entity advisory lock for the whole unit apply (§5.7).
 6. **Across different `subject_entity_id` values:** concurrent units are allowed.
-7. **Across different versions of the same entity:** concurrent units are allowed
-   and are serialized by the entity lock for writes. Cross-version **source-time
-   total order of apply** is **not** guaranteed by D90 and is **not worse than
-   today’s** concurrent version-level flushes (already multi-lease). Repair of
-   reverse arrival uses existing D43 `_pull_valid_from_earlier` / open-slice
-   rules. A schedule-independent multi-version recompute of open windows is
-   **out of scope** (separate design if product requires it).
-8. **Empty staging:** no units; durable empty completion for the version; enqueue
-   supersession **and** `embed_claim` as sibling follow-ups (same topology as
-   today’s flush handler — not supersession-only).
+7. **Across different versions of the same entity:** units may exist
+   concurrently in the ledger, but **at most one unit for a given
+   `subject_entity_id` may be `running` at a time**, and pending units for that
+   entity are claimed in order of  
+   `(min_asserted_at of the unit’s staging slice, version_id, unit_id)`  
+   with `min_asserted_at` treating NULL as last (§5.5). In addition, D43 reverse
+   arrival must **recompute open windows for that entity from durable
+   observations ordered by the same total order** after each applied assertion
+   that lands earlier than an existing open slice (§5.5.1) — today’s predecessor
+   repair alone is not enough for three-or-more out-of-order state changes.
+8. **Empty staging:** no units; durable empty completion **only** via
+   `obs_flush_version_state` (or equivalent), **never** via a
+   `document_version` processing row at the fan-out component version (§5.1,
+   §5.8). Enqueue supersession **and** `embed_claim` as sibling follow-ups.
 9. **Legacy** version-serial flush at pre-`:entity-fanout-1` component version
    remains until drained. Fan-out and legacy for the **same** version must not
-   both run (§5.8).
+   both run (§5.8). Zero-chunk / empty-extract call sites must not insert
+   `document_version` rows at the fan-out component version (§5.8).
 10. **LLM / TX:** bind per-assertion durable writes **without** releasing the
     entity lock mid-unit in a way that allows another writer to interleave
-    *inside* this unit’s ordered sequence (§5.7).
+    *inside* this unit’s ordered sequence (§5.6).
 
 ## 2. Problem
 
@@ -103,20 +108,25 @@ Binding columns (logical; exact SQL in migration):
 | `unit_id` | PK; ledger `target_id` |
 | `deployment_id` | tenant |
 | `version_id` | document version being flushed |
+| `representation_id` | required for barrier lock + supersession/embed reconstruction |
 | `normalizer_version` | claim-normalize generation that wrote staging |
+| `chunker_version` | required for supersession origin-claim reconstruction |
+| `extractor_version` | required when embed/supersession payload needs it; store always |
 | `subject_entity_id` | D43 block key |
-| `doc_id` | optional; for forget / payload-free handler |
+| `doc_id` | for forget / operator display |
 | `content_hash` | copy from barrier parent |
+| `min_asserted_at` | min claim `asserted_at` in this unit’s staging at fan-out (null if all undated); claim-order key |
 | `created_at` | audit |
 
 **Unique:** `(deployment_id, version_id, normalizer_version, subject_entity_id)`.
 
-**Optional durable empty marker:** either a version-level processing row at
-fan-out component version with `target_kind=document_version` used **only** for
-empty completion / readiness timestamp, or a row in a small
-`obs_flush_version_state` table `{deployment_id, version_id, normalizer_version,
-fanout_status, completed_at}`. Impl picks one; design requires a **durable empty
-success signal** that readiness can read without scanning staging.
+**Durable empty / fan-out state (binding):** table `obs_flush_version_state`
+keyed `(deployment_id, version_id, normalizer_version)` with columns at least
+`representation_id`, `chunker_version`, `extractor_version`, `content_hash`,
+`fanout_status` (`materialized` | `empty_complete` | `barrier_complete`),
+`completed_at`. **Never** use a `processing_state` row with
+`target_kind=document_version` at the fan-out component version as this signal
+(that shape is reserved for legacy pre-fanout handlers only).
 
 ### 5.2 Fan-out (claim barrier transaction)
 
@@ -127,19 +137,23 @@ When claim barrier is ready for version V + normalizer generation N:
    legacy to finish (or ops dead-letters legacy first). Mutual exclusion §5.8.
 2. If membership already materialized for (V, N) → do not re-insert units;
    only ensure barrier evaluation can still fire (idempotent complete path).
-3. Else `SELECT DISTINCT subject_entity_id, doc_id …` from staging for (V, N).
-4. **Empty:** write empty completion signal; enqueue `adjudicate_supersession` +
-   `embed_claim` (sibling follow-ups, same stages/versions as
-   `AdjudicateObservationsHandler` today).
+3. Else `SELECT DISTINCT subject_entity_id, doc_id …` plus per-entity
+   `min(asserted_at)` from staging joined to claims for (V, N). Coordinates
+   `representation_id`, `chunker_version`, `extractor_version` come from the
+   claim-barrier parent payload / representation catalog (must be known at
+   barrier time — same as today’s version flush payload).
+4. **Empty:** upsert `obs_flush_version_state` to `empty_complete`; enqueue
+   `adjudicate_supersession` + `embed_claim` (sibling follow-ups, same stages and
+   component versions as `AdjudicateObservationsHandler` today).
 5. **Non-empty:** insert one membership row + one processing_state row per
-   entity (`target_kind=entity`, `target_id=unit_id`, fan-out component version).
-   Set fan-out materialized.
+   entity (`target_kind=entity`, `target_id=unit_id`, fan-out component version);
+   set `obs_flush_version_state.fanout_status=materialized`.
 
 `content_hash` / `lane` from barrier parent work.
 
-Payload on the processing row is **cache only**. Handler **must** load
-coordinates from membership by `unit_id` (target_id). Missing membership →
-non-retryable.
+Payload on the processing row is **cache only**. Handler and barrier **must**
+load coordinates from membership / `obs_flush_version_state` by `unit_id` /
+version. Missing membership → non-retryable.
 
 ### 5.3 Handler (entity unit)
 
@@ -148,7 +162,7 @@ non-retryable.
    `(deployment_id, version_id, subject_entity_id, normalizer_version)` ordered by  
    **`(asserted_at NULLS LAST, claim_id, statement)`**.
 3. If no staging rows: succeed (slice already applied / cleared by **this**
-   unit’s prior progress only — see §5.8 exclusivity).
+   unit’s prior progress only — see §5.7 exclusivity).
 4. Apply D43 for that entity only, total order from step 2, under entity lock
    for the **entire unit apply** (§5.7).
 5. On full unit success: ensure no staging remains for that slice; return
@@ -170,20 +184,43 @@ One transaction:
    normalizer_version)` has a processing row at fan-out component version with
    `status=succeeded`. Any membership unit without a row, or with
    pending/running/failed/dead_letter, is **not** ready.
-4. If ready → enqueue **once** (idempotent):
+4. If ready → enqueue **once** (idempotent), loading coordinates from
+   `obs_flush_version_state` + membership (`representation_id`,
+   `chunker_version`, `normalizer_version`, `extractor_version`, `doc_id`):
    - `adjudicate_supersession` at existing adjudicator version (payload may omit
-     `relation_ids`; handler reconstructs as today), and
+     `relation_ids` only when all reconstruction fields are present — membership
+     + version_state guarantee that), and
    - `embed_claim` at existing P1 embed version  
-   as **sibling** follow-ups (preserve today’s topology).
+   as **sibling** follow-ups (preserve today’s topology). Set
+   `obs_flush_version_state.fanout_status=barrier_complete`.
+
+Barrier advisory lock: reuse the exact `complete_claim_normalize`
+representation barrier key family with `representation_id` from
+`obs_flush_version_state` (not re-derived ad hoc).
 
 ### 5.5 Ordering
 
 | Scope | Rule |
 | --- | --- |
 | Within unit | `(asserted_at NULLS LAST, claim_id, statement)` only |
-| Across entities | Any completion order |
-| Across versions same entity | Entity lock serializes writes; apply order is lock schedule, not global source-time (same class as concurrent version flushes today) |
+| Across different entities | Any completion order |
+| Across units sharing `subject_entity_id` | At most one `running`; claim pending units in order `(min_asserted_at NULLS LAST, version_id, unit_id)` |
 | Undated `asserted_at` | Sort last (`NULLS LAST`); supersede boundary uses existing D43 undated rules (`now()` where already coded) — not redefined here |
+
+#### 5.5.1 Reverse-arrival / multi-version recompute (binding)
+
+After each durable apply of an assertion whose `asserted_at` is strictly earlier
+than an existing open observation’s `valid_from` (or undated rules require
+repair), D43 must leave the entity’s open windows consistent with the **full**
+durable observation set for that entity ordered by
+`(asserted_at NULLS LAST, claim_id, statement)`, not only with the single
+“current open” predecessor. Concretely, three changing states at
+`t1 < t2 < t3` applied in order `t3, t1, t2` must not leave overlapping open
+windows such as both `[t1,t3)` and `[t2,t3)`. Impl may re-cap along the ordered
+chain after each reverse-arrival insert or run an entity-local pure recompute of
+`valid_from` / `valid_until` from stored outcomes + timestamps after each write,
+as long as the post-condition holds. This is a required co-requisite of D90 for
+continuous multi-version ingest.
 
 ### 5.6 LLM and locking (binding)
 
@@ -222,17 +259,28 @@ still blocks “observations complete”; supersession/embed wait on the barrier
 | Generation | Behavior |
 | --- | --- |
 | Pre-`:entity-fanout-1` | Version-serial `AdjudicateObservationsHandler` only |
-| `:entity-fanout-1` | Unit fan-out only |
+| `:entity-fanout-1` | Unit fan-out only; **no** `document_version` processing rows at this component version |
 
 **Mutual exclusion for a given version V:**
 
 - If non-terminal **legacy** version-level flush exists for V → claim barrier
   must not materialize unit fan-out for V.  
-- If unit membership is materialized for V → legacy handler must refuse to claim
-  work for V (or ops dead-letters legacy before enabling fan-out).  
+- If unit membership or `obs_flush_version_state` is materialized for V → legacy
+  handler must refuse to claim work for V (or ops dead-letters legacy before
+  enabling fan-out).  
 - Entity-path **must not** invoke version-wide staging clear.  
 - Mixed-image rollout: enable fan-out only when all workers understand entity
   units (capability / stop-drain-restart), same class as D88 mixed-image rule.
+
+**Call sites that today enqueue version-level `adjudicate_observations` at
+`OBS_FLUSH_VERSION`** (claim barrier empty, all-claims-already-succeeded hop,
+E1/E2 zero-chunk paths): after the component-version bump they must either:
+
+- write `obs_flush_version_state.empty_complete` + enqueue supersession +
+  `embed_claim` directly (preferred for true empty observation sets), or  
+- enqueue a **legacy-component-version** version-serial row only if a serial
+  path is still required for cutover — never a `document_version` row at the
+  fan-out component version.
 
 ### 5.8 Readiness, lifecycle, forget
 
@@ -274,8 +322,8 @@ still blocks “observations complete”; supersession/embed wait on the barrier
 | In-process pool without ledger | Reject (D67) |
 | Parallel apply within entity | Reject (D43) |
 | Assertion-grain ledger jobs | Reject (row explosion; order still serial) |
-| Global cross-version source-time scheduler | Out of scope |
-| Commutative D43 recompute | Out of scope |
+| Bare concurrent same-entity units without claim order | Rejected (Codex r2) |
+| Rely only on today’s predecessor repair for 3+ reverse arrivals | Rejected (§5.5.1) |
 
 ## 9. Test plan (minimum)
 
@@ -284,6 +332,10 @@ still blocks “observations complete”; supersession/embed wait on the barrier
 | Claim barrier, 3 staging entities | 3 units + 3 processing rows |
 | Two versions, same subject entity | 2 distinct unit_ids; both can succeed |
 | V2 after V1 succeeded for same entity | V2 still gets its own unit and apply |
+| Same entity, two pending units | only one running; claim order by min_asserted_at |
+| Reverse arrival t3 then t1 then t2 | no overlapping open windows after recompute |
+| Supersession payload fields | reconstruction fields always present from membership/state |
+| Zero-chunk empty path | no document_version row at fan-out component version |
 | Empty staging | empty signal + supersession + embed_claim |
 | 2/3 units succeeded | no supersession |
 | 3/3 succeeded | supersession + embed_claim once |
@@ -296,9 +348,8 @@ still blocks “observations complete”; supersession/embed wait on the barrier
 
 ## 10. Out of scope
 
-- D43 ladder / `hub_top_k` / model seats.  
+- D43 ladder / `hub_top_k` / model seats (except reverse-arrival recompute §5.5.1).  
 - Parallel ladder pair judgments.  
-- Schedule-independent multi-version open-window recompute.  
 - Relation supersession fan-out.
 
 ## 11. Success criteria

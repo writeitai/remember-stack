@@ -3601,11 +3601,15 @@ Analysis: `plan/analysis/e3_entity_obs_flush_fanout_analysis.md`. Binding design
 
 **Consequences.** Queue depth approximates unfinished **units**. Continuous
 multi-doc ingest stays version-scoped without silent cross-version observation
-loss. Within-unit order and D43 fail-safe rules are unchanged. Cross-version
-apply order for the same entity remains lock-scheduled (as with concurrent
-version-level flushes today). Readiness, lifecycle, and forget join membership
-by version. Handlers load coordinates from membership, not payload alone.
-Entity lock spans the unit apply so writers do not interleave mid-sequence.
+loss. Membership carries representation/chunker/extractor coordinates for
+barrier lock and supersession reconstruction. Same-entity units are
+single-flight and claimed in `(min_asserted_at, version_id, unit_id)` order;
+D43 must recompute open windows on reverse arrival so `t3,t1,t2` cannot leave
+overlapping opens. Empty completion uses `obs_flush_version_state` only.
+Within-unit order uses `(asserted_at NULLS LAST, claim_id, statement)`.
+Readiness, lifecycle, and forget join membership by version. Handlers load
+coordinates from membership, not payload alone. Entity lock spans the unit
+apply so writers do not interleave mid-sequence.
 
 **Design review.** Claude and Codex both REQUEST_CHANGES on the first draft;
 blocking findings absorbed into the design revision (reviews under
