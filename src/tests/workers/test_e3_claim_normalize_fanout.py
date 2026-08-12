@@ -250,6 +250,9 @@ def test_cycle_wait_blocks_on_missing_entity_obs_flush_units() -> None:
     assert "entity-grain obs flush" in sql or "obs_flush_entity_units" in sql
     assert "entity-fanout" in sql
     assert "w.status IS NULL OR w.status <> 'succeeded'" in sql
+    # SQLAlchemy text() scans comments and quoted literals for :binds.
+    # Keep only the deployment_id parameter so cycles_ready_to_finalize works.
+    assert set(lifecycle._SELECT_READY_CYCLES._bindparams.keys()) == {"deployment_id"}
 
 
 def test_claim_handler_rejects_coordinate_mismatches() -> None:

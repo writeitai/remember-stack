@@ -1082,7 +1082,7 @@ _SELECT_READY_CYCLES = text(
            AND w.target_kind = 'entity'
            AND w.target_id = u.unit_id
            AND w.stage = 'adjudicate_observations'
-           -- Avoid ':name' inside text() (SQLAlchemy bind). Match D90 generation.
+           -- Match D90 fanout generation without using SQLAlchemy bind syntax.
            AND w.component_version LIKE '%entity-fanout%'
           WHERE v.sync_cycle_id = y.cycle_id
             AND (w.status IS NULL OR w.status <> 'succeeded')
