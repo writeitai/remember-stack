@@ -25,6 +25,7 @@ from rememberstack.model import HandlerAlreadyRegisteredError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
+from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import QueueRoute
@@ -259,7 +260,7 @@ class Worker:
         )
         try:
             outcome = handler.handle(work=claimed, meter=meter)
-        except NonRetryableHandlerError as exception:
+        except (NonRetryableHandlerError, ProviderAccountingError) as exception:
             _logger.exception(
                 "non-retryable failure in stage %s for %s",
                 claimed.stage,

@@ -30,6 +30,7 @@ from rememberstack.model import LaneRouteError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import RecordCall
@@ -471,6 +472,48 @@ class _BillableFailingHandler:
                 latency_ms=8,
             ),
         )
+
+
+class _UnaccountedPaidResponseHandler:
+    """A completed call whose provider accounting cannot be recovered."""
+
+    def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
+        """Expose the terminal accounting failure to the worker boundary."""
+        del work, meter
+        raise ProviderAccountingError("provider accounting unavailable")
+
+
+def test_worker_does_not_automatically_retry_unaccounted_paid_response(
+    database_engine: Engine, ledger: WorkLedger
+) -> None:
+    """Fail closed without silently buying the same generation again."""
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.EXTRACT_CLAIMS, handler=_UnaccountedPaidResponseHandler()
+    )
+    worker = Worker(ledger=ledger, registry=registry)
+    enqueued = ledger.enqueue(work=_work())
+
+    result = worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.EXTRACT_CLAIMS,
+        lane=ProcessingLane.STEADY,
+    )
+
+    assert result.outcome is RunResultOutcome.DEAD_LETTERED
+    with database_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT status, attempts, max_attempts FROM processing_state"
+                    " WHERE processing_id = :processing_id"
+                ),
+                {"processing_id": enqueued.processing_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert dict(row) == {"status": "dead_letter", "attempts": 1, "max_attempts": 3}
 
 
 def test_worker_meters_usage_bearing_provider_failure_before_retry(

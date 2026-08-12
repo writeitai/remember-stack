@@ -38,6 +38,8 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
     ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 )
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
+_GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (0.0, 0.25, 0.75)
+_GENERATION_USAGE_TIMEOUT_S: Final[float] = 10.0
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
 )
@@ -378,9 +380,7 @@ class OpenRouterModelProvider:
         the work ledger's job, which already grants each item several attempts.
         """
         body = self._post(path="/chat/completions", payload=payload)
-        usage = _usage(
-            body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
-        )
+        usage = self._completion_usage(body=body, started_ns=started_ns)
         content = _completion_content(body=body)
         if content is None:
             raise OpenRouterInvalidResponseError(
@@ -389,6 +389,50 @@ class OpenRouterModelProvider:
                 usage=usage,
             )
         return content, usage, body
+
+    def _completion_usage(
+        self, *, body: dict[str, Any], started_ns: int
+    ) -> ProviderCallUsage:
+        """Use inline accounting, or recover it by the existing generation id.
+
+        OpenRouter documents inline usage on every non-streaming response, but
+        also exposes the same accounting asynchronously by generation id. The
+        metadata fallback never creates another paid generation. It remains
+        fail-closed when the response has no id or metadata stays unavailable.
+        """
+        try:
+            return _usage(
+                body=body,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                require_output_tokens=True,
+            )
+        except ProviderAccountingError as inline_error:
+            generation_id = body.get("id")
+            if not isinstance(generation_id, str) or not generation_id.strip():
+                raise inline_error
+            last_error: Exception = inline_error
+
+        for delay_s in _GENERATION_USAGE_POLL_DELAYS_S:
+            if delay_s:
+                time.sleep(delay_s)
+            try:
+                metadata = self._get_generation(generation_id=generation_id)
+                return _generation_usage(
+                    body=metadata,
+                    fallback_model=body.get("model"),
+                    generation_id=generation_id,
+                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                )
+            except (
+                httpx.HTTPError,
+                OpenRouterProviderError,
+                ProviderAccountingError,
+            ) as error:
+                last_error = error
+        raise ProviderAccountingError(
+            "OpenRouter response carries unusable usage accounting and generation"
+            " metadata did not recover it"
+        ) from last_error
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.
@@ -451,6 +495,29 @@ class OpenRouterModelProvider:
                 f"{response.text[:500]}"
             )
         return response.json()
+
+    def _get_generation(self, *, generation_id: str) -> dict[str, Any]:
+        """Fetch metadata for one already-created generation without its content."""
+        response = self._client.get(
+            "/generation",
+            params={"id": generation_id},
+            timeout=min(self._settings.timeout_s, _GENERATION_USAGE_TIMEOUT_S),
+        )
+        if response.status_code >= 400:
+            raise OpenRouterProviderError(
+                f"OpenRouter /generation returned {response.status_code}"
+            )
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise OpenRouterProviderError(
+                "OpenRouter /generation returned non-JSON metadata"
+            ) from error
+        if not isinstance(body, dict):
+            raise OpenRouterProviderError(
+                "OpenRouter /generation returned malformed metadata"
+            )
+        return body
 
 
 def _strict_json_schema(response_type: type[StructuredResponseModel]) -> dict[str, Any]:
@@ -602,8 +669,10 @@ def _safe_finish_reason(*, body: dict[str, Any], key: str) -> str | None:
     return "unexpected"
 
 
-def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
-    """Validate OpenRouter accounting; missing usage must not silently disable budgets."""
+def _usage(
+    *, body: dict[str, Any], latency_ms: int, require_output_tokens: bool = False
+) -> ProviderCallUsage:
+    """Validate accounting; chat requires output tokens while embeddings do not."""
     raw = body.get("usage")
     if not isinstance(raw, dict):
         raise ProviderAccountingError("OpenRouter response carries no usage accounting")
@@ -611,6 +680,10 @@ def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
     if not isinstance(model_name, str) or not model_name.strip():
         raise ProviderAccountingError(
             "OpenRouter response carries no resolved model identity"
+        )
+    if require_output_tokens and "completion_tokens" not in raw:
+        raise ProviderAccountingError(
+            "OpenRouter response carries incomplete completion usage accounting"
         )
     try:
         return ProviderCallUsage(
@@ -624,3 +697,31 @@ def _usage(*, body: dict[str, Any], latency_ms: int) -> ProviderCallUsage:
         raise ProviderAccountingError(
             "OpenRouter response carries invalid usage accounting"
         ) from err
+
+
+def _generation_usage(
+    *, body: dict[str, Any], fallback_model: object, generation_id: str, latency_ms: int
+) -> ProviderCallUsage:
+    """Normalize OpenRouter generation metadata into the ordinary usage proof."""
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise ProviderAccountingError(
+            "OpenRouter generation metadata carries no usage accounting"
+        )
+    if data.get("id") != generation_id:
+        raise ProviderAccountingError(
+            "OpenRouter generation metadata does not match the requested generation"
+        )
+    model_name = data.get("model") or fallback_model
+    return _usage(
+        body={
+            "model": model_name,
+            "usage": {
+                "prompt_tokens": data.get("tokens_prompt"),
+                "completion_tokens": data.get("tokens_completion"),
+                "cost": data.get("total_cost"),
+            },
+        },
+        latency_ms=latency_ms,
+        require_output_tokens=True,
+    )
