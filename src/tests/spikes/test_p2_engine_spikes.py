@@ -69,20 +69,19 @@ def _scalar_int(raw: object) -> int:
 
 def _load_postgres_extension(connection: ladybug.Connection) -> None:
     """Install the remote extension with a bounded retry for transient downloads."""
-    last_error: RuntimeError | None = None
     for attempt in range(3):
         try:
             connection.execute("INSTALL postgres")
-            connection.execute("LOAD postgres")
-            return
         except RuntimeError as error:
-            last_error = error
+            if "Failed to download extension" not in str(error):
+                raise
+            if attempt == 2:
+                pytest.skip("LadybugDB extension registry is temporarily unavailable")
             if attempt < 2:
                 time.sleep(2 ** (attempt + 1))
-    assert last_error is not None
-    if "Failed to download extension" in str(last_error):
-        pytest.skip("LadybugDB extension registry is temporarily unavailable")
-    raise last_error
+        else:
+            break
+    connection.execute("LOAD postgres")
 
 
 @pytest.fixture(scope="module")
