@@ -137,7 +137,9 @@ def test_generation_accounting_fallback_polls_but_stays_fail_closed(
         return {"data": {"model": "openai/gpt-5.6-luna"}}
 
     monkeypatch.setattr(provider, "_get_generation", get_generation)
-    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", lambda _delay: None)
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda _delay: None
+    )
     try:
         with pytest.raises(
             ProviderAccountingError, match="generation metadata did not recover"

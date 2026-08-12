@@ -379,10 +379,7 @@ class OpenRouterModelProvider:
         the work ledger's job, which already grants each item several attempts.
         """
         body = self._post(path="/chat/completions", payload=payload)
-        usage = self._completion_usage(
-            body=body,
-            started_ns=started_ns,
-        )
+        usage = self._completion_usage(body=body, started_ns=started_ns)
         content = _completion_content(body=body)
         if content is None:
             raise OpenRouterInvalidResponseError(
@@ -404,8 +401,7 @@ class OpenRouterModelProvider:
         """
         try:
             return _usage(
-                body=body,
-                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
             )
         except ProviderAccountingError as inline_error:
             generation_id = body.get("id")
@@ -501,7 +497,7 @@ class OpenRouterModelProvider:
         response = self._client.get("/generation", params={"id": generation_id})
         if response.status_code >= 400:
             raise OpenRouterProviderError(
-                "OpenRouter /generation returned " f"{response.status_code}"
+                f"OpenRouter /generation returned {response.status_code}"
             )
         try:
             body = response.json()
