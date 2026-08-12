@@ -324,21 +324,23 @@ jobs:
               docker compose --env-file .env.example exec -T api \
                 python -c 'import json, sys; print(json.load(sys.stdin)["version_id"])'
           )"
-          # D84/D88: extract is chunk-scoped; empty input skips claim normalize
-          # and opens obs-flush then supersession. Version-level ledger stages:
-          # convert→structure→chunk→embed_chunk→adjudicate_observations→
-          # adjudicate_supersession→embed_claim→label→reconcile (9).
+          # D84/D88/D90: extract is chunk-scoped; empty input skips claim
+          # normalize and takes durable empty_complete (no document_version
+          # adjudicate_observations row at the entity-fanout generation).
+          # Version-level ledger stages:
+          # convert→structure→chunk→embed_chunk→adjudicate_supersession→
+          # embed_claim→label→reconcile (8).
           observed=''
           for attempt in {1..60}; do
             observed="$(docker compose --env-file .env.example exec -T postgres \
               psql -U rememberstack -d rememberstack -Atc \
               "SELECT count(*), count(*) FILTER (WHERE status='succeeded'), count(DISTINCT stage) FROM processing_state WHERE target_id='$version_id'")"
-            if [ "$observed" = '9|9|9' ]; then
+            if [ "$observed" = '8|8|8' ]; then
               break
             fi
             sleep 1
           done
-          test "$observed" = '9|9|9'
+          test "$observed" = '8|8|8'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM cost_ledger')" = '0'
