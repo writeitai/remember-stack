@@ -16,6 +16,7 @@ src/tests/spine/test_knowledge_commit_driver.py
 src/tests/spine/test_knowledge_control_plane.py
 src/tests/spine/test_migrations.py
 src/tests/spine/test_observation_adjudication.py
+src/tests/spine/test_p1_maintain_ledger.py
 src/tests/spine/test_p1_maintain_lock.py
 src/tests/spine/test_operations.py
 src/tests/spine/test_pipeline_readiness.py

@@ -145,6 +145,8 @@ EXPECTED_TABLES: Final = (
     "merge_events",
     "obs_flush_entity_units",
     "obs_flush_version_state",
+    "p1_lance_table_stats",
+    "p1_maintain_units",
     "observation_adjudications",
     "observation_evidence",
     "observations",
@@ -237,6 +239,7 @@ EXPECTED_INDEXES: Final = (
     "ix_observations_block",
     "ix_observations_contradiction",
     "ix_observations_entity",
+    "ix_p1_maintain_units_key",
     "ix_obsevidence_claim",
     "ix_predicates_other",
     "ix_procstate_dlq",
@@ -283,6 +286,7 @@ UNLANED_STAGES: Final = frozenset(
         "lint_knowledge",
         "dispatch_knowledge",
         "hard_forget",
+        "maintain_p1_index",
     }
 )
 """Scheduled aggregate and deployment-orchestration stages whose route is unlaned.
@@ -331,7 +335,7 @@ EMPTY_AT_HEAD: Final = (
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 54, "f": 128, "p": 69, "u": 35, "x": 1}
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 60, "f": 129, "p": 71, "u": 35, "x": 1}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),
@@ -353,6 +357,7 @@ DECISION_OBJECTS: Final = {
     "D69": ("v_graph_relates",),
     "D74": ("forget_manifests", "ix_forget_content_guard"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
+    "D91": ("p1_maintain_units", "p1_lance_table_stats", "ix_p1_maintain_units_key"),
 }
 
 

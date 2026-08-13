@@ -33,6 +33,9 @@ from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.operations import error_class_from_traceback
 from rememberstack.spine.operations import OperationalCatalog
 from rememberstack.spine.operations import OperationalSettings
+from rememberstack.spine.p1_maintain import P1_MAINTAIN_COMPONENT_VERSION
+from rememberstack.spine.p1_maintain import P1MaintainCatalog
+from rememberstack.spine.p1_maintain import P1MaintainSettings
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.resolver import CascadeResolver
@@ -94,4 +97,7 @@ __all__ = (
     "DeploymentBootstrapper",
     "WorkLedger",
     "WorkLedgerSettings",
+    "P1_MAINTAIN_COMPONENT_VERSION",
+    "P1MaintainCatalog",
+    "P1MaintainSettings",
 )

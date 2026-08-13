@@ -11,6 +11,7 @@ running row and callers can never supply it.
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
+from datetime import UTC
 from decimal import Decimal
 from typing import cast
 from typing import Self
@@ -630,7 +631,13 @@ class WorkLedger:
             return tuple(outcomes)
 
     def fail(
-        self, *, processing_id: UUID, error: str, retryable: bool
+        self,
+        *,
+        processing_id: UUID,
+        error: str,
+        retryable: bool,
+        expected_attempt: int | None = None,
+        not_before: datetime | None = None,
     ) -> datetime | None:
         """Record a failed attempt with its full traceback; never bury it (core value 6).
 
@@ -640,6 +647,11 @@ class WorkLedger:
         queue port (packaging §3: retry paths call the port in both profiles). A
         failure at the attempt limit, or a non-retryable one, dead-letters the
         row and returns None.
+
+        When ``expected_attempt`` is supplied (required for D91 maintain reclaim
+        and conflict_defer), the row must still be running at that attempt or
+        the call raises ``WorkNotRunningError`` so a stale owner cannot fail a
+        replacement claim.
         """
         with self._engine.begin() as connection:
             row = (
@@ -656,24 +668,88 @@ class WorkLedger:
                     f"processing row {processing_id} is not running; cannot fail it"
                 )
             attempts, max_attempts = int(row["attempts"]), int(row["max_attempts"])
+            if expected_attempt is not None and attempts != expected_attempt:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is attempt {attempts}, "
+                    f"not {expected_attempt}"
+                )
             if retryable and attempts < max_attempts:
                 backoff_s = min(
                     self._settings.retry_backoff_base_s * 2 ** (attempts - 1),
                     self._settings.retry_backoff_max_s,
                 )
+                if not_before is not None:
+                    extra = (not_before - datetime.now(tz=UTC)).total_seconds()
+                    backoff_s = max(backoff_s, extra)
+                retry_params: dict[str, object] = {
+                    "processing_id": processing_id,
+                    "error": error,
+                    "backoff_s": backoff_s,
+                }
+                if expected_attempt is not None:
+                    retry_params["expected_attempt"] = expected_attempt
                 scheduled = connection.execute(
-                    _FAIL_RETRY,
-                    {
-                        "processing_id": processing_id,
-                        "error": error,
-                        "backoff_s": backoff_s,
-                    },
-                ).scalar_one()
+                    _FAIL_RETRY_FENCED if expected_attempt is not None else _FAIL_RETRY,
+                    retry_params,
+                ).scalar_one_or_none()
+                if scheduled is None:
+                    raise WorkNotRunningError(
+                        f"processing row {processing_id} is not running "
+                        f"at attempt {expected_attempt}"
+                    )
                 return scheduled
-            connection.execute(
-                _FAIL_DEAD_LETTER, {"processing_id": processing_id, "error": error}
-            )
+            dead_params: dict[str, object] = {
+                "processing_id": processing_id,
+                "error": error,
+            }
+            if expected_attempt is not None:
+                dead_params["expected_attempt"] = expected_attempt
+            dead = connection.execute(
+                (
+                    _FAIL_DEAD_LETTER_FENCED
+                    if expected_attempt is not None
+                    else _FAIL_DEAD_LETTER
+                ),
+                dead_params,
+            ).rowcount
+            if dead == 0:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running "
+                    f"at attempt {expected_attempt}"
+                )
             return None
+
+    def complete_maintain_p1(
+        self,
+        *,
+        processing_id: UUID,
+        unit_id: UUID,
+        expected_attempt: int,
+        follow_up: tuple[EnqueueWork, ...] = (),
+        deferred_successor_not_before: datetime | None = None,
+        skip_successor: bool = False,
+        result: dict[str, object] | None = None,
+        successor_reason: str | None = None,
+    ) -> tuple[EnqueueOutcome, ...]:
+        """Succeed a maintain claim and consume ``rerun_requested`` atomically."""
+        from rememberstack.model.p1_maintain import P1MaintainCompleteRequest
+        from rememberstack.spine.p1_maintain import complete_maintain_p1_on
+
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        return complete_maintain_p1_on(
+            engine=self._engine,
+            request=P1MaintainCompleteRequest(
+                processing_id=processing_id,
+                unit_id=unit_id,
+                expected_attempt=expected_attempt,
+                deferred_successor_not_before=deferred_successor_not_before,
+                skip_successor=skip_successor,
+                result=result,
+                successor_reason=successor_reason,
+            ),
+            follow_up=follow_up,
+        )
 
     def park_for_budget(self, *, processing_id: UUID, resume_at: datetime) -> None:
         """Park queued work until its budget window rolls (D67).
@@ -1468,6 +1544,33 @@ _FAIL_DEAD_LETTER = text(
         last_error = :error,
         finished_at = now()
     WHERE processing_id = :processing_id
+    """
+)
+
+_FAIL_RETRY_FENCED = text(
+    """
+    UPDATE processing_state
+    SET status = 'failed',
+        defer_reason = 'retry_backoff',
+        not_before = now() + make_interval(secs => :backoff_s),
+        last_error = :error
+    WHERE processing_id = :processing_id
+      AND status = 'running'
+      AND attempts = :expected_attempt
+    RETURNING not_before
+    """
+)
+
+_FAIL_DEAD_LETTER_FENCED = text(
+    """
+    UPDATE processing_state
+    SET status = 'dead_letter',
+        defer_reason = NULL,
+        last_error = :error,
+        finished_at = now()
+    WHERE processing_id = :processing_id
+      AND status = 'running'
+      AND attempts = :expected_attempt
     """
 )
 

@@ -42,6 +42,7 @@ class PipelineStage(StrEnum):
     RECONCILE = "reconcile"
     DISPATCH_KNOWLEDGE = "dispatch_knowledge"  # appended by WP-6.6
     HARD_FORGET = "hard_forget"
+    MAINTAIN_P1_INDEX = "maintain_p1_index"
 
 
 class ProcessingLane(StrEnum):

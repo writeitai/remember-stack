@@ -46,6 +46,7 @@ _PIPELINE_STAGE_VALUES = (
     "reconcile",
     "dispatch_knowledge",
     "hard_forget",
+    "maintain_p1_index",
 )
 
 

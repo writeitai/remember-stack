@@ -27,6 +27,7 @@ class ProcessingTarget(StrEnum):
     SNAPSHOT = "snapshot"
     KNOWLEDGE_ARTIFACT = "knowledge_artifact"
     KNOWLEDGE_DISPATCH = "knowledge_dispatch"
+    P1_MAINTAIN_UNIT = "p1_maintain_unit"
 
 
 class ProcessingStatus(StrEnum):

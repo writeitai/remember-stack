@@ -271,6 +271,11 @@ from rememberstack.model.operations import PoisonTargetRecord
 from rememberstack.model.operations import PoisonTargetReport
 from rememberstack.model.operations import ProjectionSnapshotState
 from rememberstack.model.p1_maintain import MaintainReport
+from rememberstack.model.p1_maintain import P1MaintainCompleteRequest
+from rememberstack.model.p1_maintain import P1MaintainEnqueueRequest
+from rememberstack.model.p1_maintain import P1MaintainEnqueueResult
+from rememberstack.model.p1_maintain import P1MaintainMode
+from rememberstack.model.p1_maintain import P1MaintainTable
 from rememberstack.model.p1_maintain import TableMaintainStats
 from rememberstack.model.processing import BackfillNotDrainedError
 from rememberstack.model.processing import BackfillSeedRequest
@@ -481,6 +486,11 @@ __all__ = (
     "P1FactRow",
     "P1FactMetadataRow",
     "MaintainReport",
+    "P1MaintainCompleteRequest",
+    "P1MaintainEnqueueRequest",
+    "P1MaintainEnqueueResult",
+    "P1MaintainMode",
+    "P1MaintainTable",
     "TableMaintainStats",
     "PackedChunk",
     "PerimeterCredential",
