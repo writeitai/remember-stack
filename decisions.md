@@ -3623,3 +3623,66 @@ version; unlock-for-LLM without revalidation.
 **Amends.** D88 §5.6 ledger grain for the post-barrier flush (product rule of
 per-entity ordered apply preserved; lease identity becomes version-scoped unit).
 Does not amend D43 ladder semantics, `hub_top_k`, or claim-normalize fan-out.
+
+## D91. P1 Lance bulk writes and two-layer index maintenance
+
+**Decision (2026-08-13).** P1 Lance writes and indexes are maintained as a
+rebuildable projection (D8), not as a second spine:
+
+1. **Bulk metadata.** `update_fact_metadata` batches matched-only
+   `merge_insert` on `(deployment_id, kind, fact_id)`. Skip rows whose
+   eligibility scalars already match Lance. Do not insert unmatched keys
+   (would null vectors). Ensure facts join-key indexes before large merges.
+   Writers must not call synchronous `optimize()` / `create_index` under
+   `label_lock` or an embed/label lease.
+2. **Three maintain modes, one unlaned stage `maintain_p1_index`:**
+   - `light` — `table.optimize()` (compact, prune, fold unindexed tails into
+     **existing** indexes).
+   - `heavy` — `create_index(..., replace=True)` IVF/FTS retrain.
+   - `ensure_indexes` — create contracted indexes if missing.
+   Light is not a retrain. Heavy is not on the read path.
+3. **Discovery (not three crons).** One continuous maintain worker claims
+   ledger units. Observers: **writers** enqueue `light` after they dirty a
+   table; **idle `ensure_maintain_due`** probes durable table stats / Lance
+   and may enqueue light or heavy; **backfill finalizer / admin** run ensure
+   and may force heavy. Grain is physical `(lance_root, table, mode)`.
+4. **Heavy fires on durable amount of change**, not calendar-only. Table
+   stats hold `changed_rows_since_heavy` and `change_mass_since_heavy`,
+   incremented only when a **vector is rewritten**. Eligibility-only and
+   skip-unchanged metadata do **not** count. Chunks are more sensitive
+   (lower changed-row fraction and change-mass thresholds) than short-text
+   facts/claims. `heavy_rebuild_min_hours` is an anti-thrash cap.
+5. Under sustained high write rate, heavy is **best-effort**: rate-defer
+   without burning attempts; conflict after a full train is one long
+   `not_before`; escalate to durable `awaiting_operator` rather than silent
+   thrash.
+
+**Context.** BEAM-scale `label_relation` spent hours in per-row Lance
+`update` after embeds finished (~7.9k facts → thousands of tiny fragments).
+Inline `_maintain_indexed_tail` only called `optimize()` from process-local
+counters and never scheduled IVF retrain. Official LanceDB OSS docs
+(retrieved 2026-08-13): `optimize` = compaction + prune + incremental index
+update, not full ANN retrain
+([reindexing](https://docs.lancedb.com/indexing/reindexing)); each write
+commits a fragment ([performance](https://docs.lancedb.com/performance)).
+Dual design review (Claude + Codex, 2026-08-13, r1–r4) reached
+APPROVE_WITH_NITS; trigger/change-mass rules were then made explicit.
+
+**Consequences.** Compose gains `worker-maintain-p1` (gates default off).
+Stage is unlaned and **not** in `_expected_components`. Reclaim is
+stage-scoped via attempt-fenced `WorkLedger.fail`. Vectors stay in Lance
+only; Postgres keeps stamps and text. Content/embedding migration rebuild
+(`p1_batch_rebuild`) remains a separate family.
+
+**Design.** `plan/designs/p1_lance_maintenance_design.md`.
+**Analysis.** `plan/analysis/p1_lance_maintenance_analysis.md`.
+**Companion rulebook.** `plan/analysis/lance_indexing_maintenance.md`.
+
+**Rejected.** Per-row `table.update` loops; always-heavy “one proper job”;
+calendar-only heavy; counting eligibility-only writes as change-mass;
+process-local mutation counters as estate policy; vectors as a live second
+copy in Postgres; `lane=backfill` for maintain; wiring maintain into
+per-version readiness.
+
+**Amends.** Clarifies D8 write/maintenance contracts for the Lance
+projection. Does not amend D9 query path or D48 hydration.
