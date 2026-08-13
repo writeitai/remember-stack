@@ -270,6 +270,8 @@ from rememberstack.model.operations import PipelineRouteStatus
 from rememberstack.model.operations import PoisonTargetRecord
 from rememberstack.model.operations import PoisonTargetReport
 from rememberstack.model.operations import ProjectionSnapshotState
+from rememberstack.model.p1_maintain import MaintainReport
+from rememberstack.model.p1_maintain import TableMaintainStats
 from rememberstack.model.processing import BackfillNotDrainedError
 from rememberstack.model.processing import BackfillSeedRequest
 from rememberstack.model.processing import BackfillSeedResult
@@ -478,6 +480,8 @@ __all__ = (
     "P1EntityRow",
     "P1FactRow",
     "P1FactMetadataRow",
+    "MaintainReport",
+    "TableMaintainStats",
     "PackedChunk",
     "PerimeterCredential",
     "PipelineComponent",

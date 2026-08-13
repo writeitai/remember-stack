@@ -21,6 +21,8 @@ from rememberstack.model import LaneRouteError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model.p1_maintain import MaintainReport
+from rememberstack.model.p1_maintain import TableMaintainStats
 from rememberstack.spine import BackfillFinalizer
 from rememberstack.spine import BackfillSeeder
 from rememberstack.spine import BackfillSeederSettings
@@ -117,6 +119,28 @@ class _RecordingIndexMaintenance:
     def build_search_indexes(self) -> None:
         """Record one post-backfill build."""
         self.builds += 1
+
+    def ensure_search_indexes(self, *, tables=None) -> MaintainReport:
+        """Unused D91 port surface for the structural fake."""
+        return MaintainReport()
+
+    def optimize_tables(
+        self, *, tables=None, cleanup_older_than=None
+    ) -> MaintainReport:
+        """Unused D91 port surface for the structural fake."""
+        return MaintainReport()
+
+    def rebuild_vector_indexes(self, *, tables=None) -> MaintainReport:
+        """Unused D91 port surface for the structural fake."""
+        return MaintainReport()
+
+    def rebuild_text_indexes(self, *, tables=None) -> MaintainReport:
+        """Unused D91 port surface for the structural fake."""
+        return MaintainReport()
+
+    def maintenance_stats(self, *, table: str) -> TableMaintainStats:
+        """Unused D91 port surface for the structural fake."""
+        return TableMaintainStats(table=table)
 
 
 def test_version_bump_is_bounded_resumable_and_cannot_starve_steady_work(
