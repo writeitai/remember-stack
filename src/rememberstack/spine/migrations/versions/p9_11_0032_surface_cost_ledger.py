@@ -123,12 +123,24 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop D91 surface metering objects."""
+    """Drop D91 surface metering objects including the partman template."""
     op.execute("DROP VIEW IF EXISTS v_cost_receipts")
     op.execute(
         """
-        DELETE FROM public.part_config
-        WHERE parent_table = 'public.surface_cost_ledger'
+        DO $$
+        DECLARE
+          configured_template text;
+        BEGIN
+          SELECT template_table INTO configured_template
+          FROM public.part_config
+          WHERE parent_table = 'public.surface_cost_ledger';
+          DELETE FROM public.part_config
+          WHERE parent_table = 'public.surface_cost_ledger';
+          IF configured_template IS NOT NULL THEN
+            EXECUTE 'DROP TABLE IF EXISTS ' || configured_template || ' CASCADE';
+          END IF;
+        END
+        $$;
         """
     )
     op.execute("DROP TABLE IF EXISTS surface_cost_ledger CASCADE")

@@ -182,6 +182,7 @@ class _MeterEvent:
     call_key: str
     tier: str
     usage: ProviderCallUsage
+    outcome: str = "ok"
 
 
 @dataclass(frozen=True)
@@ -206,7 +207,12 @@ class _SummaryAccountingFailure(Exception):
 def _record_events(*, meter: CostMeterPort, events: tuple[_MeterEvent, ...]) -> None:
     """Persist completed calls before success, degradation, or terminal failure."""
     for event in events:
-        meter.record(call_key=event.call_key, tier=event.tier, usage=event.usage)
+        meter.record(
+            call_key=event.call_key,
+            tier=event.tier,
+            usage=event.usage,
+            outcome=event.outcome,
+        )
 
 
 class SectionSummarizer:
@@ -632,6 +638,7 @@ class SectionSummarizer:
                         call_key=f"{call_key}:failed",
                         tier="section_summary_failed_response",
                         usage=error.usage,
+                        outcome="provider_error",
                     )
                 )
         except Exception:  # noqa: BLE001 - summary failure never fails a document
@@ -666,6 +673,7 @@ class SectionSummarizer:
                             call_key=f"{call_key}:failed",
                             tier=f"{tier}_failed_response",
                             usage=error.usage,
+                            outcome="provider_error",
                         ),
                     ),
                 )

@@ -276,8 +276,8 @@ EXPECTED_RANGE_PARENTS: Final = {
     "claims": "ingested_at",
     "mentions": "created_at",
     "resolution_decisions": "decided_at",
-    "testimony_currency_events": "occurred_at",
     "surface_cost_ledger": "occurred_at",
+    "testimony_currency_events": "occurred_at",
 }
 EXPECTED_HASH_PARENTS: Final = ("observation_evidence", "relation_evidence")
 UNLANED_STAGES: Final = frozenset(

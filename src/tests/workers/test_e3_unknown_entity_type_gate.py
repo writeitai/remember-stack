@@ -32,10 +32,15 @@ class RecordingCostMeter:
         self.records: list[tuple[str, str | None]] = []
 
     def record(
-        self, *, call_key: str, tier: str | None, usage: ProviderCallUsage
+        self,
+        *,
+        call_key: str,
+        tier: str | None,
+        usage: ProviderCallUsage,
+        outcome: str = "ok",
     ) -> None:
         """Append one metered call."""
-        del usage
+        del usage, outcome
         self.records.append((call_key, tier))
 
 

@@ -251,6 +251,8 @@ def selfhost_embed_query(
     embedding_model: str,
     query: str,
     embedder_generation: str | None = None,
+    surface_cost: SqlSurfaceCostRecorder | None = None,
+    deployment_id: UUID | None = None,
 ) -> tuple[float, ...]:
     """Embed one query text with the same model the E1 path stamps.
 
@@ -264,9 +266,34 @@ def selfhost_embed_query(
             code=QueryErrorCode.GENERATION_UNAVAILABLE,
             message="requested embedder_generation is not available on this host",
         )
-    response = model_provider.embed(
-        request=EmbeddingRequest(model=embedding_model, texts=(query,))
-    )
+    from rememberstack.model import ProviderCallError
+    from rememberstack.spine.surface_cost import SurfaceCallSite
+    from rememberstack.spine.surface_cost import SurfaceCostOutcome
+
+    try:
+        response = model_provider.embed(
+            request=EmbeddingRequest(model=embedding_model, texts=(query,))
+        )
+    except ProviderCallError as error:
+        if (
+            error.usage is not None
+            and surface_cost is not None
+            and deployment_id is not None
+        ):
+            surface_cost.record(
+                usage=error.usage,
+                outcome=SurfaceCostOutcome.PROVIDER_ERROR,
+                call_site=SurfaceCallSite.OPEN_QUERY_SQL,
+                deployment_id=deployment_id,
+            )
+        raise
+    if surface_cost is not None and deployment_id is not None:
+        surface_cost.record(
+            usage=response.usage,
+            outcome=SurfaceCostOutcome.OK,
+            call_site=SurfaceCallSite.OPEN_QUERY_SQL,
+            deployment_id=deployment_id,
+        )
     return tuple(response.vectors[0])
 
 
@@ -452,10 +479,15 @@ class SelfHostProfile:
         kill_switches = KillSwitches()
         audit_trail = AuditTrail()
         query_role_connect = _query_role_connect_factory(engine=self._engine)
+        surface_cost = SqlSurfaceCostRecorder(
+            engine=self._engine, deployment_id=self._settings.deployment_id
+        )
         embed_query = partial(
             selfhost_embed_query,
             model_provider=self._model_provider,
             embedding_model=embedding_model,
+            surface_cost=surface_cost,
+            deployment_id=self._settings.deployment_id,
         )
 
         query_engine = QueryEngine(
@@ -463,9 +495,7 @@ class SelfHostProfile:
             search_index=search_index,
             model_provider=self._model_provider,
             embedding_model=embedding_model,
-            surface_cost=SqlSurfaceCostRecorder(
-                engine=self._engine, deployment_id=self._settings.deployment_id
-            ),
+            surface_cost=surface_cost,
         )
         sql_executor = QuerySandboxExecutor(
             deployment_id=self._settings.deployment_id,

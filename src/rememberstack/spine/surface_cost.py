@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from contextvars import Token
 from dataclasses import dataclass
 from enum import StrEnum
+import logging
 from typing import Iterator
 from uuid import UUID
 from uuid import uuid4
@@ -15,6 +16,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ProviderCallUsage
+
+_logger = logging.getLogger(__name__)
 
 _SCOPE: ContextVar[SurfaceRequestScope | None] = ContextVar(
     "surface_cost_scope", default=None
@@ -68,6 +71,25 @@ class SurfaceCostUnrecordedError(RuntimeError):
 
 
 @contextmanager
+def bind_surface_scope(
+    *, request_id: UUID, surface: SurfaceCostKind
+) -> Iterator[SurfaceRequestScope]:
+    """Bind an already-minted request id (SQL sandbox audit id)."""
+    existing = _SCOPE.get()
+    if existing is not None:
+        yield existing
+        return
+    scope = SurfaceRequestScope(request_id=request_id, surface=surface)
+    scope_token: Token[SurfaceRequestScope | None] = _SCOPE.set(scope)
+    ordinal_token: Token[int] = _ORDINAL.set(0)
+    try:
+        yield scope
+    finally:
+        _SCOPE.reset(scope_token)
+        _ORDINAL.reset(ordinal_token)
+
+
+@contextmanager
 def open_surface_scope(*, surface: SurfaceCostKind) -> Iterator[SurfaceRequestScope]:
     """Reuse a nested scope or open a new request id for this surface."""
     existing = _SCOPE.get()
@@ -114,14 +136,17 @@ class SqlSurfaceCostRecorder:
     ) -> None:
         """Insert one allowlisted receipt or raise if no loss signal is durable."""
         if deployment_id != self._deployment_id:
+            _logger.exception("surface_cost_deployment_mismatch")
             self._bump_counter(column="persist_failures")
             return
         scope = _SCOPE.get()
         if scope is None:
+            _logger.exception("surface_cost_scope_missing")
             self._bump_counter(column="scope_missing")
             scope = SurfaceRequestScope(
                 request_id=uuid4(), surface=SurfaceCostKind.LIBRARY
             )
+            _ORDINAL.set(0)
         ordinal = next_surface_ordinal()
         try:
             with self._engine.begin() as connection:
@@ -147,6 +172,7 @@ class SqlSurfaceCostRecorder:
                     },
                 )
         except Exception:
+            _logger.exception("surface_cost_record_failed")
             self._bump_counter(column="persist_failures")
 
     def _bump_counter(self, *, column: str) -> None:

@@ -180,7 +180,7 @@ class RecordCall(BaseModel):
     tokens_out: int | None = None
     cost_usd: Decimal | None = None
     latency_ms: int | None = None
-    outcome: str = "ok"
+    outcome: str = "ok"  # "ok" | "provider_error"; written by the meter caller
 
 
 class RunResultOutcome(StrEnum):
