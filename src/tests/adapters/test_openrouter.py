@@ -168,7 +168,59 @@ def test_generation_accounting_fallback_polls_but_stays_fail_closed(
     finally:
         provider._client.close()
 
-    assert metadata_requests == ["gen-no-accounting"] * 3
+    assert metadata_requests == ["gen-no-accounting"] * 5
+
+
+def test_generation_accounting_fallback_tolerates_metadata_visibility_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed generation can remain 404 briefly before metadata appears."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    metadata_requests: list[str] = []
+
+    monkeypatch.setattr(
+        provider,
+        "_post",
+        lambda **_kwargs: {
+            "id": "gen-delayed-accounting",
+            "model": "openai/gpt-5.6-luna",
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        },
+    )
+
+    def get_generation(*, generation_id: str) -> dict[str, object]:
+        metadata_requests.append(generation_id)
+        if len(metadata_requests) < 5:
+            raise OpenRouterProviderError("OpenRouter /generation returned 404")
+        return {
+            "data": {
+                "id": generation_id,
+                "model": "openai/gpt-5.6-luna",
+                "tokens_prompt": 17,
+                "tokens_completion": 4,
+                "total_cost": "0.00021",
+            }
+        }
+
+    monkeypatch.setattr(provider, "_get_generation", get_generation)
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda _delay: None
+    )
+    try:
+        generated = provider.generate(
+            request=ModelRequest(
+                model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+            ),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert generated.output.answer == "Prague"
+    assert generated.usage.tokens_in == 17
+    assert generated.usage.tokens_out == 4
+    assert generated.usage.cost_usd == Decimal("0.00021")
+    assert metadata_requests == ["gen-delayed-accounting"] * 5
 
 
 @pytest.mark.parametrize(
