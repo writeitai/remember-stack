@@ -566,6 +566,15 @@ class SelfHostProfile:
                 connection.execute(text("SELECT 1")).scalar_one()
             return {"status": "ok"}
 
+        from rememberstack.spine.cost_export import CostExportSettings
+        from rememberstack.surfaces.cost_export_api import attach_cost_export_listener
+
+        attach_cost_export_listener(
+            app=app,
+            engine=self._engine,
+            deployment_id=self._settings.deployment_id,
+            settings=CostExportSettings.model_validate({}),
+        )
         return app
 
     def worker_loop(self, *, stage: PipelineStage) -> SelfHostWorkerLoop:

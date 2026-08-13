@@ -45,6 +45,10 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | Human label |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | API listen port (Compose) |
 | `REMEMBERSTACK_API_URL` | Client target; defaults to `http://127.0.0.1:8000` — **must match** if you change the port |
+| `REMEMBERSTACK_TOKEN_HOST` | Device-grant host for `remember login` (required unless `--token-host` is passed). Never derived from the query API URL |
+| `REMEMBERSTACK_CONFIG_DIR` | Optional override for the CLI credential directory |
+| `REMEMBERSTACK_COST_EXPORT_BIND` | Optional second listen address for HTTP cost export (`127.0.0.1:8001`, `[::1]:8001`, or `unix:/path`). Unset = no HTTP export |
+| `REMEMBERSTACK_COST_EXPORT_TOKEN` | Bearer for the export listener. Required and ≥32 bytes when the bind is set |
 
 ### Stores (Compose local defaults)
 
