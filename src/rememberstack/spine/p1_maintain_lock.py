@@ -50,6 +50,6 @@ def hold_p1_table_maintain_locks(
                 connection.commit()
             except BaseException as error:  # noqa: BLE001
                 release_errors.append(error)
-                connection.invalidate()
             if release_errors:
+                connection.invalidate()
                 raise release_errors[0]

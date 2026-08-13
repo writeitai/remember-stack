@@ -29,6 +29,7 @@ from rememberstack.spine import BackfillSeederSettings
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.p1_maintain_lock import p1_table_maintain_lock_key
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -115,13 +116,15 @@ class _RecordingIndexMaintenance:
 
     def __init__(self) -> None:
         self.builds = 0
+        self.ensures = 0
 
     def build_search_indexes(self) -> None:
         """Record one post-backfill build."""
         self.builds += 1
 
     def ensure_search_indexes(self, *, tables=None) -> MaintainReport:
-        """Unused D91 port surface for the structural fake."""
+        """Count per-table ensure calls from the finalizer."""
+        self.ensures += 1
         return MaintainReport()
 
     def optimize_tables(
@@ -250,7 +253,7 @@ def test_search_indexes_build_only_after_backfill_has_drained(
     )
     with pytest.raises(BackfillNotDrainedError):
         finalizer.build_search_indexes(deployment_id=_DEPLOYMENT_ID)
-    assert maintenance.builds == 0
+    assert maintenance.ensures == 0
 
     claimed = ledger.claim_one(
         deployment_id=_DEPLOYMENT_ID,
@@ -261,7 +264,23 @@ def test_search_indexes_build_only_after_backfill_has_drained(
     ledger.complete(processing_id=claimed.processing_id)
 
     finalizer.build_search_indexes(deployment_id=_DEPLOYMENT_ID)
-    assert maintenance.builds == 1
+    assert maintenance.ensures == 4
+
+
+def test_p1_maintain_lock_key_is_root_and_table() -> None:
+    """Custom and default roots must not collide; Path and str resolve alike."""
+    left = p1_table_maintain_lock_key(
+        lance_root="/tmp/rememberstack-a/lance", table_name="facts"
+    )
+    right = p1_table_maintain_lock_key(
+        lance_root=Path("/tmp/rememberstack-a/lance"), table_name="facts"
+    )
+    other = p1_table_maintain_lock_key(
+        lance_root="/tmp/rememberstack-b/lance", table_name="facts"
+    )
+    assert left == right
+    assert left != other
+    assert left.endswith(":facts")
 
 
 def test_unlaned_stage_cannot_be_seeded_as_backfill(database_engine: Engine) -> None:
