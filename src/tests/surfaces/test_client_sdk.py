@@ -671,6 +671,7 @@ def test_cli_ingest_and_connector_commands_use_the_remote_client(
 ) -> None:
     """The new CLI grammar delegates to the same SDK contracts."""
     client, ingest, _ = client_surface
+    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
     monkeypatch.setattr(MemoryClient, "from_settings", classmethod(lambda _cls: client))
     source = tmp_path / "cli.md"
     source.write_text("from cli")
@@ -722,6 +723,7 @@ def test_cli_reports_invalid_client_input_without_a_traceback(
 ) -> None:
     """Lineage and credential mistakes are controlled CLI usage errors."""
     client, _, _ = client_surface
+    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
     monkeypatch.setattr(MemoryClient, "from_settings", classmethod(lambda _cls: client))
     source = tmp_path / "invalid.md"
     source.write_text("invalid input")

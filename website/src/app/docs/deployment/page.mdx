@@ -46,6 +46,14 @@ also ships this Compose file pinned to
 `ghcr.io/writeitai/remember-stack:0.2.0`; release consumers use
 `--no-build --pull always` so Compose cannot fall back to a local source build.
 
+Do **not** put cost export on the public query port. When you want HTTP export,
+set `REMEMBERSTACK_COST_EXPORT_BIND` to a second address (loopback or a unix
+socket) and `REMEMBERSTACK_COST_EXPORT_TOKEN` to a ≥32-byte secret. The API
+process starts one export worker in-process; do not multiply workers in front
+of that bind. If the bind is unset, use `remember ops cost-export` locally.
+If the bind is set and the token is missing or short, the API process refuses
+to start.
+
 The example file contains local-only PostgreSQL and MinIO credentials. Replace
 every secret before using the stack outside an isolated development machine.
 It also contains an OpenRouter placeholder. Replace it before processing a

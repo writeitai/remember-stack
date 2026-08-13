@@ -875,7 +875,9 @@ def test_memory_client_open_query_http_methods(migrated: str) -> None:
     assert isinstance(stamp["query_hash"], str) and stamp["query_hash"]
 
 
-def test_cli_open_query_parse_and_dispatch(migrated: str, monkeypatch, capsys) -> None:
+def test_cli_open_query_parse_and_dispatch(
+    migrated: str, monkeypatch, capsys, tmp_path
+) -> None:
     """CLI parser accepts positional SQL/saved-query forms and dispatches them."""
     import json
 
@@ -895,6 +897,7 @@ def test_cli_open_query_parse_and_dispatch(migrated: str, monkeypatch, capsys) -
         def __call__(self, *args: object, **kwargs: object) -> MemoryClient:
             return real_client
 
+    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
     monkeypatch.setattr("rememberstack.surfaces.cli.MemoryClient", _Factory)
 
     assert main(["query", "sql", "SELECT 1 AS n"]) == 0

@@ -55,7 +55,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "connectors":
             return _run_connectors(args)
         if args.command == "mcp":
-            return _run_mcp()
+            return _run_mcp(args)
+        if args.command == "login":
+            return _run_login(args)
+        if args.command == "logout":
+            return _run_logout(args)
     except MemoryApiError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -133,6 +137,9 @@ def _run_ops(args: argparse.Namespace) -> int:
         )
         return 1
 
+    if args.ops_command == "cost-export":
+        return _run_cost_export(deployment_id=args.deployment, args=args)
+
     operations = operations_type.from_settings()
     try:
         if args.ops_command == "inspect":
@@ -165,15 +172,61 @@ def _run_ops(args: argparse.Namespace) -> int:
         operations.close()
 
 
+def _run_cost_export(*, deployment_id: UUID, args: argparse.Namespace) -> int:
+    """Print one v1 cost-export page on stdout. Logs stay on stderr."""
+    try:
+        from sqlalchemy import create_engine
+
+        from rememberstack.spine.cost_export import CostExportConfigError
+        from rememberstack.spine.cost_export import CostExportCursorError
+        from rememberstack.spine.cost_export import spine_deployment_id
+        from rememberstack.spine.cost_export import SqlCostExportReader
+        from rememberstack.spine.settings import load_database_settings
+    except ModuleNotFoundError:
+        print(
+            "error: ops commands require the 'rememberstack[server]' extra",
+            file=sys.stderr,
+        )
+        return 1
+
+    engine = create_engine(load_database_settings().sqlalchemy_url())
+    try:
+        try:
+            spine_id = spine_deployment_id(engine=engine)
+        except CostExportConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        if spine_id != deployment_id:
+            print(
+                "error: --deployment does not match the spine deployment",
+                file=sys.stderr,
+            )
+            return 2
+        reader = SqlCostExportReader(engine=engine)
+        page = reader.read_page(
+            deployment_id=deployment_id, cursor=args.cursor, limit=args.limit
+        )
+    except CostExportCursorError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    except (ValueError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(page.model_dump_json())
+    return 0
+
+
 def _run_query(args: argparse.Namespace) -> int:
     """Run a query command through the typed remote SDK."""
-    with MemoryClient.from_settings() as client:
+    with _cli_memory_client(args) as client:
         return _run_open_query(client=client, args=args)
 
 
 def _run_operations(args: argparse.Namespace) -> int:
     """List or run the closed assured-operation catalog."""
-    with MemoryClient.from_settings() as client:
+    with _cli_memory_client(args) as client:
         if args.operation_command == "list":
             for descriptor in client.list_operations():
                 print(descriptor.model_dump_json())
@@ -322,7 +375,7 @@ def _json_object(raw: str | None) -> dict[str, object]:
 def _run_ingest(args: argparse.Namespace) -> int:
     """Push one local file to the deployment's E0 ingress."""
     try:
-        with MemoryClient.from_settings() as client:
+        with _cli_memory_client(args) as client:
             result = client.ingest(
                 args.file,
                 mime=args.mime,
@@ -345,7 +398,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 def _run_connectors(args: argparse.Namespace) -> int:
     """Manage connector configuration on the deployment API."""
-    with MemoryClient.from_settings() as client:
+    with _cli_memory_client(args) as client:
         if args.connector_command == "list":
             for connector in client.connectors():
                 print(connector.model_dump_json())
@@ -373,9 +426,9 @@ def _run_connectors(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_mcp() -> int:
+def _run_mcp(args: argparse.Namespace) -> int:
     """Expose the remote assured operations and open retrieval tools over MCP."""
-    with MemoryClient.from_settings() as client:
+    with _cli_memory_client(args) as client:
         return serve_mcp_stdio(server=RemoteOperationMcpServer(client=client))
 
 
@@ -405,6 +458,177 @@ def operations_run(*, client: httpx.Client, name: str, arg_pairs: list[str]) -> 
         print(f"error: {error}", file=sys.stderr)
         return 1
     print(result.model_dump_json())
+    return 0
+
+
+def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
+    """Resolve CLI credentials: flags, then env, then the file, then SDK defaults.
+
+    ``MemoryClient.from_settings`` is used when nothing CLI-specific is set so
+    existing tests that patch that factory keep working.
+    """
+    from rememberstack.surfaces.credentials import authorization_header
+    from rememberstack.surfaces.credentials import CliClientEnv
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_credentials
+
+    flag_url = getattr(args, "api_url", None)
+    flag_token = getattr(args, "token", None)
+    env = CliClientEnv.model_validate({})
+    need_file = (flag_url is None and env.api_url is None) or (
+        flag_token is None and env.api_authorization is None
+    )
+    stored = None
+    if need_file:
+        try:
+            stored = load_credentials()
+        except CredentialError as error:
+            raise MemoryApiError(status_code=0, detail=str(error)) from error
+    if (
+        flag_url is None
+        and flag_token is None
+        and env.api_url is None
+        and env.api_authorization is None
+        and stored is None
+    ):
+        return MemoryClient.from_settings()
+    api_url = (
+        flag_url or env.api_url or (stored.api_url if stored is not None else None)
+    )
+    raw_token = flag_token
+    if raw_token is None and env.api_authorization is not None:
+        raw_token = env.api_authorization.get_secret_value()
+    if raw_token is None and stored is not None:
+        raw_token = stored.access_token.get_secret_value()
+    return MemoryClient(
+        base_url=api_url,
+        authorization=authorization_header(token=raw_token) if raw_token else None,
+    )
+
+
+def _resolved_token_host(
+    *, explicit: str | None, stored_host: str | None = None
+) -> str:
+    """Require an explicit token host; never derive one from the query API URL."""
+    from rememberstack.surfaces.credentials import TokenHostSettings
+    from rememberstack.surfaces.device_login import normalize_token_host
+
+    settings = TokenHostSettings.model_validate({})
+    host = explicit or settings.token_host or stored_host
+    if host is None or not host.strip():
+        raise ValueError("--token-host or REMEMBERSTACK_TOKEN_HOST is required")
+    return normalize_token_host(token_host=host)
+
+
+def _run_login(args: argparse.Namespace) -> int:
+    """Device-grant login; writes the owner-only credential file."""
+    from rememberstack.surfaces.credentials import CliClientEnv
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_credentials
+    from rememberstack.surfaces.credentials import write_credentials
+    from rememberstack.surfaces.device_login import authorize_device
+    from rememberstack.surfaces.device_login import credential_from_token
+    from rememberstack.surfaces.device_login import DeviceGrantError
+    from rememberstack.surfaces.device_login import poll_device_token
+
+    env = CliClientEnv.model_validate({})
+    api_url = args.api_url or env.api_url or "http://127.0.0.1:8000"
+    try:
+        token_host = _resolved_token_host(explicit=args.token_host)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    existing = None
+    try:
+        existing = load_credentials()
+    except CredentialError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if existing is not None:
+        revoked = _logout_existing(
+            token_host=existing.token_host, allow_stored_host=True
+        )
+        if revoked != 0:
+            print(
+                "error: existing credential could not be revoked; file kept",
+                file=sys.stderr,
+            )
+            return revoked
+    try:
+        with httpx.Client(
+            base_url=token_host, timeout=30.0, follow_redirects=False
+        ) as client:
+            granted = authorize_device(client=client)
+            print(f"verification_uri: {granted.verification_uri}")
+            print(f"verification_uri_complete: {granted.verification_uri_complete}")
+            print(f"user_code: {granted.user_code}")
+            token = poll_device_token(
+                client=client,
+                device_code=granted.device_code.get_secret_value(),
+                interval=granted.interval,
+                expires_in=granted.expires_in,
+            )
+            credential = credential_from_token(
+                token=token, api_url=api_url, token_host=token_host
+            )
+            write_credentials(credential=credential)
+    except KeyboardInterrupt:
+        return 130
+    except DeviceGrantError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return error.exit_code
+    except (httpx.HTTPError, CredentialError, ValueError):
+        print("error: login failed", file=sys.stderr)
+        return 1
+    else:
+        print(f"token_prefix: {credential.token_prefix}")
+        print(f"deployment_id: {credential.deployment_id}")
+        print(f"api_url: {credential.api_url}")
+        return 0
+
+
+def _run_logout(args: argparse.Namespace) -> int:
+    """Revoke the stored bearer, then unlink the file."""
+    return _logout_existing(token_host=args.token_host, allow_stored_host=True)
+
+
+def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
+    """Revoke-then-unlink using the stored bearer. Keep the file on 5xx."""
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_credentials
+    from rememberstack.surfaces.credentials import unlink_credentials
+    from rememberstack.surfaces.device_login import revoke_self
+
+    try:
+        stored = load_credentials()
+    except CredentialError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if stored is None:
+        return 0
+    try:
+        host = _resolved_token_host(
+            explicit=token_host,
+            stored_host=stored.token_host if allow_stored_host else None,
+        )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    with httpx.Client(base_url=host, timeout=30.0, follow_redirects=False) as client:
+        status = revoke_self(
+            client=client, access_token=stored.access_token.get_secret_value()
+        )
+    if status == 0 or status >= 500:
+        print("error: token host did not confirm revoke; file kept", file=sys.stderr)
+        return 1
+    if status < 200 or (status >= 300 and status not in {401, 404}):
+        print(f"error: revoke returned HTTP {status}; file kept", file=sys.stderr)
+        return 1
+    try:
+        unlink_credentials()
+    except CredentialError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -499,6 +723,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--version", action="version", version=f"RememberStack {__version__}"
     )
     commands = parser.add_subparsers(dest="command")
+    client_flags = argparse.ArgumentParser(add_help=False)
+    client_flags.add_argument("--api-url", default=None)
+    client_flags.add_argument("--token", default=None)
 
     review = commands.add_parser("review", help="the D24 local review queue")
     review_commands = review.add_subparsers(dest="review_command", required=True)
@@ -528,6 +755,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "inspect", help="bounded pipeline, DLQ, projection, and currency report"
     )
     ops_inspect.add_argument("--deployment", type=UUID, required=True)
+    cost_export = ops_commands.add_parser(
+        "cost-export", help="print one content-free v1 cost-export page"
+    )
+    cost_export.add_argument("--deployment", type=UUID, required=True)
+    cost_export.add_argument("--cursor", default=None)
+    cost_export.add_argument("--limit", type=int, default=100)
     replay = ops_commands.add_parser("replay", help="reopen one dead-letter row")
     replay.add_argument("processing_id", type=UUID)
     replay.add_argument("--deployment", type=UUID, required=True)
@@ -554,9 +787,11 @@ def _build_parser() -> argparse.ArgumentParser:
     operation_commands = operations.add_subparsers(
         dest="operation_command", required=True
     )
-    operation_commands.add_parser("list", help="list the four remote operations")
+    operation_commands.add_parser(
+        "list", parents=[client_flags], help="list the four remote operations"
+    )
     run_operation = operation_commands.add_parser(
-        "run", help="run one assured operation by name"
+        "run", parents=[client_flags], help="run one assured operation by name"
     )
     run_operation.add_argument("operation", help="the operation name")
     run_operation.add_argument(
@@ -565,19 +800,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
     query = commands.add_parser("query", help="query the open retrieval space")
     query_commands = query.add_subparsers(dest="query_command", required=True)
-    sql = query_commands.add_parser("sql", help="run one sandboxed SQL statement")
+    sql = query_commands.add_parser(
+        "sql", parents=[client_flags], help="run one sandboxed SQL statement"
+    )
     sql.add_argument("statement", help="SQL text")
     sql.add_argument("--parameters", help="JSON array of positional bound parameters")
     sql.add_argument("--max-rows", type=int)
     explain_sql = query_commands.add_parser(
-        "explain-sql", help="EXPLAIN one SQL statement without executing it"
+        "explain-sql",
+        parents=[client_flags],
+        help="EXPLAIN one SQL statement without executing it",
     )
     explain_sql.add_argument("statement", help="SQL text")
     explain_sql.add_argument(
         "--parameters", help="JSON array of positional bound parameters"
     )
     cypher = query_commands.add_parser(
-        "cypher", help="run one read-only Cypher statement"
+        "cypher", parents=[client_flags], help="run one read-only Cypher statement"
     )
     cypher.add_argument("statement", help="Cypher text")
     cypher.add_argument("--parameters", help="JSON object of named parameters")
@@ -588,12 +827,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="confirm projected Entity/RELATES ids against live PostgreSQL",
     )
     explain_cypher = query_commands.add_parser(
-        "explain-cypher", help="plan one Cypher statement without executing it"
+        "explain-cypher",
+        parents=[client_flags],
+        help="plan one Cypher statement without executing it",
     )
     explain_cypher.add_argument("statement", help="Cypher text")
     explain_cypher.add_argument("--parameters", help="JSON object of named parameters")
     space = query_commands.add_parser(
-        "space", help="describe the open query space (manifest discovery)"
+        "space",
+        parents=[client_flags],
+        help="describe the open query space (manifest discovery)",
     )
     space.add_argument("--pattern", help="optional fnmatch filter over view names")
     space.add_argument(
@@ -602,23 +845,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="include shipped examples.* names",
     )
     search_space = query_commands.add_parser(
-        "search-space", help="search checked-in manifest text"
+        "search-space", parents=[client_flags], help="search checked-in manifest text"
     )
     search_space.add_argument("query", help="free-text search over the manifest")
     search_space.add_argument("--k", type=int, default=10)
     list_saved = query_commands.add_parser(
-        "list-saved", help="list saved-query registry metadata"
+        "list-saved", parents=[client_flags], help="list saved-query registry metadata"
     )
     list_saved.add_argument("--namespace")
     list_saved.add_argument("--status")
     describe_saved = query_commands.add_parser(
-        "describe-saved", help="describe one saved-query version"
+        "describe-saved",
+        parents=[client_flags],
+        help="describe one saved-query version",
     )
     describe_saved.add_argument("namespace")
     describe_saved.add_argument("name")
     describe_saved.add_argument("--version", type=int)
     run_saved = query_commands.add_parser(
-        "run-saved", help="run one active saved query"
+        "run-saved", parents=[client_flags], help="run one active saved query"
     )
     run_saved.add_argument("namespace")
     run_saved.add_argument("name")
@@ -628,7 +873,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_saved.add_argument("--max-rows", type=int)
 
-    ingest = commands.add_parser("ingest", help="push a file through E0")
+    ingest = commands.add_parser(
+        "ingest", parents=[client_flags], help="push a file through E0"
+    )
     ingest.add_argument("file", type=Path)
     ingest.add_argument("--mime")
     ingest.add_argument("--title")
@@ -646,18 +893,35 @@ def _build_parser() -> argparse.ArgumentParser:
     connector_commands = connectors.add_subparsers(
         dest="connector_command", required=True
     )
-    connector_commands.add_parser("list", help="list connectors")
-    add = connector_commands.add_parser("add", help="add connector configuration")
+    connector_commands.add_parser(
+        "list", parents=[client_flags], help="list connectors"
+    )
+    add = connector_commands.add_parser(
+        "add", parents=[client_flags], help="add connector configuration"
+    )
     add.add_argument("kind")
     add.add_argument("--name", required=True)
     add.add_argument("--config", action="append", default=[], metavar="KEY=VALUE")
     add.add_argument("--credential-ref")
-    pause = connector_commands.add_parser("pause", help="pause a connector")
+    pause = connector_commands.add_parser(
+        "pause", parents=[client_flags], help="pause a connector"
+    )
     pause.add_argument("connector_id", type=UUID)
-    status = connector_commands.add_parser("status", help="show connector status")
+    status = connector_commands.add_parser(
+        "status", parents=[client_flags], help="show connector status"
+    )
     status.add_argument("connector_id", type=UUID)
 
-    commands.add_parser("mcp", help="serve remote retrieval tools over MCP stdio")
+    commands.add_parser(
+        "mcp",
+        parents=[client_flags],
+        help="serve remote retrieval tools over MCP stdio",
+    )
+    login = commands.add_parser("login", help="device-grant login to a token host")
+    login.add_argument("--token-host", default=None)
+    login.add_argument("--api-url", default=None)
+    logout = commands.add_parser("logout", help="revoke the stored bearer and unlink")
+    logout.add_argument("--token-host", default=None)
     return parser
 
 

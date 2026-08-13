@@ -51,6 +51,22 @@ Four things are true of every deployment's API:
   (`unknown_entity`, `known_empty`, `boundary`). An unroutable request is an
   ordinary HTTP status.
 
+## Cost export (ops listener, not this API)
+
+Content-free spend export is **not** a route on the query API. When
+`REMEMBERSTACK_COST_EXPORT_BIND` is set, the API process starts a second
+listener that serves only:
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| `GET` | `/ops/cost-export/v1` | `rememberstack.cost_export.v1` page |
+
+Auth is `Authorization: Bearer <REMEMBERSTACK_COST_EXPORT_TOKEN>` (minimum 32
+bytes). A customer perimeter token is rejected. The path is frozen; a later
+contract is `/ops/cost-export/v2`. Pages carry allowlisted receipts only — no
+query text, prompts, or memory content. Local operators can print the same
+page with `remember ops cost-export`. See [Deployment](/docs/deployment).
+
 ## Open query space
 
 Choose among three neutral surfaces: native snapshot Cypher with
