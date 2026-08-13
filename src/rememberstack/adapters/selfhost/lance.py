@@ -1027,6 +1027,7 @@ class LanceChunkIndex:
         outcomes: list[TableMaintainStats] = []
         for table_name in self._selected_tables(tables=tables):
             started = time.monotonic()
+            before = self.maintenance_stats(table=table_name)
             table = self._connection.open_table(table_name)
             rows = table.count_rows()
             skipped = None
@@ -1036,12 +1037,16 @@ class LanceChunkIndex:
                 skipped = "below_min_rows"
             else:
                 self._build_vector_index(table=table, replace=True)
-            stats = self.maintenance_stats(table=table_name)
+            after = self.maintenance_stats(table=table_name)
             outcomes.append(
-                stats.model_copy(
+                after.model_copy(
                     update={
                         "operation": "rebuild_vector",
                         "skipped": skipped,
+                        "row_count_before": before.row_count,
+                        "unindexed_rows_before": before.unindexed_rows,
+                        "num_fragments_before": before.num_fragments,
+                        "num_small_fragments_before": before.num_small_fragments,
                         "duration_ms": int((time.monotonic() - started) * 1000),
                     }
                 )
@@ -1055,6 +1060,7 @@ class LanceChunkIndex:
         outcomes: list[TableMaintainStats] = []
         for table_name in self._selected_tables(tables=tables):
             started = time.monotonic()
+            before = self.maintenance_stats(table=table_name)
             table = self._connection.open_table(table_name)
             skipped = None
             if "text" not in {field.name for field in table.schema}:
@@ -1062,12 +1068,16 @@ class LanceChunkIndex:
             else:
                 table.create_index("text", config=_TEXT_INDEX, replace=True)
                 self._text_indexes_ready.add(table_name)
-            stats = self.maintenance_stats(table=table_name)
+            after = self.maintenance_stats(table=table_name)
             outcomes.append(
-                stats.model_copy(
+                after.model_copy(
                     update={
                         "operation": "rebuild_text",
                         "skipped": skipped,
+                        "row_count_before": before.row_count,
+                        "unindexed_rows_before": before.unindexed_rows,
+                        "num_fragments_before": before.num_fragments,
+                        "num_small_fragments_before": before.num_small_fragments,
                         "duration_ms": int((time.monotonic() - started) * 1000),
                     }
                 )
@@ -1138,10 +1148,14 @@ class LanceChunkIndex:
             elif kind == "fts":
                 self._ensure_text_index(table_name=table_name)
             elif kind == "vector":
-                if table.count_rows() >= _MIN_VECTOR_INDEX_ROWS and not any(
-                    index.columns == [column] for index in table.list_indices()
-                ):
-                    self._build_vector_index(table=table, replace=False)
+                if table.count_rows() < _MIN_VECTOR_INDEX_ROWS:
+                    continue
+                vector_indexes = [
+                    index for index in table.list_indices() if index.columns == [column]
+                ]
+                if any(index.index_type == "IVF_FLAT" for index in vector_indexes):
+                    continue
+                self._build_vector_index(table=table, replace=bool(vector_indexes))
 
     def _ensure_text_index(self, *, table_name: str) -> None:
         """Bootstrap one FTS index, including on first read after an upgrade."""
