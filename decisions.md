@@ -3623,3 +3623,39 @@ version; unlock-for-LLM without revalidation.
 **Amends.** D88 §5.6 ledger grain for the post-barrier flush (product rule of
 per-entity ordered apply preserved; lease identity becomes version-scoped unit).
 Does not amend D43 ladder semantics, `hub_top_k`, or claim-normalize fan-out.
+
+## D91. Request-path provider spend is a sibling ledger; export is a pull union
+
+**Decision (2026-08-13).** Worker provider spend stays on `cost_ledger` with
+D67 identity (`processing_id` NOT NULL, lock-and-copy attribution). Interactive
+provider calls (search, assured operations, lookup, SQL nomination, in-process
+QueryEngine embeds) write `surface_cost_ledger`. The operator read model is
+`v_cost_receipts`. HTTP export is `GET /ops/cost-export/v1` on a **separate
+bind**, never a route on the customer FastAPI app. Fail-open on meter persist
+only after a durable `persist_failures` increment; otherwise the query fails
+503 `surface_cost_unrecorded`.
+
+**Context.** `QueryEngine._embed` and `selfhost_embed_query` discarded
+`response.usage`. Stuffing search into `processing_state` would fake work.
+Issue #258.
+
+**Design.** `plan/designs/request_path_metering_and_cost_export_design.md`.
+**Analysis.** `plan/analysis/request_path_metering_and_cost_export_analysis.md`.
+**Reviews.** `design/reviews/REVIEW_*_request_path_meter_export_design*.md`
+(Claude APPROVE_WITH_NITS; Codex APPROVE after cursor replay/forward split).
+
+**Amends.** D67 is worker-only after this decision. Worker `occurred_at` is
+insert-time `clock_timestamp()`. Worker `outcome` is written at the meter site.
+
+**Rejected.** Synthetic processing rows; nullable `cost_ledger.processing_id`;
+export on the customer perimeter; derive token host from API URL (that is D92).
+
+## D92. `remember login` is a CLI device-grant client, not a second credential store
+
+**Decision (2026-08-13).** `remember login` / `logout` live in the base CLI.
+They require an explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`. The
+credential file is CLI-only; `MemoryClient` / `ClientSettings` do not read it.
+Logout revokes then unlinks. No engine-native second credential.
+
+**Design.** same document §6.
+**Issue.** #268.
