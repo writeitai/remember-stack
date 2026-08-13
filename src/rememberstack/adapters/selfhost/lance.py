@@ -969,15 +969,21 @@ class LanceChunkIndex:
         self, *, tables: tuple[str, ...] | None = None
     ) -> MaintainReport:
         """Create missing matrix indexes; convert known wrong types; no retrain."""
-        started = time.monotonic()
         outcomes: list[TableMaintainStats] = []
         for table_name in self._selected_tables(tables=tables):
+            started = time.monotonic()
+            before = self.maintenance_stats(table=table_name)
+            self._forget_index_cache(table_name=table_name)
             self._ensure_matrix_indexes(table_name=table_name)
-            stats = self.maintenance_stats(table=table_name)
+            after = self.maintenance_stats(table=table_name)
             outcomes.append(
-                stats.model_copy(
+                after.model_copy(
                     update={
                         "operation": "ensure",
+                        "row_count_before": before.row_count,
+                        "unindexed_rows_before": before.unindexed_rows,
+                        "num_fragments_before": before.num_fragments,
+                        "num_small_fragments_before": before.num_small_fragments,
                         "duration_ms": int((time.monotonic() - started) * 1000),
                     }
                 )
@@ -994,14 +1000,20 @@ class LanceChunkIndex:
         outcomes: list[TableMaintainStats] = []
         for table_name in self._selected_tables(tables=tables):
             started = time.monotonic()
-            self._optimize_with_retry(
+            before = self.maintenance_stats(table=table_name)
+            retries = self._optimize_with_retry(
                 table_name=table_name, cleanup_older_than=cleanup_older_than
             )
-            stats = self.maintenance_stats(table=table_name)
+            after = self.maintenance_stats(table=table_name)
             outcomes.append(
-                stats.model_copy(
+                after.model_copy(
                     update={
                         "operation": "optimize",
+                        "row_count_before": before.row_count,
+                        "unindexed_rows_before": before.unindexed_rows,
+                        "num_fragments_before": before.num_fragments,
+                        "num_small_fragments_before": before.num_small_fragments,
+                        "conflicts_retried": retries,
                         "duration_ms": int((time.monotonic() - started) * 1000),
                     }
                 )
@@ -1099,6 +1111,13 @@ class LanceChunkIndex:
         present = set(self._connection.list_tables().tables or ())
         wanted = tables if tables is not None else P1_TABLE_NAMES
         return tuple(name for name in wanted if name in present)
+
+    def _forget_index_cache(self, *, table_name: str) -> None:
+        """Drop process-local ready flags so ensure re-reads physical indexes."""
+        self._text_indexes_ready.discard(table_name)
+        self._scalar_indexes_ready = {
+            key for key in self._scalar_indexes_ready if key[0] != table_name
+        }
 
     def _ensure_matrix_indexes(self, *, table_name: str) -> None:
         """Create or type-correct every matrix index whose column exists."""
@@ -1231,14 +1250,14 @@ class LanceChunkIndex:
 
     def _optimize_with_retry(
         self, *, table_name: str, cleanup_older_than: timedelta | None = None
-    ) -> None:
+    ) -> int:
         """Optimize one table with bounded retry on concurrent rewrites."""
         for attempt in range(_LANCE_COMMIT_RETRIES):
             try:
                 self._connection.open_table(table_name).optimize(
                     cleanup_older_than=cleanup_older_than
                 )
-                return
+                return attempt
             except RuntimeError as exc:
                 if (
                     "Retryable commit conflict" not in str(exc)
@@ -1246,6 +1265,7 @@ class LanceChunkIndex:
                 ):
                     raise
                 self._pause_before_retry(attempt=attempt)
+        raise RuntimeError("optimize retries exhausted")
 
     @staticmethod
     def _pause_before_retry(*, attempt: int) -> None:

@@ -244,7 +244,9 @@ def test_search_indexes_build_only_after_backfill_has_drained(
 
     maintenance = _RecordingIndexMaintenance()
     finalizer = BackfillFinalizer(
-        engine=database_engine, search_index_maintenance=maintenance
+        engine=database_engine,
+        search_index_maintenance=maintenance,
+        lance_root=Path("/tmp/rememberstack-test-lance"),
     )
     with pytest.raises(BackfillNotDrainedError):
         finalizer.build_search_indexes(deployment_id=_DEPLOYMENT_ID)

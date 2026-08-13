@@ -11,9 +11,13 @@ class TableMaintainStats(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     table: str
+    row_count_before: int = 0
     row_count: int = 0
+    unindexed_rows_before: int = 0
     unindexed_rows: int = 0
+    num_fragments_before: int = 0
     num_fragments: int = 0
+    num_small_fragments_before: int = 0
     num_small_fragments: int = 0
     duration_ms: int = 0
     conflicts_retried: int = 0

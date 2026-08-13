@@ -107,12 +107,12 @@ class BackfillFinalizer:
         *,
         engine: Engine,
         search_index_maintenance: P1IndexMaintenancePort,
-        lance_root: Path | None = None,
+        lance_root: Path,
     ) -> None:
         """Bind the completion barrier to the ledger and configured P1 adapter."""
         self._engine = engine
         self._search_index_maintenance = search_index_maintenance
-        self._lance_root = lance_root or Path("/var/lib/rememberstack/lance")
+        self._lance_root = lance_root
 
     def build_search_indexes(self, *, deployment_id: UUID) -> None:
         """Build P1 indexes after the caller has finished seeding and work is terminal.
@@ -130,10 +130,19 @@ class BackfillFinalizer:
             raise BackfillNotDrainedError(
                 f"deployment {deployment_id} has {unresolved} unresolved backfill rows"
             )
-        with hold_p1_table_maintain_locks(
-            engine=self._engine, lance_root=self._lance_root, tables=P1_MAINTAIN_TABLES
-        ):
-            self._search_index_maintenance.build_search_indexes()
+        for table_name in P1_MAINTAIN_TABLES:
+            with hold_p1_table_maintain_locks(
+                engine=self._engine, lance_root=self._lance_root, tables=(table_name,)
+            ):
+                self._search_index_maintenance.ensure_search_indexes(
+                    tables=(table_name,)
+                )
+                self._search_index_maintenance.rebuild_vector_indexes(
+                    tables=(table_name,)
+                )
+                self._search_index_maintenance.rebuild_text_indexes(
+                    tables=(table_name,)
+                )
 
 
 _SELECT_CANDIDATES = text(

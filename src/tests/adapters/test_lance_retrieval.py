@@ -592,6 +592,33 @@ def test_build_search_indexes_is_rerunnable_and_covers_entities(
     assert stats.num_fragments >= 1
 
 
+def test_ensure_repairs_dropped_scalar_index(tmp_path) -> None:
+    """Explicit ensure must re-read physical indexes, not process-local caches."""
+    deployment_id = uuid4()
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=deployment_id,
+                text="Context.\n\nRepair token.",
+            ),
+        )
+    )
+    connection = lancedb.connect(str(tmp_path / "lance"))
+    table = connection.open_table("chunks")
+    for item in table.list_indices():
+        if item.columns == ["deployment_id"]:
+            table.drop_index(item.name)
+    report = index.ensure_search_indexes(tables=("chunks",))
+    assert report.tables[0].operation == "ensure"
+    repaired = {
+        (item.index_type, tuple(item.columns))
+        for item in connection.open_table("chunks").list_indices()
+    }
+    assert ("BTree", ("deployment_id",)) in repaired
+
+
 def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:
     """Build one compact source projection row."""
     return P1ChunkRow(
