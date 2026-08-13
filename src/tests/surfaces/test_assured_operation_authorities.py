@@ -63,7 +63,8 @@ def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     assert "review_queue" not in confirmation_sql
     assert "relation_evidence" not in confirmation_sql
     assert "observation_evidence" not in confirmation_sql
-    assert "memory_v1.evidence_lineage" in evidence_sql
+    assert "v_memory_evidence_lineage_live" in evidence_sql
+    assert "memory_v1.evidence_lineage" not in evidence_sql
     assert "memory_v1.claims_live" in evidence_sql
     assert "memory_v1.documents_live" in evidence_sql
     assert "relation_evidence" not in evidence_sql

@@ -3711,7 +3711,11 @@ _CURRENT_FACT_EVIDENCE = text(
                claim.ingested_at AS evidence_ingested_at,
                document.title AS document_title, document.source_kind
         FROM requested
-        JOIN memory_v1.evidence_lineage AS lineage
+        -- Confirmation already proved these fact identities through
+        -- memory_v1.facts_visible_history in this REPEATABLE READ snapshot.
+        -- Hydrate their D54 lineage from the private authority helper so this
+        -- step does not expand the complete fact-visibility tree a second time.
+        JOIN v_memory_evidence_lineage_live AS lineage
           ON lineage.deployment_id = :deployment_id
          AND lineage.fact_kind = requested.kind
          AND lineage.fact_id = requested.fact_id
