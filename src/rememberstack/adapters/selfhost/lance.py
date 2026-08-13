@@ -166,7 +166,6 @@ class LanceChunkIndex:
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="policy_generation")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="embedder_generation")
-        self._maintain_indexed_tail(table_name=_CHUNK_TABLE)
 
     def chunk_vectors(
         self,
@@ -273,7 +272,6 @@ class LanceChunkIndex:
         self._ensure_bitmap_index(
             table_name=_CLAIM_TABLE, column="is_current_testimony"
         )
-        self._maintain_indexed_tail(table_name=_CLAIM_TABLE)
 
     def claim_vectors(
         self, *, deployment_id: str, claim_ids: tuple[str, ...]
@@ -332,7 +330,6 @@ class LanceChunkIndex:
             "invalidated_at_us",
         ):
             self._ensure_scalar_index(table_name=_FACT_TABLE, column=column)
-        self._maintain_indexed_tail(table_name=_FACT_TABLE)
 
     def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
         """Refresh mutable eligibility fields without rewriting vectors.
@@ -389,17 +386,31 @@ class LanceChunkIndex:
         found: dict[tuple[str, str, str], dict[str, object]] = {}
         table = self._connection.open_table(_FACT_TABLE)
         for deployment_id, items in by_deployment.items():
-            ids = ", ".join(f"'{UUID(fact_id)}'" for _, fact_id in items)
-            rows = (
-                table.search()
-                .where(
-                    f"deployment_id = '{UUID(deployment_id)}' AND fact_id IN ({ids})"
+            by_kind: dict[str, list[str]] = {}
+            for kind, fact_id in items:
+                by_kind.setdefault(kind, []).append(fact_id)
+            for kind, fact_ids in by_kind.items():
+                ids = ", ".join(f"'{UUID(fact_id)}'" for fact_id in fact_ids)
+                rows = (
+                    table.search()
+                    .where(
+                        f"deployment_id = '{UUID(deployment_id)}'"
+                        f" AND kind = '{kind}'"
+                        f" AND fact_id IN ({ids})"
+                    )
+                    .limit(len(fact_ids))
+                    .select(
+                        [
+                            "deployment_id",
+                            "kind",
+                            "fact_id",
+                            *_FACT_METADATA_VALUE_COLUMNS,
+                        ]
+                    )
+                    .to_list()
                 )
-                .limit(len(items))
-                .to_list()
-            )
-            for row in rows:
-                found[(row["deployment_id"], row["kind"], row["fact_id"])] = row
+                for row in rows:
+                    found[(row["deployment_id"], row["kind"], row["fact_id"])] = row
         return found
 
     def _merge_insert_matched(
