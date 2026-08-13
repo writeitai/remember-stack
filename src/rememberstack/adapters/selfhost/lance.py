@@ -31,12 +31,49 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.p1_maintain import MaintainReport
+from rememberstack.model.p1_maintain import TableMaintainStats
 from rememberstack.ports.p1_index import P1Nomination
 
 _CHUNK_TABLE = "chunks"
 _CLAIM_TABLE = "claims"
 _FACT_TABLE = "facts"
 _ENTITY_TABLE = "entities"
+P1_TABLE_NAMES: Final = (_CHUNK_TABLE, _CLAIM_TABLE, _FACT_TABLE, _ENTITY_TABLE)
+"""Physical Lance tables under one lance_root (D91)."""
+
+# table, column, kind — btree | bitmap | fts | vector
+P1_INDEX_MATRIX: Final[tuple[tuple[str, str, str], ...]] = (
+    (_CHUNK_TABLE, "deployment_id", "btree"),
+    (_CHUNK_TABLE, "chunk_id", "btree"),
+    (_CHUNK_TABLE, "policy_generation", "btree"),
+    (_CHUNK_TABLE, "embedder_generation", "btree"),
+    (_CHUNK_TABLE, "doc_id", "btree"),
+    (_CHUNK_TABLE, "source_kind", "bitmap"),
+    (_CHUNK_TABLE, "source_shape", "bitmap"),
+    (_CHUNK_TABLE, "section_role", "bitmap"),
+    (_CHUNK_TABLE, "text", "fts"),
+    (_CHUNK_TABLE, "vector", "vector"),
+    (_CLAIM_TABLE, "deployment_id", "btree"),
+    (_CLAIM_TABLE, "claim_id", "btree"),
+    (_CLAIM_TABLE, "doc_id", "btree"),
+    (_CLAIM_TABLE, "is_current_testimony", "bitmap"),
+    (_CLAIM_TABLE, "text", "fts"),
+    (_CLAIM_TABLE, "vector", "vector"),
+    (_FACT_TABLE, "deployment_id", "btree"),
+    (_FACT_TABLE, "fact_id", "btree"),
+    (_FACT_TABLE, "kind", "bitmap"),
+    (_FACT_TABLE, "status", "bitmap"),
+    (_FACT_TABLE, "valid_from_us", "btree"),
+    (_FACT_TABLE, "valid_until_us", "btree"),
+    (_FACT_TABLE, "ingested_at_us", "btree"),
+    (_FACT_TABLE, "invalidated_at_us", "btree"),
+    (_FACT_TABLE, "vector", "vector"),
+    (_ENTITY_TABLE, "deployment_id", "btree"),
+    (_ENTITY_TABLE, "entity_id", "btree"),
+    (_ENTITY_TABLE, "type", "bitmap"),
+    (_ENTITY_TABLE, "vector", "vector"),
+)
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _MIN_TIME_US: Final = -(2**63) + 1
@@ -321,7 +358,7 @@ class LanceChunkIndex:
             ],
         )
         self._ensure_scalar_index(table_name=_FACT_TABLE, column="deployment_id")
-        self._ensure_scalar_index(table_name=_FACT_TABLE, column="kind")
+        self._ensure_bitmap_index(table_name=_FACT_TABLE, column="kind")
         self._ensure_bitmap_index(table_name=_FACT_TABLE, column="status")
         for column in (
             "valid_from_us",
@@ -923,40 +960,169 @@ class LanceChunkIndex:
         )
 
     def build_search_indexes(self) -> None:
-        """Build the measured scalar + IVF_FLAT indexes after a bulk load.
+        """Ensure the contracted matrix then heavy-retrain every present table."""
+        self.ensure_search_indexes()
+        self.rebuild_vector_indexes()
+        self.rebuild_text_indexes()
 
-        This is explicit rather than hidden in every upsert: index construction
-        is a maintenance/backfill operation, while inline P1 writes must stay
-        cheap. Lance still searches unindexed tail fragments after the build.
-        """
-        available = set(self._connection.list_tables().tables or ())
-        if _CHUNK_TABLE in available:
-            chunks = self._connection.open_table(_CHUNK_TABLE)
-            chunks.create_index("deployment_id", config=BTree())
-            chunks.create_index("chunk_id", config=BTree())
-            chunks.create_index("text", config=_TEXT_INDEX)
-            self._text_indexes_ready.add(_CHUNK_TABLE)
-            self._scalar_indexes_ready.add((_CHUNK_TABLE, "deployment_id"))
-            self._scalar_indexes_ready.add((_CHUNK_TABLE, "chunk_id"))
-            self._mutations_since_optimize[_CHUNK_TABLE] = 0
-            self._build_vector_index(table=chunks)
-        if _CLAIM_TABLE in available:
-            claims = self._connection.open_table(_CLAIM_TABLE)
-            claims.create_index("deployment_id", config=BTree())
-            claims.create_index("claim_id", config=BTree())
-            claims.create_index("is_current_testimony", config=Bitmap())
-            claims.create_index("text", config=_TEXT_INDEX)
-            self._text_indexes_ready.add(_CLAIM_TABLE)
-            self._scalar_indexes_ready.add((_CLAIM_TABLE, "deployment_id"))
-            self._scalar_indexes_ready.add((_CLAIM_TABLE, "claim_id"))
-            self._scalar_indexes_ready.add((_CLAIM_TABLE, "is_current_testimony"))
-            self._mutations_since_optimize[_CLAIM_TABLE] = 0
-            self._build_vector_index(table=claims)
-        if _FACT_TABLE in available:
-            facts = self._connection.open_table(_FACT_TABLE)
-            facts.create_index("deployment_id", config=BTree())
-            facts.create_index("kind", config=Bitmap())
-            self._build_vector_index(table=facts)
+    def ensure_search_indexes(
+        self, *, tables: tuple[str, ...] | None = None
+    ) -> MaintainReport:
+        """Create missing matrix indexes; convert known wrong types; no retrain."""
+        started = time.monotonic()
+        outcomes: list[TableMaintainStats] = []
+        for table_name in self._selected_tables(tables=tables):
+            self._ensure_matrix_indexes(table_name=table_name)
+            stats = self.maintenance_stats(table=table_name)
+            outcomes.append(
+                stats.model_copy(
+                    update={
+                        "operation": "ensure",
+                        "duration_ms": int((time.monotonic() - started) * 1000),
+                    }
+                )
+            )
+        return MaintainReport(tables=tuple(outcomes))
+
+    def optimize_tables(
+        self,
+        *,
+        tables: tuple[str, ...] | None = None,
+        cleanup_older_than: timedelta | None = None,
+    ) -> MaintainReport:
+        """Light compact, prune, and incremental index fold."""
+        outcomes: list[TableMaintainStats] = []
+        for table_name in self._selected_tables(tables=tables):
+            started = time.monotonic()
+            self._optimize_with_retry(
+                table_name=table_name, cleanup_older_than=cleanup_older_than
+            )
+            stats = self.maintenance_stats(table=table_name)
+            outcomes.append(
+                stats.model_copy(
+                    update={
+                        "operation": "optimize",
+                        "duration_ms": int((time.monotonic() - started) * 1000),
+                    }
+                )
+            )
+        return MaintainReport(tables=tuple(outcomes))
+
+    def rebuild_vector_indexes(
+        self, *, tables: tuple[str, ...] | None = None
+    ) -> MaintainReport:
+        """Retrain IVF_FLAT with replace=True; skip tables below the min-row gate."""
+        outcomes: list[TableMaintainStats] = []
+        for table_name in self._selected_tables(tables=tables):
+            started = time.monotonic()
+            table = self._connection.open_table(table_name)
+            rows = table.count_rows()
+            skipped = None
+            if "vector" not in {field.name for field in table.schema}:
+                skipped = "no_vector_column"
+            elif rows < _MIN_VECTOR_INDEX_ROWS:
+                skipped = "below_min_rows"
+            else:
+                self._build_vector_index(table=table, replace=True)
+            stats = self.maintenance_stats(table=table_name)
+            outcomes.append(
+                stats.model_copy(
+                    update={
+                        "operation": "rebuild_vector",
+                        "skipped": skipped,
+                        "duration_ms": int((time.monotonic() - started) * 1000),
+                    }
+                )
+            )
+        return MaintainReport(tables=tuple(outcomes))
+
+    def rebuild_text_indexes(
+        self, *, tables: tuple[str, ...] | None = None
+    ) -> MaintainReport:
+        """Rebuild FTS with replace=True on tables that have a text column."""
+        outcomes: list[TableMaintainStats] = []
+        for table_name in self._selected_tables(tables=tables):
+            started = time.monotonic()
+            table = self._connection.open_table(table_name)
+            skipped = None
+            if "text" not in {field.name for field in table.schema}:
+                skipped = "no_text_column"
+            else:
+                table.create_index("text", config=_TEXT_INDEX, replace=True)
+                self._text_indexes_ready.add(table_name)
+            stats = self.maintenance_stats(table=table_name)
+            outcomes.append(
+                stats.model_copy(
+                    update={
+                        "operation": "rebuild_text",
+                        "skipped": skipped,
+                        "duration_ms": int((time.monotonic() - started) * 1000),
+                    }
+                )
+            )
+        return MaintainReport(tables=tuple(outcomes))
+
+    def maintenance_stats(self, *, table: str) -> TableMaintainStats:
+        """Snapshot row, unindexed-tail, and fragment counts for one table."""
+        if not self._has_table(table_name=table):
+            return TableMaintainStats(table=table, skipped="missing_table")
+        lance_table = self._connection.open_table(table)
+        unindexed = max(
+            (
+                int(index.num_unindexed_rows or 0)
+                for index in lance_table.list_indices()
+            ),
+            default=0,
+        )
+        raw = lance_table.stats()
+        fragment_stats = (
+            raw["fragment_stats"]
+            if isinstance(raw, Mapping)
+            else getattr(raw, "fragment_stats", None)
+        )
+        if isinstance(fragment_stats, Mapping):
+            num_fragments = int(fragment_stats.get("num_fragments") or 0)
+            num_small = int(fragment_stats.get("num_small_fragments") or 0)
+        else:
+            num_fragments = int(getattr(fragment_stats, "num_fragments", 0) or 0)
+            num_small = int(getattr(fragment_stats, "num_small_fragments", 0) or 0)
+        return TableMaintainStats(
+            table=table,
+            row_count=lance_table.count_rows(),
+            unindexed_rows=unindexed,
+            num_fragments=num_fragments,
+            num_small_fragments=num_small,
+        )
+
+    def _selected_tables(self, *, tables: tuple[str, ...] | None) -> tuple[str, ...]:
+        """Intersect the request with tables that currently exist."""
+        present = set(self._connection.list_tables().tables or ())
+        wanted = tables if tables is not None else P1_TABLE_NAMES
+        return tuple(name for name in wanted if name in present)
+
+    def _ensure_matrix_indexes(self, *, table_name: str) -> None:
+        """Create or type-correct every matrix index whose column exists."""
+        table = self._connection.open_table(table_name)
+        columns = {field.name for field in table.schema}
+        for matrix_table, column, kind in P1_INDEX_MATRIX:
+            if matrix_table != table_name or column not in columns:
+                continue
+            if kind == "btree":
+                self._ensure_scalar_index(table_name=table_name, column=column)
+            elif kind == "bitmap":
+                self._ensure_typed_index(
+                    table_name=table_name,
+                    column=column,
+                    index_type="Bitmap",
+                    config=Bitmap(),
+                )
+            elif kind == "fts":
+                self._ensure_text_index(table_name=table_name)
+            elif kind == "vector":
+                if table.count_rows() >= _MIN_VECTOR_INDEX_ROWS and not any(
+                    index.columns == [column] for index in table.list_indices()
+                ):
+                    self._build_vector_index(table=table, replace=False)
 
     def _ensure_text_index(self, *, table_name: str) -> None:
         """Bootstrap one FTS index, including on first read after an upgrade."""
@@ -979,11 +1145,31 @@ class LanceChunkIndex:
 
     def _ensure_bitmap_index(self, *, table_name: str, column: str) -> None:
         """Bootstrap one low-cardinality filter index on ordinary paths."""
-        key = (table_name, column)
-        if key in self._scalar_indexes_ready:
-            return
-        self._create_index_with_retry(
+        self._ensure_typed_index(
             table_name=table_name, column=column, index_type="Bitmap", config=Bitmap()
+        )
+
+    def _ensure_typed_index(
+        self,
+        *,
+        table_name: str,
+        column: str,
+        index_type: str,
+        config: BTree | Bitmap | FTS,
+    ) -> None:
+        """Create the contracted index type, replacing a known wrong type."""
+        key = (table_name, column)
+        table = self._connection.open_table(table_name)
+        existing = [
+            index for index in table.list_indices() if index.columns == [column]
+        ]
+        if any(index.index_type == index_type for index in existing):
+            self._scalar_indexes_ready.add(key)
+            return
+        for index in existing:
+            table.drop_index(index.name)
+        self._create_index_with_retry(
+            table_name=table_name, column=column, index_type=index_type, config=config
         )
         self._scalar_indexes_ready.add(key)
 
@@ -1043,11 +1229,15 @@ class LanceChunkIndex:
         self._optimize_with_retry(table_name=table_name)
         self._mutations_since_optimize[table_name] = 0
 
-    def _optimize_with_retry(self, *, table_name: str) -> None:
+    def _optimize_with_retry(
+        self, *, table_name: str, cleanup_older_than: timedelta | None = None
+    ) -> None:
         """Optimize one table with bounded retry on concurrent rewrites."""
         for attempt in range(_LANCE_COMMIT_RETRIES):
             try:
-                self._connection.open_table(table_name).optimize()
+                self._connection.open_table(table_name).optimize(
+                    cleanup_older_than=cleanup_older_than
+                )
                 return
             except RuntimeError as exc:
                 if (
@@ -1067,7 +1257,7 @@ class LanceChunkIndex:
         return table_name in set(self._connection.list_tables().tables or ())
 
     @staticmethod
-    def _build_vector_index(*, table: Table) -> None:
+    def _build_vector_index(*, table: Table, replace: bool = False) -> None:
         """Build one vector index when the table is large enough to train it."""
         rows = table.count_rows()
         if rows < _MIN_VECTOR_INDEX_ROWS:
@@ -1079,6 +1269,7 @@ class LanceChunkIndex:
                 num_partitions=max(1, math.ceil(rows / LANCE_TARGET_PARTITION_ROWS)),
                 target_partition_size=LANCE_TARGET_PARTITION_ROWS,
             ),
+            replace=replace,
         )
 
     def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
@@ -1124,7 +1315,11 @@ class LanceChunkIndex:
         fact_ids: tuple[UUID, ...],
         entity_ids: tuple[UUID, ...],
     ) -> None:
-        """Delete exact deployment-owned rows and prune obsolete Lance versions."""
+        """Delete exact deployment-owned rows and prune obsolete Lance versions.
+
+        Callers that use ``delete_unverified`` prune (the adapter purge path)
+        must already hold the table-scoped P1 maintain lock for each table.
+        """
         for table, key, ids in (
             (_CHUNK_TABLE, "chunk_id", chunk_ids),
             (_CLAIM_TABLE, "claim_id", claim_ids),
