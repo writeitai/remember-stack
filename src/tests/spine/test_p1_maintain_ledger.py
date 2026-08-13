@@ -1,7 +1,9 @@
 """Real-PostgreSQL proofs for D91 maintain units, coalesce, and attempt fence."""
 
 from collections.abc import Iterator
+from datetime import datetime
 from datetime import timedelta
+from datetime import UTC
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -486,4 +488,78 @@ def test_stale_heartbeat_does_not_reclaim_replacement_attempt(
         unit_id=opened.unit_id or second.target_id,
         expected_attempt=second.attempt,
         skip_successor=True,
+    )
+
+
+def test_reclaim_at_attempt_limit_dead_letters_and_next_enqueue_is_fresh(
+    database_engine: Engine, ledger: WorkLedger
+) -> None:
+    """Exhausted reclaim is CHECK-safe dead_letter; dead letters are not open."""
+    catalog = _catalog(
+        database_engine=database_engine, ledger=ledger, running_stale_s=0.001
+    )
+    first = catalog.enqueue(request=_request())
+    claimed = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(claimed, ClaimedWork)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state"
+                " SET max_attempts = attempts,"
+                "     started_at = now() - interval '1 hour'"
+                " WHERE processing_id = :processing_id"
+            ),
+            {"processing_id": claimed.processing_id},
+        )
+    assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 1
+    with database_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT status::text, defer_reason::text"
+                " FROM processing_state WHERE processing_id = :processing_id"
+            ),
+            {"processing_id": claimed.processing_id},
+        ).one()
+    assert tuple(row) == ("dead_letter", None)
+    second = catalog.enqueue(request=_request())
+    assert second.created is True
+    assert second.unit_id != first.unit_id
+
+
+def test_deferred_successor_keeps_not_before(
+    database_engine: Engine, ledger: WorkLedger
+) -> None:
+    """A rate-defer complete inserts a successor that is not due yet."""
+    catalog = _catalog(database_engine=database_engine, ledger=ledger)
+    opened = catalog.enqueue(request=_request())
+    claimed = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(claimed, ClaimedWork)
+    due = datetime(2026, 8, 13, 20, 0, tzinfo=UTC)
+    outcomes = ledger.complete_maintain_p1(
+        processing_id=claimed.processing_id,
+        unit_id=opened.unit_id or claimed.target_id,
+        expected_attempt=claimed.attempt,
+        deferred_successor_not_before=due,
+    )
+    assert len(outcomes) == 1
+    with database_engine.connect() as connection:
+        not_before = connection.execute(
+            text(
+                "SELECT not_before FROM processing_state"
+                " WHERE processing_id = :processing_id"
+            ),
+            {"processing_id": outcomes[0].processing_id},
+        ).scalar_one()
+    assert not_before == due
+    assert (
+        ledger.claim_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.MAINTAIN_P1_INDEX,
+            lane=None,
+        )
+        is None
     )
