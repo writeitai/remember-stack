@@ -38,13 +38,7 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
     ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 )
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
-_GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (
-    0.0,
-    1.0,
-    2.0,
-    3.0,
-    5.0,
-)
+_GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (0.0, 1.0, 2.0, 3.0, 5.0)
 _GENERATION_USAGE_TIMEOUT_S: Final[float] = 10.0
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
