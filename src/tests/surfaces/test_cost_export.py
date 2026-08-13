@@ -255,9 +255,7 @@ def test_tiny_surface_cost_and_null_worker_cost_round_trip(
     assert worker_json["cost_usd"] is None
 
 
-def test_idle_after_insert_aborts_and_is_not_exported(
-    database_engine: Engine,
-) -> None:
+def test_idle_after_insert_aborts_and_is_not_exported(database_engine: Engine) -> None:
     """A writer that idles past the session timeout leaves no exportable row."""
     _bootstrap(database_engine)
     cost_id = uuid4()

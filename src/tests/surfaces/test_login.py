@@ -400,9 +400,7 @@ def test_retry_after_cannot_shorten_slow_down() -> None:
     from rememberstack.surfaces.device_login import _retry_after_seconds
 
     response = httpx.Response(400, headers={"Retry-After": "1"})
-    assert (
-        _retry_after_seconds(response=response, fallback=10.0, bump=True) == 15.0
-    )
+    assert _retry_after_seconds(response=response, fallback=10.0, bump=True) == 15.0
     pending = httpx.Response(400, headers={"Retry-After": "8"})
     assert _retry_after_seconds(response=pending, fallback=5.0, bump=False) == 8.0
     zero = httpx.Response(400, headers={"Retry-After": "0"})

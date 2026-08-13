@@ -278,7 +278,8 @@ def test_unauthenticated_request_does_not_consume_rate_limit() -> None:
     assert client.get("/ops/cost-export/v1").status_code == 401
     assert (
         client.get(
-            "/ops/cost-export/v1", headers={"Authorization": f"Bearer {_CUSTOMER_TOKEN}"}
+            "/ops/cost-export/v1",
+            headers={"Authorization": f"Bearer {_CUSTOMER_TOKEN}"},
         ).status_code
         == 401
     )
