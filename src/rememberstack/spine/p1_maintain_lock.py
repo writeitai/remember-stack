@@ -31,13 +31,25 @@ def hold_p1_table_maintain_locks(
         p1_table_maintain_lock_key(lance_root=lance_root, table_name=name)
         for name in sorted(tables)
     )
+    acquired: list[str] = []
     with engine.connect() as connection:
-        for key in keys:
-            connection.execute(_ACQUIRE, {"key": key})
-        connection.commit()
         try:
+            for key in keys:
+                connection.execute(_ACQUIRE, {"key": key})
+                acquired.append(key)
+            connection.commit()
             yield
         finally:
-            for key in reversed(keys):
-                connection.execute(_RELEASE, {"key": key})
-            connection.commit()
+            release_errors: list[BaseException] = []
+            for key in reversed(acquired):
+                try:
+                    connection.execute(_RELEASE, {"key": key})
+                except BaseException as error:  # noqa: BLE001 — unlock every key
+                    release_errors.append(error)
+            try:
+                connection.commit()
+            except BaseException as error:  # noqa: BLE001
+                release_errors.append(error)
+                connection.invalidate()
+            if release_errors:
+                raise release_errors[0]

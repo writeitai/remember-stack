@@ -12,6 +12,7 @@ from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
+from rememberstack.adapters.selfhost.p1_locked_purge import LockingP1Purge
 from rememberstack.model import ForgetManifest
 from rememberstack.model import PipelineStage
 from rememberstack.spine import ForgetCatalog
@@ -84,7 +85,11 @@ class SelfHostHardForget:
             catalog=catalog,
             deletion=DeletionService(catalog=LifecycleCatalog(engine=engine)),
             object_purgers=object_purgers,
-            p1=LanceChunkIndex(root=lance_root),
+            p1=LockingP1Purge(
+                index=LanceChunkIndex(root=lance_root),
+                engine=engine,
+                lance_root=lance_root,
+            ),
             projection_rebuilder=ProjectionPairForgetRebuilder(
                 graph=GraphRebuildWorker(
                     catalog=projection_catalog, snapshot_store=snapshot_store
