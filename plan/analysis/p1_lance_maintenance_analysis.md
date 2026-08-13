@@ -9,8 +9,7 @@ work truth), D87 (fact eligibility scalars), R3 in
 [`lance_indexing_maintenance.md`](lance_indexing_maintenance.md)  
 **Designed-but-missing worker family:** `plan/analysis/workers.md` §6.3
 (`p1_batch_rebuild` + Lance compaction)  
-**Proposed binding decision:** D91 (entered; trigger/change-mass amendment
-2026-08-13)  
+**Binding decision:** D91 (entered; trigger/change-mass amendment 2026-08-13)  
 **Driver:** BEAM-scale P1 write-path pain observed 2026-08-13 on self-host
 compose after Phase E embeds finish quickly, then stall on fact metadata
 refresh and long-lived fragment/index debt.
@@ -330,7 +329,7 @@ Still implementation-detail / soak questions:
 - `plan/analysis/workers.md` §6.3
 - `plan/analysis/lance_indexing_maintenance.md`
 - `design/benchmarks/review-pr193-risks.md` R3
-- `plan/designs/p1_lance_maintenance_design.md` (proposed D91)
+- `plan/designs/p1_lance_maintenance_design.md` (D91)
 - `design/reviews/REVIEW_claude-opus_p1_lance_maintenance_design_2026-08-13.md`
 - `design/reviews/REVIEW_codex-sol_p1_lance_maintenance_design_2026-08-13.md`
 
@@ -348,5 +347,4 @@ Still implementation-detail / soak questions:
 ---
 
 *Non-binding. Implementation follows the binding design
-`plan/designs/p1_lance_maintenance_design.md` (proposed D91, revised r4) after
-re-review.*
+`plan/designs/p1_lance_maintenance_design.md` (D91).*

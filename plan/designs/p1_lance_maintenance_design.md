@@ -889,7 +889,7 @@ MaintainP1IndexHandler.handle(work: ClaimedWork) -> MaintainCompleteOutcome:
     if mode == ensure_indexes: ensure_search_indexes(tables=(table,))
     if mode == light: optimize_tables(tables=(table,), cleanup_older_than=…)
     if mode == heavy:
-      if unit.operator_state == 'awaiting_operator' and not unit.force:
+      if stats.operator_state == 'awaiting_operator' and not unit.force:
         stop heartbeat; release lock
         return MaintainCompleteOutcome(skipped_awaiting_operator=True)
       if not heavy_enabled and not unit.force: mark skipped in unit.result
@@ -903,7 +903,7 @@ MaintainP1IndexHandler.handle(work: ClaimedWork) -> MaintainCompleteOutcome:
         # runner (binding R12): NEVER WorkLedger.fail for pure rate-defer
         # (fail burns toward max_attempts on the next claim path shape).
         # Instead:
-        #   1) bump unit.rate_defer_count / first_defer_at
+        #   1) bump stats.rate_defer_count / first_defer_at
         #   2) if escalate (N / age): set operator_state=awaiting_operator,
         #      complete_maintain_p1(…, expected_attempt, skip_successor=True)
         #      with result.reason=heavy_needs_quiet_window; metric + alert
@@ -917,7 +917,7 @@ MaintainP1IndexHandler.handle(work: ClaimedWork) -> MaintainCompleteOutcome:
         try:
           rebuild_vector_indexes(tables=(table,))  # one create_index; no short multi-retry train loop
           maybe rebuild_text_indexes per policy
-          # on train success: clear rate_defer_count, conflict_defer_count, first_defer_at
+          # on train success: clear stats.rate_defer_count, conflict_defer_count, first_defer_at
         except CommitConflict:
           # do NOT re-train 8× with sub-second pauses in this claim
           stop heartbeat; release lock
@@ -1036,6 +1036,8 @@ ensure_maintain_due(deployment_id, lance_root):
          and (last_light older than maintain_poll_hours or thresholds unknown)
        ):
       stats = probe Lance once  # floor: maintain_probe_min_s
+    if contracted indexes missing or IVF min-row gate newly crossed:
+      enqueue_p1_maintain(table, mode=ensure_indexes, reason=missing_index)
     if light thresholds or last_light older than maintain_poll_hours:
       enqueue_p1_maintain(table, mode=light, reason=schedule)
     if table has open/terminal unit with operator_state == 'awaiting_operator':
@@ -1540,7 +1542,7 @@ and docs land. PR1 remains independently shippable **with join-key ensure**.
 | **Concurrent upsert + optimize** | Eventually succeeds under short retry budget |
 | **Concurrent upsert + heavy (quiet window)** | With write rate below defer threshold (or after operator quiet gate): pre-train may proceed; on conflict at most one conflict_defer with long `not_before`; **not** 8 full retrains in one claim; one heavy succeeds |
 | **Sustained high write rate + heavy (best-effort)** | Continuous rate above defer threshold through N/age budget → unit reaches durable `operator_state=awaiting_operator` with metric/alert; **no** infinite silent thrash and **no** acceptance claim of automatic eventual success; after operator sets quiet gate (`maintenance_writer_gate=hold` or scale-down) and force-heavy, **one** heavy succeeds and clears the flag |
-| **Pure rate-defer does not burn attempts** | N consecutive rate-defers do not dead-letter via `max_attempts`; counters live on unit `rate_defer_count` / escalation path |
+| **Pure rate-defer does not burn attempts** | N consecutive rate-defers do not dead-letter via `max_attempts`; counters live on `p1_lance_table_stats.rate_defer_count` |
 | **Reclaim after kill** | Leave `running` past heartbeat stale → attempt-fenced `fail(retryable=True, expected_attempt=observed)` → claim succeeds → maintain completes |
 | **Live heavy not reclaimed** | Heartbeat fresh past wall-clock floor → reclaim no-ops; unit completes as owner |
 | **Stale worker after reclaim / attempt fence** | With attempt B `running`, force attempt A's `complete_maintain_p1` **and** A's `fail` → both rejected (`WorkNotRunningError` / zero rows); B remains `running` and can complete |
@@ -1590,4 +1592,4 @@ and docs land. PR1 remains independently shippable **with join-key ensure**.
 ---
 
 *Revised r4 after dual re-review r3; dual APPROVE_WITH_NITS on r4 (Claude +
-Codex). Binding for implementation once D91 is entered in `decisions.md`.*
+Codex). D91 entered. PR #270 dual-reviewed APPROVE_WITH_NITS.*
