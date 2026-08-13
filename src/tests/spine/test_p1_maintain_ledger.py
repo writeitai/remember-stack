@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing.queue import RecordingTaskQueue
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EnqueueWork
@@ -96,6 +97,8 @@ def _catalog(
     heavy_enabled: bool = False,
     running_stale_s: float = 7200.0,
     heartbeat_s: float = 60.0,
+    reclaim_min_s: float = 0.0,
+    queue: object | None = None,
 ) -> P1MaintainCatalog:
     """Catalog with explicit gates for one proof."""
     return P1MaintainCatalog(
@@ -107,7 +110,9 @@ def _catalog(
             running_stale_s=running_stale_s,
             heartbeat_s=heartbeat_s,
             heartbeat_stale_mult=3.0,
+            reclaim_min_s=reclaim_min_s,
         ),
+        queue=queue,  # type: ignore[arg-type]
     )
 
 
@@ -277,7 +282,7 @@ def test_stale_attempt_cannot_complete_or_fail_replacement(
             ),
             {"processing_id": first.processing_id},
         )
-    assert catalog.reclaim_stale() == 1
+    assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 1
     second = ledger.claim_one(
         deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
     )
@@ -331,8 +336,8 @@ def test_reclaim_skips_live_lock_holder_on_wall_clock_arm(
         tables=("facts",),
         timeout=timedelta(seconds=2),
     ):
-        assert catalog.reclaim_stale() == 0
-    assert catalog.reclaim_stale() == 1
+        assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 0
+    assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 1
 
 
 def test_heartbeat_stale_reclaims_without_lock_probe(
@@ -349,10 +354,11 @@ def test_heartbeat_stale_reclaims_without_lock_probe(
         connection.execute(
             text(
                 "UPDATE p1_maintain_units"
-                " SET last_heartbeat_at = now() - interval '10 seconds'"
+                " SET claimed_attempt = :attempt,"
+                "     last_heartbeat_at = now() - interval '10 seconds'"
                 " WHERE unit_id = :unit_id"
             ),
-            {"unit_id": opened.unit_id},
+            {"unit_id": opened.unit_id, "attempt": claimed.attempt},
         )
     with hold_p1_table_maintain_locks(
         engine=database_engine,
@@ -360,4 +366,124 @@ def test_heartbeat_stale_reclaims_without_lock_probe(
         tables=("facts",),
         timeout=timedelta(seconds=2),
     ):
-        assert catalog.reclaim_stale() == 1
+        assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 1
+
+
+def test_default_settings_skip_continuous_enqueue(database_engine: Engine) -> None:
+    """Unmodified P1MaintainSettings keeps both gates off."""
+    catalog = P1MaintainCatalog.from_engine(engine=database_engine)
+    skipped = catalog.enqueue(request=_request())
+    assert skipped.skipped == "maintenance_disabled"
+
+
+def test_force_survives_pending_and_running_coalesce(
+    database_engine: Engine, ledger: WorkLedger
+) -> None:
+    """Admin force must stick on the open unit and its atomic successor."""
+    catalog = _catalog(
+        database_engine=database_engine,
+        ledger=ledger,
+        maintenance_enabled=True,
+        heavy_enabled=False,
+    )
+    first = catalog.enqueue(request=_request(mode=P1MaintainMode.HEAVY, force=True))
+    assert first.created is True
+    catalog.enqueue(request=_request(mode=P1MaintainMode.HEAVY, force=True))
+    with database_engine.connect() as connection:
+        force = connection.execute(
+            text("SELECT force FROM p1_maintain_units WHERE unit_id = :unit_id"),
+            {"unit_id": first.unit_id},
+        ).scalar_one()
+        payload_force = connection.execute(
+            text(
+                "SELECT payload ->> 'force' FROM processing_state WHERE target_id = :id"
+            ),
+            {"id": first.unit_id},
+        ).scalar_one()
+    assert force is True
+    assert payload_force == "true"
+    claimed = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(claimed, ClaimedWork)
+    catalog.enqueue(request=_request(mode=P1MaintainMode.HEAVY, force=True))
+    outcomes = ledger.complete_maintain_p1(
+        processing_id=claimed.processing_id,
+        unit_id=first.unit_id or claimed.target_id,
+        expected_attempt=claimed.attempt,
+    )
+    assert len(outcomes) == 1
+    successor = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(successor, ClaimedWork)
+    assert successor.payload is not None
+    assert successor.payload["force"] is True
+
+
+def test_complete_rejects_a_mismatched_unit(
+    database_engine: Engine, ledger: WorkLedger
+) -> None:
+    """Completion must bind processing_id to the nominated unit identity."""
+    catalog = _catalog(database_engine=database_engine, ledger=ledger)
+    facts = catalog.enqueue(request=_request(table_name=P1MaintainTable.FACTS))
+    chunks = catalog.enqueue(request=_request(table_name=P1MaintainTable.CHUNKS))
+    claimed = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(claimed, ClaimedWork)
+    other = chunks.unit_id if claimed.target_id == facts.unit_id else facts.unit_id
+    with pytest.raises(WorkNotRunningError):
+        ledger.complete_maintain_p1(
+            processing_id=claimed.processing_id,
+            unit_id=other or uuid4(),
+            expected_attempt=claimed.attempt,
+        )
+
+
+def test_stale_heartbeat_does_not_reclaim_replacement_attempt(
+    database_engine: Engine, ledger: WorkLedger
+) -> None:
+    """Attempt A's leftover beat must not authorize fail(expected_attempt=B)."""
+    queue = RecordingTaskQueue()
+    catalog = _catalog(
+        database_engine=database_engine,
+        ledger=ledger,
+        running_stale_s=0.001,
+        heartbeat_s=1.0,
+        queue=queue,
+    )
+    opened = catalog.enqueue(request=_request())
+    first = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(first, ClaimedWork)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE p1_maintain_units"
+                " SET claimed_attempt = :attempt,"
+                "     last_heartbeat_at = now() - interval '10 seconds'"
+                " WHERE unit_id = :unit_id"
+            ),
+            {"unit_id": opened.unit_id, "attempt": first.attempt},
+        )
+    assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 1
+    assert queue.announcements
+    second = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.MAINTAIN_P1_INDEX, lane=None
+    )
+    assert isinstance(second, ClaimedWork)
+    with hold_p1_table_maintain_locks(
+        engine=database_engine,
+        lance_root=_LANCE_KEY,
+        tables=("facts",),
+        timeout=timedelta(seconds=2),
+    ):
+        assert catalog.reclaim_stale(deployment_id=_DEPLOYMENT_ID) == 0
+    ledger.complete_maintain_p1(
+        processing_id=second.processing_id,
+        unit_id=opened.unit_id or second.target_id,
+        expected_attempt=second.attempt,
+        skip_successor=True,
+    )

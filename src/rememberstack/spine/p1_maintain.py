@@ -24,12 +24,14 @@ from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import QueueRoute
 from rememberstack.model import WorkNotFoundError
 from rememberstack.model import WorkNotRunningError
 from rememberstack.model.p1_maintain import P1MaintainCompleteRequest
 from rememberstack.model.p1_maintain import P1MaintainEnqueueRequest
 from rememberstack.model.p1_maintain import P1MaintainEnqueueResult
 from rememberstack.model.p1_maintain import P1MaintainMode
+from rememberstack.ports.queue import TaskQueuePort
 from rememberstack.spine.p1_maintain_lock import p1_table_maintain_lock_key
 from rememberstack.spine.work_ledger import enqueue_on
 from rememberstack.spine.work_ledger import WorkLedger
@@ -51,7 +53,7 @@ class P1MaintainSettings(BaseSettings):
 
     maintenance_enabled: bool = False
     heavy_enabled: bool = False
-    reclaim_min_s: float = Field(default=60.0, gt=0)
+    reclaim_min_s: float = Field(default=60.0, ge=0)
     running_stale_s: float = Field(default=7200.0, gt=0)
     heartbeat_s: float = Field(default=60.0, gt=0)
     heartbeat_stale_mult: float = Field(default=3.0, gt=0)
@@ -85,21 +87,29 @@ class P1MaintainCatalog:
         engine: Engine,
         ledger: WorkLedger,
         settings: P1MaintainSettings | None = None,
+        queue: TaskQueuePort | None = None,
     ) -> None:
         """Bind the catalog to the ledger and default-off maintain gates."""
         self._engine = engine
         self._ledger = ledger
         self._settings = settings or P1MaintainSettings()
+        self._queue = queue
+        self._last_reclaim_at: datetime | None = None
 
     @classmethod
     def from_engine(
-        cls, *, engine: Engine, settings: P1MaintainSettings | None = None
+        cls,
+        *,
+        engine: Engine,
+        settings: P1MaintainSettings | None = None,
+        queue: TaskQueuePort | None = None,
     ) -> Self:
         """Compose a catalog that shares the engine with a fresh ledger."""
         return cls(
             engine=engine,
             ledger=WorkLedger(engine=engine, settings=WorkLedgerSettings()),
             settings=settings,
+            queue=queue,
         )
 
     def enqueue(self, *, request: P1MaintainEnqueueRequest) -> P1MaintainEnqueueResult:
@@ -107,6 +117,9 @@ class P1MaintainCatalog:
         skipped = self._gate_skip(request=request)
         if skipped is not None:
             return P1MaintainEnqueueResult(skipped=skipped)
+        request = request.model_copy(
+            update={"lance_root_key": lance_root_key(lance_root=request.lance_root_key)}
+        )
         with self._engine.begin() as connection:
             connection.execute(
                 _ENQUEUE_LOCK,
@@ -132,117 +145,110 @@ class P1MaintainCatalog:
                 .first()
             )
             if open_row is not None and open_row["status"] in ("pending", "failed"):
-                connection.execute(
-                    _BUMP_REQUESTED,
-                    {"unit_id": open_row["unit_id"], "reason": request.reason},
+                _coalesce_open(
+                    connection=connection,
+                    unit_id=open_row["unit_id"],
+                    processing_id=open_row["processing_id"],
+                    reason=request.reason,
+                    force=request.force,
+                    not_before=request.not_before,
+                    rerun=False,
                 )
-                if request.not_before is not None:
-                    connection.execute(
-                        _MAYBE_LOWER_NOT_BEFORE,
-                        {
-                            "not_before": request.not_before,
-                            "processing_id": open_row["processing_id"],
-                        },
-                    )
                 return P1MaintainEnqueueResult(
                     unit_id=open_row["unit_id"],
                     processing_id=open_row["processing_id"],
                     coalesced=True,
                 )
             if open_row is not None and open_row["status"] == "running":
-                connection.execute(
-                    _MARK_RERUN,
-                    {"unit_id": open_row["unit_id"], "reason": request.reason},
-                )
-                return P1MaintainEnqueueResult(
-                    unit_id=open_row["unit_id"],
-                    processing_id=open_row["processing_id"],
-                    rerun_requested=True,
-                )
-            unit_id = uuid4()
-            connection.execute(
-                _INSERT_UNIT,
-                {
-                    "unit_id": unit_id,
-                    "deployment_id": request.deployment_id,
-                    "lance_root_key": request.lance_root_key,
-                    "table_name": request.table_name.value,
-                    "mode": request.mode.value,
-                    "reason": request.reason,
-                },
-            )
-            outcome = enqueue_on(
-                connection=connection,
-                work=EnqueueWork(
-                    deployment_id=request.deployment_id,
-                    target_kind=ProcessingTarget.P1_MAINTAIN_UNIT,
-                    target_id=unit_id,
-                    stage=PipelineStage.MAINTAIN_P1_INDEX,
-                    component_version=P1_MAINTAIN_COMPONENT_VERSION,
-                    content_hash=maintain_content_hash(
-                        lance_root_key=request.lance_root_key,
-                        table_name=request.table_name.value,
-                        mode=request.mode.value,
-                        unit_id=unit_id,
-                    ),
-                    lane=None,
-                    payload={
-                        "mode": request.mode.value,
-                        "table": request.table_name.value,
-                        "force": request.force,
-                        "reason": request.reason,
-                    },
-                    not_before=request.not_before,
-                ),
-            )
-            return P1MaintainEnqueueResult(
-                unit_id=unit_id, processing_id=outcome.processing_id, created=True
-            )
+                if _unit_is_reclaimable(
+                    row=dict(open_row),
+                    now=datetime.now(tz=UTC),
+                    heartbeat_stale=self._heartbeat_stale(),
+                    running_stale=timedelta(seconds=self._settings.running_stale_s),
+                ):
+                    _fail_running_on(
+                        connection=connection,
+                        processing_id=open_row["processing_id"],
+                        expected_attempt=int(open_row["attempts"]),
+                        error="stale maintain claim reclaimed on enqueue",
+                    )
+                else:
+                    _coalesce_open(
+                        connection=connection,
+                        unit_id=open_row["unit_id"],
+                        processing_id=open_row["processing_id"],
+                        reason=request.reason,
+                        force=request.force,
+                        not_before=None,
+                        rerun=True,
+                    )
+                    return P1MaintainEnqueueResult(
+                        unit_id=open_row["unit_id"],
+                        processing_id=open_row["processing_id"],
+                        rerun_requested=True,
+                    )
+            return _insert_open_unit(connection=connection, request=request)
 
-    def reclaim_stale(self) -> int:
+    def reclaim_stale(self, *, deployment_id: UUID) -> int:
         """Fail reclaimable running maintain rows with an attempt fence.
 
-        Heartbeat-stale rows reclaim without probing the table lock. The
-        wall-clock arm (no heartbeat) also requires the table maintain lock
-        to be free so a live owner whose heartbeat thread died is not stolen.
+        A heartbeat is trusted only when ``claimed_attempt`` matches the
+        running ledger attempt. Unstamped or leftover attempt-A beats fall
+        through to the wall-clock arm, which also requires the table lock
+        to be free.
         """
-        heartbeat_stale = timedelta(
-            seconds=self._settings.heartbeat_s * self._settings.heartbeat_stale_mult
-        )
+        now = datetime.now(tz=UTC)
+        if (
+            self._last_reclaim_at is not None
+            and (now - self._last_reclaim_at).total_seconds()
+            < self._settings.reclaim_min_s
+        ):
+            return 0
+        self._last_reclaim_at = now
+        heartbeat_stale = self._heartbeat_stale()
         running_stale = timedelta(seconds=self._settings.running_stale_s)
         reclaimed = 0
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
-                    _SELECT_RUNNING_UNITS, {"version": P1_MAINTAIN_COMPONENT_VERSION}
+                    _SELECT_RUNNING_UNITS,
+                    {
+                        "version": P1_MAINTAIN_COMPONENT_VERSION,
+                        "deployment_id": deployment_id,
+                    },
                 )
                 .mappings()
                 .all()
             )
             connection.commit()
-        now = datetime.now(tz=UTC)
         for row in rows:
+            mapping = dict(row)
             if not _unit_is_reclaimable(
-                row=dict(row),
+                row=mapping,
                 now=now,
                 heartbeat_stale=heartbeat_stale,
                 running_stale=running_stale,
             ):
                 continue
-            if row["last_heartbeat_at"] is None and not self._table_lock_is_free(
-                lance_root_key=str(row["lance_root_key"]),
-                table_name=str(row["table_name"]),
+            if _trusted_heartbeat(row=mapping) is None and not self._table_lock_is_free(
+                lance_root_key=str(mapping["lance_root_key"]),
+                table_name=str(mapping["table_name"]),
             ):
                 continue
             try:
-                self._ledger.fail(
-                    processing_id=row["processing_id"],
+                scheduled = self._ledger.fail(
+                    processing_id=mapping["processing_id"],
                     error="stale maintain claim reclaimed",
                     retryable=True,
-                    expected_attempt=int(row["attempts"]),
+                    expected_attempt=int(mapping["attempts"]),
                 )
             except (WorkNotRunningError, WorkNotFoundError):
                 continue
+            self._announce(
+                processing_id=mapping["processing_id"],
+                deployment_id=deployment_id,
+                not_before=scheduled,
+            )
             reclaimed += 1
         return reclaimed
 
@@ -253,8 +259,44 @@ class P1MaintainCatalog:
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
         """Succeed one attempt and maybe insert a successor in the same transaction."""
-        return complete_maintain_p1_on(
+        outcomes = complete_maintain_p1_on(
             engine=self._engine, request=request, follow_up=follow_up
+        )
+        due = request.deferred_successor_not_before or datetime.now(tz=UTC)
+        with self._engine.connect() as connection:
+            deployment_id = connection.execute(
+                text("SELECT deployment_id FROM p1_maintain_units WHERE unit_id = :id"),
+                {"id": request.unit_id},
+            ).scalar_one()
+        for outcome in outcomes:
+            if outcome.created:
+                self._announce(
+                    processing_id=outcome.processing_id,
+                    deployment_id=deployment_id,
+                    not_before=due,
+                )
+        return outcomes
+
+    def _heartbeat_stale(self) -> timedelta:
+        """Age after which a trusted heartbeat is considered dead."""
+        return timedelta(
+            seconds=self._settings.heartbeat_s * self._settings.heartbeat_stale_mult
+        )
+
+    def _announce(
+        self, *, processing_id: UUID, deployment_id: UUID, not_before: datetime | None
+    ) -> None:
+        """Announce retry/successor work after the ledger transaction commits."""
+        if self._queue is None or not_before is None:
+            return
+        self._queue.announce(
+            processing_id=processing_id,
+            route_snapshot=QueueRoute(
+                deployment_id=deployment_id,
+                stage=PipelineStage.MAINTAIN_P1_INDEX,
+                lane=None,
+            ),
+            not_before_snapshot=not_before,
         )
 
     def _gate_skip(self, *, request: P1MaintainEnqueueRequest) -> str | None:
@@ -320,16 +362,20 @@ def complete_maintain_p1_on(
             {
                 "processing_id": request.processing_id,
                 "expected_attempt": request.expected_attempt,
+                "unit_id": request.unit_id,
+                "deployment_id": unit["deployment_id"],
+                "version": P1_MAINTAIN_COMPONENT_VERSION,
             },
         ).rowcount
         if updated == 0:
             raise WorkNotRunningError(
                 f"processing row {request.processing_id} is not running "
-                f"at attempt {request.expected_attempt}"
+                f"at attempt {request.expected_attempt} for unit {request.unit_id}"
             )
         connection.execute(
             _WRITE_UNIT_RESULT, {"unit_id": request.unit_id, "result": request.result}
         )
+        connection.execute(_CLEAR_RERUN, {"unit_id": request.unit_id})
         outcomes: list[EnqueueOutcome] = []
         wants_successor = not request.skip_successor and (
             bool(unit["rerun_requested"])
@@ -349,7 +395,6 @@ def complete_maintain_p1_on(
                     not_before=request.deferred_successor_not_before,
                 )
             )
-            connection.execute(_CLEAR_RERUN, {"unit_id": request.unit_id})
         outcomes.extend(
             enqueue_on(connection=connection, work=work) for work in follow_up
         )
@@ -365,6 +410,7 @@ def _insert_successor(
 ) -> EnqueueOutcome:
     """Insert a fresh unit + pending ledger row for the same physical key."""
     mapping = dict(unit)
+    force = bool(mapping.get("force"))
     unit_id = uuid4()
     connection.execute(
         _INSERT_UNIT,
@@ -375,6 +421,7 @@ def _insert_successor(
             "table_name": mapping["table_name"],
             "mode": mapping["mode"],
             "reason": reason,
+            "force": force,
         },
     )
     return enqueue_on(
@@ -395,12 +442,113 @@ def _insert_successor(
             payload={
                 "mode": str(mapping["mode"]),
                 "table": str(mapping["table_name"]),
-                "force": False,
+                "force": force,
                 "reason": reason,
             },
             not_before=not_before,
         ),
     )
+
+
+def _insert_open_unit(
+    *, connection: Connection, request: P1MaintainEnqueueRequest
+) -> P1MaintainEnqueueResult:
+    """Insert a fresh unit and unlaned pending ledger row."""
+    unit_id = uuid4()
+    connection.execute(
+        _INSERT_UNIT,
+        {
+            "unit_id": unit_id,
+            "deployment_id": request.deployment_id,
+            "lance_root_key": request.lance_root_key,
+            "table_name": request.table_name.value,
+            "mode": request.mode.value,
+            "reason": request.reason,
+            "force": request.force,
+        },
+    )
+    outcome = enqueue_on(
+        connection=connection,
+        work=EnqueueWork(
+            deployment_id=request.deployment_id,
+            target_kind=ProcessingTarget.P1_MAINTAIN_UNIT,
+            target_id=unit_id,
+            stage=PipelineStage.MAINTAIN_P1_INDEX,
+            component_version=P1_MAINTAIN_COMPONENT_VERSION,
+            content_hash=maintain_content_hash(
+                lance_root_key=request.lance_root_key,
+                table_name=request.table_name.value,
+                mode=request.mode.value,
+                unit_id=unit_id,
+            ),
+            lane=None,
+            payload={
+                "mode": request.mode.value,
+                "table": request.table_name.value,
+                "force": request.force,
+                "reason": request.reason,
+            },
+            not_before=request.not_before,
+        ),
+    )
+    return P1MaintainEnqueueResult(
+        unit_id=unit_id, processing_id=outcome.processing_id, created=True
+    )
+
+
+def _coalesce_open(
+    *,
+    connection: Connection,
+    unit_id: UUID,
+    processing_id: UUID,
+    reason: str,
+    force: bool,
+    not_before: datetime | None,
+    rerun: bool,
+) -> None:
+    """Bump an open unit and monotonically preserve force."""
+    connection.execute(
+        _MARK_RERUN if rerun else _BUMP_REQUESTED,
+        {"unit_id": unit_id, "reason": reason, "force": force},
+    )
+    connection.execute(
+        _OR_PAYLOAD_FORCE, {"processing_id": processing_id, "force": force}
+    )
+    if not_before is not None:
+        connection.execute(
+            _MAYBE_LOWER_NOT_BEFORE,
+            {"not_before": not_before, "processing_id": processing_id},
+        )
+
+
+def _fail_running_on(
+    *, connection: Connection, processing_id: UUID, expected_attempt: int, error: str
+) -> None:
+    """Attempt-fence a running row to retryable failed inside the caller TX."""
+    updated = connection.execute(
+        _FAIL_RUNNING,
+        {
+            "processing_id": processing_id,
+            "expected_attempt": expected_attempt,
+            "error": error,
+        },
+    ).rowcount
+    if updated == 0:
+        raise WorkNotRunningError(
+            f"processing row {processing_id} is not running at attempt {expected_attempt}"
+        )
+
+
+def _trusted_heartbeat(*, row: Mapping[str, Any]) -> datetime | None:
+    """Return last_heartbeat_at only when it belongs to the running attempt."""
+    heartbeat = row.get("last_heartbeat_at")
+    claimed = row.get("claimed_attempt")
+    attempts = row.get("attempts")
+    if heartbeat is None or claimed is None or attempts is None:
+        return None
+    if int(claimed) != int(attempts):
+        return None
+    return heartbeat
 
 
 def _unit_is_reclaimable(
@@ -412,7 +560,7 @@ def _unit_is_reclaimable(
 ) -> bool:
     """Return whether a running unit has missed its liveness proof."""
     mapping = dict(row)
-    heartbeat = mapping["last_heartbeat_at"]
+    heartbeat = _trusted_heartbeat(row=mapping)
     if heartbeat is not None:
         return now - heartbeat >= heartbeat_stale
     started = mapping["started_at"]
@@ -423,7 +571,8 @@ def _unit_is_reclaimable(
 
 _SELECT_OPEN_UNIT = text(
     """
-    SELECT u.unit_id, ps.processing_id, ps.status
+    SELECT u.unit_id, u.force, u.last_heartbeat_at, u.claimed_attempt,
+           ps.processing_id, ps.status, ps.attempts, ps.started_at
     FROM p1_maintain_units AS u
     JOIN processing_state AS ps
       ON ps.target_id = u.unit_id
@@ -449,8 +598,9 @@ _BUMP_REQUESTED = text(
     """
     UPDATE p1_maintain_units
     SET requested_at = now(),
+        force = force OR :force,
         reason = CASE
-          WHEN position(:reason IN reason) > 0 THEN reason
+          WHEN :reason = ANY (string_to_array(reason, ',')) THEN reason
           ELSE reason || ',' || :reason
         END
     WHERE unit_id = :unit_id
@@ -473,8 +623,9 @@ _MARK_RERUN = text(
     """
     UPDATE p1_maintain_units
     SET rerun_requested = true,
+        force = force OR :force,
         reason = CASE
-          WHEN position(:reason IN reason) > 0 THEN reason
+          WHEN :reason = ANY (string_to_array(reason, ',')) THEN reason
           ELSE reason || ',' || :reason
         END
     WHERE unit_id = :unit_id
@@ -484,9 +635,9 @@ _MARK_RERUN = text(
 _INSERT_UNIT = text(
     """
     INSERT INTO p1_maintain_units (
-      unit_id, deployment_id, lance_root_key, table_name, mode, reason
+      unit_id, deployment_id, lance_root_key, table_name, mode, reason, force
     ) VALUES (
-      :unit_id, :deployment_id, :lance_root_key, :table_name, :mode, :reason
+      :unit_id, :deployment_id, :lance_root_key, :table_name, :mode, :reason, :force
     )
     """
 )
@@ -494,7 +645,7 @@ _INSERT_UNIT = text(
 _LOOKUP_UNIT = text(
     """
     SELECT unit_id, deployment_id, lance_root_key, table_name, mode,
-           rerun_requested
+           rerun_requested, force
     FROM p1_maintain_units
     WHERE unit_id = :unit_id
     """
@@ -503,7 +654,7 @@ _LOOKUP_UNIT = text(
 _LOCK_UNIT = text(
     """
     SELECT unit_id, deployment_id, lance_root_key, table_name, mode,
-           rerun_requested
+           rerun_requested, force
     FROM p1_maintain_units
     WHERE unit_id = :unit_id
     FOR UPDATE
@@ -513,7 +664,7 @@ _LOCK_UNIT = text(
 _SELECT_RUNNING_UNITS = text(
     """
     SELECT u.unit_id, u.lance_root_key, u.table_name, u.last_heartbeat_at,
-           ps.processing_id, ps.attempts, ps.started_at
+           u.claimed_attempt, ps.processing_id, ps.attempts, ps.started_at
     FROM p1_maintain_units AS u
     JOIN processing_state AS ps
       ON ps.target_id = u.unit_id
@@ -522,6 +673,7 @@ _SELECT_RUNNING_UNITS = text(
      AND ps.target_kind = 'p1_maintain_unit'
      AND ps.component_version = :version
     WHERE ps.status = 'running'
+      AND u.deployment_id = :deployment_id
     """
 )
 
@@ -529,6 +681,38 @@ _COMPLETE_FENCED = text(
     """
     UPDATE processing_state
     SET status = 'succeeded', finished_at = now()
+    WHERE processing_id = :processing_id
+      AND status = 'running'
+      AND attempts = :expected_attempt
+      AND target_id = :unit_id
+      AND target_kind = 'p1_maintain_unit'
+      AND stage = 'maintain_p1_index'
+      AND component_version = :version
+      AND deployment_id = :deployment_id
+    """
+)
+
+_OR_PAYLOAD_FORCE = text(
+    """
+    UPDATE processing_state
+    SET payload = jsonb_set(
+          COALESCE(payload, '{}'::jsonb),
+          '{force}',
+          to_jsonb(
+            COALESCE((payload ->> 'force')::boolean, false) OR :force
+          )
+        )
+    WHERE processing_id = :processing_id
+    """
+)
+
+_FAIL_RUNNING = text(
+    """
+    UPDATE processing_state
+    SET status = 'failed',
+        defer_reason = 'retry_backoff',
+        not_before = now(),
+        last_error = :error
     WHERE processing_id = :processing_id
       AND status = 'running'
       AND attempts = :expected_attempt

@@ -23,6 +23,7 @@ CREATE TABLE p1_maintain_units (
   table_name        text NOT NULL,                    -- chunks | claims | facts | entities
   mode              text NOT NULL,                    -- light | heavy | ensure_indexes
   reason            text NOT NULL,                    -- last enqueue / coalesce reason
+  force             boolean NOT NULL DEFAULT false,   -- monotonic admin/force override
   requested_at      timestamptz NOT NULL DEFAULT now(), -- bumped on pending/failed coalesce
   rerun_requested   boolean NOT NULL DEFAULT false,   -- set when enqueue races a live run
   last_heartbeat_at timestamptz,                      -- side-thread liveness (D91 §5.5.2)
