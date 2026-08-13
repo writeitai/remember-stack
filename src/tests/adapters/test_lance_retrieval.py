@@ -503,7 +503,18 @@ def test_fact_metadata_honors_kind_in_join_key(tmp_path) -> None:
 def test_fact_writes_do_not_call_optimize(tmp_path, monkeypatch: Any) -> None:
     """D91 PR1: ordinary fact writers never compact on the lease path."""
     optimize_calls = 0
-    original = lance_adapter.Table.optimize
+    deployment_id = uuid4()
+    fact_id = uuid4()
+    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    # Seed the table so we can patch the concrete LanceTable type.
+    index.upsert_facts(
+        rows=(
+            _fact(fact_id=fact_id, deployment_id=deployment_id, ingested_at=ingested),
+        )
+    )
+    table_type = type(lancedb.connect(str(tmp_path / "lance")).open_table("facts"))
+    original = table_type.optimize
 
     def banned_optimize(table: Any, *args: Any, **kwargs: Any) -> Any:
         """Fail the test if a write path reaches Lance optimize."""
@@ -511,12 +522,8 @@ def test_fact_writes_do_not_call_optimize(tmp_path, monkeypatch: Any) -> None:
         optimize_calls += 1
         return original(table, *args, **kwargs)
 
-    monkeypatch.setattr(lance_adapter.Table, "optimize", banned_optimize)
+    monkeypatch.setattr(table_type, "optimize", banned_optimize)
     monkeypatch.setattr(lance_adapter, "_INDEX_OPTIMIZE_MUTATIONS", 1)
-    deployment_id = uuid4()
-    fact_id = uuid4()
-    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
-    index = LanceChunkIndex(root=tmp_path / "lance")
     index.upsert_facts(
         rows=(
             _fact(fact_id=fact_id, deployment_id=deployment_id, ingested_at=ingested),
