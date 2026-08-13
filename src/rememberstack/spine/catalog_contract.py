@@ -96,6 +96,8 @@ EXPECTED_ENUMS: Final = (
     "snapshot_status",
     "structure_route_tag",
     "subscription_status",
+    "surface_cost_kind",
+    "surface_cost_outcome",
     "versioning_mode",
 )
 EXPECTED_TABLES: Final = (
@@ -167,6 +169,8 @@ EXPECTED_TABLES: Final = (
     "saved_query_versions",
     "scope_interests",
     "scopes",
+    "surface_cost_ledger",
+    "surface_cost_meter_state",
     "testimony_currency_events",
 )
 EXPECTED_INDEXES: Final = (
@@ -189,6 +193,7 @@ EXPECTED_INDEXES: Final = (
     "ix_claims_valid_window",
     "ix_communities_snapshot",
     "ix_cost_budget_window",
+    "ix_cost_export",
     "ix_crossrefs_from",
     "ix_crossrefs_to",
     "ix_currency_claim",
@@ -258,6 +263,7 @@ EXPECTED_INDEXES: Final = (
     "ix_sections_role",
     "ix_skeleton_checks_representation",
     "ix_structure_generations_representation",
+    "ix_surface_cost_export",
     "ux_kae_link",
     "ux_kquarantine_open_artifact",
     "ux_kwatch",
@@ -270,6 +276,7 @@ EXPECTED_RANGE_PARENTS: Final = {
     "claims": "ingested_at",
     "mentions": "created_at",
     "resolution_decisions": "decided_at",
+    "surface_cost_ledger": "occurred_at",
     "testimony_currency_events": "occurred_at",
 }
 EXPECTED_HASH_PARENTS: Final = ("observation_evidence", "relation_evidence")
@@ -303,6 +310,7 @@ def lane_is_valid(*, stage: str, lane: str | None) -> bool:
 
 
 EXPECTED_VIEWS: Final = (
+    "v_cost_receipts",
     "v_graph_crossref",
     "v_graph_documents",
     "v_graph_entities",
@@ -331,7 +339,7 @@ EMPTY_AT_HEAD: Final = (
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 54, "f": 128, "p": 69, "u": 35, "x": 1}
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 58, "f": 130, "p": 71, "u": 35, "x": 1}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),
@@ -353,6 +361,13 @@ DECISION_OBJECTS: Final = {
     "D69": ("v_graph_relates",),
     "D74": ("forget_manifests", "ix_forget_content_guard"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
+    "D91": (
+        "surface_cost_ledger",
+        "surface_cost_meter_state",
+        "v_cost_receipts",
+        "ix_surface_cost_export",
+        "ix_cost_export",
+    ),
 }
 
 

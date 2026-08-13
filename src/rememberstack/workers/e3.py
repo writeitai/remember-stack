@@ -571,6 +571,7 @@ class NormalizeRelationsHandler:
                         call_key=f"{call_key}:failure",
                         tier="normalize_failed_response",
                         usage=exception.usage,
+                        outcome="provider_error",
                     )
                 _logger.exception(
                     "e3.claim_normalize_error claim_id=%s error_class=%s site=generate",

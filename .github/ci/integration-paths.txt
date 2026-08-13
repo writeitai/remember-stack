@@ -39,6 +39,7 @@ src/tests/surfaces/test_retrieval_batch_d.py
 src/tests/surfaces/test_retrieval_batch_e.py
 src/tests/surfaces/test_retrieval_primitives.py
 src/tests/surfaces/test_saved_queries_batch_e.py
+src/tests/surfaces/test_surface_cost.py
 src/tests/surfaces/test_surfaces_parity.py
 src/tests/workers/test_claimify_loss_ledger_pg.py
 src/tests/workers/test_e0_chain.py

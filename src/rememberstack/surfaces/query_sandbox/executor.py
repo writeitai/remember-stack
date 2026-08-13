@@ -462,14 +462,20 @@ class QuerySandboxExecutor:
                         resolution.invocation for resolution in resolutions
                     )
                 elif validated.srf_bindings:
-                    resolutions = resolve_invocations(
-                        bindings=validated.srf_bindings,
-                        parameters=parameters,
-                        connection=cursor.connection,
-                        search=self._search,
-                        embed=self._embed,
-                        settings=BridgeSettings(deployment_id=self._deployment_id),
-                    )
+                    from rememberstack.spine.surface_cost import bind_surface_scope
+                    from rememberstack.spine.surface_cost import SurfaceCostKind
+
+                    with bind_surface_scope(
+                        request_id=request_id, surface=SurfaceCostKind.OPEN_QUERY
+                    ):
+                        resolutions = resolve_invocations(
+                            bindings=validated.srf_bindings,
+                            parameters=parameters,
+                            connection=cursor.connection,
+                            search=self._search,
+                            embed=self._embed,
+                            settings=BridgeSettings(deployment_id=self._deployment_id),
+                        )
                     executable, bridge_parameters = substitute(
                         validated.sql, resolutions
                     )

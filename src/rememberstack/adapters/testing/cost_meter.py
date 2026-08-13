@@ -7,7 +7,12 @@ class NoopCostMeter:
     """Accept provider accounting without persisting it."""
 
     def record(
-        self, *, call_key: str, tier: str | None, usage: ProviderCallUsage
+        self,
+        *,
+        call_key: str,
+        tier: str | None,
+        usage: ProviderCallUsage,
+        outcome: str = "ok",
     ) -> None:
         """Discard one test-only call record."""
-        del call_key, tier, usage
+        del call_key, tier, usage, outcome
