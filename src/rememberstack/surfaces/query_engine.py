@@ -11,10 +11,12 @@ never trigger anything.
 import base64
 import binascii
 from collections import Counter
+from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
+from functools import wraps
 from itertools import batched
 import math
 from time import monotonic
@@ -63,6 +65,7 @@ from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import OverlapTemporalScope
 from rememberstack.model import PageRef
+from rememberstack.model import ProviderCallError
 from rememberstack.model import RankedItem
 from rememberstack.model import ScanRow
 from rememberstack.model import SourceRecord
@@ -78,6 +81,11 @@ from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.surface_cost import open_surface_scope
+from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
+from rememberstack.spine.surface_cost import SurfaceCallSite
+from rememberstack.spine.surface_cost import SurfaceCostKind
+from rememberstack.spine.surface_cost import SurfaceCostOutcome
 
 if TYPE_CHECKING:
     from rememberstack.surfaces.graph_queries import GraphQueries
@@ -175,6 +183,22 @@ def _decode_feed_cursor(token: str | None) -> tuple[datetime, UUID] | None:
         raise ValueError(f"invalid delta continuation: {token!r}") from error
 
 
+def _with_surface[**P, T](
+    surface: SurfaceCostKind,
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Open a D91 request scope around a public QueryEngine method."""
+
+    def decorator(method: Callable[P, T]) -> Callable[P, T]:
+        @wraps(method)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
+            with open_surface_scope(surface=surface):
+                return method(*args, **kwargs)
+
+        return wrapped
+
+    return decorator
+
+
 class QueryEngine:
     """The typed read path over one deployment's spine and P1 indexes."""
 
@@ -186,6 +210,7 @@ class QueryEngine:
         model_provider: ModelProviderPort,
         embedding_model: str,
         batch_engine: Engine | None = None,
+        surface_cost: SqlSurfaceCostRecorder | None = None,
     ) -> None:
         """Bind the engine to the spine, the P1 indexes, and the embedder.
 
@@ -212,6 +237,7 @@ class QueryEngine:
         self._policy_generation = EMBEDDING_INPUT_POLICY_VERSION
         self._embedder_generation = embedding_model
         self._batch_engine = batch_engine or engine
+        self._surface_cost = surface_cost
 
     def resolve(
         self,
@@ -346,6 +372,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def claims_about(
         self, *, deployment_id: UUID, entity: str, query: str | None = None, k: int = 20
     ) -> Envelope:
@@ -373,7 +400,11 @@ class QueryEngine:
         candidate_ids = tuple(row["claim_id"] for row in rows)
         total = int(rows[0]["total_count"]) if rows else 0
         ordered_ids, ranking = self._rank_bounded_claims(
-            deployment_id=deployment_id, claim_ids=candidate_ids, query=query, k=k
+            deployment_id=deployment_id,
+            claim_ids=candidate_ids,
+            query=query,
+            k=k,
+            call_site=SurfaceCallSite.CLAIMS_ABOUT,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id, claim_ids=ordered_ids
@@ -395,6 +426,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def claims_as_of(
         self,
         *,
@@ -435,7 +467,11 @@ class QueryEngine:
         candidate_ids = tuple(row["claim_id"] for row in rows)
         total = int(rows[0]["total_count"]) if rows else 0
         ordered_ids, ranking = self._rank_bounded_claims(
-            deployment_id=deployment_id, claim_ids=candidate_ids, query=query, k=k
+            deployment_id=deployment_id,
+            claim_ids=candidate_ids,
+            query=query,
+            k=k,
+            call_site=SurfaceCallSite.CLAIMS_AS_OF,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id, claim_ids=ordered_ids, current_only=False
@@ -515,6 +551,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.OPERATION)
     def fact_context(
         self,
         *,
@@ -711,6 +748,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.OPERATION)
     def testimony_context(
         self,
         *,
@@ -760,6 +798,7 @@ class QueryEngine:
             }
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def multi_hop_context(
         self,
         *,
@@ -1099,6 +1138,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LOOKUP)
     def lookup_observations(
         self,
         *,
@@ -1135,7 +1175,11 @@ class QueryEngine:
         else:
             nominated = self._search_index.search_facts(
                 deployment_id=str(deployment_id),
-                vector=self._embed(query=property_query),
+                vector=self._embed(
+                    query=property_query,
+                    call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
+                    deployment_id=deployment_id,
+                ),
                 k=k,
                 kind="observation",
             )
@@ -1169,6 +1213,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.SEARCH)
     def search_claims(
         self,
         *,
@@ -1184,7 +1229,11 @@ class QueryEngine:
         confirms, counting the drops (D48 nominate-then-drop honesty).
         """
         nominated = self._nominate_claim_ids(
-            deployment_id=deployment_id, query=query, k=k, channel=channel
+            deployment_id=deployment_id,
+            query=query,
+            k=k,
+            channel=channel,
+            call_site=SurfaceCallSite.SEARCH_CLAIMS,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id,
@@ -1204,6 +1253,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def nominate_claims(
         self,
         *,
@@ -1219,12 +1269,17 @@ class QueryEngine:
         `hydrate_claims` confirmation. Candidate UUIDs and ranks are not facts.
         """
         nominated = self._nominate_claim_ids(
-            deployment_id=deployment_id, query=query, k=k, channel=channel
+            deployment_id=deployment_id,
+            query=query,
+            k=k,
+            channel=channel,
+            call_site=SurfaceCallSite.NOMINATE_CLAIMS,
         )
         return _nomination_envelope(
             ids=nominated, empty_explanation="no claims were nominated"
         )
 
+    @_with_surface(SurfaceCostKind.SEARCH)
     def search_chunks(
         self,
         *,
@@ -1235,7 +1290,11 @@ class QueryEngine:
     ) -> Envelope:
         """Search live source chunks without pretending they are claims."""
         nominated = self._nominate_chunk_ids(
-            deployment_id=deployment_id, query=query, k=k, channel=channel
+            deployment_id=deployment_id,
+            query=query,
+            k=k,
+            channel=channel,
+            call_site=SurfaceCallSite.SEARCH_CHUNKS,
         )
         chunks, dropped, _coverage = self._confirm_chunks(
             deployment_id=deployment_id,
@@ -1255,6 +1314,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def nominate_chunks(
         self,
         *,
@@ -1265,7 +1325,11 @@ class QueryEngine:
     ) -> Envelope:
         """Rank source-chunk IDs without returning unconfirmed source text."""
         nominated = self._nominate_chunk_ids(
-            deployment_id=deployment_id, query=query, k=k, channel=channel
+            deployment_id=deployment_id,
+            query=query,
+            k=k,
+            channel=channel,
+            call_site=SurfaceCallSite.NOMINATE_CHUNKS,
         )
         return _nomination_envelope(
             ids=nominated, empty_explanation="no source chunks were nominated"
@@ -1278,13 +1342,16 @@ class QueryEngine:
         query: str,
         k: int,
         channel: Literal["semantic", "bm25"],
+        call_site: SurfaceCallSite,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 claim-nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
         if channel == "semantic":
             return self._search_index.search_claims(
                 deployment_id=str(deployment_id),
-                vector=self._embed(query=query),
+                vector=self._embed(
+                    query=query, call_site=call_site, deployment_id=deployment_id
+                ),
                 k=k,
                 current_only=True,
             )
@@ -1299,13 +1366,16 @@ class QueryEngine:
         query: str,
         k: int,
         channel: Literal["semantic", "bm25"],
+        call_site: SurfaceCallSite,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 source-chunk nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
         if channel == "semantic":
             return self._search_index.search_chunks(
                 deployment_id=str(deployment_id),
-                vector=self._embed(query=query),
+                vector=self._embed(
+                    query=query, call_site=call_site, deployment_id=deployment_id
+                ),
                 k=k,
                 policy_generation=self._policy_generation,
                 embedder_generation=self._embedder_generation,
@@ -2111,7 +2181,13 @@ class QueryEngine:
             search=lambda ids, limit: method(
                 deployment_id=str(deployment_id),
                 **(
-                    {"vector": self._embed(query=query)}
+                    {
+                        "vector": self._embed(
+                            query=query,
+                            call_site=SurfaceCallSite.TESTIMONY_CLAIMS,
+                            deployment_id=deployment_id,
+                        )
+                    }
                     if channel == "semantic"
                     else {"query": query}
                 ),
@@ -2153,7 +2229,13 @@ class QueryEngine:
             search=lambda ids, limit: method(
                 deployment_id=str(deployment_id),
                 **(
-                    {"vector": self._embed(query=query)}
+                    {
+                        "vector": self._embed(
+                            query=query,
+                            call_site=SurfaceCallSite.TESTIMONY_CHUNKS,
+                            deployment_id=deployment_id,
+                        )
+                    }
                     if channel == "semantic"
                     else {"query": query}
                 ),
@@ -2187,7 +2269,11 @@ class QueryEngine:
                     k=FACT_CONTEXT_CANDIDATE_K + 1,
                     search=lambda keys, limit: method(
                         deployment_id=str(deployment_id),
-                        vector=self._embed(query=query),
+                        vector=self._embed(
+                            query=query,
+                            call_site=SurfaceCallSite.FACT_CONTEXT,
+                            deployment_id=deployment_id,
+                        ),
                         k=limit,
                         kind=None,
                         candidate_keys=tuple(
@@ -2201,7 +2287,11 @@ class QueryEngine:
                 "tuple[P1Nomination, ...]",
                 method(
                     deployment_id=str(deployment_id),
-                    vector=self._embed(query=query),
+                    vector=self._embed(
+                        query=query,
+                        call_site=SurfaceCallSite.FACT_CONTEXT,
+                        deployment_id=deployment_id,
+                    ),
                     k=FACT_CONTEXT_CANDIDATE_K + 1,
                     kind=None,
                     time=time,
@@ -2250,6 +2340,7 @@ class QueryEngine:
         claim_ids: tuple[UUID, ...],
         query: str | None,
         k: int,
+        call_site: SurfaceCallSite,
     ) -> tuple[tuple[UUID, ...], tuple[RankedItem, ...]]:
         """Optionally semantic-rank only a Postgres-bounded claim-id set."""
         if query is None:
@@ -2258,7 +2349,9 @@ class QueryEngine:
             raise RuntimeError(
                 "bounded semantic claim reranking requires ClaimVectorLookupPort"
             )
-        query_vector = self._embed(query=query)
+        query_vector = self._embed(
+            query=query, call_site=call_site, deployment_id=deployment_id
+        )
         vectors = self._claim_vector_index.claim_vectors(
             deployment_id=str(deployment_id),
             claim_ids=tuple(str(claim_id) for claim_id in claim_ids),
@@ -2663,11 +2756,30 @@ class QueryEngine:
         )
         return results, len(observation_ids) - len(results)
 
-    def _embed(self, *, query: str) -> tuple[float, ...]:
+    def _embed(
+        self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
+    ) -> tuple[float, ...]:
         """One query-string embedding through the configured port (D63)."""
-        response = self._model_provider.embed(
-            request=EmbeddingRequest(model=self._embedding_model, texts=(query,))
-        )
+        try:
+            response = self._model_provider.embed(
+                request=EmbeddingRequest(model=self._embedding_model, texts=(query,))
+            )
+        except ProviderCallError as error:
+            if error.usage is not None and self._surface_cost is not None:
+                self._surface_cost.record(
+                    usage=error.usage,
+                    outcome=SurfaceCostOutcome.PROVIDER_ERROR,
+                    call_site=call_site,
+                    deployment_id=deployment_id,
+                )
+            raise
+        if self._surface_cost is not None:
+            self._surface_cost.record(
+                usage=response.usage,
+                outcome=SurfaceCostOutcome.OK,
+                call_site=call_site,
+                deployment_id=deployment_id,
+            )
         return response.vectors[0]
 
 

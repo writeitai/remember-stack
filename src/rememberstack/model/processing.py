@@ -180,6 +180,7 @@ class RecordCall(BaseModel):
     tokens_out: int | None = None
     cost_usd: Decimal | None = None
     latency_ms: int | None = None
+    outcome: str = "ok"
 
 
 class RunResultOutcome(StrEnum):

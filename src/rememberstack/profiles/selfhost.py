@@ -39,6 +39,7 @@ from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -462,6 +463,9 @@ class SelfHostProfile:
             search_index=search_index,
             model_provider=self._model_provider,
             embedding_model=embedding_model,
+            surface_cost=SqlSurfaceCostRecorder(
+                engine=self._engine, deployment_id=self._settings.deployment_id
+            ),
         )
         sql_executor = QuerySandboxExecutor(
             deployment_id=self._settings.deployment_id,

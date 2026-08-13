@@ -146,6 +146,9 @@ class _LedgerCostMeter:
         self, *, call_key: str, tier: str | None, usage: ProviderCallUsage
     ) -> None:
         """Persist one provider-reported call through the spine attribution path."""
+        failed = call_key == "provider_failure" or (tier or "").endswith(
+            "failed_response"
+        )
         self._ledger.record_call(
             call=RecordCall(
                 processing_id=self._processing_id,
@@ -156,6 +159,7 @@ class _LedgerCostMeter:
                 tokens_out=usage.tokens_out,
                 cost_usd=usage.cost_usd,
                 latency_ms=usage.latency_ms,
+                outcome="provider_error" if failed else "ok",
             )
         )
 
