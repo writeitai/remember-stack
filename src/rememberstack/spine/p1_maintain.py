@@ -1,9 +1,11 @@
 """D91 ledger-backed P1 maintain units: enqueue coalesce, reclaim, complete."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from typing import Self
 from uuid import UUID
 from uuid import uuid4
@@ -31,6 +33,7 @@ from rememberstack.model.p1_maintain import P1MaintainMode
 from rememberstack.spine.p1_maintain_lock import p1_table_maintain_lock_key
 from rememberstack.spine.work_ledger import enqueue_on
 from rememberstack.spine.work_ledger import WorkLedger
+from rememberstack.spine.work_ledger import WorkLedgerSettings
 
 P1_MAINTAIN_COMPONENT_VERSION = "p1-lance-maintain-2026.08"
 _ADMIN_FORCE_REASON = "admin_force"
@@ -93,7 +96,11 @@ class P1MaintainCatalog:
         cls, *, engine: Engine, settings: P1MaintainSettings | None = None
     ) -> Self:
         """Compose a catalog that shares the engine with a fresh ledger."""
-        return cls(engine=engine, ledger=WorkLedger(engine=engine), settings=settings)
+        return cls(
+            engine=engine,
+            ledger=WorkLedger(engine=engine, settings=WorkLedgerSettings()),
+            settings=settings,
+        )
 
     def enqueue(self, *, request: P1MaintainEnqueueRequest) -> P1MaintainEnqueueResult:
         """Open or coalesce one (root, table, mode) unit under an xact lock."""
@@ -216,7 +223,7 @@ class P1MaintainCatalog:
         now = datetime.now(tz=UTC)
         for row in rows:
             if not _unit_is_reclaimable(
-                row=row,
+                row=dict(row),
                 now=now,
                 heartbeat_stale=heartbeat_stale,
                 running_stale=running_stale,
@@ -284,23 +291,30 @@ def complete_maintain_p1_on(
 ) -> tuple[EnqueueOutcome, ...]:
     """Attempt-fenced maintain complete used by WorkLedger and the catalog."""
     with engine.begin() as connection:
-        unit = (
-            connection.execute(_SELECT_UNIT, {"unit_id": request.unit_id})
+        peeked = (
+            connection.execute(_LOOKUP_UNIT, {"unit_id": request.unit_id})
             .mappings()
             .first()
         )
-        if unit is None:
+        if peeked is None:
             raise WorkNotFoundError(f"maintain unit {request.unit_id} does not exist")
         connection.execute(
             _ENQUEUE_LOCK,
             {
                 "key": p1_maintain_enqueue_lock_key(
-                    lance_root_key=str(unit["lance_root_key"]),
-                    table_name=str(unit["table_name"]),
-                    mode=str(unit["mode"]),
+                    lance_root_key=str(peeked["lance_root_key"]),
+                    table_name=str(peeked["table_name"]),
+                    mode=str(peeked["mode"]),
                 )
             },
         )
+        unit = (
+            connection.execute(_LOCK_UNIT, {"unit_id": request.unit_id})
+            .mappings()
+            .first()
+        )
+        if unit is None:
+            raise WorkNotFoundError(f"maintain unit {request.unit_id} does not exist")
         updated = connection.execute(
             _COMPLETE_FENCED,
             {
@@ -330,7 +344,7 @@ def complete_maintain_p1_on(
             outcomes.append(
                 _insert_successor(
                     connection=connection,
-                    unit=unit,
+                    unit=dict(unit),
                     reason=reason,
                     not_before=request.deferred_successor_not_before,
                 )
@@ -343,10 +357,14 @@ def complete_maintain_p1_on(
 
 
 def _insert_successor(
-    *, connection: Connection, unit: object, reason: str, not_before: datetime | None
+    *,
+    connection: Connection,
+    unit: Mapping[str, Any],
+    reason: str,
+    not_before: datetime | None,
 ) -> EnqueueOutcome:
     """Insert a fresh unit + pending ledger row for the same physical key."""
-    mapping = dict(unit)  # type: ignore[arg-type]
+    mapping = dict(unit)
     unit_id = uuid4()
     connection.execute(
         _INSERT_UNIT,
@@ -386,10 +404,14 @@ def _insert_successor(
 
 
 def _unit_is_reclaimable(
-    *, row: object, now: datetime, heartbeat_stale: timedelta, running_stale: timedelta
+    *,
+    row: Mapping[str, Any],
+    now: datetime,
+    heartbeat_stale: timedelta,
+    running_stale: timedelta,
 ) -> bool:
     """Return whether a running unit has missed its liveness proof."""
-    mapping = dict(row)  # type: ignore[arg-type]
+    mapping = dict(row)
     heartbeat = mapping["last_heartbeat_at"]
     if heartbeat is not None:
         return now - heartbeat >= heartbeat_stale
@@ -469,7 +491,16 @@ _INSERT_UNIT = text(
     """
 )
 
-_SELECT_UNIT = text(
+_LOOKUP_UNIT = text(
+    """
+    SELECT unit_id, deployment_id, lance_root_key, table_name, mode,
+           rerun_requested
+    FROM p1_maintain_units
+    WHERE unit_id = :unit_id
+    """
+)
+
+_LOCK_UNIT = text(
     """
     SELECT unit_id, deployment_id, lance_root_key, table_name, mode,
            rerun_requested
