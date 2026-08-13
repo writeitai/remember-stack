@@ -86,6 +86,7 @@ LANCE_NPROBES: Final = 20
 """WP-5.6 query probe count for filtered ANN reads."""
 
 _MIN_VECTOR_INDEX_ROWS: Final = 256
+_VECTOR_INDEX_TYPE_ALIASES: Final = frozenset({"ivfflat"})
 _INDEX_OPTIMIZE_MUTATIONS: Final = 20
 """Optimize indexed tails after this many writes (LanceDB guidance)."""
 
@@ -974,7 +975,7 @@ class LanceChunkIndex:
             started = time.monotonic()
             before = self.maintenance_stats(table=table_name)
             self._forget_index_cache(table_name=table_name)
-            self._ensure_matrix_indexes(table_name=table_name)
+            retries = self._ensure_matrix_indexes(table_name=table_name)
             after = self.maintenance_stats(table=table_name)
             outcomes.append(
                 after.model_copy(
@@ -984,6 +985,7 @@ class LanceChunkIndex:
                         "unindexed_rows_before": before.unindexed_rows,
                         "num_fragments_before": before.num_fragments,
                         "num_small_fragments_before": before.num_small_fragments,
+                        "conflicts_retried": retries,
                         "duration_ms": int((time.monotonic() - started) * 1000),
                     }
                 )
@@ -1129,52 +1131,58 @@ class LanceChunkIndex:
             key for key in self._scalar_indexes_ready if key[0] != table_name
         }
 
-    def _ensure_matrix_indexes(self, *, table_name: str) -> None:
+    def _ensure_matrix_indexes(self, *, table_name: str) -> int:
         """Create or type-correct every matrix index whose column exists."""
         table = self._connection.open_table(table_name)
         columns = {field.name for field in table.schema}
+        retries = 0
         for matrix_table, column, kind in P1_INDEX_MATRIX:
             if matrix_table != table_name or column not in columns:
                 continue
             if kind == "btree":
-                self._ensure_scalar_index(table_name=table_name, column=column)
+                retries += self._ensure_scalar_index(
+                    table_name=table_name, column=column
+                )
             elif kind == "bitmap":
-                self._ensure_typed_index(
+                retries += self._ensure_typed_index(
                     table_name=table_name,
                     column=column,
                     index_type="Bitmap",
                     config=Bitmap(),
                 )
             elif kind == "fts":
-                self._ensure_text_index(table_name=table_name)
+                retries += self._ensure_text_index(table_name=table_name)
             elif kind == "vector":
                 if table.count_rows() < _MIN_VECTOR_INDEX_ROWS:
                     continue
                 vector_indexes = [
                     index for index in table.list_indices() if index.columns == [column]
                 ]
-                if any(index.index_type == "IVF_FLAT" for index in vector_indexes):
+                if any(_is_ivf_flat(index.index_type) for index in vector_indexes):
                     continue
                 self._build_vector_index(table=table, replace=bool(vector_indexes))
+        return retries
 
-    def _ensure_text_index(self, *, table_name: str) -> None:
+    def _ensure_text_index(self, *, table_name: str) -> int:
         """Bootstrap one FTS index, including on first read after an upgrade."""
         if table_name in self._text_indexes_ready:
-            return
-        self._create_index_with_retry(
+            return 0
+        retries = self._create_index_with_retry(
             table_name=table_name, column="text", index_type="FTS", config=_TEXT_INDEX
         )
         self._text_indexes_ready.add(table_name)
+        return retries
 
-    def _ensure_scalar_index(self, *, table_name: str, column: str) -> None:
+    def _ensure_scalar_index(self, *, table_name: str, column: str) -> int:
         """Bootstrap one hot-path scalar index, including on upgraded stores."""
         key = (table_name, column)
         if key in self._scalar_indexes_ready:
-            return
-        self._create_index_with_retry(
+            return 0
+        retries = self._create_index_with_retry(
             table_name=table_name, column=column, index_type="BTree", config=BTree()
         )
         self._scalar_indexes_ready.add(key)
+        return retries
 
     def _ensure_bitmap_index(self, *, table_name: str, column: str) -> None:
         """Bootstrap one low-cardinality filter index on ordinary paths."""
@@ -1189,22 +1197,23 @@ class LanceChunkIndex:
         column: str,
         index_type: str,
         config: BTree | Bitmap | FTS,
-    ) -> None:
+    ) -> int:
         """Create the contracted index type, replacing a known wrong type."""
         key = (table_name, column)
         table = self._connection.open_table(table_name)
         existing = [
             index for index in table.list_indices() if index.columns == [column]
         ]
-        if any(index.index_type == index_type for index in existing):
+        if any(_index_type_matches(index.index_type, index_type) for index in existing):
             self._scalar_indexes_ready.add(key)
-            return
+            return 0
         for index in existing:
             table.drop_index(index.name)
-        self._create_index_with_retry(
+        retries = self._create_index_with_retry(
             table_name=table_name, column=column, index_type=index_type, config=config
         )
         self._scalar_indexes_ready.add(key)
+        return retries
 
     def _create_index_with_retry(
         self,
@@ -1213,18 +1222,19 @@ class LanceChunkIndex:
         column: str,
         index_type: str,
         config: BTree | Bitmap | FTS,
-    ) -> None:
+    ) -> int:
         """Create one missing index despite concurrent maintenance commits."""
         for attempt in range(_LANCE_COMMIT_RETRIES):
             table = self._connection.open_table(table_name)
             if any(
-                index.index_type == index_type and index.columns == [column]
+                _index_type_matches(index.index_type, index_type)
+                and index.columns == [column]
                 for index in table.list_indices()
             ):
-                return
+                return attempt
             try:
                 table.create_index(column, config=config)
-                return
+                return attempt
             except RuntimeError as exc:
                 if (
                     "Retryable commit conflict" not in str(exc)
@@ -1232,6 +1242,7 @@ class LanceChunkIndex:
                 ):
                     raise
                 self._pause_before_retry(attempt=attempt)
+        raise RuntimeError(f"{index_type} index retries exhausted for {table_name}")
 
     def _maintain_indexed_tail(self, *, table_name: str) -> None:
         """Incrementally fold appended rows into indexes before tails grow large.
@@ -1485,6 +1496,21 @@ class LanceChunkIndex:
                 transforms[column] = sql_default
         if transforms:
             table.add_columns(transforms)
+
+
+def _normalize_index_type(value: str) -> str:
+    """Fold Lance list_indices / index_stats spellings to a comparable token."""
+    return value.replace("_", "").lower()
+
+
+def _index_type_matches(observed: str, expected: str) -> bool:
+    """Treat IVF_FLAT/IvfFlat and similar vendor aliases as the same type."""
+    return _normalize_index_type(observed) == _normalize_index_type(expected)
+
+
+def _is_ivf_flat(observed: str) -> bool:
+    """Return whether list_indices reported the contracted IVF_FLAT family."""
+    return _normalize_index_type(observed) in _VECTOR_INDEX_TYPE_ALIASES
 
 
 def _escape_literal(value: str) -> str:
