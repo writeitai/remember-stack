@@ -981,8 +981,12 @@ ops; index matrix; gates default off; change-mass; vectors Lance-only.
 | **PR1** | Join-key ensure + batched matched-only metadata merge; remove write-path optimize | Vector/label preserved; skip-unchanged; 8k facts not multi-hour |
 | **PR2** | Port: ensure/optimize/rebuild/stats + index matrix; purge lock; finalizer per-table locks | Adapter tests; ensure twice is non-destructive; IVF type match |
 | **PR3** | `p1_lance_table_stats` + ticker loop + compose `maintain-p1` + gates default off | Catalog verify; try-lock skip; ensure/compact chosen; writers not locked |
-| **PR4** | Writer change-mass bump + heavy policy + `awaiting_operator` + writer gate | Flat row-count updates trip heavy via mass; eligibility does not |
+| **PR4** | Writer change-mass bump + per-table heavy *triggers* (frac/mass/growth; unindexed ratio only after compact) | Flat row-count updates trip heavy via mass; eligibility and no-op upserts do not |
+| **PR4b** | Rate-defer / conflict-defer / `awaiting_operator` / `writer_gate` quiet window | Sustained writes escalate instead of silent thrash; compact still allowed |
 | **PR5** | BEAM soak | Sign-off |
+
+PR4b is a later PR. The stats columns already exist; PR4 must not pretend the
+escalation machine is live. Gates stay default-off until PR4b + metrics.
 
 Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 

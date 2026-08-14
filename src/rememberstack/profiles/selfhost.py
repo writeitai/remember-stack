@@ -645,7 +645,11 @@ class SelfHostProfile:
         log = logging.getLogger(__name__)
         while True:
             try:
-                ticker.tick()
+                outcomes = ticker.tick()
+                log.info(
+                    "p1 maintain tick %s",
+                    [(item.table, item.operation, item.reason) for item in outcomes],
+                )
             except Exception:
                 log.exception("D93 maintain tick failed")
             time.sleep(settings.poll_s)

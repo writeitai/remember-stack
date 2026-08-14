@@ -70,6 +70,7 @@ class _FakeMaintenance:
         self.ensures = 0
         self.optimizes = 0
         self.rebuilds = 0
+        self.skip_rebuild: str | None = None
         self.stats = TableMaintainStats(table="facts", row_count=10, num_fragments=1)
 
     def ensure_search_indexes(self, *, tables=None) -> MaintainReport:
@@ -87,7 +88,7 @@ class _FakeMaintenance:
     def rebuild_vector_indexes(self, *, tables=None) -> MaintainReport:
         """Count retrain calls."""
         self.rebuilds += 1
-        skipped = getattr(self, "skip_rebuild", None)
+        skipped = self.skip_rebuild
         return MaintainReport(
             tables=(self.stats.model_copy(update={"skipped": skipped}),)
         )
