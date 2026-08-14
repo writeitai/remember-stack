@@ -187,6 +187,13 @@ services:
       setup:
         condition: service_completed_successfully
 
+  worker-maintain-p1:
+    <<: *app
+    command: ["maintain-p1"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
   projections:
     <<: *app
     command: ["project", "--plane", "all"]

@@ -17,6 +17,7 @@ src/tests/spine/test_knowledge_control_plane.py
 src/tests/spine/test_migrations.py
 src/tests/spine/test_observation_adjudication.py
 src/tests/spine/test_p1_maintain_lock.py
+src/tests/spine/test_p1_maintain_ticker.py
 src/tests/spine/test_operations.py
 src/tests/spine/test_pipeline_readiness.py
 src/tests/spine/test_query_space_batch_a.py
