@@ -850,16 +850,31 @@ def test_runtime_validation_uses_the_image_revision_stamp(
     )
 
 
-def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
-    """The destructive command remains textually enclosed by the backup protocol."""
+def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
+    """The runner verifies ingestion off-host before any scoring can begin."""
 
     script = Path("benchmarks/locomo/sharding/run_shard.sh").read_text(encoding="utf-8")
     loop = script[script.index('for sample_id in "${pending_samples[@]}"; do') :]
 
     assert loop.index("authorize-wipe") < loop.index("down --volumes --remove-orphans")
-    assert loop.index("-m benchmarks.locomo judge") < loop.index(
-        "stage=backup status=starting"
-    )
+    post_ingest_backup = loop.index("stage=post-ingest-backup status=starting")
+    answer = loop.index("-m benchmarks.locomo answer", post_ingest_backup)
+    judge = loop.index("-m benchmarks.locomo judge", answer)
+    final_backup = loop.index("stage=final-backup status=starting", judge)
+    assert post_ingest_backup < answer < judge < final_backup
+    between_backup_and_answer = loop[post_ingest_backup:answer]
+    assert between_backup_and_answer.count('require_verified_backup "$sample_id"') == 2
+    start_existing = script[
+        script.index("start_existing_store()") : script.index(
+            "backup_completed_live_store()"
+        )
+    ]
+    assert "--no-recreate" in start_existing
+    assert 'status=resumable-ingested-checkpoint' in script
+    assert 'stage=stack status=resuming-existing-store' in script
+    assert 'stage=answer status=resuming-from-checkpoint' in script
+    resume_answer = loop.index("stage=answer status=resuming-from-checkpoint")
+    assert loop.rfind('require_verified_backup "$sample_id"', 0, resume_answer) >= 0
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
@@ -881,7 +896,7 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
         "REMEMBERSTACK_BUILD_REVISION"
         in script[script.index("attest_worker_environment") :]
     )
-    assert script.count("attest_worker_environment") == 3
+    assert script.count("attest_worker_environment") == 4
     assert script.index("attest_worker_environment") < script.index(
         'log "sample=$sample_id stage=ingest status=starting"'
     )
