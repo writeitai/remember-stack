@@ -870,16 +870,14 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
         )
     ]
     assert "--no-recreate" in start_existing
-    assert 'status=resumable-ingested-checkpoint' in script
-    assert 'stage=stack status=resuming-existing-store' in script
-    assert 'stage=answer status=resuming-from-checkpoint' in script
+    assert "status=resumable-ingested-checkpoint" in script
+    assert "stage=stack status=resuming-existing-store" in script
+    assert "stage=answer status=resuming-from-checkpoint" in script
     resume_start = loop.index("stage=stack status=resuming-existing-store")
     resume_answer = loop.index("stage=answer status=resuming-from-checkpoint")
     assert loop.rfind('require_verified_backup "$sample_id"', 0, resume_start) >= 0
     assert (
-        loop[resume_start:resume_answer].count(
-            'require_verified_backup "$sample_id"'
-        )
+        loop[resume_start:resume_answer].count('require_verified_backup "$sample_id"')
         == 1
     )
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
