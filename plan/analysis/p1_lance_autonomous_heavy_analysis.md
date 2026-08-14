@@ -71,14 +71,43 @@ Simplest. Under BEAM-scale continuous ingest it will collide, retry, and burn
 hours. The *defer* part of B is still needed. Autonomy does not mean
 spin-forever at full cost.
 
+## Compact vs rebuild (retrieval speed)
+
+`optimize()` incrementally attaches newly written rows to the **existing**
+index. Each pass can add another indexed piece. Ten optimizes can mean ten
+extra index pieces: better than a brute-force tail, worse than one rebuilt
+index. Official docs call this incremental index update, not a full retrain
+([reindexing](https://docs.lancedb.com/indexing/reindexing), 2026-08-14).
+
+So:
+
+- Run `optimize()` after a **bound of new/changed rows** (or fragment dirt).
+  Not on a tight “as often as possible” loop.
+- **Do not postpone `create_index(..., replace=True)` indefinitely** because
+  ingest is still running. A never-ending ingest would otherwise leave a
+  growing stack of incremental index pieces and retrieval would keep getting
+  slower.
+- Short conflict backoff (minutes after a lost train commit) is still
+  allowed. “Writers are active, wait until they stop” is not. Ingest can
+  run for days.
+
+Retrieval speed is a first-class constraint. Autonomy means the ticker
+keeps scheduling rebuilds itself. It does **not** mean compact-only forever
+while a wave never ends.
+
 ## Decision this analysis supports
 
 - No `awaiting_operator`, no “needs a human” state, no required `writer_gate`.
 - Autonomous policy is **backoff and retry**, not **stop and page**.
+- `optimize()` after a row/fragment threshold is enough light work; it is
+  not a substitute for periodic full rebuild.
+- Full rebuild must fire on durable change-mass / growth **even during
+  sustained ingest**. Rate-defer is only a short anti-thrash after a
+  conflict, not “defer until quiet.”
 - Schema columns already shipped (`operator_state`, `writer_gate`) stay unused
   (always null / `run`) and may be dropped later. Do not write them.
-- PR4b, if built, is only: measure write rate, skip retrain this tick when
-  hot, record a conflict and wait, keep compacting. No escalation ladder.
+- PR4b, if built, is only: short conflict backoff, then try rebuild again
+  (writers still running). No escalation ladder. No wait-for-ingest-to-end.
 
 Adoption trigger for bringing A back: a staffed ops product that *wants* a
 ticket queue for index quality. That is not this engine.

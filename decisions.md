@@ -3691,12 +3691,13 @@ request-path metering and `remember login`, so this decision is **D93**:
    skip-unchanged metadata do **not** count. Chunks are more sensitive
    (lower changed-row fraction and change-mass thresholds) than short-text
    facts/claims. `heavy_rebuild_min_hours` is an anti-thrash cap.
-5. Under sustained high write rate, heavy is **autonomous and best-effort**:
-   skip retrain while writers are hot; after a post-train commit conflict,
-   wait a long interval and try again. Compact and ensure keep running.
-   **Never** a “needs a human” flag, `awaiting_operator` stop, or required
-   writer hold. If writes never quiet, full IVF may stay deferred; search
-   stays correct. When the wave ends, the next tick retrains by itself.
+5. Heavy is **autonomous**. `optimize()` incrementally attaches new rows to
+   the existing index (another piece per pass) — run it after a row/fragment
+   threshold, not as a tight loop. **Do not postpone full
+   `create_index(..., replace=True)` because ingest is still running**;
+   a long wave would stack incremental pieces and retrieval would slow.
+   After a lost train commit, wait a short interval and try again with
+   writers still going. **Never** a “needs a human” flag or writer hold.
 
 **Context.** BEAM-scale `label_relation` spent hours in per-row Lance
 `update` after embeds finished (~7.9k facts → thousands of tiny fragments).

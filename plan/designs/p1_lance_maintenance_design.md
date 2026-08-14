@@ -92,14 +92,16 @@ LanceDB guidance
 10. **Observability, enable gates, and failure contracts** in §5.5, §8–§9 are
     required for ship. Continuous auto-worker defaults **off** until soak
     (`maintenance_enabled` / `heavy_enabled`).
-11. **Heavy IVF under sustained high write rate is autonomous and best-effort**
-    (§5.7 rule 3): skip retrain when write rate is high; on `create_index`
-    commit conflict after a full train, wait a long interval and try again on
-    a later tick. **Never** stop for a human. There is no
-    `awaiting_operator` flag and no required writer hold. Compact and ensure
-    keep running. If writes never quiet, full retrain may stay deferred;
-    search remains correct (unindexed tail). When the wave ends, the next
-    tick retrains by itself.
+11. **Heavy IVF is autonomous and must not wait for ingest to finish**
+    (§5.7 rule 3). `optimize()` incrementally attaches new rows to the
+    existing index (another indexed piece per pass). That is good enough
+    after a bound of new rows; it is **not** a substitute for rebuild.
+    `create_index(..., replace=True)` rebuilds one index and is what keeps
+    retrieval fast. Fire it on durable change-mass / growth **while writers
+    are still running**. After a lost train commit, wait a short interval
+    and try again. **Never** stop for a human. **Never** defer rebuild
+    until a “quiet window.” There is no `awaiting_operator` and no writer
+    hold.
 12. **Writers stay outside the maintain lock.** The lock serializes ticker vs
     ticker and ticker vs hard-forget `delete_unverified`. It does **not** pause
     `merge_insert`. Official OSS docs allow concurrent writes; collisions retry
@@ -340,7 +342,7 @@ workers are out of scope while that lock holds. Maintain runs outside
 | Layer | API (port) | Lance operations | Cadence |
 | --- | --- | --- | --- |
 | Light | `optimize_tables(tables, cleanup_older_than=…)` | `table.optimize(...)` under table lock | Frequent; dual trigger on unindexed rows **or** small-fragment pressure **or** enqueue from writers |
-| Heavy | `rebuild_vector_indexes(tables)` / `rebuild_text_indexes(tables)` | `create_index(..., replace=True)` IVF_FLAT (+ FTS) under table lock | Periodic / admin / growth policy; subject to write-rate defer (§5.7) |
+| Heavy | `rebuild_vector_indexes(tables)` / `rebuild_text_indexes(tables)` | `create_index(..., replace=True)` IVF_FLAT (+ FTS) under table lock | Periodic / growth policy; writers may be active; only a short wait after a lost train commit |
 | Ensure | `ensure_search_indexes()` | scalar + FTS + vector per matrix if missing; min-row gate re-eval | Deploy, backfill end, maintain tick, **and before large metadata merges** |
 | Stats | `maintenance_stats(table) -> …` | `count_rows`, `list_indices`, `index_stats`, **`table.stats()`** fragment_stats | Every ticker tick; metrics export |
 
@@ -532,7 +534,7 @@ older than `maintain_probe_min_s`). Writers only bump counters.
 | --- | --- | --- |
 | **ensure** | A contracted index is missing, or vector IVF min-row gate (256) is newly crossed and no vector index exists | Ticker `list_indices`; finalizer after drain; admin. |
 | **compact** (`optimize`) | `num_unindexed_rows` ≥ `optimize_unindexed_rows` **or** `num_small_fragments` ≥ `optimize_small_fragments` | Ticker reads stats / Lance. |
-| **retrain** (`create_index replace=True`) | Durable **amount of change** since last successful train (below) **and** `heavy_enabled` **and** write-rate defer does not apply **and** `heavy_rebuild_min_hours` has elapsed **and** any conflict backoff has expired | Ticker only. Writers never trigger retrain. |
+| **retrain** (`create_index replace=True`) | Durable **amount of change** since last successful train (below) **and** `heavy_enabled` **and** `heavy_rebuild_min_hours` has elapsed **and** any *conflict* backoff has expired. **Not** gated on “writers are quiet.” | Ticker only. Writers never trigger retrain. They may still be writing. |
 
 Priority on one locked tick: **ensure first**, then compact if still dirty, then retrain only if compact is not also due (do not start a multi-hour IVF train on a table that still needs a cheap compact — compact first, re-evaluate retrain on the next tick).
 
@@ -554,7 +556,7 @@ rewrite `vector` / `label`, or no-op upserts.
 
 Reset both counters **only** after a successful retrain for that table.
 
-**Retrain if any (per table, after min-hours / enable / not-awaiting / not-rate-deferred):**
+**Retrain if any (per table, after min-hours / enable / conflict backoff expired):**
 
 1. `changed_rows_since_heavy / max(last_heavy_row_count, 1) ≥ heavy_changed_row_frac[table]`, or
 2. `change_mass_since_heavy ≥ heavy_change_mass[table]`, or
@@ -599,7 +601,7 @@ loop:
         ensure_search_indexes(tables=(table,))
       elif light dirt:
         optimize_tables(tables=(table,))
-      elif heavy_enabled and not rate_defer and not conflict_backoff and retrain due:
+      elif heavy_enabled and not conflict_backoff and retrain due:
         try:
           rebuild_vector_indexes(tables=(table,))
           maybe rebuild_text_indexes
@@ -693,28 +695,27 @@ material, all three sites.
    commit conflicts use `_LANCE_COMMIT_RETRIES` + jitter on the **writer** side.
 3. **Heavy progress under continuous writes (binding product contract):**
 
-   Retrain is **autonomous**. The engine never raises a “needs a human”
-   flag and never requires a writer hold. Analysis:
-   `plan/analysis/p1_lance_autonomous_heavy_analysis.md`. Rejected path:
-   `plan/proposals/p1_lance_awaiting_operator.md`.
+   Retrain is **autonomous** and **must not wait for ingest to end**.
+   Analysis: `plan/analysis/p1_lance_autonomous_heavy_analysis.md`.
+   Rejected path: `plan/proposals/p1_lance_awaiting_operator.md`.
 
-   **Honesty:** a multi-hour IVF rebuild under a never-quiet write stream is
-   **best-effort**. Compact still folds tails into the existing index. Search
-   stays correct. Full retrain runs when write rate is low enough (or a
-   conflict backoff has expired). The system does **not** promise a successful
-   train while ingest never pauses; it **does** promise to keep trying without
-   a person.
+   **Retrieval:** `optimize()` adds an incremental indexed piece to the
+   current IVF. Useful after a threshold of new rows. Repeated optimizes
+   stack pieces; query cost grows. A full `create_index(..., replace=True)`
+   replaces that stack with one rebuilt index. That rebuild is the speed
+   contract. Do not postpone it because writers are still embedding.
 
    **Policy:**
-   - **Skip retrain** this tick while write rate exceeds
-     `heavy_defer_write_rate` (durable stats, not a hot `label_lock` probe).
-     Compact may still run. Try again on the next tick — forever.
+   - Run **compact** when unindexed rows or small fragments cross the
+     threshold. Not tighter than that.
+   - Run **retrain** when change-mass / changed-row fraction / growth says
+     so **and** `heavy_enabled` **and** `heavy_rebuild_min_hours` has
+     elapsed. Writers may be active. That is expected.
    - On `create_index` **commit conflict after a full train:** do **not**
-     re-train up to `_LANCE_COMMIT_RETRIES` (8) times in this tick. Stamp
-     `next_heavy_eligible_at` at least `heavy_conflict_not_before_s` ahead
-     and leave. The later tick tries again. No terminal stop.
-   - Light `optimize` may still use existing short `_LANCE_COMMIT_RETRIES`
-     backoff (conflicts cost milliseconds of lost work).
+     re-train 8× in this tick. Wait `heavy_conflict_not_before_s`, then
+     try again with writers still running. No terminal stop.
+   - Do **not** skip retrain merely because recent write rate is high.
+     Ingest waves can last days; that would be an indefinite delay.
    - **No** `awaiting_operator`. **No** `writer_gate=hold`. **No** expansion
      of `label_lock` across `create_index`.
 
@@ -735,7 +736,7 @@ material, all three sites.
    - Merge + light optimize: `_LANCE_COMMIT_RETRIES` + sub-second jitter.
    - Heavy `create_index`: **at most one** full train attempt per tick;
      conflict → record and leave, not short multi-retry.
-   - Pure rate-defer: **zero** trains this tick.
+   - Do not skip a due train just because writers are active.
 
 ### 5.8 Physical storage
 
@@ -849,7 +850,7 @@ Ship metrics **before** enabling the ticker in production.
 | Crash mid-optimize or mid-`create_index` | Session lock dies; next ticker tick retries the idempotent op |
 | Concurrent writer during compact | Writer and/or compact use short `_LANCE_COMMIT_RETRIES` |
 | Concurrent writer during retrain | Prefer skip retrain this tick; on post-train conflict record once and leave |
-| Sustained high write rate, retrain due | Skip retrain this tick; compact still runs; try again next tick |
+| Sustained high write rate, retrain due | Still retrain (writers keep going); only a short wait after a lost train commit |
 | Disk full | Fail the tick; log critical; do not spin |
 | Purge vs ticker | Same table lock; ticker try-lock skips; forget bounded-waits |
 | Finalizer vs ticker | Finalizer holds same table lock per table around ensure+retrain |
@@ -884,7 +885,7 @@ Ship metrics **before** enabling the ticker in production.
 | Calendar-only heavy | Misses flat `count_rows` updates |
 | Stop writers during optimize/retrain | Not a Lance requirement; would recreate the stall |
 | Drop `delete_unverified` lock | Corruption hazard on forget |
-| Guaranteed eventual heavy under continuous high write | Dishonest; compact still works and retrain retries when quiet |
+| Wait to rebuild until ingest is quiet | A long wave would stack incremental index pieces; retrieval would slow |
 | Durable `awaiting_operator` / writer hold | A human stop. Rejected — see proposal |
 | Gate `BackfillFinalizer` on `heavy_enabled` | Barrier exists to build indexes |
 
@@ -918,7 +919,7 @@ ops; index matrix; gates default off; change-mass; vectors Lance-only;
 | K13 | Embedding migration rebuild remains a separate family |
 | K14 | Observability before auto activation |
 | K15 | Decision log **D93** entered; ticker amendment 2026-08-14 |
-| K16 | Heavy is autonomous best-effort: backoff and retry; **never** a human flag |
+| K16 | Heavy is autonomous: rebuild on mass even during ingest; conflict backoff only; **never** a human flag |
 | K17 | Heavy discovery is durable change-mass; chunks more sensitive than short text |
 | K18 | PR1 ensures facts join-key indexes before large metadata merges |
 | K19 | Ledger-units design is a proposal, not binding |
@@ -931,7 +932,7 @@ ops; index matrix; gates default off; change-mass; vectors Lance-only;
 | **PR2** | Port: ensure/optimize/rebuild/stats + index matrix; purge lock; finalizer per-table locks | Adapter tests; ensure twice is non-destructive; IVF type match |
 | **PR3** | `p1_lance_table_stats` + ticker loop + compose `maintain-p1` + gates default off | Catalog verify; try-lock skip; ensure/compact chosen; writers not locked |
 | **PR4** | Writer change-mass bump + per-table heavy *triggers* (frac/mass/growth; unindexed ratio only after compact) | Flat row-count updates trip heavy via mass; eligibility and no-op upserts do not |
-| **PR4b** | Autonomous rate-defer + conflict backoff only (no human flag, no writer hold) | Hot writes skip retrain this tick; conflict waits then retries; compact still runs |
+| **PR4b** | Conflict backoff only (no human flag, no writer hold, no wait-for-quiet) | Lost train commit waits then retries while ingest continues; rebuild still due on mass |
 | **PR5** | BEAM soak | Sign-off |
 
 PR4b is optional later work. Unused `operator_state` / `writer_gate` columns
@@ -951,7 +952,7 @@ Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 | Ticker choose | Missing index → ensure; small fragments → optimize; mass + `heavy_enabled` → retrain |
 | Gates off | Ticker no-ops Lance ops |
 | Crash mid-optimize | Next tick retries; no ledger row |
-| Sustained high write + heavy | Retrain skipped this tick; compact still runs; later tick retries |
+| Sustained high write + heavy | Retrain still starts; writers continue; conflict → wait then retry |
 | Backfill finalizer | Refuses when undrained; shared port under table locks |
 | Catalog contract | `p1_lance_table_stats` comments/constraints pass verify |
 
