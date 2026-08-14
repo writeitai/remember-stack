@@ -13,7 +13,11 @@ The repository ships Docker Compose for a **fresh, single-deployment** self-host
 It starts PostgreSQL, MinIO, the HTTP API, and one process for each of the ten
 implemented continuous document routes: conversion, structure, chunking, chunk
 embedding, claim extraction, normalization, supersession, claim embedding,
-reconciliation, and fact labeling. The one-shot `setup` service applies every
+reconciliation, and fact labeling. Compose also starts `worker-maintain-p1`, a
+loop (not a ledger stage) that can compact and retrain Lance search indexes.
+Both `REMEMBERSTACK_P1_MAINTAIN_MAINTENANCE_ENABLED` and
+`REMEMBERSTACK_P1_MAINTAIN_HEAVY_ENABLED` default to **false**, so that process
+sleeps until an operator turns a gate on. The one-shot `setup` service applies every
 migration, provisions object buckets, bootstraps the deployment, and seeds
 the four canonical assured operations plus the `examples.*` saved queries.
 The RememberStack, `rememberstack`, and `remember` names used here are final. Do

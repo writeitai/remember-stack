@@ -547,6 +547,55 @@ def test_fact_writes_do_not_call_optimize(tmp_path, monkeypatch: Any) -> None:
     assert optimize_calls == 0
 
 
+def test_vector_upsert_notifies_change_mass_metadata_does_not(tmp_path) -> None:
+    """D93: only vector rewrites report change-mass; eligibility merges do not."""
+    events: list[tuple[str, int, float]] = []
+    deployment_id = uuid4()
+    fact_id = uuid4()
+    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    index = LanceChunkIndex(
+        root=tmp_path / "lance",
+        on_vector_rewrite=lambda table, rows, mass: events.append((table, rows, mass)),
+    )
+    index.upsert_facts(
+        rows=(
+            _fact(
+                fact_id=fact_id,
+                deployment_id=deployment_id,
+                ingested_at=ingested,
+                label="rel label",
+            ),
+        )
+    )
+    assert events == [("facts", 1, 9.0)]
+    index.upsert_facts(
+        rows=(
+            _fact(
+                fact_id=fact_id,
+                deployment_id=deployment_id,
+                ingested_at=ingested,
+                label="rel label",
+            ),
+        )
+    )
+    assert events == [("facts", 1, 9.0)]
+    index.update_fact_metadata(
+        rows=(
+            P1FactMetadataRow(
+                fact_id=fact_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="invalidated",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=ingested,
+            ),
+        )
+    )
+    assert events == [("facts", 1, 9.0)]
+
+
 def test_build_search_indexes_is_rerunnable_and_covers_entities(
     tmp_path, monkeypatch: Any
 ) -> None:

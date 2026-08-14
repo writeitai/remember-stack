@@ -1,4 +1,4 @@
-"""Postgres proofs for the D91 locked maintain ticker."""
+"""Postgres proofs for the D93 locked maintain ticker."""
 
 from collections.abc import Iterator
 from datetime import timedelta
@@ -33,7 +33,7 @@ def database_engine() -> Iterator[Engine]:
     try:
         database_url = load_database_settings().sqlalchemy_url()
     except ValidationError:
-        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D91 ticker proofs")
+        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D93 ticker proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
     command.downgrade(config=config, revision="base")
@@ -54,7 +54,7 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,
             slug="d91-ticker",
-            name="D91 ticker proofs",
+            name="D93 ticker proofs",
             default_language="en",
             raw_bucket="mem://raw",
             artifacts_bucket="mem://artifacts",
@@ -70,6 +70,7 @@ class _FakeMaintenance:
         self.ensures = 0
         self.optimizes = 0
         self.rebuilds = 0
+        self.skip_rebuild: str | None = None
         self.stats = TableMaintainStats(table="facts", row_count=10, num_fragments=1)
 
     def ensure_search_indexes(self, *, tables=None) -> MaintainReport:
@@ -87,7 +88,10 @@ class _FakeMaintenance:
     def rebuild_vector_indexes(self, *, tables=None) -> MaintainReport:
         """Count retrain calls."""
         self.rebuilds += 1
-        return MaintainReport(tables=(self.stats,))
+        skipped = self.skip_rebuild
+        return MaintainReport(
+            tables=(self.stats.model_copy(update={"skipped": skipped}),)
+        )
 
     def rebuild_text_indexes(self, *, tables=None) -> MaintainReport:
         """Unused in these proofs."""
@@ -167,6 +171,64 @@ def test_vector_rewrite_plus_heavy_gate_retrains(database_engine: Engine) -> Non
     facts = next(item for item in outcomes if item.table == "facts")
     assert facts.operation == "retrain"
     assert fake.rebuilds >= 1
+
+
+def test_small_fact_rewrite_does_not_retrain(database_engine: Engine) -> None:
+    """Facts need a 25% changed-row fraction; one rewrite of ten is not enough."""
+    fake = _FakeMaintenance()
+    ticker = _ticker(engine=database_engine, maintenance=fake, heavy=True)
+    ticker.tick()
+    ticker.record_vector_rewrites(table="facts", changed_rows=1, change_mass=10.0)
+    fake.rebuilds = 0
+    outcomes = ticker.tick()
+    facts = next(item for item in outcomes if item.table == "facts")
+    assert facts.operation == "skip"
+    assert fake.rebuilds == 0
+
+
+def test_unhealthy_indexes_ensure_after_first_stamp(database_engine: Engine) -> None:
+    """Live index health, not the mere presence of a stats row, drives ensure."""
+    fake = _FakeMaintenance()
+    ticker = _ticker(engine=database_engine, maintenance=fake)
+    ticker.tick()
+    fake.ensures = 0
+    fake.stats = fake.stats.model_copy(update={"indexes_healthy": False})
+    outcomes = ticker.tick()
+    assert any(item.operation == "ensure" for item in outcomes)
+    assert fake.ensures == 4
+
+
+def test_unindexed_ratio_retrains_only_after_compact(database_engine: Engine) -> None:
+    """15% unindexed is a post-compact signal, not a first-touch heavy trigger."""
+    fake = _FakeMaintenance()
+    ticker = _ticker(engine=database_engine, maintenance=fake, heavy=True, unindexed=2)
+    ticker.tick()
+    fake.rebuilds = 0
+    outcomes = ticker.tick()
+    facts = next(item for item in outcomes if item.table == "facts")
+    assert facts.operation == "skip"
+    assert fake.rebuilds == 0
+
+
+def test_skipped_retrain_keeps_change_mass(database_engine: Engine) -> None:
+    """below_min_rows must not stamp last_heavy or wipe writer counters."""
+    fake = _FakeMaintenance()
+    fake.skip_rebuild = "below_min_rows"
+    ticker = _ticker(engine=database_engine, maintenance=fake, heavy=True)
+    ticker.tick()
+    ticker.record_vector_rewrites(table="facts", changed_rows=5, change_mass=200.0)
+    fake.rebuilds = 0
+    outcomes = ticker.tick()
+    facts = next(item for item in outcomes if item.table == "facts")
+    assert facts.operation == "skip"
+    with database_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT changed_rows_since_heavy FROM p1_lance_table_stats "
+                "WHERE table_name = 'facts'"
+            )
+        ).one()
+    assert row[0] == 5
 
 
 def test_busy_table_lock_skips_without_waiting(database_engine: Engine) -> None:

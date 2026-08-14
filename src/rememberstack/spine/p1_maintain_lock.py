@@ -41,16 +41,18 @@ def hold_p1_table_maintain_locks(
     tables: tuple[str, ...] = P1_MAINTAIN_TABLES,
     timeout: timedelta = DEFAULT_P1_MAINTAIN_LOCK_WAIT,
     poll_interval: timedelta = DEFAULT_P1_MAINTAIN_LOCK_POLL,
+    try_once: bool = False,
 ) -> Iterator[None]:
     """Hold session locks for each table in a fixed order (deadlock-safe).
 
-    Acquisition uses ``pg_try_advisory_lock`` and polls until ``timeout``.
-    Forget and maintain callers retry instead of waiting forever on a
-    multi-hour IVF retrain. An empty ``tables`` tuple is a no-op.
+    Acquisition uses ``pg_try_advisory_lock``. The ticker passes
+    ``try_once=True`` (one attempt, immediate skip). Forget polls until
+    ``timeout`` so delete_unverified is not interleaved with compact/retrain.
+    An empty ``tables`` tuple is a no-op.
     """
-    if timeout <= timedelta(0):
+    if not try_once and timeout <= timedelta(0):
         raise ValueError("P1 maintain lock timeout must be positive")
-    if poll_interval <= timedelta(0):
+    if not try_once and poll_interval <= timedelta(0):
         raise ValueError("P1 maintain lock poll interval must be positive")
     keys = tuple(
         p1_table_maintain_lock_key(lance_root=lance_root, table_name=name)
@@ -68,6 +70,8 @@ def hold_p1_table_maintain_locks(
                     if locked is True:
                         acquired.append(key)
                         break
+                    if try_once:
+                        raise P1MaintainLockTimeout(f"P1 maintain lock busy {key}")
                     remaining = deadline - monotonic()
                     if remaining <= 0:
                         raise P1MaintainLockTimeout(

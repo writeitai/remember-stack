@@ -626,7 +626,8 @@ class SelfHostProfile:
             loop.run_for(duration_s=self._settings.worker_session_s)
 
     def run_p1_maintain_ticker(self) -> int:
-        """Run the D91 Lance ticker until the process is stopped."""
+        """Run the D93 Lance ticker until the process is stopped."""
+        import logging
         import time
 
         from rememberstack.adapters.selfhost.lance import LanceChunkIndex
@@ -641,8 +642,16 @@ class SelfHostProfile:
             settings=settings,
             deployment_id=self._settings.deployment_id,
         )
+        log = logging.getLogger(__name__)
         while True:
-            ticker.tick()
+            try:
+                outcomes = ticker.tick()
+                log.info(
+                    "p1 maintain tick %s",
+                    [(item.table, item.operation, item.reason) for item in outcomes],
+                )
+            except Exception:
+                log.exception("D93 maintain tick failed")
             time.sleep(settings.poll_s)
 
     def run_projection(self, *, plane: str) -> dict[str, object]:
@@ -706,6 +715,7 @@ class SelfHostProfile:
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
         from rememberstack.spine import SupersessionSettings
+        from rememberstack.spine.p1_maintain_ticker import record_p1_vector_rewrites
         from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
@@ -730,7 +740,22 @@ class SelfHostProfile:
         chunks = ChunkCatalog(engine=self._engine)
         claims = ClaimCatalog(engine=self._engine)
         facts = FactCatalog(engine=self._engine)
-        index = LanceChunkIndex(root=self._settings.lance_root)
+
+        def _record_vector_rewrite(
+            table: str, changed_rows: int, change_mass: float
+        ) -> None:
+            """Bump D93 change-mass after a worker vector upsert."""
+            record_p1_vector_rewrites(
+                engine=self._engine,
+                lance_root=self._settings.lance_root,
+                table=table,
+                changed_rows=changed_rows,
+                change_mass=change_mass,
+            )
+
+        index = LanceChunkIndex(
+            root=self._settings.lance_root, on_vector_rewrite=_record_vector_rewrite
+        )
         params = ChunkerParams()
         chunk_generation = chunker_version(params=params)
         p1_settings = P1Settings.model_validate({})
@@ -874,7 +899,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
     )
     subparsers.add_parser(
-        "maintain-p1", help="run the D91 Lance maintain ticker (not a ledger stage)"
+        "maintain-p1", help="run the D93 Lance maintain ticker (not a ledger stage)"
     )
     projection = subparsers.add_parser(
         "project", help="build aggregate projections once"
