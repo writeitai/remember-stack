@@ -106,6 +106,7 @@ EXPECTED_TABLES: Final = (
     "aliases",
     "canary_cases",
     "chunk_claims",
+    "chunk_search",
     "chunks",
     "claim_extraction_decisions",
     "claims",
@@ -150,6 +151,7 @@ EXPECTED_TABLES: Final = (
     "obs_flush_entity_units",
     "obs_flush_version_state",
     "p1_lance_table_stats",
+    "p1_search_channels",
     "observation_adjudications",
     "observation_evidence",
     "observations",
@@ -184,6 +186,8 @@ EXPECTED_INDEXES: Final = (
     "ix_aliases_lemma_exact",
     "ix_aliases_lemma_trgm",
     "ix_chunkclaims_claim",
+    "ix_chunk_search_bm25",
+    "ix_chunk_search_embedding_hnsw",
     "ix_chunks_doc",
     "ix_chunks_reuse",
     "ix_chunks_section",
@@ -191,6 +195,8 @@ EXPECTED_INDEXES: Final = (
     "ix_claims_audit",
     "ix_claims_chunk",
     "ix_claims_current",
+    "ix_claims_current_bm25",
+    "ix_claims_current_embedding_hnsw",
     "ix_claims_doc",
     "ix_claims_flagged",
     "ix_claims_valid_window",
@@ -212,6 +218,7 @@ EXPECTED_INDEXES: Final = (
     "ix_egm_entity",
     "ix_egm_snapshot",
     "ix_entities_name_trgm",
+    "ix_entities_embedding_hnsw",
     "ix_entities_redirect",
     "ix_entities_type",
     "ix_entity_types_parent",
@@ -245,6 +252,7 @@ EXPECTED_INDEXES: Final = (
     "ix_observations_block",
     "ix_observations_contradiction",
     "ix_observations_entity",
+    "ix_observations_embedding_hnsw",
     "ix_obsevidence_claim",
     "ix_predicates_other",
     "ix_procstate_dlq",
@@ -254,6 +262,7 @@ EXPECTED_INDEXES: Final = (
     "ix_relations_block_subj",
     "ix_relations_contradiction",
     "ix_relations_live",
+    "ix_relations_embedding_hnsw",
     "ix_relations_predicate",
     "ix_relevidence_claim",
     "ix_resdec_entity",
@@ -276,7 +285,6 @@ EXPECTED_RANGE_PARENTS: Final = {
     "chunk_claims": "created_at",
     "chunks": "created_at",
     "claim_extraction_decisions": "decided_at",
-    "claims": "ingested_at",
     "mentions": "created_at",
     "resolution_decisions": "decided_at",
     "surface_cost_ledger": "occurred_at",
@@ -346,11 +354,11 @@ EMPTY_AT_HEAD: Final = (
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 61,
-    "f": 130,
-    "n": 554,
-    "p": 72,
-    "u": 35,
+    "c": 71,
+    "f": 132,
+    "n": 562,
+    "p": 74,
+    "u": 36,
     "x": 1,
 }
 DECISION_OBJECTS: Final = {
@@ -382,6 +390,14 @@ DECISION_OBJECTS: Final = {
         "ix_cost_export",
     ),
     "D93": ("p1_lance_table_stats",),
+    "D94": (
+        "chunk_search",
+        "p1_search_channels",
+        "ix_chunk_search_embedding_hnsw",
+        "ix_chunk_search_bm25",
+        "ix_claims_current_embedding_hnsw",
+        "ix_claims_current_bm25",
+    ),
 }
 
 
@@ -459,6 +475,21 @@ def verify_schema(connection: Connection) -> CatalogInventory:
     _compare(
         label="UGM tables", actual=tables, expected=EXPECTED_TABLES, problems=problems
     )
+    chunk_search_orphans = int(
+        connection.execute(
+            statement=text(
+                "SELECT count(*) FROM chunk_search AS search "
+                "WHERE NOT EXISTS ("
+                "SELECT 1 FROM chunks AS authority "
+                "WHERE authority.deployment_id = search.deployment_id "
+                "AND authority.chunk_id = search.chunk_id)"
+            )
+        ).scalar_one()
+    )
+    if chunk_search_orphans:
+        problems.append(
+            f"chunk_search contains {chunk_search_orphans} rows without chunk authority"
+        )
     _compare(
         label="explicit indexes",
         actual=indexes,

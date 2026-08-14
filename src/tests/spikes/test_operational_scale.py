@@ -510,7 +510,16 @@ def _schema_shape(
         for definition in hot_index_defs
         for token in (" using gin ", " using gist ", "hnsw")
     )
-    no_oltp_hnsw = not any("hnsw" in value.lower() for value in index_defs.values())
+    p1_hnsw_indexes = {
+        name for name, definition in index_defs.items() if "hnsw" in definition.lower()
+    }
+    expected_p1_hnsw_indexes = {
+        "ix_chunk_search_embedding_hnsw",
+        "ix_claims_current_embedding_hnsw",
+        "ix_relations_embedding_hnsw",
+        "ix_observations_embedding_hnsw",
+        "ix_entities_embedding_hnsw",
+    }
     passed = (
         inventory.range_parents == expected_range
         and inventory.hash_parents == expected_hash
@@ -523,12 +532,15 @@ def _schema_shape(
         and "subject_entity_id, predicate, object_entity_id"
         in blocking["ix_relations_block_subj"]
         and no_heavy_hot_index
-        and no_oltp_hnsw
+        and p1_hnsw_indexes == expected_p1_hnsw_indexes
     )
     return OperationalScaleMeasurement(
         name="d23_schema_shape",
         profile=_SETTINGS.profile,
-        scale={"partition_parents": 9, "hash_children_per_parent": 64},
+        scale={
+            "partition_parents": len(expected_range),
+            "hash_children_per_parent": 64,
+        },
         metrics={
             "range_parents": inventory.range_parents,
             "hash_parents": inventory.hash_parents,
@@ -537,7 +549,7 @@ def _schema_shape(
             "blocking_indexes": blocking,
             "blocking_index_bytes": blocking_index_bytes,
             "hot_indexes_are_btree_only": no_heavy_hot_index,
-            "oltp_has_no_hnsw": no_oltp_hnsw,
+            "p1_hnsw_indexes": sorted(p1_hnsw_indexes),
         },
         passed=passed,
     )

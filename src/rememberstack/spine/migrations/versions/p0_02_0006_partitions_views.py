@@ -16,7 +16,6 @@ _RANGE_PARENTS = (
     ("resolution_decisions", "decided_at"),
     ("chunks", "created_at"),
     ("chunk_claims", "created_at"),
-    ("claims", "ingested_at"),
     ("claim_extraction_decisions", "decided_at"),
     ("testimony_currency_events", "occurred_at"),
 )
@@ -123,7 +122,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop views and unregister only the seven UGM pg_partman parents."""
+    """Drop views and unregister only the six UGM pg_partman parents."""
     for view_name in reversed(_VIEWS):
         op.execute(f"DROP VIEW IF EXISTS {view_name}")
     op.execute(
@@ -141,7 +140,6 @@ def downgrade() -> None:
               'public.resolution_decisions',
               'public.chunks',
               'public.chunk_claims',
-              'public.claims',
               'public.claim_extraction_decisions',
               'public.testimony_currency_events'
             ])
