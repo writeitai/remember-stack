@@ -51,9 +51,9 @@ server = [
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     # PostgreSQL's own SQL parser, used to canonicalize the memory_v1 view
     # definitions into the hashed AST. The major is pinned because the parse
-    # tree is a hash input: pglast 6.x embeds the PostgreSQL 16 grammar, which
+    # tree is a hash input: pglast 8.x embeds the PostgreSQL 18 grammar, which
     # is the major the query-space manifest declares.
-    "pglast>=6.16,<7",
+    "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
     "sqlalchemy>=2.0",
     "uvicorn>=0.37",
@@ -98,7 +98,7 @@ dev = [
     "markitdown>=0.1.6",
     "nltk>=3.9",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
-    "pglast>=6.16,<7",
+    "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
     "pyright>=1.1",
     "pytest>=8.3",

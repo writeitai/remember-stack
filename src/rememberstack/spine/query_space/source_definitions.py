@@ -27,9 +27,13 @@ the gate reads the live side from the catalogs alone and never from the same
 declaration it is checking.
 """
 
+from typing import cast
 from typing import Final
 
 from pglast import parse_sql
+from pglast.ast import CommentStmt
+from pglast.ast import Node
+from pglast.ast import String
 from pydantic import BaseModel
 from pydantic import ConfigDict
 
@@ -126,9 +130,15 @@ def _view_name(*, statement: str) -> str | None:
 def _comment_target(*, statement: str) -> tuple[str, str] | None:
     """Return the (view name, comment) a `COMMENT ON VIEW` statement sets."""
     node = parse_sql(statement)[0].stmt
-    if type(node).__name__ != "CommentStmt" or node.objtype.name != "OBJECT_VIEW":
+    if not isinstance(node, CommentStmt) or node.objtype is None:
         return None
-    parts = [str(part.sval) for part in node.object]
+    if node.objtype.name != "OBJECT_VIEW":
+        return None
+    object_parts = cast(tuple[Node, ...], node.object)
+    if not all(isinstance(part, String) for part in object_parts):
+        return None
+    string_parts = cast(tuple[String, ...], object_parts)
+    parts = [str(part.sval) for part in string_parts]
     return ".".join(parts), str(node.comment)
 
 

@@ -49,6 +49,7 @@ def database_engine() -> Iterator[Engine]:
 def bootstrapped_deployment(database_engine: Engine) -> None:
     """Fresh deployment so forget probes have a tenant."""
     with database_engine.begin() as connection:
+        connection.execute(statement=text("TRUNCATE TABLE p1_lance_table_stats"))
         connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(

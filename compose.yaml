@@ -56,18 +56,34 @@ x-app: &app
 
 services:
   postgres:
-    image: ghcr.io/dbsystel/postgresql-partman@sha256:bf9d2331aaeb3e33a4e6e73b4c024ca618d4d1ea050bbab978125ff63b83385a
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: rememberstack-postgres:18
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_textsearch,pg_partman_bgw
+      - -c
+      - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
+      - -c
+      - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}
       POSTGRES_PASSWORD: ${REMEMBERSTACK_POSTGRES_PASSWORD}
       POSTGRES_DB: ${REMEMBERSTACK_POSTGRES_DB}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${REMEMBERSTACK_POSTGRES_USER} -d ${REMEMBERSTACK_POSTGRES_DB}"]
+      test:
+        - CMD-SHELL
+        - >-
+          psql --username ${REMEMBERSTACK_POSTGRES_USER}
+          --dbname ${REMEMBERSTACK_POSTGRES_DB}
+          --tuples-only --command 'SELECT 1' >/dev/null
       interval: 2s
       timeout: 5s
       retries: 30
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
 
   minio:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e

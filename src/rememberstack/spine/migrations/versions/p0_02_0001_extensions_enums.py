@@ -11,7 +11,9 @@ down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_DDL = r"""CREATE EXTENSION IF NOT EXISTS pgcrypto;      -- gen_random_uuid fallback; digests
+_DDL = r"""CREATE EXTENSION IF NOT EXISTS vector;        -- P1 semantic vectors + HNSW (D94)
+CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- P1 BM25 lexical channels (D94; preloaded)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;      -- gen_random_uuid fallback; digests
 CREATE EXTENSION IF NOT EXISTS pg_trgm;       -- T1 fuzzy blocking: trigram GIN on names (D17)
 CREATE EXTENSION IF NOT EXISTS fuzzystrmatch; -- T2 phonetic: daitch_mokotoff() (D17, NOT soundex)
 CREATE EXTENSION IF NOT EXISTS unaccent;      -- accent-fold names before trigram/phonetic (registries §5)
