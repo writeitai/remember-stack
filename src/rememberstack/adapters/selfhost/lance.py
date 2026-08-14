@@ -58,6 +58,17 @@ _INDEX_OPTIMIZE_TAIL_ROWS: Final = 100_000
 _LANCE_COMMIT_RETRIES: Final = 8
 """Bounded retries for concurrent Lance write and maintenance commits."""
 
+METADATA_MERGE_BATCH_SIZE: Final = 500
+"""Rows per matched-only fact-metadata merge_insert (D91 PR1)."""
+
+_FACT_METADATA_VALUE_COLUMNS: Final = (
+    "status",
+    "valid_from_us",
+    "valid_until_us",
+    "ingested_at_us",
+    "invalidated_at_us",
+)
+
 _TEXT_INDEX = FTS(
     with_position=True,
     base_tokenizer="simple",
@@ -67,6 +78,49 @@ _TEXT_INDEX = FTS(
     ascii_folding=True,
 )
 """Language-neutral lexical defaults for heterogeneous memory corpora."""
+
+
+def fact_metadata_merge_payload(*, row: P1FactMetadataRow) -> dict[str, object]:
+    """Project one metadata row into the matched-only Lance merge columns."""
+    if row.kind not in {"relation", "observation"}:
+        raise ValueError(f"unknown fact kind {row.kind!r}")
+    return {
+        "deployment_id": str(row.deployment_id),
+        "kind": row.kind,
+        "fact_id": str(row.fact_id),
+        "status": row.status,
+        "valid_from_us": _optional_time_us(value=row.valid_from, absent=_MIN_TIME_US),
+        "valid_until_us": _optional_time_us(value=row.valid_until, absent=_MAX_TIME_US),
+        "ingested_at_us": _utc_epoch_micros(value=row.ingested_at),
+        "invalidated_at_us": _optional_time_us(
+            value=row.invalidated_at, absent=_MAX_TIME_US
+        ),
+    }
+
+
+def dedupe_fact_metadata_rows(
+    *, rows: tuple[P1FactMetadataRow, ...]
+) -> tuple[P1FactMetadataRow, ...]:
+    """Keep the last row per facts join key so a batch cannot ambiguous-merge."""
+    unique: dict[tuple[UUID, str, UUID], P1FactMetadataRow] = {}
+    for row in rows:
+        unique[(row.deployment_id, row.kind, row.fact_id)] = row
+    return tuple(unique.values())
+
+
+def fact_metadata_scalars_differ(
+    *, existing: Mapping[str, object] | None, incoming: Mapping[str, object]
+) -> bool:
+    """True when Lance already has the row and eligibility scalars differ.
+
+    Missing Lance rows are not merged (matched-only; no null-vector insert).
+    """
+    if existing is None:
+        return False
+    return any(
+        existing.get(column) != incoming[column]
+        for column in _FACT_METADATA_VALUE_COLUMNS
+    )
 
 
 class LanceChunkIndex:
@@ -112,7 +166,6 @@ class LanceChunkIndex:
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="policy_generation")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="embedder_generation")
-        self._maintain_indexed_tail(table_name=_CHUNK_TABLE)
 
     def chunk_vectors(
         self,
@@ -219,7 +272,6 @@ class LanceChunkIndex:
         self._ensure_bitmap_index(
             table_name=_CLAIM_TABLE, column="is_current_testimony"
         )
-        self._maintain_indexed_tail(table_name=_CLAIM_TABLE)
 
     def claim_vectors(
         self, *, deployment_id: str, claim_ids: tuple[str, ...]
@@ -278,37 +330,111 @@ class LanceChunkIndex:
             "invalidated_at_us",
         ):
             self._ensure_scalar_index(table_name=_FACT_TABLE, column=column)
-        self._maintain_indexed_tail(table_name=_FACT_TABLE)
 
     def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
-        """Refresh exact mutable eligibility fields without provider calls."""
+        """Refresh mutable eligibility fields without rewriting vectors.
+
+        D91 PR1: join-key indexes, skip-unchanged, batched matched-only
+        ``merge_insert``. Does not call ``optimize()`` on the write path.
+        """
         if not rows or not self._has_table(table_name=_FACT_TABLE):
             return
-        for row in rows:
-            deployment_id = str(row.deployment_id)
-            fact_id = str(row.fact_id)
-            if row.kind not in {"relation", "observation"}:
-                raise ValueError(f"unknown fact kind {row.kind!r}")
-            where = (
-                f"deployment_id = '{deployment_id}'"
-                f" AND kind = '{row.kind}'"
-                f" AND fact_id = '{fact_id}'"
+        self._ensure_facts_join_indexes()
+        payloads = [
+            fact_metadata_merge_payload(row=row)
+            for row in dedupe_fact_metadata_rows(rows=rows)
+        ]
+        keys = tuple(
+            (str(item["deployment_id"]), str(item["kind"]), str(item["fact_id"]))
+            for item in payloads
+        )
+        existing = self._fact_metadata_by_key(keys=keys)
+        changed = [
+            item
+            for item, key in zip(payloads, keys, strict=True)
+            if fact_metadata_scalars_differ(existing=existing.get(key), incoming=item)
+        ]
+        for batch_start in range(0, len(changed), METADATA_MERGE_BATCH_SIZE):
+            batch = changed[batch_start : batch_start + METADATA_MERGE_BATCH_SIZE]
+            self._merge_insert_matched(
+                table=_FACT_TABLE,
+                key=["deployment_id", "kind", "fact_id"],
+                payload=batch,
             )
-            values = {
-                "status": row.status,
-                "valid_from_us": _optional_time_us(
-                    value=row.valid_from, absent=_MIN_TIME_US
-                ),
-                "valid_until_us": _optional_time_us(
-                    value=row.valid_until, absent=_MAX_TIME_US
-                ),
-                "ingested_at_us": _utc_epoch_micros(value=row.ingested_at),
-                "invalidated_at_us": _optional_time_us(
-                    value=row.invalidated_at, absent=_MAX_TIME_US
-                ),
-            }
-            self._update_with_retry(where=where, values=values)
-        self._maintain_indexed_tail(table_name=_FACT_TABLE)
+
+    def _ensure_facts_join_indexes(self) -> None:
+        """Create merge join keys before a large metadata merge (D91 PR1)."""
+        self._ensure_scalar_index(table_name=_FACT_TABLE, column="deployment_id")
+        self._ensure_scalar_index(table_name=_FACT_TABLE, column="fact_id")
+        if not self._column_has_index(table_name=_FACT_TABLE, column="kind"):
+            self._ensure_bitmap_index(table_name=_FACT_TABLE, column="kind")
+
+    def _column_has_index(self, *, table_name: str, column: str) -> bool:
+        """Whether any index already covers this column."""
+        table = self._connection.open_table(table_name)
+        return any(index.columns == [column] for index in table.list_indices())
+
+    def _fact_metadata_by_key(
+        self, *, keys: tuple[tuple[str, str, str], ...]
+    ) -> dict[tuple[str, str, str], dict[str, object]]:
+        """Load current eligibility scalars for the requested fact keys."""
+        if not keys or not self._has_table(table_name=_FACT_TABLE):
+            return {}
+        by_deployment: dict[str, list[tuple[str, str]]] = {}
+        for deployment_id, kind, fact_id in keys:
+            by_deployment.setdefault(deployment_id, []).append((kind, fact_id))
+        found: dict[tuple[str, str, str], dict[str, object]] = {}
+        table = self._connection.open_table(_FACT_TABLE)
+        for deployment_id, items in by_deployment.items():
+            by_kind: dict[str, list[str]] = {}
+            for kind, fact_id in items:
+                by_kind.setdefault(kind, []).append(fact_id)
+            for kind, fact_ids in by_kind.items():
+                ids = ", ".join(f"'{UUID(fact_id)}'" for fact_id in fact_ids)
+                rows = (
+                    table.search()
+                    .where(
+                        f"deployment_id = '{UUID(deployment_id)}'"
+                        f" AND kind = '{kind}'"
+                        f" AND fact_id IN ({ids})"
+                    )
+                    .limit(len(fact_ids))
+                    .select(
+                        [
+                            "deployment_id",
+                            "kind",
+                            "fact_id",
+                            *_FACT_METADATA_VALUE_COLUMNS,
+                        ]
+                    )
+                    .to_list()
+                )
+                for row in rows:
+                    found[(row["deployment_id"], row["kind"], row["fact_id"])] = row
+        return found
+
+    def _merge_insert_matched(
+        self, *, table: str, key: list[str], payload: list[dict[str, object]]
+    ) -> None:
+        """Update matching rows only — omitted columns stay, misses are not inserted."""
+        if not payload:
+            return
+        for attempt in range(_LANCE_COMMIT_RETRIES):
+            try:
+                (
+                    self._connection.open_table(table)
+                    .merge_insert(key)
+                    .when_matched_update_all()
+                    .execute(payload)
+                )
+                return
+            except RuntimeError as exc:
+                if (
+                    "Retryable commit conflict" not in str(exc)
+                    or attempt == _LANCE_COMMIT_RETRIES - 1
+                ):
+                    raise
+                self._pause_before_retry(attempt=attempt)
 
     def search_claims(
         self,
