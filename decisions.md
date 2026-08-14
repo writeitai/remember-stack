@@ -3635,17 +3635,18 @@ rebuildable projection (D8), not as a second spine:
    (would null vectors). Ensure facts join-key indexes before large merges.
    Writers must not call synchronous `optimize()` / `create_index` under
    `label_lock` or an embed/label lease.
-2. **Three maintain modes, one unlaned stage `maintain_p1_index`:**
-   - `light` — `table.optimize()` (compact, prune, fold unindexed tails into
-     **existing** indexes).
-   - `heavy` — `create_index(..., replace=True)` IVF/FTS retrain.
-   - `ensure_indexes` — create contracted indexes if missing.
-   Light is not a retrain. Heavy is not on the read path.
-3. **Discovery (not three crons).** One continuous maintain worker claims
-   ledger units. Observers: **writers** enqueue `light` after they dirty a
-   table; **idle `ensure_maintain_due`** probes durable table stats / Lance
-   and may enqueue light or heavy; **backfill finalizer / admin** run ensure
-   and may force heavy. Grain is physical `(lance_root, table, mode)`.
+2. **Three operations, one ticker (not three jobs, not a pipeline stage):**
+   - compact — `table.optimize()` (fold unindexed tails into **existing**
+     indexes).
+   - retrain — `create_index(..., replace=True)` IVF/FTS.
+   - ensure — create contracted indexes if missing or wrong type.
+   Compact is not a retrain. Retrain is not on the read path. The ticker
+   try-locks the table and chooses at most one op. Writers stay outside
+   that lock (Lance allows concurrent writes).
+3. **Discovery.** Writers bump `p1_lance_table_stats` after a **vector
+   rewrite**. The ticker reads stats (probes Lance if stale). Backfill
+   finalizer / admin call the same port under the same lock. Grain is
+   physical `(lance_root, table)`.
 4. **Heavy fires on durable amount of change**, not calendar-only. Table
    stats hold `changed_rows_since_heavy` and `change_mass_since_heavy`,
    incremented only when a **vector is rewritten**. Eligibility-only and
@@ -3668,11 +3669,17 @@ commits a fragment ([performance](https://docs.lancedb.com/performance)).
 Dual design review (Claude + Codex, 2026-08-13, r1–r4) reached
 APPROVE_WITH_NITS; trigger/change-mass rules were then made explicit.
 
-**Consequences.** Compose gains `worker-maintain-p1` (gates default off).
-Stage is unlaned and **not** in `_expected_components`. Reclaim is
-stage-scoped via attempt-fenced `WorkLedger.fail`. Vectors stay in Lance
-only; Postgres keeps stamps and text. Content/embedding migration rebuild
-(`p1_batch_rebuild`) remains a separate family.
+**Consequences.** Compose gains `maintain-p1` (gates default off) as a
+loop, not `worker --stage`. No `maintain_p1_index` ledger stage and no
+reclaim/heartbeat. Vectors stay in Lance only; Postgres keeps stamps, text,
+and the stats row. Content/embedding migration rebuild (`p1_batch_rebuild`)
+remains a separate family.
+
+**Ticker amendment (2026-08-14).** Ledger units were dropped after
+implementation review showed reclaim/heartbeat/attempt fences exist only
+because maintain was modeled as a D67 attempt. Analysis:
+`plan/analysis/p1_lance_maintain_ticker_analysis.md`. Rejected path:
+`plan/proposals/p1_lance_maintain_ledger_units.md`.
 
 **Design.** `plan/designs/p1_lance_maintenance_design.md`.
 **Analysis.** `plan/analysis/p1_lance_maintenance_analysis.md`.
@@ -3681,8 +3688,9 @@ only; Postgres keeps stamps and text. Content/embedding migration rebuild
 **Rejected.** Per-row `table.update` loops; always-heavy “one proper job”;
 calendar-only heavy; counting eligibility-only writes as change-mass;
 process-local mutation counters as estate policy; vectors as a live second
-copy in Postgres; `lane=backfill` for maintain; wiring maintain into
-per-version readiness.
+copy in Postgres; claimed `maintain_p1_index` units / reclaim / heartbeat;
+stopping writers during optimize/retrain; wiring maintain into per-version
+readiness.
 
 **Amends.** Clarifies D8 write/maintenance contracts for the Lance
 projection. Does not amend D9 query path or D48 hydration.

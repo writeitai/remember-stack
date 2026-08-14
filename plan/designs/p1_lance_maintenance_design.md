@@ -1,9 +1,11 @@
 # Design: P1 Lance bulk writes and two-layer maintenance
 
-**Status:** binding (D91 entered; trigger/change-mass amendment 2026-08-13)  
-**Date:** 2026-08-13  
+**Status:** binding (D91 entered; ticker amendment 2026-08-14)  
+**Date:** 2026-08-14  
 **Decision log:** [D91](../../decisions.md#d91--p1-lance-bulk-writes-and-two-layer-index-maintenance)  
-**Analysis:** [p1_lance_maintenance_analysis.md](../analysis/p1_lance_maintenance_analysis.md)  
+**Analysis:** [p1_lance_maintenance_analysis.md](../analysis/p1_lance_maintenance_analysis.md),
+[p1_lance_maintain_ticker_analysis.md](../analysis/p1_lance_maintain_ticker_analysis.md)  
+**Rejected alternative:** [p1_lance_maintain_ledger_units.md](../proposals/p1_lance_maintain_ledger_units.md)  
 **Companion rulebook (non-binding):** [lance_indexing_maintenance.md](../analysis/lance_indexing_maintenance.md)  
 **Reviews absorbed (r1):**
 - [REVIEW_claude-opus_p1_lance_maintenance_design_2026-08-13.md](../../design/reviews/REVIEW_claude-opus_p1_lance_maintenance_design_2026-08-13.md)
@@ -24,8 +26,9 @@ clarifies light vs heavy index work relative to `BackfillFinalizer` and
 **Preserves:** D8 rebuildability from Postgres; D9 nomination-not-truth; D67
 ledger as work truth; D87 eligibility scalars; IVF_FLAT + scalar/FTS index
 choices already in `lance.py`  
-**Pattern:** OSS-baked maintenance as a first-class worker (not Enterprise
-auto-index); bulk Lance writes aligned with public LanceDB guidance
+**Pattern:** OSS-baked maintenance as a locked ticker (not Enterprise
+auto-index, not a D67 claimed stage); bulk Lance writes aligned with public
+LanceDB guidance
 
 ## 1. Decision
 
@@ -52,31 +55,29 @@ auto-index); bulk Lance writes aligned with public LanceDB guidance
      optional FTS rebuild when policy thresholds fire.
    - Light is **not** a substitute for heavy. Heavy is **not** run on the
      interactive read path or under `label_lock`.
-4. **Physical grain is the Lance table under one `lance_root`.** Maintenance
-   units, durable stats, advisory locks, and coalesce keys are **table-scoped**
-   (identity: `(lance_root identity, table_name, mode)`). `deployment_id` on
-   ledger rows is for routing and ops attribution only. Self-host is
-   **single-deployment by construction** for continuous maintain. Multi-deployment
-   cloud sharing one `lance_root` is an explicit **non-goal** of this design
-   (future cloud layout: one root per deployment, or a separate multi-tenant
-   maintain design).
-5. **Dedicated ledger-backed maintenance work.** Stage `maintain_p1_index`
-   (Postgres `pipeline_stage` + `PipelineStage` enum). **Unlaned** (add to
-   `UNLANED_STAGES`; `lane IS NULL`). **`lane=backfill` is forbidden** for this
-   stage (would deadlock `BackfillFinalizer` drain). One stage; mode in payload
-   (`light` | `heavy` | `ensure_indexes`). Splitting into separate stages later
-   is a documented alternative if ops want separate autoscaling — not required
-   here.
+4. **Physical grain is the Lance table under one `lance_root`.** Durable stats
+   and advisory locks are **table-scoped** (identity:
+   `(lance_root identity, table_name)`). Self-host is **single-deployment by
+   construction** for continuous maintain. Multi-deployment cloud sharing one
+   `lance_root` is an explicit **non-goal**.
+5. **One ticker, three operations, not three jobs.** Continuous maintain is a
+   compose process (not a `pipeline_stage`, not `processing_state` rows). After
+   a **try-lock** on the table, the loop chooses at most one of: **ensure**
+   missing/wrong-type indexes, **compact** (`optimize()`), **retrain**
+   (`create_index(..., replace=True)`). Process death needs no reclaim: the
+   session lock dies and the next tick retries the idempotent Lance op.
+   Ledger units / reclaim / heartbeat are a [rejected alternative](../proposals/p1_lance_maintain_ledger_units.md).
 6. **Unify maintenance API.** Expand `P1IndexMaintenancePort` beyond
    `build_search_indexes()` to expose light optimize, heavy rebuild, ensure
    indexes (with the **binding per-table index matrix** in §5.3), and stats.
    `BackfillFinalizer.build_search_indexes` becomes a caller of the same port
    (ensure + heavy), not a second private path. The port stays
    **deployment-free**; callers remain deployment-scoped for barriers only.
-7. **Write-path is enqueue-only for maintain.** After bulk writes, writers may
-   evaluate cheap stats and **enqueue** light maintain. They must **not** call
-   synchronous `optimize()` under `label_lock` / embed lease. There is no
-   enforceable wall-clock budget on uninterruptible Lance calls.
+7. **Write-path never calls `optimize()` / `create_index`.** After a **vector
+   rewrite**, writers bump `p1_lance_table_stats` (change-mass / changed-row
+   counters). They do **not** enqueue ledger work and they do **not** take the
+   maintain lock. There is no enforceable wall-clock budget on uninterruptible
+   Lance calls.
 8. **Distinguish three job families** (do not collapse):
    - light maintain (this design),
    - heavy reindex (this design),
@@ -89,25 +90,20 @@ auto-index); bulk Lance writes aligned with public LanceDB guidance
     required for ship. Continuous auto-worker defaults **off** until soak
     (`maintenance_enabled` / `heavy_enabled`).
 11. **Heavy IVF under sustained high write rate is best-effort** (§5.7 rule 3):
-    defer heavy when write / maintain-enqueue rate is high; on
-    `create_index` commit conflict after a full train, fail retryable with a
-    long `not_before` (one ledger attempt) — never re-train 8× with
-    sub-second pauses inside one claim. Continuous writers above the defer
-    threshold do **not** guarantee eventual heavy success without operator
-    action; after a defined defer/conflict budget the unit enters durable
-    **`awaiting_operator`** (visible, not silent thrash). Operator may force
-    a quiet window or accept stale IVF until natural quiet.
-12. **Reclaim uses `WorkLedger.fail` + liveness + attempt fence** (§5.5.2): no
-    hand-rolled `status='failed'` UPDATE that violates CHECK constraints;
-    side-thread heartbeat during long Lance ops so a live heavy is never
-    reclaimed; every ownership-changing and liveness write is
-    compare-and-transition on `ClaimedWork.attempt`.
-13. **Maintain completion is atomic with `rerun_requested`** (§5.5.3): one
-    ledger transaction marks success and creates the successor unit when the
-    flag is set — never a post-complete best-effort enqueue. Completion,
-    fail/defer, reclaim, and heartbeat all require
-    `expected_attempt = ClaimedWork.attempt`.
-14. **Heavy fires on durable amount of change, not calendar-only** (§5.4.1):
+    skip retrain when write rate is high; on `create_index` commit conflict
+    after a full train, do **not** re-train 8× with sub-second pauses — record
+    the conflict on the stats row and try again on a later tick. Continuous
+    writers above the defer threshold do **not** guarantee eventual heavy
+    success without operator action; after a defined defer/conflict budget the
+    table enters durable **`awaiting_operator`** (visible, not silent thrash).
+    Operator may force a quiet window or accept stale IVF until natural quiet.
+12. **Writers stay outside the maintain lock.** The lock serializes ticker vs
+    ticker and ticker vs hard-forget `delete_unverified`. It does **not** pause
+    `merge_insert`. Official OSS docs allow concurrent writes; collisions retry
+    on the writer ([FAQ](https://docs.lancedb.com/faq/faq-oss),
+    [reindexing](https://docs.lancedb.com/indexing/reindexing), retrieved
+    2026-08-14).
+13. **Heavy fires on durable amount of change, not calendar-only** (§5.4.1):
     writers increment table-scoped `changed_rows_since_heavy` and
     `change_mass_since_heavy` only when a **vector is actually rewritten**.
     Eligibility-only / skip-unchanged metadata must not increment heavy mass.
@@ -167,12 +163,9 @@ is Lance write/maintenance correctness**, not claim grain fan-out.
   multi-hour retrains under continuous writers; honest **best-effort** heavy
   progress under sustained high write rate (terminal `awaiting_operator`, not
   fake eventual-success while writers never quiet).
-- Ledger-visible maintenance progress and failures with stage-scoped reclaim
-  that cannot steal a live op, violate `processing_state` CHECKs, or complete/
-  fail a **replacement attempt** on the same `processing_id`.
-- Atomic maintain completion that never drops a `rerun_requested` successor.
-- Safe concurrent writers via existing commit-conflict retries + **table-scoped
-  exclusive maintain lock** for light+heavy (one named owner for all callers).
+- Safe concurrent writers via existing commit-conflict retries. A **table-scoped
+  maintain lock** serializes the ticker against other ticker ticks and against
+  hard-forget `delete_unverified` only — writers stay outside it.
 - Cold-reader contracts for storage location, backup, compose wiring, readiness
   exclusion, and lane.
 
@@ -188,9 +181,8 @@ is Lance write/maintenance correctness**, not claim grain fan-out.
 - Multi-deployment continuous maintain against a **shared** `lance_root`
   (cloud multi-tenant layout is future work; self-host is one deployment per
   root by construction).
-- Shared estate-wide processing_state reaper for all long stages (this design
-  ships **stage-scoped** reclaim for `maintain_p1_index` only; generalizing
-  later is fine).
+- A claimed `maintain_p1_index` stage, reclaim, or heartbeat (rejected
+  alternative: `plan/proposals/p1_lance_maintain_ledger_units.md`).
 - Expanding `label_lock` to wait on maintain workers (hot-path quiesce that
   blocks labeling). **Supported ops path** is a separate bounded
   `maintenance_writer_gate=hold` (or compose scale-down of label/embed for the
@@ -212,26 +204,23 @@ flowchart TB
     META --> UPS
   end
 
-  subgraph ledger [Postgres work ledger]
-    PS[processing_state stage=maintain_p1_index unlaned]
-    U[p1_maintain_units table-scoped]
+  subgraph control [Postgres control plane]
+    ST[p1_lance_table_stats table-scoped]
   end
 
-  subgraph maint [Maintenance worker]
-    SEED[ensure_maintain_due on idle tick]
-    W[worker --stage maintain_p1_index lane=NULL]
-    L[light: optimize per table under table lock]
-    H[heavy: create_index replace IVF_FLAT / FTS]
-    E[ensure scalar+FTS+vector per index matrix]
-    SEED --> PS
-    W --> L
-    W --> H
-    W --> E
+  subgraph maint [Maintain ticker]
+    TICK[compose maintain-p1 loop]
+    L[compact: optimize]
+    H[retrain: create_index replace]
+    E[ensure matrix indexes]
+    TICK --> E
+    TICK --> L
+    TICK --> H
   end
 
-  UPS -->|enqueue-only when thresholds| PS
-  PS --> W
-  U --> PS
+  UPS -->|bump change-mass on vector rewrite| ST
+  ST --> TICK
+  TICK -->|try-lock per table| ST
   BF[BackfillFinalizer] --> E
   BF --> H
 
@@ -277,7 +266,7 @@ update_fact_metadata(rows):
       .execute(payload)
     metadata_miss += batch_len - MergeResult.num_updated_rows
     bounded commit-conflict retry (existing _LANCE_COMMIT_RETRIES pattern)
-  record mutation stats; enqueue light maintain if thresholds trip (§5.4)
+  record mutation stats on p1_lance_table_stats if a vector was rewritten
   # never call optimize() here
 ```
 
@@ -333,14 +322,11 @@ merge never falls back to a full-column scan at BEAM scale.
 `merge_insert`. Changes required:
 
 - **Remove** synchronous write-path `optimize()` from
-  `_maintain_indexed_tail` (or reduce it to optional cheap pre-check that only
-  **enqueues**). Prefer one `table.stats()` call over per-index
-  `list_indices` + `index_stats` loops when deciding whether to enqueue.
-- Enqueue light maintain when batch sizes or fragment/unindexed stats warrant
-  (§5.4), if `maintenance_enabled`.
-- `upsert_entities` must call the same ensure-scalar path and enqueue maintain
-  as other writers (today it ensures nothing and never maintains — fixed by
-  §5.3 matrix + writer hygiene).
+  `_maintain_indexed_tail`.
+- After a **vector rewrite**, bump `p1_lance_table_stats` change-mass /
+  changed-row counters (§5.4.1). Do not take the maintain lock.
+- `upsert_entities` must call the same ensure-scalar path as other writers
+  (today it ensures nothing — fixed by §5.3 matrix).
 
 Do not introduce per-row `update` anywhere else in the adapter.
 
@@ -356,7 +342,7 @@ workers are out of scope while that lock holds. Maintain runs outside
 | Light | `optimize_tables(tables, cleanup_older_than=…)` | `table.optimize(...)` under table lock | Frequent; dual trigger on unindexed rows **or** small-fragment pressure **or** enqueue from writers |
 | Heavy | `rebuild_vector_indexes(tables)` / `rebuild_text_indexes(tables)` | `create_index(..., replace=True)` IVF_FLAT (+ FTS) under table lock | Periodic / admin / growth policy; subject to write-rate defer (§5.7) |
 | Ensure | `ensure_search_indexes()` | scalar + FTS + vector per matrix if missing; min-row gate re-eval | Deploy, backfill end, maintain tick, **and before large metadata merges** |
-| Stats | `table_maintenance_stats(table) -> …` | `count_rows`, `list_indices`, `index_stats`, **`table.stats()`** fragment_stats | Every maintain claim; metrics export |
+| Stats | `maintenance_stats(table) -> …` | `count_rows`, `list_indices`, `index_stats`, **`table.stats()`** fragment_stats | Every ticker tick; metrics export |
 
 **Binding semantics of light:**
 
@@ -544,31 +530,34 @@ New settings group (implementation chooses one namespace under
   that table (no silent thrash). Only admin clear / force-after-quiet / accept-
   stale clears the flag (§5.7 rule 3).
 
-### 5.4.1 How each mode is discovered (binding)
+### 5.4.1 How each operation is chosen (binding)
 
-There is no Lance callback. Three observers decide to enqueue; the worker
-only **runs** claimed units.
+There is no Lance callback and **no ledger enqueue**. The ticker reads
+`p1_lance_table_stats` (and probes Lance only when that row is missing or
+older than `maintain_probe_min_s`). Writers only bump counters.
 
-| Observer | What it sees | What it may enqueue |
+| Observer | What it sees | What it does |
 | --- | --- | --- |
-| **P1 writer** (embed_chunk / embed_claim / label_relation / entity profile) | The batch it just committed: table name, whether each row **rewrote a vector**, `len(embedded_text)` | Bump durable counters; **enqueue `light` only** when light dirt thresholds trip. Never enqueue `heavy`. Never call `optimize` / `create_index` under the lease. |
-| **Maintain idle tick** (`ensure_maintain_due` before `claim_one`) | `p1_lance_table_stats` first; if stale, probe Lance (`unindexed_rows`, `num_small_fragments`, `count_rows`) | Enqueue `light` if dirt/poll due. Enqueue `heavy` if `heavy_enabled` and change-mass / changed-row / growth / leftover-unindexed policy trips and write-rate does not defer. |
-| **Backfill finalizer / admin / CLI** | Drain barrier, missing indexes, operator intent | `ensure_indexes` and/or force `heavy`. Finalizer is **not** gated by `heavy_enabled`. |
+| **P1 writer** | The batch it just committed: table, whether each row **rewrote a vector**, `len(embedded_text)` | Bump durable counters. Never call `optimize` / `create_index`. Never take the maintain lock. |
+| **Maintain ticker** | Stats first; Lance probe if stale | Try-lock the table. Then at most one of ensure / compact / retrain. Skip the table if the lock is held (purge or another tick). |
+| **Backfill finalizer / admin / CLI** | Drain barrier, missing indexes, operator intent | Same port under the same table lock. Finalizer is **not** gated by `heavy_enabled`. |
 
-#### Mode trigger table
+#### Operation trigger table
 
-| Mode | Fires when | How the system finds out |
+| Operation | Fires when | How the system finds out |
 | --- | --- | --- |
-| **`ensure_indexes`** | A contracted index is missing, or vector IVF min-row gate (256) is newly crossed and no vector index exists | Finalizer after backfill drain; idle probe of `list_indices`; admin. **Not** on a clock. |
-| **`light`** | `num_unindexed_rows` ≥ `optimize_unindexed_rows` **or** `num_small_fragments` ≥ `optimize_small_fragments` **or** last light older than `maintain_poll_hours` while the table is still dirty | Writer enqueue after a dirtied merge; idle tick safety poll. |
-| **`heavy`** | Durable **amount of change** since last successful train (below) **and** `heavy_enabled` **and** not `awaiting_operator` **and** write-rate defer does not apply **and** `heavy_rebuild_min_hours` has elapsed (unless force) | Idle tick / post-light completion path reads table stats. Writers never enqueue heavy. |
+| **ensure** | A contracted index is missing, or vector IVF min-row gate (256) is newly crossed and no vector index exists | Ticker `list_indices`; finalizer after drain; admin. |
+| **compact** (`optimize`) | `num_unindexed_rows` ≥ `optimize_unindexed_rows` **or** `num_small_fragments` ≥ `optimize_small_fragments` | Ticker reads stats / Lance. |
+| **retrain** (`create_index replace=True`) | Durable **amount of change** since last successful train (below) **and** `heavy_enabled` **and** not `awaiting_operator` **and** write-rate defer does not apply **and** `heavy_rebuild_min_hours` has elapsed (unless force) | Ticker only. Writers never trigger retrain. |
+
+Priority on one locked tick: **ensure first**, then compact if still dirty, then retrain only if compact is not also due (do not start a multi-hour IVF train on a table that still needs a cheap compact — compact first, re-evaluate retrain on the next tick).
 
 #### Heavy = change-mass (binding)
 
 Calendar (`heavy_rebuild_min_hours`) is an **anti-thrash cap**, not discovery.
 Row-count growth alone misses **updates that keep `count_rows` flat**.
 
-On `p1_lance_table_stats` (table-scoped, survive successor units):
+On `p1_lance_table_stats` (table-scoped):
 
 - `changed_rows_since_heavy` — count of rows whose **vector** was rewritten
   since the last successful heavy (or since baseline init).
@@ -576,26 +565,23 @@ On `p1_lance_table_stats` (table-scoped, survive successor units):
   those same vector rewrites only.
 
 **Increment only when the Lance vector column is written.** Forbidden to
-increment for:
+increment for skip-unchanged eligibility rows, metadata merge that does not
+rewrite `vector` / `label`, or no-op upserts.
 
-- skip-unchanged eligibility rows (Postgres scalars already match Lance);
-- matched-only metadata merge that does **not** rewrite `vector` / `label`;
-- no-op upserts.
+Reset both counters **only** after a successful retrain for that table.
 
-Reset both counters **only** after a successful heavy for that table.
-
-**Heavy if any (per table, after min-hours / enable / not-awaiting / not-rate-deferred):**
+**Retrain if any (per table, after min-hours / enable / not-awaiting / not-rate-deferred):**
 
 1. `changed_rows_since_heavy / max(last_heavy_row_count, 1) ≥ heavy_changed_row_frac[table]`, or
 2. `change_mass_since_heavy ≥ heavy_change_mass[table]`, or
 3. `count_rows` grew ≥ `heavy_rebuild_row_growth_pct[table]` vs `last_heavy_row_count`, or
-4. after a **successful light**, `unindexed/total ≥ heavy_rebuild_unindexed_ratio`.
+4. after a **successful compact**, `unindexed/total ≥ heavy_rebuild_unindexed_ratio`.
 
 #### Per-table sensitivity (chunks more often than short text)
 
 | Table | `change_mass_char_cap` | `heavy_changed_row_frac` | `heavy_change_mass` (start) | Why |
 | --- | --- | --- | --- | --- |
-| **chunks** | 4096 | **0.05** | **2e6** | Long embedding text; primary semantic mass; each rewrite moves more of the IVF |
+| **chunks** | 4096 | **0.05** | **2e6** | Long embedding text; primary semantic mass |
 | claims | 512 | 0.15 | 5e6 | Medium needles; many rows |
 | facts | 256 | 0.25 | 8e6 | Short labels; eligibility churn must not look like retrain |
 | entities | 1024 | 0.25 | 2e6 | Few rows; profile text |
@@ -609,498 +595,61 @@ Writer hook (same batch that upserts):
 if vector_rewritten:
   stats.changed_rows_since_heavy += 1
   stats.change_mass_since_heavy += min(len(embedded_text), cap[table])
-if light_dirt_thresholds:
-  enqueue_p1_maintain(table, mode=light)
 ```
 
-### 5.5 Worker / stage: `maintain_p1_index`
+### 5.5 Ticker (not a pipeline stage)
 
-#### 5.5.1 Ledger identity (one protocol)
-
-| Field | Binding value |
-| --- | --- |
-| `stage` | `maintain_p1_index` (new `pipeline_stage` enum value + Python `PipelineStage`) |
-| `target_kind` | `p1_maintain_unit` (new `processing_target` enum value + `ProcessingTarget`) |
-| `target_id` | `unit_id` (UUID PK of `p1_maintain_units`) |
-| `component_version` | fixed string e.g. `p1-lance-maintain-2026.08` (logical only; **not** registered in `_expected_components`; no new `pipeline_component` enum value required — D1 component registry is for per-version readiness generations) |
-| `content_hash` | stable per-unit diagnostic string (e.g. `p1-maintain:{root_key}:{table}:{mode}:{unit_id}`); required by `processing_state.content_hash NOT NULL` — for diagnostics/replay, **not** uniqueness |
-| `lane` | **`NULL` (unlaned)** always |
-| `deployment_id` | sole self-host deployment (routing / attribution) |
-| `payload` | see below |
-
-Payload:
-
-```json
-{
-  "mode": "light" | "heavy" | "ensure_indexes",
-  "table": "chunks" | "claims" | "facts" | "entities",
-  "force": false,
-  "reason": "threshold|schedule|admin|post_write|backfill|reclaim|deferred_heavy|conflict_defer|heavy_needs_quiet_window"
-}
-```
-
-**One physical maintain unit = one table × one mode.** Multi-table admin work
-enqueues one unit per table (or the handler fans out under one claimed unit by
-processing tables sequentially under per-table locks — prefer **one unit per
-table** for reclaim granularity and coalesce clarity).
-
-**Table `p1_maintain_units`:**
-
-| Column | Role |
-| --- | --- |
-| `unit_id` | PK; ledger `target_id` |
-| `deployment_id` | routing / attribution (self-host single deployment) |
-| `lance_root_key` | stable string identity of the root (e.g. canonical path); default single root |
-| `table_name` | `chunks` \| `claims` \| `facts` \| `entities` |
-| `mode` | `light` \| `heavy` \| `ensure_indexes` |
-| `reason` | text |
-| `requested_at` | timestamptz (bumped on coalesce) |
-| `rerun_requested` | boolean — set when enqueue races a live run (§5.5.3) |
-| `last_heartbeat_at` | timestamptz nullable — side-thread liveness (§5.5.2) |
-| `claimed_attempt` | int nullable — last claim's `ClaimedWork.attempt` stamped at claim start; heartbeat and ownership writes compare against it |
-| `operator_state` | text nullable — denormalized copy of table-stats terminal for the unit row; **authoritative** escalation state lives on `p1_lance_table_stats` (§5.6) |
-| `result` | optional jsonb after completion |
-
-**Escalation counters are table-scoped, not unit-local:** `rate_defer_count`,
-`conflict_defer_count`, `first_defer_at`, and `operator_state` for heavy
-best-effort live on **`p1_lance_table_stats`** (keyed by
-`(lance_root_key, table_name)`). Successor units must **not** reset these to
-zero on insert — they read/update the stats row. Unit rows may mirror
-`operator_state` for display only.
-
-**Unique open-unit constraint (coalesce) — binding implementation:**
-
-At most one **open** unit per `(lance_root_key, table_name, mode)`, where open
-means a linked ledger row in `pending` or `failed` (retryable), **or**
-`running` with a fresh heartbeat / not past reclaim criteria.
-
-**Do not** implement open-ness via a PostgreSQL partial unique index on
-`p1_maintain_units` filtered by `processing_state.status` — a partial-index
-predicate may only reference columns of the indexed table
-([PostgreSQL partial indexes](https://www.postgresql.org/docs/current/indexes-partial.html)).
-Status lives on `processing_state`, so that alternative is **not expressible**.
-
-**Binding:** `enqueue_p1_maintain` takes an enqueue advisory xact lock for
-`(lance_root_key, table_name, mode)`, then `SELECT … FOR UPDATE` the control
-row / existing open unit and inserts only when none is open. Optional later:
-add unit-local `open boolean` maintained in the same transaction as ledger
-transitions if a real partial unique index is desired — not required to ship.
-
-**Ledger unique key** remains
-`(deployment_id, target_kind, target_id, stage, component_version)`. Fresh
-units get new `unit_id`s; coalesce **does not** insert a second open unit for
-the same `(root, table, mode)`.
-
-#### 5.5.2 Coalesce, idempotency, reclaim, and liveness
-
-**Coalesce only on `pending` (and retryable `failed`), not on unbounded
-`running`.**
+Continuous maintain is `rememberstack self-host maintain-p1`: a loop, not
+`worker --stage`. It is **absent** from `_expected_components` and from
+`UNLANED_STAGES` because it never touches `processing_state`.
 
 ```text
-enqueue_p1_maintain(root, table, mode, reason, *, not_before=None):
-  if not maintenance_enabled and reason != admin_force: return
-  if mode == heavy and not heavy_enabled and not force: return
-  BEGIN
-    take enqueue xact lock for (root, table, mode)
-    if open pending/failed unit exists:
-      bump requested_at; OR reason into unit; optionally lower not_before; return
-    if running unit exists for same (root, table, mode) and not reclaimable:
-      set rerun_requested = true on that unit; return
-    else insert unit + ledger pending row (lane NULL, content_hash set)
-  COMMIT
-```
-
-**Idempotency of Lance ops (makes double-run safe):**
-
-- `table.optimize()` is safe to re-run.
-- `create_index(..., replace=True)` for heavy is safe to re-run.
-- Ensure is list-then-create-if-missing.
-
-Therefore a duplicate maintain after reclaim is correct, not harmful.
-
----
-
-##### Stage-scoped reclaim (binding, ships with D91 — not deferred)
-
-There is **no** estate-wide processing_state reaper today. This design adds a
-**minimal maintain-only** reclaim.
-
-**Forbidden:** hand-rolled SQL of the form
-`UPDATE processing_state SET status='failed' …` that omits
-`defer_reason` / `not_before` or ignores attempt exhaustion. Live CHECKs
-(`p0_02_0002_infrastructure_registries.py`):
-
-```sql
-CHECK (status <> 'failed' OR attempts < max_attempts),
-CHECK (
-  (status = 'failed'  AND defer_reason = 'retry_backoff') OR
-  (status = 'pending' AND (defer_reason IS NULL OR defer_reason IN ('scheduled','budget'))) OR
-  (status NOT IN ('pending','failed') AND defer_reason IS NULL)
-)
-```
-
-A bare `status='failed'` from `running` violates both arms when
-`defer_reason` stays null or `attempts >= max_attempts`.
-
-**Binding reclaim path:**
-
-```text
-reclaim_stale_maintain(deployment_id):
-  # rate-floor: skip if last reclaim scan < maintain_reclaim_min_s ago
-  select processing_state rows (join p1_maintain_units) where:
-    stage = 'maintain_p1_index'
-    AND status = 'running'
-    AND is_reclaimable(row)   # see liveness below
-  # SELECT must project the observed attempt: processing_state.attempts AS observed_attempt
-  for each row:
-    try:
-      scheduled = WorkLedger.fail(          # maintain path — see attempt fence
-        processing_id=row.processing_id,
-        error='stale maintain running reclaimed',
-        retryable=True,
-        expected_attempt=row.observed_attempt,  # binding: carry scan attempt into locked fail
-      )
-    except WorkNotRunningError:
-      # select→fail race: owner completed (or was already failed) between scan
-      # and lock; skip this row (do not abort the reclaim loop)
-      continue
-    # fail() already (when attempt matches):
-    #   - asserts status == 'running' AND attempts == expected_attempt
-    #   - if attempts < max_attempts: status=failed, defer_reason=retry_backoff,
-    #     not_before = now() + backoff; returns scheduled time
-    #   - else: status=dead_letter; returns None
-    # fail() when attempt mismatches or status not running:
-    #   - raise WorkNotRunningError (same as generic fail on non-running)
-    if scheduled is not None:
-      queue.announce(
-        processing_id=row.processing_id,
-        route_snapshot=QueueRoute(
-          deployment_id=deployment_id,
-          stage=PipelineStage.MAINTAIN_P1_INDEX,
-          lane=None,  # unlaned
-        ),
-        not_before_snapshot=scheduled,
-      )  # matches TaskQueuePort.announce (ports/queue.py)
-      metric p1_lance_maintain_reclaimed{outcome=retry}
-    else:
-      metric p1_lance_maintain_reclaimed{outcome=dead_letter}
-      # dead_letter is NOT open (§5.5.1). For light / hard-fail exhaustion,
-      # next ensure_maintain_due may enqueue a fresh unit. For heavy that
-      # escalated to operator_state=awaiting_operator (§5.7 rule 3), ensure
-      # must NOT auto-enqueue another heavy until ops clears the flag.
-```
-
-**Scope of candidates:** only `stage=maintain_p1_index`. Prefer also join to
-`p1_maintain_units` so reclaim reasoning is table/mode-aware (heavy vs light
-liveness) and so `observed_attempt` can cross-check `unit.claimed_attempt`
-when set.
-
-**Attempt fence (binding — closes Codex P1.4):** "running" alone is **not** an
-ownership fence. `ClaimedWork.attempt` (integer returned on claim; column
-`processing_state.attempts` after `_CLAIM_START`) is bound through **every**
-maintain ownership-changing and liveness write:
-
-| Write | Fence predicate |
-| --- | --- |
-| `complete_maintain_p1` | `WHERE processing_id=:id AND status='running' AND attempts=:expected_attempt` |
-| fail / reclaim / conflict_defer | same compare-and-transition on fail path (`expected_attempt` required for maintain) |
-| heartbeat UPDATE | update `last_heartbeat_at` only if unit still linked to a `running` processing row at that attempt (`claimed_attempt` / `attempts` match) |
-
-Extend `WorkLedger.fail` (or a maintain-specific wrapper used by reclaim and
-the handler runner) to accept `expected_attempt: int | None = None`. When
-supplied (maintain path always supplies it), the locked UPDATE is:
-
-```sql
-UPDATE processing_state
-SET status = 'failed', defer_reason = 'retry_backoff', ...
-WHERE processing_id = :id AND status = 'running' AND attempts = :expected_attempt
-```
-
-(and the dead-letter arm likewise). Zero rows → `WorkNotRunningError` (stale
-attempt A cannot fail replacement attempt B). After a successful reclaim
-`fail`, a new claim (if retryable) increments `attempts` via normal
-`_CLAIM_START`; the old process retains only its original
-`claimed.attempt` and cannot complete/fail/heartbeat the new attempt.
-
----
-
-##### Liveness (binding for heavy; recommended for light)
-
-`_LANCE_COMMIT_RETRIES` and wall-clock alone cannot prove death of a multi-hour
-`create_index`. Binding policy:
-
-1. **Preferred — side-thread heartbeat** while a maintain claim holds a long
-   Lance call:
-   - On claim start, stamp `p1_maintain_units.claimed_attempt = claimed.attempt`
-     and spawn a daemon/side thread that every `maintain_heartbeat_s` (default
-     **60s**) writes `last_heartbeat_at = now()` using a short Postgres
-     connection **outside** the Lance call thread, with:
-     ```sql
-     UPDATE p1_maintain_units u
-     SET last_heartbeat_at = now()
-     FROM processing_state ps
-     WHERE u.unit_id = :unit_id
-       AND ps.target_id = u.unit_id
-       AND ps.stage = 'maintain_p1_index'
-       AND ps.status = 'running'
-       AND ps.attempts = :expected_attempt
-     ```
-     Zero rows ⇒ stop the heartbeat thread (unit reclaimed / replaced; old
-     thread must not refresh a replacement).
-   - **Reclaim stale iff** `last_heartbeat_at` is older than
-     `maintain_heartbeat_stale_mult × maintain_heartbeat_s` (default **3×** →
-     180s without a beat). A live process with a fresh heartbeat is **never**
-     reclaimed.
-   - On process death the side thread dies; heartbeat freezes; reclaim fires
-     after the gap.
-2. **Fallback / secondary safety net** when heartbeat is missing (legacy row
-   or light op that chose not to start a thread):
-   - `started_at` older than `maintain_running_stale_s`, **and** for heavy the
-     cutoff **must exceed** expected heavy duration (set from
-     `p1_lance_rebuild_duration_ms` p99 after soak — do not ship a 2h default
-     as sufficient for multi-GB IVF if measured rebuild is longer).
-   - **Binding defense-in-depth for wall-clock fallback:** only reclaim if
-     `pg_try_advisory_lock(table_maintain_key)` succeeds (lock free ⇒ no live
-     maintain owner holding it). If the try-lock fails, a peer still holds the
-     table lock — do not reclaim. Always unlock the try immediately if taken
-     solely for the probe. (Under the preferred heartbeat path the candidate
-     is already dead; the probe is required only on the wall-clock arm so a
-     live owner whose heartbeat *thread* died but still holds the table lock
-     is not reclaimed.)
-
-**Fence summary:** a live process with a fresh heartbeat is never reclaimed.
-Ownership of the processing row is the **attempt number**, not merely
-`status='running'`. Stale attempt A cannot complete, fail, or heartbeat
-attempt B on the same `processing_id`. Residual if both heartbeat *and*
-table-lock probe were skipped: attribution/queue-health only — Lance safety
-still holds via the table lock + idempotent ops; this design does **not**
-skip the probe on the wall-clock arm.
-
-#### 5.5.3 Handler and atomic completion
-
-```text
-MaintainP1IndexHandler.handle(work: ClaimedWork) -> MaintainCompleteOutcome:
-  # work.attempt is the sole ownership token for this claim (Codex P1.4)
-  load unit by target_id; stamp unit.claimed_attempt = work.attempt
-  open Lance adapter at lance_root  # class name LanceChunkIndex is historical
-  acquire table maintain advisory lock (root, table_name) via Postgres engine  # §5.7
-  start heartbeat side-thread(expected_attempt=work.attempt)  # heavy required; light recommended
-  try:
-    if mode == ensure_indexes: ensure_search_indexes(tables=(table,))
-    if mode == light: optimize_tables(tables=(table,), cleanup_older_than=…)
-    if mode == heavy:
-      if stats.operator_state == 'awaiting_operator' and not unit.force:
-        stop heartbeat; release lock
-        return MaintainCompleteOutcome(skipped_awaiting_operator=True)
-      if not heavy_enabled and not unit.force: mark skipped in unit.result
-      elif should_defer_heavy(table):  # §5.7 rule 3 pure rate-defer
-        stop heartbeat; release lock
-        return MaintainCompleteOutcome(
-          defer_heavy=True,             # pure rate-defer — MUST NOT fail-retryable
-          not_before=now()+rate_backoff,
-          expected_attempt=work.attempt,
-        )
-        # runner (binding R12): NEVER WorkLedger.fail for pure rate-defer
-        # (fail burns toward max_attempts on the next claim path shape).
-        # Instead:
-        #   1) bump stats.rate_defer_count / first_defer_at
-        #   2) if escalate (N / age): set operator_state=awaiting_operator,
-        #      complete_maintain_p1(…, expected_attempt, skip_successor=True)
-        #      with result.reason=heavy_needs_quiet_window; metric + alert
-        #   3) else: complete_maintain_p1 as skipped-deferred (succeed)
-        #      and insert successor unit + ledger pending with not_before
-        #      in the same TX (or ensure_maintain_due re-enqueues with
-        #      not_before without claiming). Metric: deferred_heavy.
-        #   Do not create_index.
-      else:
-        ensure_search_indexes(tables=(table,))
-        try:
-          rebuild_vector_indexes(tables=(table,))  # one create_index; no short multi-retry train loop
-          maybe rebuild_text_indexes per policy
-          # on train success: clear stats.rate_defer_count, conflict_defer_count, first_defer_at
-        except CommitConflict:
-          # do NOT re-train 8× with sub-second pauses in this claim
-          stop heartbeat; release lock
-          return MaintainCompleteOutcome(
-            conflict_defer=True,
-            not_before=now()+heavy_conflict_not_before_s,
-            expected_attempt=work.attempt,
-          )
-          # runner: WorkLedger.fail(
-          #   retryable=True, expected_attempt=work.attempt, …)
-          # once; fail() sets defer_reason=retry_backoff; override/extend
-          # not_before to the long floor if settings backoff is shorter.
-          # Bump conflict_defer_count; if escalate (M / age) →
-          # awaiting_operator instead of another retryable fail.
-    write p1_lance_table_stats + metrics
-    write unit.result
-  finally:
-    stop heartbeat
-    release table lock
-  return MaintainCompleteOutcome(success=True, expected_attempt=work.attempt)
-  # DO NOT succeed ledger here; DO NOT enqueue successor here
-```
-
-**Atomic completion (binding — closes Codex P1.2 + P1.4):**
-
-Do **not** use generic `WorkLedger.complete()` after a post-handler flag read.
-Add a maintain-specific completion path (pattern: `complete_chunk_extract` /
-`complete_entity_obs_flush`) invoked from the worker runner when the handler
-returns a maintain success / skipped-deferred outcome:
-
-```text
-WorkLedger.complete_maintain_p1(
-  processing_id,
-  unit_id,
-  *,
-  expected_attempt: int,          # binding — ClaimedWork.attempt
-  follow_up=(),
-  deferred_successor_not_before=None,  # pure rate-defer path
-  skip_successor=False,                # awaiting_operator terminal
-):
-  BEGIN
-    take enqueue xact lock for (root, table, mode) of this unit
-    SELECT unit FOR UPDATE
-    SELECT processing_state FOR UPDATE
-      WHERE processing_id = :id
-        AND status = 'running'
-        AND attempts = :expected_attempt
-    if no matching row: raise WorkNotRunningError
-      # stale attempt A after B claimed / already reclaimed / already terminal
-    mark processing_state succeeded
-      # SQL: UPDATE … WHERE processing_id AND status='running' AND attempts=:expected_attempt
-    if skip_successor:
-      mark unit terminal with operator_state as already set (awaiting_operator)
-    elif unit.rerun_requested or deferred_successor_not_before is not None:
-      clear rerun_requested
-      insert successor unit + ledger pending row (same root/table/mode,
-        reason includes 'rerun' or 'deferred_heavy', content_hash set,
-        not_before = deferred_successor_not_before if set)
-      # successor insert is in THIS transaction — never after commit
-    else:
-      mark unit terminal / closed
-    enqueue any other follow_up
-  COMMIT
-  announce successor if created
-    # TaskQueuePort.announce(processing_id=…, route_snapshot=QueueRoute(
-    #   deployment_id, stage=MAINTAIN_P1_INDEX, lane=None),
-    #   not_before_snapshot=…)
-```
-
-This guarantees: an enqueue that races between handler return and completion
-still sees `running`, sets `rerun_requested`, and the completion transaction
-**consumes the flag and creates the successor atomically**. There is no
-loss window between "read flag" and "mark succeeded." Stale attempt A cannot
-succeed after attempt B is running on the same `processing_id`.
-
-**Defer / conflict outcomes (binding split — Claude R12):**
-
-| Outcome | Path | Burns attempt budget? |
-| --- | --- | --- |
-| Pure rate-defer (no train) | **Succeed-as-skipped** + successor with `not_before`, **or** ensure-side re-enqueue with `not_before` without claiming. **Forbidden:** `fail(retryable=True)` for pure rate-defer. | **No** (new unit starts clean; count is on `rate_defer_count`, not ledger attempts) |
-| Post-train `conflict_defer` | `WorkLedger.fail(..., retryable=True, expected_attempt=…)` once with long `not_before` | **Yes** — one ledger attempt per wasted train (intent) |
-| Escalation to `awaiting_operator` | Succeed terminal with `operator_state=awaiting_operator` (or fail → `dead_letter` + unit flag); **no** auto re-enqueue | Terminal; not automatic progress |
-
-Conflict after a full train **does** count as one ledger attempt. Pure rate-defer
-**must not**.
-
-Optional: after light success (atomic complete path), evaluate heavy policy for
-that table and enqueue heavy if `heavy_enabled` and thresholds trip (same
-coalesce transaction rules; honor `awaiting_operator` and writer gate).
-
-#### 5.5.4 Who enqueues and self-seed execution edge
-
-| Source | When |
-| --- | --- |
-| Writer path | After large metadata merge or upsert batch if stats exceed light thresholds — **enqueue only**. When `maintenance_writer_gate=hold` for the table: still may enqueue maintain, but **must not start new Lance-mutating batches** (park / defer new embed/label write batches for that table until gate opens or TTL) |
-| Maintain worker idle tick | `ensure_maintain_due(...)` **before** `claim_one` (see below) |
-| Backfill finalizer | After drain: ensure + heavy via same port **under table locks** (not necessarily via ledger units). **Not gated by `heavy_enabled`** |
-| Admin/CLI | Force heavy/light; clear `awaiting_operator`; set/clear `maintenance_writer_gate` |
-| Post hard-forget purge | After purge releases table locks, enqueue light for touched tables |
-
-**Self-seed execution edge (binding):** not inside the handler after claim.
-Extend the maintain compose route so each loop iteration of
-`SelfHostWorkerLoop.drain_due` / `run_for` (or a thin `MaintainWorkerLoop`
-wrapper) calls:
-
-```text
-ensure_maintain_due(deployment_id, lance_root):
-  reclaim_stale_maintain(...)          # floor: maintain_reclaim_min_s
-  if not maintenance_enabled: return
+loop:
+  if not maintenance_enabled: sleep(poll); continue
+  if ForgetInProgress for the deployment: sleep; continue
   for table in present_tables:
-    stats = read p1_lance_table_stats first
-    # parentheses are binding (Claude R16): probe when stats are missing, OR
-    # when stats are stale AND (light poll due OR thresholds unknown)
-    if (stats is missing) or (
-         stats.older_than(maintain_probe_min_s)
-         and (last_light older than maintain_poll_hours or thresholds unknown)
-       ):
-      stats = probe Lance once  # floor: maintain_probe_min_s
-    if contracted indexes missing or IVF min-row gate newly crossed:
-      enqueue_p1_maintain(table, mode=ensure_indexes, reason=missing_index)
-    if light thresholds or last_light older than maintain_poll_hours:
-      enqueue_p1_maintain(table, mode=light, reason=schedule)
-    if table has open/terminal unit with operator_state == 'awaiting_operator':
-      metric p1_lance_awaiting_operator; do NOT auto-enqueue heavy
-      continue  # light may still run
-    if heavy_enabled and heavy thresholds and not write_rate_defers:
-      enqueue_p1_maintain(table, mode=heavy, reason=threshold)
-    elif heavy thresholds but write_rate_defers:
-      metric p1_lance_deferred_heavy
-      # pure rate-defer without claim (preferred at ensure edge): bump
-      # durable rate_defer streak on stats/latest unit; if escalate → set
-      # awaiting_operator + alert; else optional enqueue with not_before
-      # only (no claim until not_before). Never fail-retryable here.
+    if not try_lock(table): continue          # purge or another tick
+    try:
+      stats = read p1_lance_table_stats or probe Lance
+      if missing/wrong index or IVF gate newly crossed:
+        ensure_search_indexes(tables=(table,))
+      elif light dirt:
+        optimize_tables(tables=(table,))
+      elif heavy_enabled and not awaiting_operator and not rate_defer and retrain due:
+        try:
+          rebuild_vector_indexes(tables=(table,))
+          maybe rebuild_text_indexes
+          clear defer counters; reset change-mass; stamp last_heavy_*
+        except CommitConflict:
+          bump conflict_defer_count; maybe awaiting_operator
+          do not re-train in this tick
+      write stats + metrics
+    finally:
+      unlock(table)
+  sleep(maintain_poll) or wait on notify
 ```
 
-then `claim_one(..., stage=maintain_p1_index, lane=None)`.
+**Try-lock, do not wait.** A held lock means purge or another maintain is in
+the table. The ticker skips and comes back. Forget **does** wait (bounded)
+because the user asked to erase now.
 
-**Wake-channel cost:** `_WAKE_CHANNEL = "queue_wake"` is estate-wide; under
-ingest the maintain loop may wake often. Binding floors
-(`maintain_probe_min_s`, `maintain_reclaim_min_s`) and durable-stats-first
-reads prevent probing Lance four tables on every notification.
+**No heartbeat, no reclaim.** Session advisory locks die with the process.
+`optimize` and `create_index(..., replace=True)` are safe to run again.
 
-**Forget interaction for claims:** while a hard-forget is open,
-`claim_one` raises `ForgetInProgressError` for every non-`hard_forget` stage
-(`work_ledger.py`). Maintain units therefore wait until forget completes; that
-is correct. Post-forget purge enqueues light **after** forget closes.
+**Admin force** is a flag on the stats row (or a CLI that takes the lock and
+calls the port). It is not a ledger unit.
 
-#### 5.5.5 Compose / profile wiring
-
-| Wire | Binding |
-| --- | --- |
-| Compose service | `worker-maintain-p1`: `command: ["worker", "--stage", "maintain_p1_index"]` |
-| `_SUPPORTED_WORKER_STAGES` | include `PipelineStage.MAINTAIN_P1_INDEX` |
-| `_handler` | register `MaintainP1IndexHandler` |
-| `worker_loop` | for this stage pass **`lane=None`** (unlaned claim); do **not** hardcode `STEADY` |
-| `UNLANED_STAGES` | add `"maintain_p1_index"` (with `hard_forget` / scheduled Plane-P) |
-| `_expected_components` | **do not add** this stage — readiness is per `document_version`; a maintain unit can never satisfy it and would mark every version `missing` forever |
-| Maintenance health | metrics (§8) + optional ops/status endpoint or CLI that reads `p1_lance_table_stats` / last unit results — **not** version readiness |
-| Volume | same `app-state` / `lance_root` |
-| Scale | 1 replica per host recommended (table locks serialize anyway) |
-| Enable gates | compose may start the process, but **no self-seed / no writer enqueue** until `maintenance_enabled=true`; continuous heavy until `heavy_enabled=true` |
-
-#### 5.5.6 Relation to `p1_batch_rebuild` (`workers.md` §6.3)
-
-| Concern | Owner |
-| --- | --- |
-| Compaction / incremental index | `maintain_p1_index` light |
-| IVF/FTS retrain | `maintain_p1_index` heavy |
-| Re-embed + rewrite vectors from Postgres | existing backfill / future `p1_batch_rebuild` campaign |
-| `BackfillFinalizer` | remains barrier; calls shared port **under table maintain locks** |
-
-Do not overload maintain to re-embed.
-
-**Lane forbid reason:** `BackfillFinalizer` refuses index build while any
-`lane='backfill'` row is not `succeeded`/`skipped`. A backfill-laned maintain
-unit would be counted as unresolved drain forever. **Enqueue of
-`maintain_p1_index` with a non-null lane is a hard error** (`lane_is_valid`
-via `UNLANED_STAGES`).
+**Lane / backfill.** The ticker is not a ledger row, so it cannot deadlock
+`BackfillFinalizer`'s "unresolved backfill rows" drain. Finalizer still
+refuses to build indexes while backfill work is open, then takes the table
+lock around ensure+retrain.
 
 ### 5.6 Durable maintenance stats
 
 Table `p1_lance_table_stats` keyed by **`(lance_root_key, table_name)`**
-(not deployment):
+(not deployment). There is **no** `p1_maintain_units` table.
+
+Keep:
 
 - `row_count`
 - `last_light_at`, `last_heavy_at`
@@ -1132,15 +681,15 @@ part of the growth-policy key.
 sequenceDiagram
   participant LR as label_relation worker
   participant L as Lance facts table
-  participant M as maintain_p1_index worker
+  participant M as maintain-p1 ticker
   participant PG as Postgres advisory lock
 
   LR->>L: merge_insert batch (metadata/upsert)
   Note over LR: label_lock held only for label+embed+meta batches
-  LR-->>LR: enqueue light maintain if needed; release label_lock
-  M->>PG: pg_advisory_lock(table_maintain_key)
-  M->>L: optimize() or create_index(replace=True)
-  Note over M,L: writers may concurrent-merge; heavy defers on high write rate
+  LR-->>LR: bump stats if vector rewritten; release label_lock
+  M->>PG: pg_try_advisory_lock(table_maintain_key)
+  M->>L: ensure / optimize / create_index(replace=True)
+  Note over M,L: writers may concurrent-merge; lock does not pause them
   M->>PG: unlock
 ```
 
@@ -1153,7 +702,7 @@ a **Postgres `Engine` held by the caller** — not inside the deployment-free
 
 | Caller | Who takes the lock |
 | --- | --- |
-| `MaintainP1IndexHandler` | Handler, around the Lance op for that unit's table |
+| Maintain ticker | Ticker, try-lock around the one chosen op for that table |
 | Hard-forget purge | Forget/profile path that has an engine (`selfhost_forget` composition); **must** hold the lock before calling into adapter purge/`delete_unverified`. `_purge_table_rows` must only be reachable under that held lock (adapter documents the precondition; optional assert via a lock-token parameter later) |
 | `BackfillFinalizer.build_search_indexes` | **Takes the same lock per table** around ensure+heavy for each present table (**preferred and binding**). Do not run four-table rebuild unlocked while continuous maintain can run. |
 
@@ -1177,39 +726,25 @@ material, all three sites.
    terminal operator-visible state instead of infinite silent thrash.
 
    **Steady-state policy (while under budget):**
-   - **Preferred:** **defer heavy** while write rate / recent maintain-enqueue
-     rate exceeds `heavy_defer_write_rate` (measured via durable stats /
-     recent enqueue timestamps, not a hot `label_lock` probe). Reschedule with
-     `not_before` backoff (minutes, exponential capped) via
-     **succeed-as-skipped + successor** or ensure-side enqueue-with-
-     `not_before` — **never** `fail(retryable=True)` for pure rate-defer
-     (Claude R12; pure rate-defer must not burn ledger attempt budget).
+   - **Preferred:** **skip retrain** this tick while write rate exceeds
+     `heavy_defer_write_rate` (durable stats, not a hot `label_lock` probe).
      Metric: `p1_lance_deferred_heavy`. Bump `rate_defer_count` /
-     `first_defer_at`.
+     `first_defer_at`. Compact may still run.
    - On `create_index` **commit conflict after a full train:** do **not**
-     re-train up to `_LANCE_COMMIT_RETRIES` (8) times in the same claim with
-     sub-second pauses (~3.6s total pause budget). Fail **once** as retryable
-     with long `not_before` (`heavy_conflict_not_before_s`, e.g. 15–60 min)
-     and `expected_attempt`, so the ledger attempt counts as **one** wasted
-     train, not eight. Metric: `p1_lance_conflict_defer`. Bump
-     `conflict_defer_count` / `first_defer_at`.
+     re-train up to `_LANCE_COMMIT_RETRIES` (8) times in this tick. Record
+     one conflict on the stats row and leave. Metric: `p1_lance_conflict_defer`.
    - Light `optimize` may still use existing short `_LANCE_COMMIT_RETRIES`
      backoff (conflicts cost milliseconds of lost work).
 
-   **Terminal escalation (binding — closes Codex P1.5):**
+   **Terminal escalation:**
    - After **`heavy_rate_defer_escalate_n`** consecutive pure rate-defers
      (default **12**), **or** **`heavy_conflict_defer_escalate_m`** consecutive
      conflict_defers (default **3**), **or** continuous defer age >
-     **`heavy_defer_age_escalate_h`** (default **24h**), the unit enters
-     durable **`operator_state = awaiting_operator`** with reason
-     `heavy_needs_quiet_window`. Processing is closed (succeed-terminal or
-     `dead_letter` with that reason + unit flag — either is fine; unit flag
-     is required either way). This state **does not** claim automatic
-     eventual heavy progress.
-   - Metrics + alert: `p1_lance_awaiting_operator{table}` gauge/counter;
-     page/ops on transition into the state. Continuous
-     `ensure_maintain_due` **must not** auto-enqueue another heavy for that
-     table while the flag is set.
+     **`heavy_defer_age_escalate_h`** (default **24h**), the **stats row**
+     enters durable **`operator_state = awaiting_operator`**. This state
+     **does not** claim automatic eventual heavy progress.
+   - Metrics + alert: `p1_lance_awaiting_operator{table}`. The ticker must
+     **not** auto-retrain that table while the flag is set. Compact may run.
    - **Supported operator actions** (both documented in runbook / D66 docs):
      1. **Admin force quiet window then heavy:** set
         `maintenance_writer_gate=hold` for the table/deployment (P1 writers
@@ -1242,13 +777,13 @@ material, all three sites.
    - Maintain cannot hold the lock during purge; already-running maintain
      finishes its current table op then releases — purge waits on the lock
      (bounded wait; fail forget step with retry if lock wait exceeds policy).
-   - Additionally, `ForgetInProgressError` blocks **new** maintain claims for
-     the deployment while forget is open.
+   - Additionally, `ForgetInProgressError` makes the ticker **skip** the
+     deployment while forget is open (it does not claim work).
 6. **Retry policy by operation cost:**
    - Merge + light optimize: `_LANCE_COMMIT_RETRIES` + sub-second jitter.
-   - Heavy `create_index`: **at most one** full train attempt per claim;
-     conflict → conflict_defer (§5.7 rule 3), not short multi-retry.
-   - Pure rate-defer: **zero** trains; **zero** ledger fail-attempts.
+   - Heavy `create_index`: **at most one** full train attempt per tick;
+     conflict → record and leave, not short multi-retry.
+   - Pure rate-defer: **zero** trains this tick.
 
 ### 5.8 Physical storage
 
@@ -1307,29 +842,17 @@ operation completed.
 
 ### 6.3 Queue / migrations / catalog contract
 
-Same PR as stage introduction (see §15):
-
-- `ALTER TYPE pipeline_stage ADD VALUE 'maintain_p1_index'`
-- `ALTER TYPE processing_target ADD VALUE 'p1_maintain_unit'`
-- Tables `p1_maintain_units` (incl. `last_heartbeat_at`, `rerun_requested`,
-  `claimed_attempt`, `operator_state`, defer counters), `p1_lance_table_stats`
-  with `COMMENT ON TABLE` / column comments
+- **Do not** add `maintain_p1_index` or `p1_maintain_unit` to enums.
+- Table `p1_lance_table_stats` with `COMMENT ON TABLE` / column comments
 - Update executable `catalog_contract.py`: `EXPECTED_TABLES`, per-contype
-  `EXPECTED_CONSTRAINT_COUNTS`, named indexes, comment counts, and
-  `verify_schema_absent` expectations for downgrade-to-base
-- `UNLANED_STAGES` += `maintain_p1_index`
-- Python `PipelineStage` / `ProcessingTarget` enums
-- `WorkLedger.complete_maintain_p1(..., expected_attempt=…)` + reclaim /
-  conflict_defer via attempt-fenced `fail(..., expected_attempt=…)`
+  `EXPECTED_CONSTRAINT_COUNTS`, named indexes, comment counts
+- No `UNLANED_STAGES` change
 
 ### 6.4 Workers / compose / profile
 
-- `MaintainP1IndexHandler` + runner branch for maintain completion / pure
-  rate-defer (succeed-as-skipped) / conflict_defer (fenced fail) /
-  `awaiting_operator` escalation
-- `reclaim_stale_maintain` + `ensure_maintain_due` + `enqueue_p1_maintain`
-- Heartbeat side-thread helper (attempt-conditional UPDATE)
-- compose service + selfhost wiring with **unlaned** worker_loop branch
+- CLI `maintain-p1` + compose service `worker-maintain-p1` (not
+  `worker --stage`)
+- Ticker uses try-lock + `P1IndexMaintenancePort`
 - enable gates default off; `maintenance_writer_gate` + admin force-quiet
   runbook surface
 - `BackfillFinalizer` takes table locks around `build_search_indexes`
@@ -1338,14 +861,10 @@ Same PR as stage introduction (see §15):
 
 Postgres only (Lance schema columns unchanged):
 
-- `p1_maintain_units` (incl. `rerun_requested`, `last_heartbeat_at`,
-  `claimed_attempt`, `operator_state`, `rate_defer_count`,
-  `conflict_defer_count`, `first_defer_at`)
-- `p1_lance_table_stats`
-- enum extensions above
-- catalog_contract updates
+- `p1_lance_table_stats` keyed by `(lance_root_key, table_name)`
+- catalog_contract updates for that table
 
-No change to fact/claim authoritative tables beyond existing eligibility fields.
+No `pipeline_stage` / `processing_target` additions. No `p1_maintain_units`.
 
 ## 8. Observability
 
@@ -1356,80 +875,54 @@ No change to fact/claim authoritative tables beyond existing eligibility fields.
 | `p1_lance_unindexed_rows{table,index}` | gauge | `index_stats` |
 | `p1_lance_row_count{table}` | gauge | |
 | `p1_lance_optimize_duration_ms{table}` | histogram/timer | |
-| `p1_lance_rebuild_duration_ms{table}` | histogram/timer | also drives `maintain_running_stale_s` for heavy |
-| `p1_lance_commit_conflicts{op}` | counter | writer / light short retries |
-| `p1_lance_deferred_heavy{table}` | counter | write-rate defer before train (no attempt burn) |
-| `p1_lance_conflict_defer{table}` | counter | post-train commit conflict → long not_before |
-| `p1_lance_awaiting_operator{table}` | gauge | 1 while heavy unit/table is `awaiting_operator` |
-| `p1_lance_awaiting_operator_transitions{table}` | counter | entries into `awaiting_operator` |
+| `p1_lance_rebuild_duration_ms{table}` | histogram/timer | |
+| `p1_lance_commit_conflicts{op}` | counter | writer / compact short retries |
+| `p1_lance_deferred_heavy{table}` | counter | write-rate skip of retrain |
+| `p1_lance_conflict_defer{table}` | counter | post-train commit conflict |
+| `p1_lance_awaiting_operator{table}` | gauge | 1 while table is `awaiting_operator` |
 | `p1_lance_writer_gate{table}` | gauge | 1 while `maintenance_writer_gate=hold` |
-| `p1_lance_stale_attempt_rejected{op}` | counter | complete/fail/heartbeat rejected by attempt fence |
 | `p1_lance_metadata_merge_rows` | counter | |
 | `p1_lance_metadata_merge_batches` | counter | |
 | `p1_lance_metadata_skipped_unchanged` | counter | |
 | `p1_lance_metadata_miss` | counter | from merge result |
 | `p1_lance_last_heavy_unixtime{table}` | gauge | |
-| `p1_lance_maintain_reclaimed{outcome}` | counter | `retry` \| `dead_letter` |
-| `p1_lance_maintain_heartbeat_age_s{table}` | gauge | ops |
-| Structured logs | info | mode, table, durations, reason, unit_id, attempt |
+| Structured logs | info | operation, table, durations, skip reason |
 
-Alerts (ops guidance): unindexed_rows high for >N hours; optimize/rebuild
-failures; disk free on volume hosting `lance_root`; reclaim rate spikes;
-conflict_defer / deferred_heavy sustained; **`awaiting_operator` transition**
-(page-worthy for heavy quality debt); dead_letter maintain units.
+Alerts: unindexed_rows high for >N hours; optimize/rebuild failures; disk free
+on the `lance_root` volume; **`awaiting_operator` transition**.
 
-Ship metrics **before** enabling auto self-seed in production.
+Ship metrics **before** enabling the ticker in production.
 
 ## 9. Failure / recovery
 
 | Failure | Behavior |
 | --- | --- |
-| Crash mid-`merge_insert` metadata batch | Batch atomic per Lance commit; resume job re-reads Postgres metadata; idempotent merge; skip-unchanged reduces churn |
-| Crash mid-optimize | Safe; heartbeat freezes → reclaim → attempt-fenced `fail(retryable=True, expected_attempt=…)` → retry; optimize re-run is idempotent |
-| Crash mid-`create_index` | Partial index state repaired by next heavy with `replace=True`; reclaim unblocks the unit |
-| Concurrent writer during light optimize | Short `_LANCE_COMMIT_RETRIES` backoff; if exhausted, fail unit → ledger retry |
-| Concurrent writer during heavy rebuild | Prefer pre-train write-rate defer (no attempt burn); on post-train conflict: **one** attempt-fenced fail + long `not_before` (`conflict_defer`), not 8 short retrains. Under **sustained** high write rate past escalation budget → `awaiting_operator` (best-effort; no fake eventual-success) |
-| Sustained high write rate, heavy due | Rate-defer streak → escalate to `awaiting_operator`; alert; no infinite auto re-enqueue thrash |
-| Disk full | Fail unit; log critical; do not spin forever |
-| Stuck `running` maintain | Stage-scoped reclaim via attempt-fenced `WorkLedger.fail` after heartbeat stale (or wall-clock floor + advisory-lock probe); never bare CHECK-violating UPDATE |
-| Live heavy still beating | Never reclaimed |
-| Heartbeat thread dead, Lance op alive | Wall-clock arm requires free table advisory lock before reclaim (binding defense-in-depth); attempt fence still rejects stale complete/fail if a successor somehow claimed |
-| Stale attempt A after B claimed | `complete_maintain_p1` / `fail` / heartbeat with A's attempt all rejected (`WorkNotRunningError` / zero-row UPDATE); B remains `running` |
-| Attempt-exhausted maintain (conflict/hard) | `fail` → `dead_letter`; prefer escalate heavy to `awaiting_operator` rather than silent fresh-unit thrash under high write rate |
-| Coalesce race during running unit | `rerun_requested` + **atomic** attempt-fenced `complete_maintain_p1` creates successor in same TX as succeed |
-| Metadata miss (fact not in Lance) | Count metric from merge result; do not insert empty vector row |
-| Purge vs maintain | Same table lock (forget path holds engine); forget blocks new maintain claims |
-| Finalizer vs maintain | Finalizer holds same table lock per table around ensure+heavy |
-| `maintenance_enabled=false` | No self-seed, no writer enqueue; admin force / backfill finalizer / offline port tools still available |
-| `maintenance_writer_gate=hold` | P1 writers enqueue but do not start new Lance-mutating batches for gated table; enables one successful force-heavy |
-| Rollback of worker | Set `maintenance_enabled=false` / stop compose service; pending units sit until drained or cancelled by ops SQL; in-progress Lance op finishes or process kill → reclaim |
+| Crash mid-`merge_insert` metadata batch | Batch atomic per Lance commit; resume re-reads Postgres; skip-unchanged |
+| Crash mid-optimize or mid-`create_index` | Session lock dies; next ticker tick retries the idempotent op |
+| Concurrent writer during compact | Writer and/or compact use short `_LANCE_COMMIT_RETRIES` |
+| Concurrent writer during retrain | Prefer skip retrain this tick; on post-train conflict record once and leave |
+| Sustained high write rate, retrain due | Rate-defer streak → `awaiting_operator` on the stats row |
+| Disk full | Fail the tick; log critical; do not spin |
+| Purge vs ticker | Same table lock; ticker try-lock skips; forget bounded-waits |
+| Finalizer vs ticker | Finalizer holds same table lock per table around ensure+retrain |
+| `maintenance_enabled=false` | Ticker sleeps; admin / backfill finalizer / offline port still available |
+| Rollback | Stop compose service or set the gate false; in-progress Lance op finishes or the process dies |
 
 ## 10. Security and privacy
 
 - Maintenance handles only projection data already in Lance; no new PII channels.
-- Filter strings must continue to use UUID validation / escaping (existing
-  search paths); merge payloads use typed fields not string-built WHERE for
-  batch path.
-- Multi-tenant cloud with shared root is out of scope; self-host worker claims
-  only the configured deployment (existing profile). Table locks are per root +
-  table, not per deployment row subset.
+- Filter strings must continue to use UUID validation / escaping; merge
+  payloads use typed fields.
+- Multi-tenant cloud with shared root is out of scope.
 
 ## 11. Rollout plan
 
-1. Land design + D91 after re-review r4 approval and `decisions.md` entry.
-2. PR order in §15: bulk write first (with join-key ensure); metrics + gates
-   before auto worker; docs in the same PR as compose/settings surfaces (D66).
-3. Deploy write-path fix (PR1) to BEAM host; measure metadata wall clock,
-   fragment counts, and unindexed tails. Between PR1 and maintain worker:
-   **no** synchronous write-path optimize; tails grow only for rows that
-   actually change eligibility (skip-unchanged). Operators may run manual
-   `optimize` / port CLI if needed.
-4. Enable `maintenance_enabled=true` (light only) after metrics are visible;
+1. Land this ticker amendment on design PR #270 and update D91.
+2. Close ledger-units implementation PR #276 (superseded).
+3. PR order in §15: bulk write (PR1) and port/locks (PR2) stay; PR3 becomes
+   stats + ticker; PR4 change-mass writer hooks + heavy policy; PR5 soak.
+4. Enable `maintenance_enabled=true` (compact/ensure only) after metrics;
    soak; then `heavy_enabled=true`.
-5. Runbook: force reindex, rebuild from Postgres, disk recovery, reclaim
-   zombies, disable gates, interpret deferred_heavy / conflict_defer /
-   `awaiting_operator` / writer quiet gate / dead_letter maintain; accept
-   stale IVF as a valid ops choice under continuous ingest.
 
 ## 12. Alternatives considered
 
@@ -1437,130 +930,85 @@ Ship metrics **before** enabling auto self-seed in production.
 | --- | --- |
 | Only increase inline `optimize` frequency | Does not fix O(N) update commits; still steals label lock |
 | Full reindex after every document label job | Multi-hour; thrash; commit conflicts |
-| Enterprise auto-index | Not OSS default; hides cost model |
-| Single global cron outside ledger | Weaker ops signal; breaks D67 work truth / budget patterns |
+| Enterprise auto-index | Not OSS default |
+| **Ledger-backed `maintain_p1_index` units** | Lance does not require claims; reclaim/heartbeat/attempt fences are ledger self-talk. See proposal. |
 | Process-local counters only | Multi-replica / restart blind spots |
-| Metadata via many `update` with one WHERE OR-clause | Fragile SQL size limits; worse than merge_insert batches |
-| S3-backed Lance in this design | Scope; keep `lance_root` port for later |
-| Deployment-scoped maintain units/stats/locks | Physical ops are table-global under one root; would multi-fire heavy and under-serialize (review B1) |
-| `lane=steady` or `lane=backfill` | Plane-P work is unlaned; backfill deadlocks finalizer drain |
-| Put stage in `_expected_components` | Breaks per-version readiness forever |
-| Coalesce on unbounded `running` without reclaim | One crash permanently stalls all maintain |
-| Estate-wide heartbeat reaper in this design | Out of scope; stage-scoped reclaim is sufficient and shippable |
-| Hand-rolled `status='failed'` reclaim UPDATE | Violates `processing_state` CHECKs; use `WorkLedger.fail` |
-| Partial unique index on units filtered by ledger status | Not expressible in PostgreSQL (predicate columns must be on indexed table) |
-| Synchronous write-path optimize with 5s budget | Unenforceable; lease theft |
-| Option B pre-filter id lookup for metadata | Matched-only merge already no-ops misses |
-| Time-bucketed `content_hash` uniqueness | `content_hash` is not in the ledger unique key |
-| Drop `delete_unverified` only | Weaker disk reclaim on purge; lock-held use is safe and keeps aggressive prune |
-| Writer quiesce via expanded `label_lock` | Blocks hot path; continuous path uses rate-defer + best-effort + `awaiting_operator`; ops quiet window is `maintenance_writer_gate=hold` or compose scale-down, not label lock |
-| Guaranteed eventual heavy under continuous high write | Dishonest without a quiet window; product contract is **best-effort** + durable `awaiting_operator` |
-| Pure rate-defer via `fail(retryable=True)` | Burns attempt budget → false dead-letters; use succeed-as-skipped / ensure re-enqueue with `not_before` only |
-| Ownership = `status='running'` only | Stale attempt A can complete/fail B; require `attempts=:expected_attempt` fence |
-| `_LANCE_COMMIT_RETRIES` on heavy create_index | ~3.6s pause budget forces up to 8 full retrains per claim; wrong cost model |
-| Handler-side `rerun_requested` then generic complete | Race loses successor; require atomic `complete_maintain_p1` |
-| Gate `BackfillFinalizer` on `heavy_enabled` | Barrier exists to build indexes; continuous gates are separate |
+| Calendar-only heavy | Misses flat `count_rows` updates |
+| Stop writers during optimize/retrain | Not a Lance requirement; would recreate the stall |
+| Drop `delete_unverified` lock | Corruption hazard on forget |
+| Guaranteed eventual heavy under continuous high write | Dishonest without a quiet window |
+| Gate `BackfillFinalizer` on `heavy_enabled` | Barrier exists to build indexes |
 
 ## 13. Open questions
 
 1. Exact settings namespace (`P1Settings` vs `SelfHostSettings` vs dedicated).
-2. Whether FTS rebuild shares heavy vector thresholds or needs a separate knob
-   after first soak measurements.
-3. Whether a shared estate-wide ledger reaper later replaces stage-scoped
-   reclaim (desirable long-term; not blocking).
-4. Exact `heavy_defer_write_rate` unit after first BEAM metrics (merges/min vs
-   enqueue timestamps).
-5. Exact TTL / auto-release policy for `maintenance_writer_gate=hold` after soak
-   (must be bounded; starting point e.g. max 2× measured p99 rebuild).
+2. Whether FTS rebuild shares heavy vector thresholds after first soak.
+3. Exact `heavy_defer_write_rate` unit after first BEAM metrics.
+4. Exact TTL for `maintenance_writer_gate=hold`.
 
-**Not open:** physical table grain; unlaned route; readiness exclusion; bulk
-matched-only merge; skip-unchanged; two-layer model; enqueue-only writers;
-table-scoped lock with named owner (handler, purge, finalizer); stage-scoped
-reclaim via attempt-fenced `WorkLedger.fail` + heartbeat + wall-clock advisory
-probe; atomic maintain completion with `rerun_requested` and
-`expected_attempt`; heavy **best-effort** progress (rate-defer without attempt
-burn + conflict_defer + terminal `awaiting_operator`); index matrix including
-prefilter columns and entities; enable gates default off; catalog contract +
-docs in-plan; PR1 join-key ensure before large merges; heavy **change-mass**
-with per-table chunk vs short-text sensitivity; skip-unchanged excluded from
-heavy mass.
+**Not open:** physical table grain; ticker not a pipeline stage; writers
+outside the maintain lock; bulk matched-only merge; skip-unchanged; two-layer
+ops; index matrix; gates default off; change-mass; vectors Lance-only.
 
 ## 14. Key decisions
 
 | ID | Decision |
 | --- | --- |
-| K1 | Replace per-row fact metadata `update` with batched matched-only `merge_insert` (deduped; Option A only) |
-| K2 | Skip-unchanged eligibility scalars before metadata merge (binding; load-bearing for tails) |
-| K3 | Light maintain = `optimize` only; heavy = full IVF/FTS rebuild with `replace=True` |
-| K4 | Maintain unit grain = physical `(lance_root, table, mode)`; stats and locks table-scoped |
-| K5 | Stage `maintain_p1_index` unlaned; `lane=backfill` forbidden; not in `_expected_components` |
-| K6 | Coalesce on pending/failed only; `rerun_requested` for running races; stage-scoped stale reclaim via attempt-fenced `WorkLedger.fail(retryable=True, expected_attempt=…)` + side-thread heartbeat + wall-clock advisory-lock probe |
-| K7 | Expand `P1IndexMaintenancePort`; unify with `BackfillFinalizer`; port is deployment-free; finalizer takes table locks |
-| K8 | Write path enqueue-only for maintain; never optimize under `label_lock` |
-| K9 | Binding per-table index matrix including entities, `facts.fact_id`, kind=BITMAP, and nominator prefilter columns |
-| K10 | Table exclusive lock for light+heavy; owner = Postgres engine at handler / forget-purge / BackfillFinalizer |
-| K11 | `maintenance_enabled` / `heavy_enabled` default **false** until soak; finalizer not gated by `heavy_enabled` |
-| K12 | Self-host Lance stays on `lance_root` local FS; shared multi-deploy root non-goal |
-| K13 | Embedding migration rebuild remains a separate family from light/heavy maintain |
-| K14 | Observability ship-required before auto activation; D66 docs in same PR as surface |
-| K15 | Decision log **D91** entered |
-| K16 | Atomic `complete_maintain_p1(..., expected_attempt=…)`: succeed + consume `rerun_requested` / deferred successor insert in one TX; fence = `running` + `attempts` |
-| K17 | Heavy progress is **best-effort** under sustained high write rate: pure rate-defer without attempt burn; single-train conflict_defer with long `not_before`; escalate to durable `awaiting_operator` (no fake eventual-success); ops quiet gate or accept-stale |
+| K1 | Replace per-row fact metadata `update` with batched matched-only `merge_insert` |
+| K2 | Skip-unchanged eligibility scalars before metadata merge |
+| K3 | Compact = `optimize` only; retrain = `create_index(..., replace=True)` |
+| K4 | Grain = physical `(lance_root, table)`; stats and locks table-scoped |
+| K5 | Continuous maintain is a **ticker process**, not a pipeline stage |
+| K6 | No reclaim/heartbeat/attempt fence; process death releases the session lock |
+| K7 | Expand `P1IndexMaintenancePort`; finalizer takes table locks |
+| K8 | Writers bump stats after vector rewrite; never `optimize` under `label_lock` |
+| K9 | Binding per-table index matrix (entities, `facts.fact_id`, kind=BITMAP, prefilters) |
+| K10 | Table lock serializes ticker vs ticker and ticker vs forget purge **only** |
+| K11 | `maintenance_enabled` / `heavy_enabled` default **false**; finalizer not gated |
+| K12 | Self-host Lance stays on `lance_root` local FS |
+| K13 | Embedding migration rebuild remains a separate family |
+| K14 | Observability before auto activation |
+| K15 | Decision log **D91** entered; ticker amendment 2026-08-14 |
+| K16 | Heavy is **best-effort** under sustained high write rate → `awaiting_operator` |
+| K17 | Heavy discovery is durable change-mass; chunks more sensitive than short text |
 | K18 | PR1 ensures facts join-key indexes before large metadata merges |
-| K19 | All maintain ownership-changing and liveness writes compare `ClaimedWork.attempt` (complete, fail/reclaim/conflict_defer, heartbeat) |
-| K20 | Pure rate-defer must not use `fail(retryable=True)`; only conflict/hard failures burn ledger attempts |
-| K21 | Heavy discovery is durable change-mass / changed-row fraction / leftover unindexed ratio, not calendar; chunks more sensitive than short-text tables; eligibility-only and skip-unchanged must not increment heavy mass |
+| K19 | Ledger-units design is a proposal, not binding |
 
 ## 15. PR plan (ordered)
 
 | PR | Scope | Validation |
 | --- | --- | --- |
-| **PR1** | **Ensure facts join keys** (`deployment_id`, `kind` BITMAP, `fact_id` BTREE) then batch `update_fact_metadata` (dedupe, skip-unchanged, matched-only merge); `metadata_merge_batch_size`; **remove** sync write-path optimize (enqueue hook may no-op until PR3 helpers exist); vector+label preservation tests. Implementation may split as **PR1a** idempotent ensure join keys + **PR1b** bulk metadata merge in one stacked PR series, but **must not** land large merges without join-key indexes. | BEAM-scale local: 8k metadata ≪ multi-hour; fragment growth drops; unchanged skip reduces merge rows; merge plan uses scalar indexes |
-| **PR2** | Port expansion: `optimize_tables` / `rebuild_*` / `maintenance_stats` / ensure with **full index matrix** (entities + remaining prefilter columns + kind BITMAP consistency); `build_search_indexes` delegates with `replace=True` on heavy; purge documents lock precondition; **BackfillFinalizer takes table locks** | Adapter tests; backfill finalizer green; entity index appears when rows ≥ gate; `build_search_indexes` twice is ensure-then-retrain |
-| **PR3** | Migration: enums + `p1_maintain_units` (incl. heartbeat, `rerun_requested`, `claimed_attempt`, `operator_state`, defer counters) + `p1_lance_table_stats`; **catalog_contract.py** updates; `UNLANED_STAGES`; enqueue coalesce (advisory lock, no partial-index-by-ledger-status); `reclaim_stale_maintain` via attempt-fenced **`WorkLedger.fail(..., expected_attempt=…)`**; `complete_maintain_p1(..., expected_attempt=…)`; settings gates default off | Migration + catalog verify; coalesce unit tests; reclaim after simulated kill; CHECK-safe fail path; atomic rerun successor; **stale attempt A complete+fail both rejected while B running** |
-| **PR4** | `MaintainP1IndexHandler` + attempt-fenced heartbeat side-thread + unlaned `worker_loop` + `_SUPPORTED_WORKER_STAGES` + `_handler` (**not** `_expected_components`) + compose `worker-maintain-p1` + `ensure_maintain_due` idle hook with probe floors; **metrics** from §8 (incl. deferred_heavy, conflict_defer, awaiting_operator); **docs** (`website/src/app/docs/**` deployment/configuration/troubleshooting/project-status) same PR (D66) | Compose up with gates off (idle); enable light in dev; unit claimed; optimize runs; metrics scrape; live heavy not reclaimed while heartbeat fresh |
-| **PR5** | Heavy policy on **durable change-mass / changed-row frac / leftover unindexed** (per-table chunk vs short-text knobs; skip-unchanged excluded) + write-rate defer (no attempt burn) + conflict_defer long `not_before` + **`awaiting_operator` escalation** + `maintenance_writer_gate` quiet path + admin force; enable runbook for `heavy_enabled` / accept-stale | Threshold unit tests: flat row-count updates still trip heavy via change-mass; eligibility-only does not increment mass; chunks trip sooner than facts; sustained high write → `awaiting_operator`; after quiet gate one heavy succeeds |
-| **PR6** | BEAM soak: light then heavy gates; dashboards; residual `embed_claim` hang as separate ticket | Sign-off |
+| **PR1** | Join-key ensure + batched matched-only metadata merge; remove write-path optimize | Vector/label preserved; skip-unchanged; 8k facts not multi-hour |
+| **PR2** | Port: ensure/optimize/rebuild/stats + index matrix; purge lock; finalizer per-table locks | Adapter tests; ensure twice is non-destructive; IVF type match |
+| **PR3** | `p1_lance_table_stats` + ticker loop + compose `maintain-p1` + gates default off | Catalog verify; try-lock skip; ensure/compact chosen; writers not locked |
+| **PR4** | Writer change-mass bump + heavy policy + `awaiting_operator` + writer gate | Flat row-count updates trip heavy via mass; eligibility does not |
+| **PR5** | BEAM soak | Sign-off |
 
-Do not block PR1 on the worker. Do not enable auto self-seed until PR4 metrics
-and docs land. PR1 remains independently shippable **with join-key ensure**.
+Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 
 ## 16. Tests (acceptance)
 
 | Test | Expectation |
 | --- | --- |
-| Metadata 1k rows | ≤ ceil(1000/batch) merge commits; values match Postgres scalars |
-| Metadata empty / missing Lance row | No crash; no null-vector insert; `metadata_miss` from merge counts |
-| **Vector + label preservation** after partial multi-batch metadata merge | Exact vector bytes/dim and label unchanged for updated and untouched rows (anchor: extend `tests/adapters/test_lance_retrieval.py` metadata path) |
-| **Skip-unchanged** | Second refresh with identical scalars performs 0 merges; tail does not grow |
-| Duplicate join keys in one batch | Deduped before merge; no ambiguous-merge error |
-| **Join-key ensure before merge** | Large metadata merge runs only after `fact_id` (and key) indexes exist |
-| Optimize after tiny fragments | `num_small_fragments` / unindexed drops |
-| Heavy below min rows | Skip with reason; no forced bad index |
-| Heavy above growth threshold | Rebuild once; baseline updated |
-| **`build_search_indexes` twice** | Second call is ensure no-op + clean heavy retrain (`replace=True`); no "index already exists" error |
-| **Concurrent upsert + optimize** | Eventually succeeds under short retry budget |
-| **Concurrent upsert + heavy (quiet window)** | With write rate below defer threshold (or after operator quiet gate): pre-train may proceed; on conflict at most one conflict_defer with long `not_before`; **not** 8 full retrains in one claim; one heavy succeeds |
-| **Sustained high write rate + heavy (best-effort)** | Continuous rate above defer threshold through N/age budget → unit reaches durable `operator_state=awaiting_operator` with metric/alert; **no** infinite silent thrash and **no** acceptance claim of automatic eventual success; after operator sets quiet gate (`maintenance_writer_gate=hold` or scale-down) and force-heavy, **one** heavy succeeds and clears the flag |
-| **Pure rate-defer does not burn attempts** | N consecutive rate-defers do not dead-letter via `max_attempts`; counters live on `p1_lance_table_stats.rate_defer_count` |
-| **Reclaim after kill** | Leave `running` past heartbeat stale → attempt-fenced `fail(retryable=True, expected_attempt=observed)` → claim succeeds → maintain completes |
-| **Live heavy not reclaimed** | Heartbeat fresh past wall-clock floor → reclaim no-ops; unit completes as owner |
-| **Stale worker after reclaim / attempt fence** | With attempt B `running`, force attempt A's `complete_maintain_p1` **and** A's `fail` → both rejected (`WorkNotRunningError` / zero rows); B remains `running` and can complete |
-| **Heartbeat cannot refresh replacement** | After reclaim + new claim (attempt B), old heartbeat thread's UPDATE matches zero rows; B's heartbeat continues |
-| **Reclaim select→fail race** | Owner completes between SELECT and fail → `WorkNotRunningError` caught per row; reclaim loop continues |
-| Coalesce light enqueue | Second enqueue does not create second pending unit; bump `requested_at` |
-| Running race / atomic rerun | Enqueue between handler return and completion sets `rerun_requested`; successor exists after attempt-fenced `complete_maintain_p1`; process death at completion/successor boundary still leaves successor or running completion recoverable |
-| Dead-letter / awaiting_operator coalesce | Conflict/hard exhaustion → `dead_letter` not open; heavy under sustained load prefers `awaiting_operator` and ensure does not auto-enqueue another heavy until ops clears |
-| Backfill finalizer | Still refuses when undrained; calls shared port under table locks; entities included when present; not gated by `heavy_enabled` |
-| Lane / readiness | Unlaned claim works; stage absent from `_expected_components`; readiness unchanged |
-| Catalog contract | New tables/comments/constraints pass verify |
-| Disk-full simulation (optional) | Failed unit, visible error |
+| Metadata 1k rows | ≤ ceil(1000/batch) merge commits; vectors/labels preserved |
+| Skip-unchanged | Second identical refresh performs 0 merges |
+| `build_search_indexes` twice | Ensure no-op + clean heavy retrain |
+| Concurrent upsert + optimize | Eventually succeeds; writers not blocked by the maintain lock |
+| Ticker try-lock | Held purge lock → ticker skips that table |
+| Ticker choose | Missing index → ensure; small fragments → optimize; mass + `heavy_enabled` → retrain |
+| Gates off | Ticker no-ops Lance ops |
+| Crash mid-optimize | Next tick retries; no ledger row |
+| Sustained high write + heavy | `awaiting_operator` on stats; compact still allowed |
+| Backfill finalizer | Refuses when undrained; shared port under table locks |
+| Catalog contract | `p1_lance_table_stats` comments/constraints pass verify |
 
 ## 17. References
 
 ### Local
 
 - Analysis: `plan/analysis/p1_lance_maintenance_analysis.md`
+- Ticker amendment analysis: `plan/analysis/p1_lance_maintain_ticker_analysis.md`
+- Rejected ledger units: `plan/proposals/p1_lance_maintain_ledger_units.md`
 - Rulebook: `plan/analysis/lance_indexing_maintenance.md`
 - Workers map: `plan/analysis/workers.md` §6.3
 - Code: `src/rememberstack/adapters/selfhost/lance.py`
