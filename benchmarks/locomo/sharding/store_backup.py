@@ -1044,6 +1044,35 @@ def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
     _log(f"sample={marker.sample_id} wipe-authorized receipt=verified")
 
 
+def authorize_scoring(
+    *, run_dir: Path, sample_id: str, compose_project: str, remote_destination: str
+) -> None:
+    """Require the current live sample to match its verified scoring-base backup."""
+
+    marker_path = _marker_path(run_dir)
+    if not marker_path.is_file():
+        raise StoreBackupError("current store has no live-sample marker")
+    marker = LiveStoreMarker.model_validate_json(marker_path.read_bytes())
+    if marker.sample_id != sample_id:
+        raise StoreBackupError("requested sample does not own the marked live store")
+    _volume_names(compose_project=compose_project)
+    receipt, manifest = verify_receipt(
+        _receipt_path(run_dir=run_dir, sample_id=sample_id, checkpoint="scoring-base")
+    )
+    if receipt.sample_id != sample_id or manifest.sample_id != sample_id:
+        raise StoreBackupError("scoring-base receipt identifies a different sample")
+    if manifest.compose_project != compose_project:
+        raise StoreBackupError(
+            "scoring-base backup belongs to a different Compose project"
+        )
+    destination_prefix = f"{remote_destination.rstrip('/')}/"
+    if not receipt.remote_prefix.startswith(destination_prefix):
+        raise StoreBackupError("scoring-base backup belongs to a different destination")
+    _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
+    _require_manifest_scoring_base(manifest=manifest, run_dir=run_dir)
+    _log(f"sample={sample_id} scoring-authorized receipt=verified")
+
+
 def clear_live_store_marker(*, run_dir: Path) -> None:
     """Remove the local marker after Docker confirms volume deletion."""
 
@@ -1508,6 +1537,15 @@ def _parser() -> argparse.ArgumentParser:
     authorize.add_argument("--compose-project", default="rememberstack")
     _add_lock_arguments(authorize)
 
+    authorize_score = subparsers.add_parser(
+        "authorize-scoring", help="verify the current store may begin or resume scoring"
+    )
+    authorize_score.add_argument("--run-dir", type=_path, required=True)
+    authorize_score.add_argument("--sample", required=True)
+    authorize_score.add_argument("--compose-project", default="rememberstack")
+    authorize_score.add_argument("--destination", required=True)
+    _add_lock_arguments(authorize_score)
+
     clear = subparsers.add_parser(
         "clear-live", help="clear the marker after confirmed volume deletion"
     )
@@ -1601,6 +1639,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif arguments.command == "authorize-wipe":
                 authorize_wipe(
                     run_dir=arguments.run_dir, compose_project=arguments.compose_project
+                )
+            elif arguments.command == "authorize-scoring":
+                authorize_scoring(
+                    run_dir=arguments.run_dir,
+                    sample_id=arguments.sample,
+                    compose_project=arguments.compose_project,
+                    remote_destination=arguments.destination,
                 )
             elif arguments.command == "clear-live":
                 clear_live_store_marker(run_dir=arguments.run_dir)

@@ -305,12 +305,12 @@ backup_sample() {
 
 require_verified_scoring_backup() {
   local sample_id=$1
-  local receipt=$run_dir/.locomo-backups/receipts/$sample_id.scoring-base.json
-  [[ -f "$receipt" ]] ||
-    die "sample=$sample_id has no verified backup receipt; refusing scoring"
-  "$python_bin" "$backup_tool" verify \
-    --receipt "$receipt" \
-    --run-dir "$run_dir" ||
+  "$python_bin" "$backup_tool" authorize-scoring \
+    --run-dir "$run_dir" \
+    --sample "$sample_id" \
+    --compose-project "$compose_project" \
+    --destination "$backup_destination" \
+    --lock-fd 9 ||
     die "sample=$sample_id backup re-verification failed; refusing scoring"
   log "sample=$sample_id backup=verified scoring=authorized"
 }
@@ -332,6 +332,12 @@ start_existing_store() {
     --scale "worker-embed-claim=$embed_claim_workers"
   bind_benchmark_api
   attest_worker_environment
+}
+
+stop_store_after_failed_scoring_authorization() {
+  log "scoring authorization failed after restart; stopping store"
+  "${compose[@]}" stop --timeout 120 || true
+  return 1
 }
 
 backup_completed_live_store() {
@@ -476,7 +482,8 @@ for sample_id in "${pending_samples[@]}"; do
       require_verified_scoring_backup "$sample_id"
       log "sample=$sample_id stage=stack status=resuming-existing-store"
       start_existing_store
-      require_verified_scoring_backup "$sample_id"
+      require_verified_scoring_backup "$sample_id" ||
+        stop_store_after_failed_scoring_authorization
       log "sample=$sample_id stage=answer status=resuming-from-checkpoint"
       "$python_bin" -m benchmarks.locomo answer \
         --run "$run_dir" \
@@ -527,7 +534,8 @@ for sample_id in "${pending_samples[@]}"; do
 
   log "sample=$sample_id stage=stack status=restarting-after-post-ingest-backup"
   start_existing_store
-  require_verified_scoring_backup "$sample_id"
+  require_verified_scoring_backup "$sample_id" ||
+    stop_store_after_failed_scoring_authorization
 
   log "sample=$sample_id stage=answer status=starting"
   "$python_bin" -m benchmarks.locomo answer \

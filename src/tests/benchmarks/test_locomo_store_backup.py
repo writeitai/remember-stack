@@ -397,6 +397,51 @@ def test_scoring_and_final_receipts_use_separate_stable_paths(tmp_path: Path) ->
     assert scoring != final
 
 
+def test_scoring_authorization_binds_live_store_and_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A remote-valid but misplaced receipt cannot authorize answer calls."""
+
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    _write_marker(run_dir=run_dir)
+    manifest = store_backup.BackupManifest.model_construct(
+        checkpoint="scoring-base",
+        sample_id="conv-1",
+        deployment_id="57000000-0000-0000-0000-000000000001",
+        compose_project="rememberstack",
+        sample_ingests_sha256=store_backup._sample_ingests_sha256(
+            run_dir=run_dir, sample_id="conv-1"
+        ),
+        run_files_sha256=store_backup._run_file_hashes(run_dir),
+    )
+    receipt = store_backup.BackupReceipt(
+        sample_id="conv-1",
+        gcp_project="remember-stack",
+        remote_prefix="gs://other-bucket/runs/unit",
+        manifest_sha256="a" * 64,
+        verified_at="2026-08-14T00:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        store_backup,
+        "_volume_names",
+        lambda **_kwargs: {
+            name: f"rememberstack_{name}" for name in store_backup.EXPECTED_VOLUMES
+        },
+    )
+    monkeypatch.setattr(
+        store_backup, "verify_receipt", lambda _path: (receipt, manifest)
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="different destination"):
+        store_backup.authorize_scoring(
+            run_dir=run_dir,
+            sample_id="conv-1",
+            compose_project="rememberstack",
+            remote_destination="gs://expected-bucket/runs",
+        )
+
+
 def test_scoring_completion_requires_every_answer_and_judge(tmp_path: Path) -> None:
     """A post-ingest receipt cannot make an unfinished store wipe-eligible."""
 
@@ -952,6 +997,7 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert 'backup_sample "$sample_id" scoring-base' in loop
     assert 'backup_sample "$sample_id" final' in loop
     assert 'require_verified_final_backup "$sample_id"' in loop
+    assert "stop_store_after_failed_scoring_authorization" in script
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
@@ -979,7 +1025,7 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     )
     drain = script[script.index("wait_for_drain()") :]
     assert drain.index("attest_worker_environment") < drain.index("SELECT count(*)")
-    assert script.count("--lock-fd 9") == 6
+    assert script.count("--lock-fd 9") == 7
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'
     )

@@ -144,10 +144,11 @@ publication manifest locally. For every assigned sample the driver:
    as the other.
 
 Progress is emitted as UTC timestamped log lines. The first verified receipt
-must exist before the first answer-model call, and the final receipt must exist
-before the store is disposable, and wipe authorization independently requires
-complete answer and judge checkpoints. A backup, upload, comparison, or read-back
-failure exits non-zero with the stack stopped and volumes intact. A restart
+must exist before the first benchmark answer stage (the ingest credential
+preflight still makes its documented tiny model probe), and the final receipt
+must exist before the store is disposable. Wipe authorization independently
+requires complete answer and judge checkpoints. A backup, upload, comparison,
+or read-back failure exits non-zero with the stack stopped and volumes intact. A restart
 from a fully ingested checkpoint resumes the same marked store; if scoring had
 already begun, the runner first re-verifies its existing receipt and continues
 only missing answers and judgments.
