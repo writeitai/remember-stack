@@ -19,7 +19,8 @@ _DDL = r"""-- ──────────────────────
 -- A row in claims is an ACCEPTED claim: the deterministic grounding gate (anchor + window
 -- membership, D32 layers 1-2) MUST pass, enforced by the CHECK — a claim that fails the gate is
 -- never produced (it becomes a ledger entry or is discarded), so the flags exist for audit and are
--- always true here. Large (~5×10⁷) ⇒ monthly partition by ingested_at; logical FKs (D23).
+-- always true here. D94 keeps claims non-partitioned so current-testimony HNSW and BM25 indexes
+-- have global ranking statistics rather than one index/statistics set per ingest month.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE claims (
   claim_id        uuid NOT NULL,
@@ -53,8 +54,9 @@ CREATE TABLE claims (
   extractor_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions (extractor); replay-on-rebuild key (D33)
   embedding_ref   text,                        -- opaque Lance key (claims are searchable in P1)
   embedding_version text,                       -- LOGICAL FK → pipeline_component_versions (embedder)
-  ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time + partition key; immutable
-  PRIMARY KEY (claim_id, ingested_at),
+  ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time; immutable
+  PRIMARY KEY (claim_id),
+  UNIQUE (deployment_id, claim_id),
   CHECK (char_end >= char_start),
   CHECK (anchor_ok AND window_membership_ok),  -- a claims row is an ACCEPTED claim; the deterministic grounding gate passed (D32)
   -- D41 precision/bounds coherence (claim validity carries no status/invalidated_at — it is immutable):
@@ -64,22 +66,17 @@ CREATE TABLE claims (
   CHECK (claim_valid_precision <> 'instant' OR (claim_valid_from IS NOT NULL AND claim_valid_until = claim_valid_from)),
   -- a bounded precision must actually carry both bounds (else it silently degrades to unknown/open):
   CHECK (claim_valid_precision NOT IN ('day','month','quarter','year') OR (claim_valid_from IS NOT NULL AND claim_valid_until IS NOT NULL))
-) PARTITION BY RANGE (ingested_at);
+);
 COMMENT ON TABLE claims IS
-  'E2 immutable verifiable propositions (D31/D32). Stores standalone claim_text + verbatim source_span + offsets + added_context for provenance-and-entailment grounding. Three immutable time axes (D41): asserted_at (assertion event), claim_valid_from/until (+precision/kind = source-asserted world-interval — evidence, not belief), ingested_at (system); never superseded (supersession is on relations, D3). A row here passed the deterministic grounding gate. Monthly-partitioned, logical FKs.';
+  'E2 immutable verifiable propositions (D31/D32). Stores standalone claim_text + verbatim source_span + offsets + added_context for provenance-and-entailment grounding. Three immutable time axes (D41): asserted_at (assertion event), claim_valid_from/until (+precision/kind = source-asserted world-interval — evidence, not belief), ingested_at (system); never superseded (supersession is on relations, D3). A row here passed the deterministic grounding gate. Non-partitioned under D94 so current-testimony semantic and BM25 indexes rank globally.';
 CREATE INDEX ix_claims_doc      ON claims (deployment_id, doc_id);
 CREATE INDEX ix_claims_chunk    ON claims (chunk_id);
 CREATE INDEX ix_claims_flagged  ON claims (deployment_id) WHERE kept_flagged = true;        -- review surface (D35)
 CREATE INDEX ix_claims_current  ON claims (deployment_id, doc_id) WHERE is_current_testimony; -- the D54 hot filter (counts; default claim search)
 CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = 'sampled_fail'; -- grounding regressions
--- D41 claim-validity is projected to Lance (P1) as filterable scalar columns (claim_valid_from/until/
--- precision) beside the claim embedding (same pattern as relation windows, D8); the time-filter path
--- is Lance, so there is NO new Postgres index by default (preserves D23's btree-light mandate on this
--- ~5×10⁷ partitioned table). A `claims_as_of(t)` search recipe (D9) answers "what did sources assert
--- held over T" at the EVIDENCE grain; fact-as-of stays relations-only (D10) and the recipe registry
--- BARS claims_as_of from answering "currently true". An OPTIONAL partial btree on (deployment_id,
--- claim_valid_from, claim_valid_until) WHERE claim_valid_precision <> 'unknown' is added only if
--- PG-side temporal claim filtering is ever load-tested against D23 — a spike (§17), not a default.
+-- D41 claim-validity remains ordinary authority data. D94 applies temporal predicates and semantic
+-- ranking inside one PostgreSQL statement; the later ix_claims_valid_window supports bounded
+-- evidence-time filtering without copying these scalars into a search mirror.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- claim_extraction_decisions — the append-only, version-stamped extraction transcript (D33). It
@@ -119,7 +116,7 @@ CREATE INDEX ix_cxd_drops ON claim_extraction_decisions (deployment_id, reason) 
 CREATE TABLE grounding_audits (
   audit_id        uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims (partitioned)
+  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   verdict         grounding_audit_status NOT NULL, -- sampled_pass | sampled_fail | escalated
   judge_version   text NOT NULL,               -- LOGICAL FK → pipeline_component_versions (independent judge)
   rationale       text,
@@ -140,7 +137,7 @@ CREATE INDEX ix_grounding_claim ON grounding_audits (claim_id);
 CREATE TABLE testimony_currency_events (
   event_id        uuid NOT NULL,
   deployment_id   uuid NOT NULL,               -- LOGICAL FK → deployments
-  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims (partitioned)
+  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the lineage; the recount scope)
   reconciliation_id uuid NOT NULL,             -- identifies ONE reconciliation run = one completed basis change per lineage (a new version's extraction completing, or a version-bump re-extraction completing). Minted when the run starts and stored in processing_state, so a RETRIED run reuses it — its re-emitted events hit the UNIQUE below as no-ops
   became_current  boolean NOT NULL,            -- false = lost currency; true = regained (un-delete, mode change)

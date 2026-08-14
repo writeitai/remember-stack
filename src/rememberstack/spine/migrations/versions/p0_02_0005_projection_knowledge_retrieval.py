@@ -295,7 +295,7 @@ CREATE TABLE knowledge_artifact_evidence (
   evidence_link_id uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
   artifact_id     uuid NOT NULL,               -- composite FK below, ON DELETE CASCADE
-  claim_id        uuid,                        -- LOGICAL FK → claims (partitioned)
+  claim_id        uuid,                        -- LOGICAL FK → claims
   relation_id     uuid,                        -- composite FK below, ON DELETE CASCADE (real, relations is not partitioned)
   doc_id          uuid,                        -- LOGICAL FK → documents
   role            knowledge_evidence_role NOT NULL, -- supports | contradicts | cites (K3 links supporting AND contradicting evidence)

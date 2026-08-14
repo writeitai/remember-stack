@@ -113,6 +113,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_10_0031",
         "p9_11_0032",
         "p9_12_0033",
+        "p9_13_0034",
     )
     assert len(script.get_heads()) == 1
 
@@ -149,7 +150,7 @@ def test_batch_b_indexes_have_bound_columns_and_predicates() -> None:
 
     assert definitions == {
         "ix_claims_valid_window": (
-            "CREATE INDEX ix_claims_valid_window ON ONLY public.claims USING btree"
+            "CREATE INDEX ix_claims_valid_window ON public.claims USING btree"
             " (deployment_id, claim_valid_from, claim_valid_until) WHERE"
             " (claim_valid_precision <> 'unknown'::claim_valid_precision)"
         ),
@@ -159,6 +160,180 @@ def test_batch_b_indexes_have_bound_columns_and_predicates() -> None:
             " (superseded_by IS NULL)"
         ),
     }
+
+
+def test_postgres_p1_schema_searches_and_audits_chunk_authority() -> None:
+    """Prove D94 vector/BM25 search, fixed dimensions, and the orphan auditor."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.upgrade(config=config, revision="head")
+    deployment_id = uuid4()
+    chunk_id = uuid4()
+    claim_id = uuid4()
+    query_vector = "[1," + "0," * 1534 + "0]"
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            try:
+                connection.execute(
+                    text(
+                        "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                        " artifacts_bucket, corpusfs_bucket) VALUES"
+                        " (:deployment, 'd94-schema', 'D94 schema', 'mem://raw',"
+                        " 'mem://artifacts', 'mem://corpusfs')"
+                    ),
+                    {"deployment": deployment_id},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                        " representation_id, ordinal, block_start, block_end,"
+                        " chunk_content_hash, extraction_input_hash, char_start, char_end)"
+                        " VALUES (:chunk, :deployment, :doc, :version, :representation,"
+                        " 0, 0, 0, 'd94-content', 'd94-input', 0, 26)"
+                    ),
+                    {
+                        "chunk": chunk_id,
+                        "deployment": deployment_id,
+                        "doc": uuid4(),
+                        "version": uuid4(),
+                        "representation": uuid4(),
+                    },
+                )
+                attestation = {
+                    "model": "qwen/qwen3-embedding-8b",
+                    "policy": "p1-search-input-1",
+                    "hash": "a" * 64,
+                    "vector": query_vector,
+                }
+                connection.execute(
+                    text(
+                        "INSERT INTO chunk_search (deployment_id, chunk_id, search_text,"
+                        " embedding, embedding_model, embedding_input_policy_version,"
+                        " embedding_text_hash) VALUES (:deployment, :chunk,"
+                        " 'a concise retrieval contract', CAST(:vector AS vector),"
+                        " :model, :policy, :hash)"
+                    ),
+                    {"deployment": deployment_id, "chunk": chunk_id, **attestation},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                        " claim_text, source_span, char_start, char_end, anchor_ok,"
+                        " window_membership_ok, extractor_version, embedding,"
+                        " embedding_model, embedding_input_policy_version,"
+                        " embedding_text_hash) VALUES (:claim, :deployment, :doc, :chunk,"
+                        " 'PostgreSQL ranks this claim', 'PostgreSQL ranks this claim',"
+                        " 0, 27, true, true, 'extractor-d94', CAST(:vector AS vector),"
+                        " :model, :policy, :hash)"
+                    ),
+                    {
+                        "claim": claim_id,
+                        "deployment": deployment_id,
+                        "doc": uuid4(),
+                        "chunk": chunk_id,
+                        **attestation,
+                    },
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO p1_search_channels (deployment_id, target, channel,"
+                        " embedding_model, embedding_dimension,"
+                        " embedding_input_policy_version, text_config, ready) VALUES"
+                        " (:deployment, 'chunks', 'semantic', :model, 1536, :policy,"
+                        " NULL, true),"
+                        " (:deployment, 'chunks', 'bm25', NULL, NULL, NULL, 'simple', true)"
+                    ),
+                    {
+                        "deployment": deployment_id,
+                        "model": attestation["model"],
+                        "policy": attestation["policy"],
+                    },
+                )
+
+                vector_types = {
+                    str(row[0]): str(row[1])
+                    for row in connection.execute(
+                        text(
+                            "SELECT c.relname, format_type(a.atttypid, a.atttypmod)"
+                            " FROM pg_attribute AS a"
+                            " JOIN pg_class AS c ON c.oid = a.attrelid"
+                            " JOIN pg_namespace AS n ON n.oid = c.relnamespace"
+                            " WHERE n.nspname = 'public' AND a.attname = 'embedding'"
+                            " AND c.relname = ANY(:tables)"
+                        ),
+                        {
+                            "tables": [
+                                "chunk_search",
+                                "claims",
+                                "relations",
+                                "observations",
+                                "entities",
+                            ]
+                        },
+                    ).all()
+                }
+                assert vector_types == {
+                    "chunk_search": "vector(1536)",
+                    "claims": "vector(1536)",
+                    "relations": "vector(1536)",
+                    "observations": "vector(1536)",
+                    "entities": "vector(1536)",
+                }
+                assert (
+                    connection.execute(
+                        text(
+                            "SELECT relkind FROM pg_class WHERE oid = 'claims'::regclass"
+                        )
+                    ).scalar_one()
+                    == "r"
+                )
+                connection.execute(
+                    text("SET LOCAL hnsw.iterative_scan = 'strict_order'")
+                )
+                semantic_id = connection.execute(
+                    text(
+                        "SELECT chunk_id FROM chunk_search"
+                        " WHERE deployment_id = :deployment"
+                        " ORDER BY embedding <=> CAST(:vector AS vector) LIMIT 1"
+                    ),
+                    {"deployment": deployment_id, "vector": query_vector},
+                ).scalar_one()
+                lexical_id = connection.execute(
+                    text(
+                        "SELECT chunk_id FROM chunk_search"
+                        " WHERE deployment_id = :deployment"
+                        " ORDER BY search_text <@>"
+                        " to_bm25query('retrieval', 'ix_chunk_search_bm25') LIMIT 1"
+                    ),
+                    {"deployment": deployment_id},
+                ).scalar_one()
+                claim_lexical_id = connection.execute(
+                    text(
+                        "SELECT claim_id FROM claims WHERE deployment_id = :deployment"
+                        " AND is_current_testimony"
+                        " ORDER BY claim_text <@>"
+                        " to_bm25query('PostgreSQL', 'ix_claims_current_bm25') LIMIT 1"
+                    ),
+                    {"deployment": deployment_id},
+                ).scalar_one()
+                assert semantic_id == lexical_id == chunk_id
+                assert claim_lexical_id == claim_id
+
+                connection.execute(
+                    text("DELETE FROM chunks WHERE chunk_id = :chunk"),
+                    {"chunk": chunk_id},
+                )
+                with pytest.raises(
+                    SchemaContractError,
+                    match="chunk_search contains 1 rows without chunk authority",
+                ):
+                    verify_schema(connection=connection)
+            finally:
+                transaction.rollback()
+    finally:
+        engine.dispose()
 
 
 def test_claim_citation_coordinate_migration_deduplicates_real_rows() -> None:
@@ -440,7 +615,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 72
+    assert len(fresh_inventory.tables) == 74
     assert fresh_inventory.empty_tables == (
         "deployments",
         "entity_types",
@@ -467,7 +642,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_12_0033"
+    assert head_before_noop == head_after_noop == "p9_13_0034"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
