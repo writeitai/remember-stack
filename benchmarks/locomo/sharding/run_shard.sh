@@ -290,6 +290,7 @@ PY
 
 backup_sample() {
   local sample_id=$1
+  local checkpoint=${2:-final}
   "$python_bin" "$backup_tool" backup \
     --sample "$sample_id" \
     --run-dir "$run_dir" \
@@ -298,17 +299,29 @@ backup_sample() {
     --project "$backup_project" \
     --destination "$backup_destination" \
     --staging-root "$backup_staging_root" \
+    --receipt-checkpoint "$checkpoint" \
     --lock-fd 9
 }
 
-require_verified_backup() {
+require_verified_scoring_backup() {
   local sample_id=$1
-  local receipt=$run_dir/.locomo-backups/receipts/$sample_id.json
+  local receipt=$run_dir/.locomo-backups/receipts/$sample_id.scoring-base.json
   [[ -f "$receipt" ]] ||
     die "sample=$sample_id has no verified backup receipt; refusing scoring"
-  "$python_bin" "$backup_tool" verify --receipt "$receipt" ||
+  "$python_bin" "$backup_tool" verify \
+    --receipt "$receipt" \
+    --run-dir "$run_dir" ||
     die "sample=$sample_id backup re-verification failed; refusing scoring"
   log "sample=$sample_id backup=verified scoring=authorized"
+}
+
+require_verified_final_backup() {
+  local sample_id=$1
+  "$python_bin" "$backup_tool" authorize-wipe \
+    --run-dir "$run_dir" \
+    --compose-project "$compose_project" \
+    --lock-fd 9 ||
+    die "sample=$sample_id has no current final backup; refusing completion"
 }
 
 start_existing_store() {
@@ -340,12 +353,16 @@ PY
   status=$(sample_status "$sample_id")
   [[ "$status" == complete ]] || return 0
   receipt=$run_dir/.locomo-backups/receipts/$sample_id.json
-  if [[ -f "$receipt" ]]; then
-    "$python_bin" "$backup_tool" verify --receipt "$receipt"
-  else
-    log "sample=$sample_id stage=backup status=resuming-after-completed-checkpoint"
-    backup_sample "$sample_id"
+  if [[ -f "$receipt" ]] &&
+    "$python_bin" "$backup_tool" authorize-wipe \
+      --run-dir "$run_dir" \
+      --compose-project "$compose_project" \
+      --lock-fd 9; then
+    return 0
   fi
+  log "sample=$sample_id stage=final-backup status=resuming-after-completed-checkpoint"
+  backup_sample "$sample_id" final
+  require_verified_final_backup "$sample_id"
 }
 
 pending_samples=()
@@ -374,6 +391,13 @@ for sample_id in "${requested_samples[@]}"; do
   esac
 done
 backup_completed_live_store
+if [[ -n "$marked_sample" ]] && [[ "$(sample_status "$marked_sample")" == ingested ]]; then
+  ordered_pending=("$marked_sample")
+  for sample_id in "${pending_samples[@]}"; do
+    [[ "$sample_id" == "$marked_sample" ]] || ordered_pending+=("$sample_id")
+  done
+  pending_samples=("${ordered_pending[@]}")
+fi
 if [[ ${#pending_samples[@]} -eq 0 ]]; then
   log "shard complete; all requested samples were already checkpointed"
   exit 0
@@ -449,10 +473,10 @@ for sample_id in "${pending_samples[@]}"; do
     [[ "$sample_id" == "$(live_sample_id)" ]] ||
       die "sample=$sample_id cannot resume a different live store"
     if [[ "$(sample_scoring_started "$sample_id")" == yes ]]; then
-      require_verified_backup "$sample_id"
+      require_verified_scoring_backup "$sample_id"
       log "sample=$sample_id stage=stack status=resuming-existing-store"
       start_existing_store
-      require_verified_backup "$sample_id"
+      require_verified_scoring_backup "$sample_id"
       log "sample=$sample_id stage=answer status=resuming-from-checkpoint"
       "$python_bin" -m benchmarks.locomo answer \
         --run "$run_dir" \
@@ -472,8 +496,8 @@ for sample_id in "${pending_samples[@]}"; do
         --execute
 
       log "sample=$sample_id stage=final-backup status=starting"
-      backup_sample "$sample_id"
-      require_verified_backup "$sample_id"
+      backup_sample "$sample_id" final
+      require_verified_final_backup "$sample_id"
       log "sample=$sample_id status=complete"
       continue
     fi
@@ -498,12 +522,12 @@ for sample_id in "${pending_samples[@]}"; do
     projections mounts --root "$mount_root"
 
   log "sample=$sample_id stage=post-ingest-backup status=starting"
-  backup_sample "$sample_id"
-  require_verified_backup "$sample_id"
+  backup_sample "$sample_id" scoring-base
+  require_verified_scoring_backup "$sample_id"
 
   log "sample=$sample_id stage=stack status=restarting-after-post-ingest-backup"
   start_existing_store
-  require_verified_backup "$sample_id"
+  require_verified_scoring_backup "$sample_id"
 
   log "sample=$sample_id stage=answer status=starting"
   "$python_bin" -m benchmarks.locomo answer \
@@ -524,8 +548,8 @@ for sample_id in "${pending_samples[@]}"; do
     --execute
 
   log "sample=$sample_id stage=final-backup status=starting"
-  backup_sample "$sample_id"
-  require_verified_backup "$sample_id"
+  backup_sample "$sample_id" final
+  require_verified_final_backup "$sample_id"
   log "sample=$sample_id status=complete"
 done
 

@@ -139,11 +139,14 @@ publication manifest locally. For every assigned sample the driver:
    manifests, run state, and the published mount root; uploads them to a unique
    immutable GCS prefix with CRC32C transport validation and create-only
    preconditions; checks object sizes; reads back the manifest; and writes a
-   final verified receipt containing the scoring checkpoints.
+   final verified receipt containing the scoring checkpoints. The scoring-base
+   and final receipts use separate stable local paths; neither can masquerade
+   as the other.
 
 Progress is emitted as UTC timestamped log lines. The first verified receipt
 must exist before the first answer-model call, and the final receipt must exist
-before the store is disposable. A backup, upload, comparison, or read-back
+before the store is disposable, and wipe authorization independently requires
+complete answer and judge checkpoints. A backup, upload, comparison, or read-back
 failure exits non-zero with the stack stopped and volumes intact. A restart
 from a fully ingested checkpoint resumes the same marked store; if scoring had
 already begun, the runner first re-verifies its existing receipt and continues
