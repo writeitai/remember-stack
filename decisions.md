@@ -3659,3 +3659,76 @@ Logout revokes then unlinks. No engine-native second credential.
 
 **Design.** same document §6.
 **Issue.** #268.
+
+## D93. P1 Lance bulk writes and ticker index maintenance
+
+**Decision (2026-08-13; remumbered 2026-08-14).** P1 Lance writes and indexes
+are maintained as a rebuildable projection (D8), not as a second spine.
+Drafted as D91 while that number was still free; `main` assigned D91/D92 to
+request-path metering and `remember login`, so this decision is **D93**:
+
+1. **Bulk metadata.** `update_fact_metadata` batches matched-only
+   `merge_insert` on `(deployment_id, kind, fact_id)`. Skip rows whose
+   eligibility scalars already match Lance. Do not insert unmatched keys
+   (would null vectors). Ensure facts join-key indexes before large merges.
+   Writers must not call synchronous `optimize()` / `create_index` under
+   `label_lock` or an embed/label lease.
+2. **Three operations, one ticker (not three jobs, not a pipeline stage):**
+   - compact — `table.optimize()` (fold unindexed tails into **existing**
+     indexes).
+   - retrain — `create_index(..., replace=True)` IVF/FTS.
+   - ensure — create contracted indexes if missing or wrong type.
+   Compact is not a retrain. Retrain is not on the read path. The ticker
+   try-locks the table and chooses at most one op. Writers stay outside
+   that lock (Lance allows concurrent writes).
+3. **Discovery.** Writers bump `p1_lance_table_stats` after a **vector
+   rewrite**. The ticker reads stats (probes Lance if stale). Backfill
+   finalizer / admin call the same port under the same lock. Grain is
+   physical `(lance_root, table)`.
+4. **Heavy fires on durable amount of change**, not calendar-only. Table
+   stats hold `changed_rows_since_heavy` and `change_mass_since_heavy`,
+   incremented only when a **vector is rewritten**. Eligibility-only and
+   skip-unchanged metadata do **not** count. Chunks are more sensitive
+   (lower changed-row fraction and change-mass thresholds) than short-text
+   facts/claims. `heavy_rebuild_min_hours` is an anti-thrash cap.
+5. Under sustained high write rate, heavy is **best-effort**: rate-defer
+   without burning attempts; conflict after a full train is one long
+   `not_before`; escalate to durable `awaiting_operator` rather than silent
+   thrash.
+
+**Context.** BEAM-scale `label_relation` spent hours in per-row Lance
+`update` after embeds finished (~7.9k facts → thousands of tiny fragments).
+Inline `_maintain_indexed_tail` only called `optimize()` from process-local
+counters and never scheduled IVF retrain. Official LanceDB OSS docs
+(retrieved 2026-08-13): `optimize` = compaction + prune + incremental index
+update, not full ANN retrain
+([reindexing](https://docs.lancedb.com/indexing/reindexing)); each write
+commits a fragment ([performance](https://docs.lancedb.com/performance)).
+Dual design review (Claude + Codex, 2026-08-13, r1–r4) reached
+APPROVE_WITH_NITS; trigger/change-mass rules were then made explicit.
+
+**Consequences.** Compose gains `maintain-p1` (gates default off) as a
+loop, not `worker --stage`. No `maintain_p1_index` ledger stage and no
+reclaim/heartbeat. Vectors stay in Lance only; Postgres keeps stamps, text,
+and the stats row. Content/embedding migration rebuild (`p1_batch_rebuild`)
+remains a separate family.
+
+**Ticker amendment (2026-08-14).** Ledger units were dropped after
+implementation review showed reclaim/heartbeat/attempt fences exist only
+because maintain was modeled as a D67 attempt. Analysis:
+`plan/analysis/p1_lance_maintain_ticker_analysis.md`. Rejected path:
+`plan/proposals/p1_lance_maintain_ledger_units.md`.
+
+**Design.** `plan/designs/p1_lance_maintenance_design.md`.
+**Analysis.** `plan/analysis/p1_lance_maintenance_analysis.md`.
+**Companion rulebook.** `plan/analysis/lance_indexing_maintenance.md`.
+
+**Rejected.** Per-row `table.update` loops; always-heavy “one proper job”;
+calendar-only heavy; counting eligibility-only writes as change-mass;
+process-local mutation counters as estate policy; vectors as a live second
+copy in Postgres; claimed `maintain_p1_index` units / reclaim / heartbeat;
+stopping writers during optimize/retrain; wiring maintain into per-version
+readiness.
+
+**Amends.** Clarifies D8 write/maintenance contracts for the Lance
+projection. Does not amend D9 query path or D48 hydration.
