@@ -181,7 +181,7 @@ IFS=',' read -r -a requested_samples <<<"$sample_csv"
 [[ ${#requested_samples[@]} -gt 0 ]] || die "the shard sample list is empty"
 declare -A seen_samples=()
 for sample_id in "${requested_samples[@]}"; do
-  [[ "$sample_id" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ "$sample_id" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$ ]] ||
     die "invalid sample ID: $sample_id"
   [[ -z ${seen_samples[$sample_id]+present} ]] ||
     die "duplicate sample ID: $sample_id"
@@ -305,12 +305,14 @@ backup_sample() {
 
 require_verified_scoring_backup() {
   local sample_id=$1
-  "$python_bin" "$backup_tool" authorize-scoring \
+  if ! "$python_bin" "$backup_tool" authorize-scoring \
     --run-dir "$run_dir" \
     --sample "$sample_id" \
     --compose-project "$compose_project" \
     --destination "$backup_destination" \
-    --lock-fd 9
+    --lock-fd 9; then
+    return 1
+  fi
   log "sample=$sample_id backup=verified scoring=authorized"
 }
 
@@ -336,7 +338,7 @@ start_existing_store() {
 stop_store_after_failed_scoring_authorization() {
   log "scoring authorization failed after restart; stopping store"
   "${compose[@]}" stop --timeout 120 || true
-  return 1
+  return 0
 }
 
 backup_completed_live_store() {
