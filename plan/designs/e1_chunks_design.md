@@ -2,7 +2,7 @@
 
 How a converted document becomes the units the system embeds, extracts from, and anchors
 claims to — and how those units survive document edits. Binding design for decisions
-**D57–D58**, building on D94 (vectors in private PostgreSQL P1), D25 (no value gate), D32 (grounding offsets),
+**D57–D58**, building on D94 (PostgreSQL-native P1), D25 (no value gate), D32 (grounding offsets),
 D38/D39 (conversion, PageIndex), D48–D50 (retrieval channels), D54–D56 (evidence lifecycle —
 this design owns the reuse *mechanics* that `evidence_lifecycle_design.md` §6 defers here).
 Shaped by a multi-round design discussion recorded in
@@ -251,7 +251,7 @@ and that changes the conclusion:**
   embedding dilution (S52); RRF fuses the channels (D9).
 - Therefore chunks are sized for **passage coherence**, not needle recall — moderate,
   block-aligned, no overlap, no heroics.
-- **Role-filtered P1 defaults**: chunks carry their section's role as a P1 scalar column;
+- **Role-filtered P1 defaults**: ranked search joins each chunk to its section role;
   default search recipes exclude `references / nav / boilerplate / legal` chunks from the
   semantic channel. This is **retrieval-side filtering of what was indexed** — everything is
   still extracted (D25 untouched) and reachable by explicit filter; it just stops a paper's
@@ -261,7 +261,9 @@ and that changes the conclusion:**
 configuration (D61). The **shipped product path is conventional only** (`texts → vectors`) so
 models stay **interchangeable** under version-scoped re-embed migration. The default model
 remains **`qwen/qwen3-embedding-8b`** via OpenRouter (self-hosted weights as the second
-adapter). Stored dimension remains a measured Matryoshka knob (D63).
+adapter). D94 pins the reference output to 1,536 dimensions so ordinary
+pgvector float32 HNSW can index it; a different dimension is a maintenance
+migration, not a runtime knob.
 
 **How conventional embeddings get document location (D80 — normative detail in
 `e1_embedding_input_policy.md`).** E1 does **not** run a per-chunk LLM “where this sits”
@@ -334,8 +336,9 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 - **Passage embedding reuse (D80 refinement).** Passage identity is the composite
   `(embedding_input_policy_version, embedding_text_hash, embedder_generation)`. Provider
   re-embed is required when the hash or embedder generation changes; a policy-only bump that
-  yields the same hash may **attest** the prior vector into a new generation record without a
-  provider call (never leave policy version and vector identity disagreeing on one row).
+  yields the same hash may **restamp** the exactly matching vector during an explicit
+  unready maintenance operation without a provider call (never leave policy version and
+  vector identity disagreeing on one row).
   Content-hash-only vector copy is **incorrect** when embedding text includes location.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
@@ -348,8 +351,9 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 - `chunks`: `version_id`, `block_start`/`block_end` ordinals, `chunk_content_hash` (= hash of
   the block-hash sequence), `extraction_input_hash` (§7), `section_id`, offsets; **D80**
   location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
-  `embedding_input_policy_version`, embedder generation / `embedding_ref` stamps (not a full
-  body duplicate of embedding text — D37). Detail: `e1_embedding_input_policy.md` §7.
+  `embedding_input_policy_version` and current embedder stamps. The normalized body and
+  vector live in the sole `chunk_search` sidecar; exact body remains in the artifact
+  (D37/D94). Detail: `e1_embedding_input_policy.md` §7.
 - `document_sections`: `block_start`/`block_end` ordinals (the grid representation, §3);
   char spans derived.
 - `document_representations` (D65): `blocks_uri` + `blockizer_version` live on the immutable
@@ -366,7 +370,7 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 | D25 (no gate) | **untouched**: everything is extracted; the role filter is retrieval-side (§5) |
 | D32 (grounding) | **strengthened**: one immutable coordinate system (document.md) with block-grain back-pointers; provenance tiers named honestly |
 | D54–D56 (lifecycle) | **completed**: the reuse mechanics deferred by lifecycle §6 are bound here (A1–A3); the D56 key is corrected to stable components only |
-| D8/D9/D48–D50 (retrieval) | **composes**: claims = needle channel, chunks = passage channel, role scalar filter in P1 defaults; D80 adds `source_shape` and generation-aware scalars |
+| D8/D9/D48–D50/D94 (retrieval) | **composes**: claims = needle channel, chunks = passage channel; role and `source_shape` filters join normalized authority; one current search attestation, no copied generation scalars |
 | D63/D80 (embed path) | **D80 binds** conventional interchangeable embedders + embedding-input policy; contextual non-goal |
 | requirements (semchunk) | **honored**: semchunk survives as the packer over blocks |
 | D7/D12/D33 | **followed**: blockizer/chunker versioned; embedding-text hashes are replayed state; all derivations deterministic or ledgered |
@@ -389,10 +393,11 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 7a. **Oversized-block constants** — the token threshold above which an atomic block becomes
    its own oversized chunk, and the deterministic sentence-splitter (library + version, pinned
    like the blockizer) for the pathological-giant-paragraph fallback.
-8. **Stored embedding dimension + embedding-input policy quality (D63/D80)** — model default
-   remains `qwen3-embedding-8b` (conventional). Measure on the golden set: Matryoshka-truncated
-   stored dimension (recall vs P1 size/cost); body_only vs compact/full location header
-   contribution; message-atom filtered vs unfiltered retrieval. See
+8. **Embedding-input-policy quality (D63/D80/D94)** — model default remains
+   `qwen3-embedding-8b` (conventional) and the reference dimension is fixed at
+   1,536. The existing golden set may still compare body-only vs compact/full
+   location-header contribution and message-atom filtering; engine migration
+   does not introduce a new benchmark gate. See
    `e1_embedding_input_policy.md` §10.
 
 ## References

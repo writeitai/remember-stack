@@ -296,10 +296,11 @@ file it never retrieved. Without this section, anything a description omits is i
 forever. (Same for sound: transcripts capture speech; the alarm in the background exists in
 no text.)
 
-**The mechanism — one more P1 target, riding existing machinery (D8/D63 unchanged):**
+**The mechanism — one more P1 target on accepted natural media rows (D63/D94):**
 
 - `search(channel=semantic, target=media_segments, query=<text | image | audio>, …)` —
-  a **logical target over per-modality P1 tables/indexes**: one row per standalone image, per
+  a **logical target over accepted per-modality segment/representation rows and
+  indexes**: one row per standalone image, per
   adaptive video keyframe/shot, per bounded audio segment; each row carries its **modality**
   (image | keyframe | acoustic), its **embedding family + version + dimension**, its
   `representation_id`, and its **immutable locator** (§4), hydrating to the representation

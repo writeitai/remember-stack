@@ -48,7 +48,7 @@ frozen product constants, unless frozen inside a named
 | **Embedding text** | Exact UTF-8 string embedded for the chunk under `(policy_version, body, location_facts)` | No |
 
 **Display / artifact body** (slice of `document.md`) remains distinct from
-**embedding text**. P1 stores **normalized body** for the text/BM25 column (§7);
+**embedding text**. `chunk_search` stores **normalized body** for its text/BM25 column (§7);
 vectors use embedding text (which may include a header). Lexical search is therefore
 not dominated by location headers on short bodies.
 
@@ -113,7 +113,7 @@ PRs; they must not be required to start D80.
    author set size, primary channel_ref).  
 3. **E0/E1 mapping** — prepare copies available refs into location facts; missing fields
    stay absent (policy must not invent them).  
-4. **D74** — purge refs, display maps, and P1 scalars with the lineage.  
+4. **D74** — purge refs, display maps, and joined authority metadata with the lineage.
 5. **Shape choice** (one message = one doc vs export) is **connector + deployment policy**,
    recorded as `source_shape`, not guessed in the embed renderer.
 
@@ -180,8 +180,9 @@ Changing any of the above is a **new policy version**.
 | `body_only` | `normalize(body)` |
 | `location_header` | `normalize(header) + "\n\n" + normalize(body)` with `len(header) ≤ H_max` under the policy counter |
 
-**Always**, independent of mode: location facts exist on the spine; **P1 filter
-scalars** (§5) may be projected for query-time filters.
+**Always**, independent of mode: location facts exist on the spine. Retrieval
+filters join those normalized authority fields; they are not copied into
+`chunk_search`.
 
 ### 4.3 Decision procedure (total function)
 
@@ -238,7 +239,7 @@ unordered rule.
   **version-scoped** metadata (or a re-render trigger on title change); do not
   silently re-read a live mutable title without a migration event.
 
-### 4.5 Migration triggers and vector reuse (single rule)
+### 4.5 Migration triggers and vector reuse
 
 **Three grains — do not collapse them:**
 
@@ -248,28 +249,25 @@ unordered rule.
 | **policy_generation** | deployment policy artifact | `embedding_input_policy_version` only |
 | **chunk embedding identity** | per chunk | `(chunk_id, policy_generation, embedding_text_hash, embedder_generation)` |
 
-**Active cutover pointer** (deployment or query scope) is
-`(policy_generation, embedder_generation)` — **not** a per-chunk hash. A corpus is
-“on” a policy+embedder pair; each chunk under that pair must have a matching
-row (or typed skip).
+The deployment has one configured `(policy_generation, embedder_generation)`
+pair. `chunk_search` is keyed by `(deployment_id, chunk_id)` and stores the pair
+and `embedding_text_hash` as attestation, not as permanent key dimensions. A
+chunk is semantic-ready only when those values match its prepared authority
+stamps and the configured pair.
 
-**P1 row key (v1):** `(chunk_id, policy_generation, embedder_generation)`.  
-Store `embedding_text_hash` on the row for verify/attestation; do **not** put the
-hash in the active pointer. Recovery “exact match” means: P1 row exists for that
-triple **and** its stored hash equals the prepared hash for the chunk.
-
-A prior vector may be **attested** into a new `policy_generation` **without a
-provider call** only when `embedding_text_hash` and `embedder_generation` match
-and a **new** P1/PG generation row is written (zero-call copy with provenance).
-Never leave policy version and vector identity disagreeing on one overwritten row.
+A prior vector may be reused without a provider call only when its
+`embedding_text_hash`, embedder model/dimension, and all policy-relevant
+attestation match exactly. The worker may then restamp the same row inside an
+explicit unready maintenance operation; it must never claim that a vector was
+produced from different text.
 
 | Change | Action |
 |---|---|
-| Body bytes change | Re-render; new hash ⇒ provider embed under active generations |
+| Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
-| Policy version changes | Re-render all in-scope chunks; if hash unchanged and embedder generation unchanged, **zero-call vector attestation** into the new `policy_generation` row set; else provider embed |
-| Scalar-only metadata (not in embedding text) | Update P1 scalar projection / PG; **no** re-embed |
-| Embedder generation changes | Provider re-embed + generation-safe P1 cutover (§7) |
+| Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
+| Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
+| Embedder generation changes | Mark semantic channel unready; provider re-embed, verify and publish (§7) |
 | Summary-only regeneration | No render/embed |
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
@@ -277,33 +275,35 @@ Content-hash-only vector carry-forward is **insufficient** when embedding text
 includes location. Block-level **extraction** reuse (D56 A1–A3) remains
 content-addressed without LLM output in identity keys.
 
-**Dual-generation cutover:** during re-embed, PG and P1 hold **versioned per-chunk
-embedding records** under `(policy_generation, embedder_generation)`. Query targets the
-**active `(policy_generation, embedder_generation)` pointer** at deployment/query scope.
-Cutover flips the pointer only when required records exist; old generation remains until
-retirement. Do not use sole in-place upsert-by-`chunk_id` as the migration story.
+**Maintenance cutover:** an incompatible model, dimension, or policy change
+makes semantic search unavailable while disposable vector state is rebuilt and
+verified. Temporary migration state is allowed; two permanent searchable
+generations are not. The configured pair is published only after coverage,
+dimension, policy, and hash checks pass.
 
 ---
 
-## 5. P1 scalars (filters), not a metadata landfill
+## 5. Query filters stay normalized
 
 ### 5.1 Principle
 
-Scalars enable **typed prefilters** on the passage channel. A scalar that no
-recipe can filter on does **not** satisfy the retrieval contract.
+Typed filters use existing authority columns and associations in the same
+PostgreSQL statement as the ranked search. `chunk_search` does not copy filter
+fields merely to avoid joins.
 
-### 5.2 Universal P1 scalar dimensions (v1)
+### 5.2 Universal filter dimensions (v1)
 
-- `source_kind` (connector)  
-- `source_shape`  
-- `section_role` (existing D58 pattern)  
-- **policy_generation** and **embedder_generation** (filter/search only the active pair)
+- `source_kind` (connector)
+- `source_shape`
+- `section_role`
+- configured policy and embedder readiness
 
-### 5.3 Source-specific P1 scalar dimensions (only with recipe support)
+### 5.3 Source-specific filter dimensions (only with recipe support)
 
-Stable deployment-scoped refs: `channel_ref`, `thread_ref`, `author_ref`, and/or
-time range — bitmap/range indexes by measurement. **Opaque stable ids** preferred;
-mutable display names live in Postgres/P3 reconstruction.
+Stable deployment-scoped refs such as `channel_ref`, `thread_ref`, `author_ref`,
+and time range remain on their typed authority records. Add a conventional
+index only when an admitted filter and query plan require it. **Opaque stable
+ids** are preferred; mutable display names live in PostgreSQL/P3 reconstruction.
 
 ### 5.4 Postgres authority
 
@@ -313,11 +313,10 @@ with lineage.
 
 ### 5.5 Claims channel (decision — no open choice)
 
-Claims remain the needle index (D58). **v1: claim P1 rows do not inherit message
-scalars.** Recipes that filter by channel/author/time on claims must **join**
-claim → origin chunk (and its projected scalars) or document location facts.
-Revisit inheritance only if measurement shows join cost is unacceptable — that
-is a later retrieval amendment, not an implementer choice.
+Claims remain the needle index (D58). Claim retrieval does not inherit or copy
+message fields. Recipes that filter by channel/author/time join claim → origin
+chunk → typed document/location authority. A later proven query-plan problem may
+justify a narrow index; it does not pre-authorize denormalized search columns.
 
 ---
 
@@ -344,7 +343,7 @@ pack chunks
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
-  embed under the active generation (or typed skips).
+  embed matching the configured current state (or typed skips).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.
@@ -359,15 +358,15 @@ is a **non-goal**, not a “later” hedge in binding text.
 
 ## 7. Storage (D37 discipline)
 
-Postgres holds **keys and stamps**, not a second full body:
+Chunk authority rows hold **keys and stamps**, not a second full body:
 
 - location-facts snapshot + **LocationElement[]** (or equivalent) for E2  
 - optional **bounded header** string (`location_header`; not body)  
 - `embedding_text_hash`, `embedding_input_policy_version` / policy_generation  
-- embedder generation / `embedding_ref`  
+- current embedder/model attestation
 - offsets into `document.md` for the body (existing)
 
-**P1 text column (bound decision — no implementer choice):** store the
+**`chunk_search.search_text` (bound decision — no implementer choice):** store the
 **normalized body only** (same bytes as `document.md` slice after normalize).  
 Do **not** put `location_header` into the P1 text/BM25 column. Vectors are still
 computed over **embedding text** (header+body when mode says so); the header is
@@ -375,10 +374,10 @@ retained on the PG stamp and returned **separately** on hydration when present.
 That keeps short-message BM25 from being dominated by headers and matches
 “header returned separately from source body” in retrieval design.
 
-**Generation-safe migration:** P1 rows keyed by
-`(chunk_id, policy_generation, embedder_generation)`; active pointer is
-`(policy_generation, embedder_generation)`. Cutover flips the pointer; no sole
-in-place upsert-by-`chunk_id` as the migration story.
+**Migration:** one active row is keyed by `(deployment_id, chunk_id)`. An
+incompatible model/dimension/policy change marks semantic search unready,
+rebuilds and verifies the derived state, then publishes the new configuration.
+Temporary build state is discarded; it is not a permanent second generation.
 
 ---
 
@@ -389,7 +388,7 @@ A deployment may swap conventional embedders when:
 1. Policy is model-independent (counter, normalization).  
 2. Embedder generation records model identity, dimension, metric, and relevant
    params.  
-3. Re-embed migration + P1 generation cutover exist and are drilled.  
+3. Re-embed maintenance + unready/rebuild/verify/publish behavior exists and is drilled.
 4. No code path branches embedding **text** on model id.
 
 ---
@@ -400,12 +399,12 @@ A deployment may swap conventional embedders when:
 |---|---|
 | D63 | Default remains conventional hosted/self-host embedders; **product path drops contextual alternate**; input policy replaces “per-chunk LLM prefix stage” |
 | D56 / A3 | Extraction reuse unchanged (no LLM in identity keys). **Vector** reuse requires embedding_text_hash + policy + embedder generation |
-| D58 | Claims = needles; chunks = passages; scalars extend role-filter pattern |
+| D58 | Claims = needles; chunks = passages; normalized joins apply role filters |
 | D79 | Summaries orientation-only; **not** default embedding text; **not** grounding |
 | D32 / E2 | Typed groundable location elements; free-form header out of union |
-| D37 | No full embedding body in PG |
+| D37 / D94 | Exact source bodies stay in artifacts; one normalized current chunk body lives in `chunk_search` |
 | D61 | Connector metadata port for message facts |
-| D74 | Purge location metadata + P1 scalars with lineage |
+| D74 | Purge location metadata + `chunk_search` with lineage |
 | D8 / retrieval | Scalar filter operators declared per recipe |
 | Orchestration | Prepare stamps + batch embed + readiness barrier |
 
@@ -423,8 +422,8 @@ A deployment may swap conventional embedders when:
 5. **Reuse locality** — edit that moves a chunk’s section/channel changes
    embedding_text_hash; content-only body edit without location change reuses
    vector when hash matches.  
-6. **Two conventional embedders** — swap generation; query generation cutover.  
-7. **D74** — forget purges scalars and facts.
+6. **Two conventional embedders** — exercise unready/rebuild/verify/publish.
+7. **D74** — forget purges derived search state and location facts.
 
 ---
 

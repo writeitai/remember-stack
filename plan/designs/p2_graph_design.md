@@ -96,7 +96,8 @@ CREATE REL TABLE IS_DOCUMENT(FROM Entity TO Document);  // bridge: a Document-ty
 
 > **Observations and claims do NOT project (D43/D18).** A non-relational fact (a value about one entity —
 > "Acme's headcount is 600") has no entity object, so it cannot be a REL (a LadybugDB endpoint must be a
-> node, never a literal); it lives in Postgres authority + the private P1 projection only. Two correctness rules govern the projection
+> node, never a literal); it lives on its PostgreSQL authority row with a
+> private current semantic vector and does not enter P2. Two correctness rules govern the projection
 > (§10.A / D44): **merge-redirect** endpoints to surviving entities (a merge is a redirect, not a rewrite,
 > so a naive `status='active'` join silently drops merged-endpoint edges), and **keep every retracted
 > edge** (`invalidated_at` set, with no invalidation-age filter, D69) for transaction-time as-of — dropping
@@ -344,17 +345,19 @@ projected graphs). Revisit only if the snapshot model itself changes (e.g. an in
 writer makes in-graph HNSW maintenance plausible) — and even then, reason #1 must first
 disappear upstream.
 
-### The relations search table (PostgreSQL P1)
+### Fact-label search (in-row PostgreSQL P1, D94)
 
-One row per distinct fact: `relation_id`, a canonical **fact label** ("Alice Novak works at
-Acme as VP of Engineering") with its embedding, plus scalar columns `subject_id, predicate,
-object_id, valid_from, valid_until, invalidated_at, evidence_count`. The label is regenerated
-when adjudication materially changes the relation (one short sentence — cheap).
+Each natural relation row carries a canonical **fact label** ("Alice Novak works
+at Acme as VP of Engineering"), its one current derived embedding, and
+attestation. Subject, predicate, object, validity, invalidation, and evidence
+count remain their existing authority columns and are filtered inside the
+ranked PostgreSQL statement; they are not copied into a search table. The label
+is regenerated when adjudication materially changes the relation.
 
-This is Graphiti's edge-fact search relocated to the designated P1 projection. Searching
+This is Graphiti's edge-fact search on the natural PostgreSQL fact row. Searching
 distinct facts instead of raw claims shrinks the search space ~5–10× and stops high-redundancy
-facts from crowding the result list; scalar columns give filtered semantic search (predicate,
-entity scope, as-of windows) before the vector stage. Fact-label BM25 remains an explicit
+facts from crowding the result list; normalized columns give filtered semantic search (predicate,
+entity scope, as-of windows) inside the ranked statement. Fact-label BM25 remains an explicit
 open-query deferral; D94 does not silently add a public lexical-facts channel.
 
 ### Search paths by query shape

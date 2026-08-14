@@ -1,237 +1,294 @@
-# Analysis: collapse P1 search into PostgreSQL
+# Analysis: a lean PostgreSQL-native P1
 
 **Status:** non-binding analysis supporting D94
 **Date:** 2026-08-14
 **Repository baseline inspected:** `origin/main` at `cc8cb23e`
-**Question:** should P1 remain a LanceDB projection beside PostgreSQL, or become
-a rebuildable search projection inside the authoritative PostgreSQL database?
+**Question:** after removing LanceDB, which search data belongs on existing
+PostgreSQL rows and which data genuinely needs a derived table?
 
-## 1. Why this question is open again
+## 1. Conclusion
 
-LanceDB was selected when the important comparison was “specialized vector
-store versus an in-memory PostgreSQL HNSW index.” That comparison is now too
-narrow. The current P1 is responsible for vector search, lexical search,
-filter scalars, generation pinning, bulk writes, hard-forget purges, local
-storage, backup participation, commit-conflict retries, compaction, IVF/FTS
-retraining, readiness and a PostgreSQL confirmation hop. D93 added a dedicated
-maintenance ticker because these duties were not automatic in LanceDB OSS.
+Use PostgreSQL 18 with pgvector HNSW and pg_textsearch BM25, but do not recreate
+LanceDB as a family of duplicated PostgreSQL tables.
 
-The relevant PostgreSQL alternative is a three-part stack:
+The lean physical model is:
 
-1. `pgvector` stores embeddings and supplies exact, HNSW and IVFFlat search.
-2. `pg_textsearch` supplies corpus-aware BM25 ranking and a top-k index. Built-in
-   PostgreSQL `ts_rank`/`ts_rank_cd` remain useful but are not BM25.
-3. `pgvectorscale` can replace the HNSW index with StreamingDiskANN when a
-   measured corpus no longer fits the HNSW resource envelope. It does not
-   provide text search or hybrid fusion.
+- index text and store one active embedding on the existing claim, relation,
+  observation and entity row when that row is already the natural search grain;
+- create one private `chunk_search` table because chunk body text does not exist
+  in PostgreSQL and the authoritative `chunks` table is a historical coordinate
+  ledger rather than the current search corpus;
+- let future media tables carry their own text/vector columns when the media
+  implementation defines their natural search grain;
+- join normalized authority tables for deployment, entity, lineage and temporal
+  filtering instead of copying arrays and eligibility state into search rows.
 
-All three are PostgreSQL extensions. They keep authority rows, derived search
-rows, filters, joins and index visibility inside one MVCC/backup boundary.
+P1 remains a logical projection plane. Physically it is ordinary indexes and
+derived columns on natural records plus the one unavoidable chunk search table,
+not a parallel copy of the data model.
 
-## 2. Local evidence
+## 2. Current local shape
 
-The following direct Lance-specific estate exists on the inspected baseline:
+### Chunk bodies
 
-| Production file | Lines | Responsibility |
-| --- | ---: | --- |
-| `src/rememberstack/adapters/selfhost/lance.py` | 1,804 | tables, vectors, FTS, indexes, retries, search, bulk mutation |
-| `src/rememberstack/spine/p1_maintain_ticker.py` | 451 | discovery and compact/retrain/ensure policy |
-| `src/rememberstack/spine/p1_maintain_lock.py` | 101 | cross-process maintenance exclusion |
-| `src/rememberstack/adapters/selfhost/p1_locked_purge.py` | 86 | hard-forget coordination |
-| `src/rememberstack/spine/migrations/versions/p9_12_0033_p1_lance_maintain.py` | 54 | maintenance state |
+The `chunks` table stores `chunk_id`, document/version/representation/section
+coordinates, block and character ranges, hashes and policy stamps. It does not
+store the body. The exact converted document is the immutable `document.md`
+artifact; E1 obtains a chunk by slicing
+`document_md[char_start:char_end]`.
 
-That is 2,496 production lines before shared P1 interfaces, query-bridge code,
-backup/restore branches and cross-store recovery are counted. Three dedicated
-test files add 1,274 lines. A PostgreSQL implementation replaces part of this
-estate, so these are delete-or-replace candidates rather than a claimed net
-deletion count.
+The D80 renderer normalizes line endings, collapses whitespace and trims the
+slice. The current Lance P1 row stores that normalized body as `text` and stores
+the vector produced from the approved embedding input. Therefore removing
+Lance while retaining chunk BM25 requires one searchable text copy somewhere
+inside PostgreSQL. A separate generic P1 layer does not avoid those bytes.
 
-More important than line count are the independent failure modes:
+### Other targets
 
-- PostgreSQL can commit truth while a Lance write fails or is delayed.
-- Lance can nominate an old generation or an invalidated ID, requiring a
-  second PostgreSQL confirmation statement.
-- deletes and hard-forget must reach two physical stores;
-- Lance datasets need their own backup, restore and index-readiness handling;
-- ordinary writes create fragments/unindexed tails and can conflict at commit;
-- compacting an index is not the same operation as retraining IVF/FTS.
+- claims already store the standalone `claim_text`;
+- relations already store `fact_label`;
+- observations already store `statement`;
+- entities already store canonical identity/profile fields.
 
-D93 is evidence that this cost is current rather than hypothetical: a BEAM
-ingest spent hours performing small Lance mutations, and the shipped IVF/FTS
-indexes required a new durable amount-of-change policy plus maintenance loop.
+Copying those texts, deployment IDs, entity IDs and temporal scalars into
+parallel search rows would add synchronization and joins without creating a new
+search grain. Their derived embeddings can live beside those records and remain
+excluded from public authority views.
 
-## 3. External capabilities checked
+### Existing Lance cost
 
-All external sources below were retrieved on **2026-08-14**.
+The inspected baseline has 2,496 lines of direct Lance adapter/maintenance
+production code before query bridges, backup and recovery branches are counted.
+It carries a second write, delete, hard-forget, backup, generation and index
+maintenance lifecycle. D93 exists because ordinary Lance writes create
+fragments/unindexed tails that require application-owned maintenance.
 
-### 3.1 pgvector
+The architectural gain from PostgreSQL is eliminating that physical boundary.
+It does not require duplicating the same logical shape inside PostgreSQL.
 
-The official pgvector documentation states that:
+## 3. PostgreSQL search capabilities
 
-- vector data participates in PostgreSQL ACID, point-in-time recovery and
-  joins;
-- HNSW has no training step and accepts incremental inserts;
-- IVFFlat is trained from existing data and therefore remains sensitive to
-  initial population and list selection;
-- filtering can use ordinary PostgreSQL indexes, partial indexes,
-  partitioning and iterative ANN scans;
-- hybrid search is composed with PostgreSQL text search and fused with RRF or
-  a cross-encoder.
+External capability sources were checked on 2026-08-14.
 
+Pgvector provides PostgreSQL vector columns, distance operators, exact search,
+and HNSW/IVFFlat indexes. HNSW has no training step, accepts incremental writes,
+and can be combined with ordinary PostgreSQL filters. Its own documentation
+describes hybrid composition with PostgreSQL text search and RRF or reranking.
 Source: <https://github.com/pgvector/pgvector>.
 
-### 3.2 PostgreSQL built-in full-text search
+The dimension contract cannot remain implicit. Pgvector HNSW indexes support
+`vector` through 2,000 dimensions and `halfvec` through 4,000. The current
+Qwen3-Embedding-8B model can emit up to 4,096 dimensions but supports
+user-selected output dimensions from 32 through 4,096; OpenRouter's embedding
+request exposes a `dimensions` parameter. The reference profile therefore pins
+Qwen output and PostgreSQL `vector` columns to **1,536 dimensions**. This keeps
+ordinary float32 cosine HNSW, avoids half-precision/expression-index machinery,
+and closes a real incompatibility without a benchmark program. A later dimension
+change follows the explicit maintenance contract.
+Sources: <https://huggingface.co/Qwen/Qwen3-Embedding-8B> and
+<https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings>.
 
-PostgreSQL parses documents to `tsvector`, parses queries to `tsquery`, and
-ranks matches with `ts_rank` or cover-density `ts_rank_cd`. Its documentation
-explicitly says those rankers use no global corpus information and that
-ranking many matches can be expensive. They are not BM25.
-
-Source: <https://www.postgresql.org/docs/current/textsearch-controls.html>.
-
-### 3.3 pg_textsearch
-
-Tiger Data's PostgreSQL-licensed `pg_textsearch` extension provides:
-
-- BM25 with configurable `k1` and `b`;
-- a `USING bm25` index and `<@>` ordering operator;
-- PostgreSQL language/text-search configurations;
-- Block-Max WAND top-k execution;
-- expression, partial and partitioned indexes;
-- WAL/replication/vacuum integration and automatic memtable spill/segment
-  compaction.
-
-The current release supports PostgreSQL 17 and 18 and requires
-`shared_preload_libraries`. `bm25_force_merge()` is an optional post-bulk-load
-optimization, not a correctness or visibility step. Current limitations
-include no native phrase queries, partition-local BM25 statistics and
-synchronous compaction during some spills.
-
+Pg_textsearch provides a PostgreSQL BM25 index and top-k ordering operator, with
+WAL/replication/vacuum integration and PostgreSQL 18 support. It is selected
+instead of relabeling PostgreSQL's `ts_rank`/`ts_rank_cd`, whose official
+documentation says the built-in rankers use no global corpus information.
 Sources: <https://github.com/timescale/pg_textsearch> and
-<https://github.com/timescale/pg_textsearch/releases>.
+<https://www.postgresql.org/docs/current/textsearch-controls.html>.
 
-### 3.4 pgvectorscale
+These two required extensions cover the current contract. Pgvectorscale is an
+unchosen future DiskANN proposal, not a baseline dependency or a reason to add
+an abstraction now. Source: <https://github.com/timescale/pgvectorscale>.
 
-Pgvectorscale builds on pgvector and adds StreamingDiskANN, Statistical Binary
-Quantization and optimized `smallint[]` label filtering. Arbitrary SQL
-predicates are supported through streaming post-filtering; they are not all
-magically pushed into the DiskANN graph. Its SQL distance operators remain the
-pgvector operators, so changing HNSW to DiskANN need not change the public
-query contract or RRF implementation.
+## 4. External implementations
 
-The project still describes itself as early stage. It is relevant when a
-measured HNSW index no longer fits the available memory or misses the filtered
-search latency/recall envelope, not merely because the extension exists.
+Sources were inspected on 2026-08-14 at the pinned commits below.
 
-Source: <https://github.com/timescale/pgvectorscale>.
+### Hindsight
 
-## 4. Alternatives
+Hindsight's default PostgreSQL memory store keeps the searchable unit directly
+in `memory_units`: `text`, `embedding`, context, temporal fields and fact type.
+Its pg_textsearch index is built over `memory_units.text`.
 
-### A. Keep LanceDB and D93
+Hindsight can also store `documents.original_text` and `chunks.chunk_text` in
+PostgreSQL, and does so by default. Those source bodies are explicitly described
+as cold and never searched; deployments may disable their persistence or route
+them to a dedicated document store. Hindsight therefore co-locates the text and
+vector for the grain it actually searches, without requiring raw source chunks
+to be that grain.
 
-This preserves known search behavior and the existing implementation. It also
-preserves a second physical lifecycle, projection drift, PostgreSQL
-confirmation queries and all of D93's maintenance machinery. It wins only if
-representative measurements show a material recall, latency or cost advantage
-that PostgreSQL cannot meet.
+Sources:
 
-### B. pgvector plus built-in PostgreSQL FTS
+- <https://github.com/vectorize-io/hindsight/blob/2e8c221c54b1dd2f6cc003f63accf3a01a077332/hindsight-api-slim/hindsight_api/alembic/versions/5a366d414dce_initial_schema.py>
+- <https://github.com/vectorize-io/hindsight/blob/2e8c221c54b1dd2f6cc003f63accf3a01a077332/hindsight-api-slim/hindsight_api/engine/retain/chunk_storage.py>
+- <https://github.com/vectorize-io/hindsight/blob/2e8c221c54b1dd2f6cc003f63accf3a01a077332/hindsight-api-slim/hindsight_api/engine/memories/base.py>
 
-This has the smallest dependency footprint and removes the second store. It
-does not preserve BM25 semantics. PostgreSQL's own documentation identifies
-the lack of global ranking information and the cost of ranking large match
-sets. This is a useful fallback and phrase-search channel, not the primary
-lexical replacement.
+### Letta
 
-### C. pgvector HNSW plus pg_textsearch BM25
+Letta's natural retrieval grain is a passage. Its PostgreSQL
+`source_passages` and `archival_passages` rows contain both `text` and
+`embedding`, plus the passage's native archive/source metadata. It can
+additionally write an external vector backend, but PostgreSQL is written first.
+That is a direct in-row design because the passage is already the stored memory
+record; Letta does not have RememberStack's separate immutable document,
+coordinate ledger, testimony and adjudicated-fact grains.
 
-This removes the store boundary while preserving independent semantic and
-BM25 nomination channels. Both operate over stable IDs in PostgreSQL and can
-apply the same authority filters in the same statement. HNSW needs no training
-ticker; BM25 maintenance is extension-owned. The costs are the binding
-PostgreSQL 18 baseline, native-extension packaging, more PostgreSQL
-WAL/storage/CPU, and the
-need to tune autovacuum and resource isolation.
+Sources:
 
-### D. pgvectorscale DiskANN plus pg_textsearch from day one
+- <https://github.com/letta-ai/letta/blob/56ba9c2d9720ba109850fd39fb3c77c2a571e493/letta/orm/passage.py>
+- <https://github.com/letta-ai/letta/blob/56ba9c2d9720ba109850fd39fb3c77c2a571e493/letta/services/passage_manager.py>
 
-This targets larger disk-resident vector estates and may reduce HNSW memory.
-It also introduces the least mature component before a measured need exists.
-Its optimized label filter is constrained to `smallint[]`; UUID deployment,
-entity and temporal filters still require schema/query planning and benchmarks.
+These implementations support one principle rather than one universal schema:
+put searchable text and its vector on the natural search grain. RememberStack
+needs a chunk sidecar only because its natural chunk ledger deliberately omits
+body text and retains historical coordinates.
 
-### E. ParadeDB `pg_search` plus pgvector
+## 5. Alternatives
 
-ParadeDB offers a broader Tantivy-backed search engine inside PostgreSQL. That
-surface is intentionally larger than the required BM25 top-k channel, and its
-AGPL/commercial licensing is a material distribution decision. It is not the
-YAGNI baseline.
+### A. Parallel P1 table for every target
 
-## 5. Hybrid and authority semantics
+This gives every target the same physical shape and allows multiple permanent
+embedding generations. It also copies already-authoritative text and filters,
+adds joins to every query, and recreates projection synchronization inside the
+same database. Uniformity alone does not justify it.
 
-Semantic distance and BM25 scores are not comparable. The stable contract is
-two independently bounded top-k scans over the same logical target followed by
-rank-based reciprocal-rank fusion (RRF):
+### B. Put all chunk search data on `chunks`
 
-`score(id) = semantic_weight/(k + semantic_rank) + lexical_weight/(k + lexical_rank)`.
+This is initially the fewest tables. It makes the monthly partitioned historical
+ledger carry body text, vectors and search indexes for obsolete versions. Search
+eligibility is narrower than ledger retention, so the ANN/BM25 corpus would grow
+with history rather than with the current searchable set.
 
-The default remains rank fusion, not raw-score addition. A cross-encoder remains
-an explicit optional reranker.
+### C. Search only extracted claims/facts; keep chunks object-only
 
-Moving P1 into PostgreSQL does **not** make the projection authoritative.
-Embeddings are still produced asynchronously and can lag. It does allow the
-ANN/BM25 scan and the authority join to execute inside one PostgreSQL statement
-and snapshot. Invalidated or wrong-generation rows are therefore ineligible
-without a separate network/storage confirmation loop. Projection lag can still
-cost recall; it cannot create current-truth output when the authority join is
-correct.
+This mirrors Hindsight more closely and saves the PostgreSQL chunk-text copy. It
+removes lexical retrieval over source testimony and forces every returned chunk
+body through object hydration. Exact names, identifiers, quotations and material
+missed by extraction would lose their independent lexical channel. That conflicts
+with RememberStack's explicit testimony surface.
 
-## 6. Maintenance comparison
+### D. Lean hybrid — chosen
 
-PostgreSQL indexes are updated as part of normal `INSERT`, `UPDATE` and
-`DELETE` processing. Autovacuum performs ordinary dead-row cleanup.
+Use in-row indexes where the text already exists and a single `chunk_search`
+table where it does not. This retains independent source and claim retrieval,
+keeps the historical chunk ledger small, and minimizes duplicated state.
 
-- HNSW requires no retraining. Evidence-driven `REINDEX CONCURRENTLY` remains
-  available for bloat, corruption, changed parameters or measured degradation.
-- IVFFlat can require rebuilding when trained centroids become unsuitable and
-  is therefore not the default.
-- pg_textsearch automatically spills and compacts its index state; an optional
-  force-merge may follow a bulk load.
-- DiskANN implements PostgreSQL insert and vacuum paths; no separate indexing
-  service or periodic retraining contract is documented.
+## 6. Chosen physical contract
 
-This removes the need for the Lance-specific compact/retrain/ensure ticker. It
-does not remove ordinary database maintenance or the embedding/backfill worker.
+`chunk_search` contains one row per currently admitted chunk:
 
-## 7. Recommendation
+```text
+deployment_id
+chunk_id
+search_text
+embedding
+embedding_model
+embedding_input_policy_version
+embedding_text_hash
+```
 
-Adopt **C** as the initial binding architecture:
+Its key is `(deployment_id, chunk_id)`. `search_text` is the deterministic D80
+normalized chunk body: normalize line endings, collapse whitespace, trim. It is
+not an LLM rewrite, summary, claim, neighboring text or generated location
+header. The exact formatted source remains the object-store `document.md`
+slice. The location header may affect the vector input but remains a separately
+labeled field on the chunk authority path and never enters chunk BM25.
 
-- PostgreSQL remains the only authoritative store and gains private,
-  rebuildable P1 search tables.
-- `pgvector` is required; HNSW is the initial ANN index.
-- `pg_textsearch` is required for the claims/chunks BM25 channels.
-- built-in PostgreSQL FTS is not relabelled as BM25.
-- pgvectorscale is an accepted index-level scale option, but becomes the
-  default only after the adoption trigger in
-  `design/proposals/pgvectorscale_default_index.md` is met.
-- Lance is removed rather than retained as a dual-write compatibility path.
+The table deliberately omits copied `entity_ids`, document status, validity
+windows, lineage currency, source metadata and other eligibility scalars.
+Queries join the existing normalized relations and invariant-bearing authority
+views in the same PostgreSQL statement. If an entity-scoped candidate set is
+large, PostgreSQL ranks that joined set; the design does not precompute UUID
+arrays or add an application ID handoff merely to anticipate a planner problem.
 
-The decision is based on eliminating a consistency and operations boundary,
-not SQL aesthetics. There are no library users whose compatibility requires a
-dual-write/shadow-read period. The implementation can rebuild the derived P1
-estate offline, prove parity, switch once and delete the Lance path.
+Claims use BM25 on `claims.claim_text` and an HNSW index over a derived embedding
+column on `claims`. Relations, observations and entities similarly keep their
+one active embedding on the natural row. The public `memory_v1` views do not
+expose derived vector columns.
 
-## 8. Proof required before implementation is called complete
+This requires one D23 amendment: `claims` is no longer monthly partitioned.
+Pg_textsearch supports partitioned tables but computes partition-local BM25
+statistics, while the current-testimony claim corpus spans ingestion months.
+Those scores are not one globally comparable claim ranking. Keeping claims in
+one table allows global partial BM25/HNSW indexes over
+`is_current_testimony = true` without creating a duplicated `claim_search`
+table. At the designed roughly 50-million-row scale, this is the leaner
+PostgreSQL shape; the remaining append-only ledgers and evidence joins keep
+their D23 partitions.
 
-1. Frozen exact-search oracles for every semantic target and frozen lexical
-   fixtures for claims/chunks.
-2. Filtered recall@k and p95 for deployment, generation, entity and temporal
-   filters at representative row counts.
-3. Current Lance versus PostgreSQL hybrid parity using identical candidate
-   bounds and RRF.
-4. Bulk-ingest throughput, WAL/storage growth, autovacuum behavior and restart
-   recovery.
-5. Hard-forget, generation cutover, backup/restore and extension-upgrade drills.
-6. LoCoMo or another paid model benchmark only when explicitly started by an
-   operator; it is not an automatic design or CI gate.
+Media is not forced into `chunk_search`. A future media search implementation
+places text/vector fields on its accepted segment/representation rows because
+those rows, not text chunks, are its natural grain.
+
+## 7. Generations without permanent duplication
+
+The initial implementation stores one active embedding per natural record and
+one row per chunk in `chunk_search`. It does not retain parallel permanent
+generations or add a generic generation registry.
+
+One small `p1_search_channels` control row per target/channel records only the
+current configured model/dimension/policy (or BM25 text configuration), readiness,
+and update time. This gives rebuild/publication and the query path a durable,
+constant-time readiness handshake without retaining historical generations or
+duplicating search records.
+
+An incompatible embedding-model, vector-dimension or embedding-input-policy
+change is an explicit maintenance operation:
+
+1. mark the affected semantic channel unready;
+2. rebuild its embeddings/index using the new configuration;
+3. verify structural completion and hashes;
+4. publish the new configuration and mark the channel ready;
+5. discard temporary rebuild state.
+
+Queries never mix vector spaces because the affected channel does not serve
+during the rebuild. This accepts temporary search unavailability in exchange
+for a much smaller permanent schema. It does not affect authoritative SQL,
+facts, graph snapshots or object artifacts.
+
+Compatible retries and unchanged-input reuse still key on the input hash,
+policy version and embedder identity. Those fields prove what produced the one
+active vector; they do not require keeping every prior vector.
+
+## 8. Storage and operational consequences
+
+The chunk text is a real PostgreSQL cost: table bytes, BM25 index bytes, WAL,
+replication and physical backups. It is not a new system-wide corpus copy,
+because Lance already stores the same normalized chunk body and is deleted.
+
+For intuition, a roughly 2 KiB chunk body is smaller than a 1,536-dimensional
+float32 vector (about 6 KiB) or a 3,072-dimensional vector (about 12 KiB), before
+ANN index overhead. Actual values depend on corpus and embedding model; no
+benchmark is required to accept the architecture.
+
+Growth is bounded structurally:
+
+- `chunk_search` contains only the admitted current search set;
+- one current vector exists per target row; historical claim rows retain their
+  current-model vector so bounded historical testimony retrieval can rank them,
+  but only current testimony enters the partial default HNSW/BM25 indexes;
+- obsolete, superseded and forgotten chunk search rows are deleted;
+- entity and temporal metadata are not copied;
+- immutable document bytes remain in object storage rather than being copied
+  wholesale into authority tables.
+
+PostgreSQL now carries search CPU, WAL and index maintenance. In return there
+is one transactional deletion/backup boundary, one query planner and no
+application-owned compact/retrain ticker.
+
+## 9. Implementation consequence
+
+There are no compatibility consumers and no requirement for shadow reads,
+dual writes, a Lance/PostgreSQL parity benchmark or a prolonged migration.
+Implementation should:
+
+1. add PostgreSQL 18, pgvector and pg_textsearch schema support;
+2. add `chunk_search` and the in-row derived embedding columns/indexes;
+3. redirect current workers and queries to PostgreSQL;
+4. rebuild the disposable search state from authority and object artifacts;
+5. switch once after deterministic completeness and functional contract tests;
+6. delete Lance code, dependencies, configuration, maintenance state, backup
+   handling, tests and runtime documentation.
+
+Historical decisions, analyses and reviews remain clearly historical because
+they explain the removed architecture. They are not runtime compatibility or
+an implementation surface.

@@ -51,7 +51,7 @@ projection — D40 refined; `e0_files_design.md` §6.)*
 
 | Store | Role | Authority | Rebuildable from |
 |---|---|---|---|
-| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; private rebuildable **P1** vector/BM25 search tables and indexes (D94) | **source of truth** for plane E; P1 rows remain derived | authority is PITR-backed; P1 rebuilds from authority + artifacts |
+| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94) | **source of truth** for plane E; P1 state remains derived | authority is PITR-backed; P1 rebuilds from authority + artifacts |
 | **GCS — raw** | immutable original files | source of truth for file bytes | — |
 | **GCS — artifacts** | per-document markdown + `pageindex.json` + conversion sidecars, one immutable **representation** per conversion run (E0, D37/D65: `…/<content_hash>/<representation_id>/…`) | source of truth for converted bodies (nondeterministic converter output is **replayed from storage**, D7 — a toolchain bump creates a new representation beside the old, never regenerates in place) | — (like raw: backed up, not regenerated) |
 | **GCS — corpus fs** | **P3**: corpus organized as a mounted directory tree (D40) | derived | Postgres + artifacts (every cycle) |
@@ -59,7 +59,7 @@ projection — D40 refined; `e0_files_design.md` §6.)*
 | **LadybugDB** | **P2**: graph projection of entities + relations | derived | Postgres (every cycle) |
 
 Two hard rules: validity/invalidation state exists **only** in authoritative Postgres
-tables — private P1 rows and Ladybug carry filtered copies, never independently decide
+columns — derived P1 state and Ladybug never independently decide
 truth (D6/D94); and every derived store must be
 reproducible by a tested batch path, exercised routinely (D7).
 
@@ -130,9 +130,11 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    relations → cheap-first escalation → write-time outcomes (`supersedes` closes windows,
    `contradicts` flags, `same_as` proposes merges). Registry detail: `registries_design.md`.
 
-Note on P1: embedding work is scheduled from E-plane readiness and committed asynchronously
-to private PostgreSQL projection tables. P1 remains a plane-P object — fully rebuildable from
-authority and immutable artifacts, carrying no authority itself (D94).
+Note on P1: embedding work is scheduled from E-plane readiness and committed
+asynchronously as one current vector/attestation on natural claim, fact, and
+entity rows, or as the `chunk_search` row for a chunk. P1 remains a logical
+plane-P object—fully rebuildable from authority and immutable artifacts,
+carrying no authority itself (D94).
 
 ## 5. Planes K and P: aggregate derivation (debounced/scheduled, D12)
 
@@ -248,6 +250,7 @@ PG entity registry             (D10/D44)                 → GCS bytes
 | `p2_graph_design.md` | graph projection, rebuild, snapshots, search | **current** |
 | `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
 | `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
+| `postgres_p1_search_projection_design.md` | PostgreSQL-native P1 storage, retrieval indexes, readiness, rebuild, and Lance removal (D94) | **current** |
 | `orchestration_design.md` | worker runtime: queue topology, lanes, backfill seeding, budget enforcement, DLQ operations (D52–D53) | **current** |
 | `evidence_lifecycle_design.md` | document versions, testimony currency, the counting rule, content-addressed reuse (D54–D56) | **current** |
 | `packaging_distribution_design.md` | delivery artifacts, delivery-only task execution, enforced code architecture (D62) | **current** |
@@ -259,5 +262,6 @@ PG entity registry             (D10/D44)                 → GCS bytes
 ## 10. Open questions
 
 Tracked in `questions.md` (root). Hard-delete obligations are resolved by D74; remaining open
-items do not alter the active-store purge contract. (The embedding model is decided — D63: port
-config, default `qwen3-embedding-8b`; what remains is the stored-dimension measurement.)
+items do not alter the active-store purge contract. (The embedding model is
+decided — D63: port config, default `qwen3-embedding-8b`; D94 pins the reference
+PostgreSQL profile to 1,536 dimensions.)

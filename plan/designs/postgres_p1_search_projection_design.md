@@ -1,345 +1,371 @@
-# Design: PostgreSQL-native P1 search projection
+# Design: PostgreSQL-native P1 search
 
 **Status:** binding architecture, implementation pending (D94)
 **Date:** 2026-08-14
-**Decision:** [D94](../../decisions.md#d94-p1-search-is-a-postgresql-projection-not-a-lancedb-store)
+**Decision:** [D94](../../decisions.md#d94-p1-search-is-postgresql-native)
 **Analysis:**
 [postgres_p1_search_projection_analysis.md](../analysis/postgres_p1_search_projection_analysis.md)
-**Scale proposal:**
-[pgvectorscale_default_index.md](../../design/proposals/pgvectorscale_default_index.md)
-**Supersedes:** D8's Lance placement, D93 and
+**Supersedes:** D8's LanceDB placement, D93, and
 [p1_lance_maintenance_design.md](p1_lance_maintenance_design.md)
-**Amends:** D9, D48 and D61 as recorded in D94
+**Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94
 
-## 1. Problem and decision
+## 1. Problem
 
-P1 is the rebuildable search projection over chunks, claims, fact labels,
-entity profiles and future media segments. It must provide independent
-semantic and lexical candidate channels, generation-safe filtering, optional
-entity and temporal constraints, and stable IDs that can be hydrated to
-provenance-bearing records.
+P1 provides semantic and lexical retrieval over chunks, claims, fact labels,
+entity profiles, and later accepted media representations. Its LanceDB
+implementation created a second database, a confirmation hop, a separate
+backup/recovery path, fragment maintenance, cross-store generation state, and
+failure modes that did not improve the public retrieval contract.
 
-P1 SHALL live inside the authoritative PostgreSQL database as private derived
-tables and indexes:
+There are no compatibility consumers. The replacement therefore needs no
+dual-write period, shadow reads, legacy adapter, data conversion, or parity
+benchmark. It needs one clear storage authority, rebuildable derived indexes,
+and functional proof that the existing retrieval contracts still hold.
 
-- `pgvector` supplies vector columns, distance operators and the initial HNSW
-  indexes;
-- `pg_textsearch` supplies the BM25 lexical indexes;
-- PostgreSQL B-tree/GIN indexes supply scalar and entity filters;
-- RRF combines independently ranked semantic and lexical candidate sets;
-- `pgvectorscale` StreamingDiskANN is the accepted scale replacement for HNSW
-  only after its recorded trigger is met.
+## 2. Decision
 
-LanceDB is not retained as a fallback, compatibility store or dual-write
-target. PostgreSQL authority tables remain distinct from P1 projection tables:
-co-location removes a physical consistency boundary; it does not make an
-embedding or BM25 row source testimony or adjudicated truth.
+P1 SHALL be implemented in PostgreSQL 18 using:
 
-## 2. Scope and non-goals
+- `pgvector` for semantic vectors and HNSW indexes;
+- `pg_textsearch` for the admitted BM25 channels;
+- ordinary PostgreSQL columns, joins, and B-tree indexes for filtering; and
+- reciprocal-rank fusion (RRF) over independently ranked semantic and lexical
+  candidates.
 
-This design decides:
+P1 remains a logical, rebuildable retrieval plane. It is not a family of
+duplicated search tables:
 
-- the P1 storage and indexing engines;
-- the derived-row, authority-join and generation contracts;
-- vector, lexical and hybrid execution;
-- maintenance, backup, failure and migration behavior;
-- the narrow gate for adopting DiskANN.
+- chunks use one private `chunk_search` table because exact chunk bodies remain
+  slices of object-store `document.md`, outside PostgreSQL authority rows;
+- claims, relations, observations, and entities keep their natural text in
+  their existing PostgreSQL rows and store one current derived embedding there;
+- a future media representation is searchable only on its accepted natural
+  segment/representation row; this decision does not create `p1_media`;
+- eligibility, entity membership, temporal state, and lineage are not copied
+  into search rows. Search joins the normalized authority tables/views in the
+  same PostgreSQL statement.
 
-This design does not:
+LanceDB is removed completely from the active system. It is not a fallback,
+compatibility store, optional backend, or migration source after cutover.
+
+## 3. Scope and non-goals
+
+This design decides the P1 storage engines, physical placement, query
+confirmation, rebuild behavior, and LanceDB removal boundary.
+
+It does not:
 
 - change the claims/facts distinction or either temporal axis;
-- move P2 graph snapshots or P3/object bytes into PostgreSQL;
-- generate embeddings inside PostgreSQL;
-- add an LLM to the query path;
-- add a search-engine abstraction or support multiple P1 stores;
-- make BM25 available for a target that has no public lexical contract;
-- implement public media-segment search before D65's media row contract lands;
+- move P2 graph snapshots or P3 source artifacts into PostgreSQL;
+- add a generic search-engine abstraction;
+- add in-database embedding generation or an LLM to the query path;
+- add lexical fact/entity/media APIs that are not already admitted;
+- add copied filter columns merely to avoid ordinary indexed joins;
+- adopt pgvectorscale or a PostgreSQL graph extension;
+- run a storage-engine, scale, or retrieval-quality benchmark; or
 - add RLS. D68's authenticated deployment binding and explicit predicates
   remain the security perimeter.
 
-## 3. Physical topology
+## 4. Storage topology
 
-```text
-authoritative Postgres tables / immutable artifact handles
-                         │
-             embedding + projection workers
-                         │
-                         ▼
-       private PostgreSQL P1 search tables
-       ├── vector column + HNSW (pgvector)
-       ├── content column + BM25 (pg_textsearch)
-       └── scalar/entity indexes (PostgreSQL)
-                         │
-       one statement: rank + authority join/filter
-                         │
-             optional RRF / reranking
-                         │
-                    QueryResult
+| Target | Canonical searchable text | Derived semantic state | Lexical state |
+| --- | --- | --- | --- |
+| Chunk | `chunk_search.search_text` (derived from object-store source slice) | `chunk_search.embedding` | BM25 on `chunk_search.search_text` |
+| Claim | existing `claims.claim_text` | embedding columns on `claims` | BM25 on `claims.claim_text` |
+| Relation | existing `relations.fact_label` | embedding columns on `relations` | not admitted; semantic only |
+| Observation | existing `observations.statement` | embedding columns on `observations` | not admitted; semantic only |
+| Entity | existing canonical profile/description row | embedding columns on that row | not admitted; semantic only |
+| Media | future D65 natural segment/representation row | embedding on that row | only if separately admitted |
+
+“Embedding columns” means one vector plus the minimum attestation needed to
+prove what produced it: model/generation, input-policy version, and input-text
+hash. They are derived, disposable columns, not testimony or adjudicated truth.
+For observations the exact embedded input is the current search/rank text
+chosen by the observation label policy (`statement` when no distinct label is
+produced), and the text hash attests that choice.
+
+PostgreSQL authority and search state being co-located does not erase their
+logical distinction. Authority can rebuild P1; P1 cannot create or change
+authority.
+
+### 4.1 Claim partition amendment
+
+`claims` SHALL be non-partitioned. Its current-testimony semantic and BM25
+channels span ingestion months, while pg_textsearch partitioned indexes use
+partition-local BM25 statistics. One claims table permits global partial HNSW
+and BM25 indexes over `is_current_testimony = true` and avoids inventing a
+duplicated `claim_search` sidecar. This narrowly amends D23; other partitioned
+ledgers and evidence joins are unchanged.
+
+Chunk and claim BM25 use `text_config='simple'` as the single multilingual,
+language-neutral baseline. Language-specific index families are not added by
+this design.
+
+## 5. `chunk_search` contract
+
+`chunk_search` is the only new P1 sidecar required by this design. Its logical
+shape is:
+
+```sql
+CREATE TABLE chunk_search (
+  deployment_id uuid NOT NULL,
+  chunk_id uuid NOT NULL,
+  search_text text NOT NULL,
+  embedding vector(1536),
+  embedding_model text,
+  embedding_input_policy_version text,
+  embedding_text_hash text,
+  PRIMARY KEY (deployment_id, chunk_id)
+);
 ```
 
-The API process still calls the configured embedding provider for a semantic
-query string. It passes the resulting vector to PostgreSQL and runs one
-bounded statement. This thin query-embedding step is not a storage bridge and
-does not call an LLM.
+The reference profile pins Qwen3-Embedding-8B output to 1,536 dimensions on
+both hosted and self-host adapters. Pgvector's float32 HNSW limit is 2,000;
+leaving the model's 4,096-dimensional default would not be indexable. The
+provider request, component version, column typmod, query vector, and readiness
+check must all agree on 1,536. An incompatible change is an explicit maintenance
+migration under §10, not arbitrary runtime schema variation.
+An adapter that returns any other dimension fails the work item and cannot make
+the semantic channel ready; the library does not silently truncate an
+unstamped provider response.
 
-Postgres is now the single hot-path database for P1. P2 remains an embedded
-snapshot and source bodies remain in the object/artifact estate.
+The table has a deployment-first lifecycle cascade and D23 auditor check
+against the partitioned chunk authority row, a BM25 index on `search_text`, and a pgvector HNSW
+index on `embedding`. It contains no copied entity arrays, timestamps,
+validity/currentness flags, source-kind guesses, or generated summaries.
 
-## 4. Required extensions and supported PostgreSQL
+### 5.1 Search-text derivation
 
-The reference and self-host images SHALL run PostgreSQL 18, continuously
-patched to the current 18.x minor, and pin tested native builds of:
+`search_text` is exactly the current deterministic E1 body normalization of the
+canonical source slice:
 
-- `vector` (required);
-- `pg_textsearch` (required and listed in `shared_preload_libraries`);
-- `vectorscale` only when the DiskANN proposal has been adopted for that
-  release/deployment profile.
+1. read the accepted `document.md` artifact;
+2. slice by the chunk's authoritative character offsets;
+3. normalize line endings;
+4. collapse whitespace runs to one space; and
+5. trim leading and trailing whitespace.
 
-Migrations verify extension availability before creating projection objects.
-A missing or wrong major-version extension fails deployment readiness; the
-runtime never silently falls back to exact scans, built-in FTS or Lance.
-Extension versions are build inputs and appear in readiness/diagnostic output.
+It contains no LLM rewrite, summary, neighboring chunk, claim text, or generated
+location header. The D80 location header may remain part of semantic embedding
+input, but it is attested separately and never enters BM25 text.
 
-## 5. Projection-table contract
+Exact source bytes remain in the object/artifact estate. PostgreSQL holds one
+normalized searchable copy per live chunk, not another full source document.
 
-P1 uses target-specific private tables rather than one polymorphic vector
-heap. The initial logical tables are:
+## 6. Extensions and supported PostgreSQL
 
-| Logical table | Search text | Semantic input | Public lexical channel |
-| --- | --- | --- | --- |
-| `p1_chunk_search` | source chunk text | D80 chunk embedding input | yes |
-| `p1_claim_search` | immutable claim statement | D80 claim embedding input | yes |
-| `p1_fact_search` | canonical relation/observation fact label | fact-label input | not until separately admitted |
-| `p1_entity_search` | canonical profile/description | entity-profile input | no |
-| `p1_media_search` | representation caption/locator text | modality-specific input | D65 implementation only |
+Reference and self-host images SHALL run PostgreSQL 18, patched to the current
+18.x minor, with pinned and tested builds of:
 
-Physical names may include an embedding-family/dimension suffix, but callers
-never construct those names. A physical ANN index contains one fixed vector
-type, dimension and distance operator. A dimension or incompatible embedding
-family change creates a new physical table/index and uses the generation
-cutover protocol; it never mixes incomparable vectors in one index.
+- `vector`; and
+- `pg_textsearch`, including its required preload configuration.
 
-Every text-target row carries at least:
+Startup/readiness verifies PostgreSQL major version, extension availability,
+and the configured **1,536** embedding dimension. Missing requirements fail readiness;
+the runtime does not silently fall back to exact scans, built-in FTS, or Lance.
 
-- `deployment_id` and stable target ID;
-- embedding family, model/version, dimension and projection generation;
-- `embedding_input_policy`, `embedding_text_hash` and the vector;
-- canonical lexical/search text where that target has a lexical channel;
-- source version/representation coordinates needed to reject mixed lineage;
-- derived `entity_ids` used by the optional entity-scoped search contract;
-- target-specific eligibility scalars useful for query planning.
+Pgvector HNSW is the only accepted initial ANN index. Pgvectorscale remains an
+unchosen future proposal. It is neither installed nor benchmarked by this
+change.
 
-Projection scalars are performance data, not authority. The query statement
-MUST join the relevant invariant-bearing PostgreSQL authority view or an
-equivalent private subquery and reapply deployment, generation, validity,
-currency and lineage predicates before a row can leave P1.
+## 7. Writes and readiness
 
-Projection tables are excluded from `memory_v1`, open SQL and raw primitives.
-Callers reach them only through the typed semantic/lexical operations and
-their saved-query compositions.
+Embedding production remains asynchronous:
 
-## 6. Writes, visibility and generation cutover
+1. an authority row becomes eligible;
+2. the work ledger schedules its current embedding input;
+3. the worker computes the embedding through the configured provider;
+4. one PostgreSQL transaction updates the natural row, or upserts
+   `chunk_search`, with the vector and all attestation fields; and
+5. the work item becomes complete only after that transaction commits.
 
-Embedding generation remains asynchronous:
+For chunks, `search_text` may be written before the external vector returns so
+the lexical channel can become ready independently. The row is semantic-ready
+only when its non-null vector attestation matches the deployment's active
+embedding configuration.
 
-1. An authority row or representation becomes eligible.
-2. The existing work ledger schedules the target's embedding work.
-3. The worker computes the contracted embedding input and external embedding.
-4. One PostgreSQL transaction upserts the P1 row and its complete coordinates.
-5. Readiness counts only rows whose coordinates match the intended generation.
+Projection lag may reduce recall; it must never expose an ineligible record.
+Deletion, invalidation, supersession, and hard-forget are enforced by the
+same-statement authority predicates described in §8. Cleanup then removes or
+clears disposable search state through the normal lifecycle transaction or
+repair worker.
 
-The source row and its embedding cannot be created atomically across an
-external provider call. That lag is explicit and may reduce recall. Once the
-embedding is available, its P1 upsert is ordinary PostgreSQL DML and its index
-entry is maintained automatically.
+`p1_search_channels` is the small durable current-state authority for query
+readiness. It has exactly one row per deployment, target, and channel, carrying
+the current model/dimension/policy (or BM25 text configuration), `ready`, and
+`updated_at`. It is not a generation history and contains no search records.
+Ranked statements require the matching ready row; ordinary asynchronous row lag
+does not flip global readiness, while an incompatible maintenance operation
+does.
 
-Invalidation, deletion and hard-forget do not trust a delayed projection
-mutation for correctness: the same-statement authority join makes an
-ineligible target invisible immediately. The projection row is then deleted
-by the normal lifecycle/hard-forget transaction or repair path and reclaimed
-by vacuum.
+No request path writes, repairs, builds indexes, or calls an LLM.
 
-A generation switch is:
+## 8. Query and filtering contract
 
-`build rows -> build/verify indexes -> exact/parity checks -> atomic active-generation switch -> retire old rows`.
+A semantic query is embedded once per syntactic invocation by the configured
+embedding provider. PostgreSQL then executes a bounded ranked statement that:
 
-Mixed-generation results are forbidden. A query pins one complete generation
-for every invoked target/channel and fails `generation_unavailable` rather
-than falling forward.
+1. applies `deployment_id` before candidate rows can escape;
+2. searches the target's HNSW index;
+3. joins the target's invariant-bearing authority view/tables;
+4. applies requested entity, temporal, lineage, eligibility, and current/history
+   predicates using their normalized indexed columns; and
+5. returns only authority-confirmed stable IDs and retrieval metadata.
 
-## 7. Vector search
+BM25 follows the same contract against the admitted text column. Hybrid search
+runs semantic and BM25 candidate subqueries independently and fuses their
+one-based ranks by RRF. Raw vector distance and BM25 scores are never added or
+treated as calibrated equivalents.
 
-The initial ANN index is pgvector HNSW with the distance operator contracted by
-the configured embedding model. HNSW is selected because it accepts
-incremental rows without an IVF training/retraining lifecycle.
+The current-testimony claim BM25 index is partial. Queries name it explicitly
+with pg_textsearch `to_bm25query()` while repeating
+`is_current_testimony = true`; implicit index discovery is not used for that
+path. Chunk BM25 uses the full `chunk_search` index. Both use the binding
+`simple` text configuration from §4.1.
 
-The semantic operation:
+Optional entity filtering is a normal SQL join through the canonical
+entity-target association. The implementation SHALL NOT first materialize tens
+of thousands of candidate IDs in application memory or send a giant `IN` list
+to the vector search. PostgreSQL plans the filter and ranked search together.
 
-1. validates the authenticated deployment and target generation;
-2. embeds the query once per syntactic invocation;
-3. runs a bounded vector top-k statement with all required filters and the
-   authority join;
-4. returns stable IDs, one-based rank, distance/score metadata and the
-   PostgreSQL statement timestamp;
-5. hydrates deeper provenance only when the caller requests it.
+D48 confirmation therefore remains mandatory in meaning, but it is no longer a
+remote “search Lance, then ask PostgreSQL” hop. Ranking and authority
+confirmation occur in one PostgreSQL statement and one transaction snapshot.
 
-ANN is approximate. The evaluation suite compares it with an exact scan under
-the same authority predicates. Query-time HNSW parameters use transaction-local
-settings and are observable; request input cannot set arbitrary database GUCs.
+## 9. Index and planner contract
 
-IVFFlat is not a supported default because its trained lists recreate a
-retraining policy. DiskANN may replace HNSW under §13 without changing the
-semantic operation or distance SQL.
+HNSW and BM25 indexes are maintained by ordinary PostgreSQL DML. Autovacuum and
+standard PostgreSQL telemetry own routine cleanup; there is no P1 compaction
+ticker, fragment ledger, or application-managed index tail.
 
-## 8. Lexical search and BM25
+Each indexed vector column has one fixed dimension and compatible distance
+operator. Deployment-bound filters and the authority join need conventional
+indexes on their existing join/filter keys. The implementation may add a
+specific missing B-tree index demonstrated by a query plan, but this design does
+not pre-emptively denormalize data or create a generic indexing framework.
 
-Claims and chunks use a `pg_textsearch` BM25 index on the same canonical text
-stored beside their embedding. Built-in `ts_rank`/`ts_rank_cd` MUST NOT be
-reported as BM25.
+ANN remains approximate. Functional tests prove contracts and structural
+completeness, not a benchmark score. Query-time search parameters are bounded,
+transaction-local, and observable; public requests cannot set arbitrary GUCs.
 
-A lexical operation:
+Filtered HNSW uses pgvector's transaction-local iterative scan in strict-order
+mode (`hnsw.iterative_scan = strict_order`) with an operator-owned
+`hnsw.max_scan_tuples` bound. The authority/entity/temporal predicates precede
+the final result limit, so PostgreSQL continues the ANN scan until it finds the
+requested eligible rows or reaches that bound; it does not take an unfiltered
+top-k and then silently return the survivors. A selective plan may use an exact
+filtered scan instead. If the bounded iterative scan cannot fill `k`, the
+existing candidate/eligible/drop counters and truncation disclosure report the
+shortfall. The library pins a pgvector release that supports iterative scans.
 
-1. executes a bounded `ORDER BY content <@> query LIMIT n` candidate scan;
-2. applies the same authority, deployment, generation, entity and temporal
-   predicates as its semantic sibling;
-3. returns the raw BM25 score and one-based lexical rank;
-4. never compares that raw score directly with a vector distance.
+## 10. Rebuild and incompatible embedding changes
 
-The analyzer/text configuration is a versioned input. Changing it creates a
-new projection generation and BM25 index. Phrase search is not part of the
-initial BM25 contract because pg_textsearch does not store positions; any
-future phrase channel is separately named and tested rather than emulated
-silently.
+There is one active embedding per searchable record. Permanent dual generations
+are removed from the P1 contract.
 
-## 9. Hybrid search and reranking
+For a compatible repair, the worker recomputes missing or mismatched rows in
+place. For an incompatible model, dimension, or input-policy change:
 
-Hybrid search means two independent candidate lists over the same target:
+1. mark the affected semantic channel unready;
+2. rebuild the derived vector state and HNSW index in maintenance state (using
+   temporary columns/tables only when the migration requires them);
+3. verify row coverage, dimensions, attestation, and input hashes;
+4. overwrite the current `p1_search_channels` configuration and mark the
+   channel ready in the publication transaction; and
+5. discard temporary state.
 
-- semantic top-k from pgvector HNSW or DiskANN;
-- lexical top-k from pg_textsearch BM25.
+Temporary semantic-search unavailability during this explicit maintenance is
+accepted. BM25 may remain available when its text contract is unchanged. This
+is simpler than retaining two permanent generations for a library with no
+compatibility consumers.
 
-The two queries may run as CTEs in one statement or concurrently through the
-same PostgreSQL pool. The implementation chooses from measured query plans,
-but both lists must share one pinned generation and equivalent authority
-filters.
+## 11. Backup, recovery, and failure behavior
 
-The default fusion is RRF over stable IDs. Raw vector and BM25 scores are never
-added. Channel weights and candidate bounds are named recipe inputs with safe
-caps. The existing optional cross-encoder remains an explicit final reranker;
-it is not required for P1 correctness and does not become implicit.
+PostgreSQL backup/restore now captures authority and current P1 state together.
+Object-store source artifacts remain covered by their existing backup contract.
+There is no separate Lance snapshot, manifest, upload window, or cross-store
+recovery ordering.
 
-## 10. D48 after co-location
+After restore, readiness validates extension versions, search indexes, active
+embedding attestation, and work-ledger completeness. Derived state can be
+recomputed from authority plus immutable artifacts. Until required state is
+complete, the affected channel reports typed unavailability or partial
+readiness according to its existing public contract; it never silently returns
+wrong-lineage data.
 
-D48 remains the correctness rule, with a simpler P1 mechanism:
+Expected failures are:
 
-- P1 search rows nominate, while authority views dispose.
-- For P1, nomination and confirmation execute inside one PostgreSQL statement
-  and MVCC snapshot. There is no Lance call followed by a second PostgreSQL
-  confirmation statement and no cross-store dropped-candidate window.
-- P2 remains a snapshot and still requires the existing confirmation/unit-drop
-  behavior when live confirmation is requested or required.
-- Hydration still progressively resolves evidence, source handles and bytes;
-  it is no longer needed merely to discover whether a P1 ID is live.
+- embedding provider failure: work remains retryable; lexical text can still be
+  ready;
+- extension/index unavailable: readiness fails for that channel;
+- stale/missing derived row: recall decreases and repair is scheduled;
+- stale extra derived row: same-statement authority predicates reject it;
+- PostgreSQL unavailable: P1 and authority are unavailable together and recover
+  through one database procedure.
 
-`dropped_by_hydration` remains meaningful for P2 and deep source hydration.
-P1 authority-filter rejection is ordinary candidate filtering and is exposed
-through channel candidate/eligible counters rather than a fake hydration drop.
+## 12. Security and resource bounds
 
-## 11. Maintenance and operations
+Every P1 statement carries the authenticated deployment predicate and the D68
+transaction binding. Private search state is absent from the public
+`memory_v1`, open SQL, Cypher, and raw-primitives schemas. RLS remains forbidden
+because it would add a second implicit authorization system and undermine the
+explicit, reviewable deployment-predicate contract.
 
-Ordinary index maintenance belongs to PostgreSQL:
+Public operations retain bounded `k`, candidate depth, query length, entity
+count, timeout, and output budgets. Query strings, source text, vectors, and
+credentials are not emitted to logs. Explain plans and index diagnostics remain
+operator-only.
 
-- inserts/updates maintain HNSW and BM25 entries;
-- autovacuum cleans dead tuples and updates planner statistics;
-- pg_textsearch automatically spills/compacts index segments;
-- initial bulk loads create indexes after loading where that is faster;
-- an optional `bm25_force_merge` may run once after a large batch build;
-- `REINDEX CONCURRENTLY` is operator-controlled recovery/tuning for measured
-  bloat, corruption, changed construction parameters or degraded performance.
+## 13. Implementation and deletion plan
 
-There is no P1 compact/retrain/ensure ticker, table-stat ledger, process lock or
-request-path rebuild. Index existence and extension versions are migration and
-readiness checks. Autovacuum lag, index size, dead tuples, statement latency and
-recall samples are observed with standard PostgreSQL telemetry.
+Implementation is a direct replacement on latest `main`:
 
-Changing an embedding model still requires embedding/backfill work. An index
-cannot create its own vectors.
+1. build and pin PostgreSQL 18, pgvector, and pg_textsearch in the reference and
+   test images;
+2. add `chunk_search`, in-row embedding columns, indexes, readiness checks, and
+   migrations;
+3. change writers and query adapters to the PostgreSQL-native paths;
+4. rebuild disposable P1 state from authority and immutable artifacts;
+5. run focused functional checks: clean migration, representative ingest,
+   semantic/BM25/hybrid queries, entity and temporal filters, invalidation,
+   hard-forget, backup/restore, and typed failure behavior;
+6. switch the single supported runtime to PostgreSQL-native P1; and
+7. delete all LanceDB runtime estate in the same delivery series.
 
-## 12. Backup, recovery and failure behavior
+The deletion includes dependencies, imports, adapters, configuration, feature
+flags, maintenance ticker/locks/state, `p1_lance` migrations, backup/restore
+paths, runtime documentation, and Lance-specific tests and fixtures. With no
+compatibility users, migration history may be rewritten before release rather
+than preserving Lance tombstones.
 
-P1 rows and index definitions participate in the PostgreSQL backup/PITR
-boundary. P1 remains derived, so restore correctness is:
+No dual write, shadow read, Lance parity run, storage-engine benchmark, scale
+benchmark, or paid retrieval benchmark is part of this work. Focused contract
+tests are required; benchmarking is not.
 
-1. restore authoritative PostgreSQL state and immutable artifact handles;
-2. verify the pinned extensions;
-3. validate P1 generation/hash coverage;
-4. rebuild missing/incompatible P1 rows or indexes;
-5. advertise search readiness only after the target generation passes.
+Historical analysis, superseded designs, and decision-log entries remain as
+history and are labelled accordingly. Completion means no active architecture,
+runtime code, dependency, manifest, configuration, migration, backup procedure,
+or current operational documentation depends on or offers LanceDB.
 
-No Lance directory, version history or separate P1 object backup remains.
+## 14. Consequences
 
-| Failure | Required behavior |
-| --- | --- |
-| PostgreSQL unavailable | P1 and authority reads fail `pg_unavailable`; no stale independent P1 serving |
-| required extension missing/wrong | startup/readiness fails; no silent engine fallback |
-| P1 row missing | recall gap is measured/repaired; authority data remains intact |
-| index missing/corrupt | take affected channel unready; exact scan is diagnostic only; rebuild/reindex |
-| BM25 spill/compaction latency | bounded statement/write telemetry exposes it; tune or rebuild outside request path |
-| HNSW resource envelope exceeded | evaluate the accepted DiskANN proposal; do not add an application cache/store |
-| generation mismatch | fail `generation_unavailable`; never mix or fall forward |
+Benefits:
 
-Co-location increases the resource/blast-radius coupling between transactional
-PostgreSQL work and search. Connection pools, statement timeouts, work memory,
-index-build resources and autovacuum are therefore explicit capacity inputs.
-This is accepted in exchange for removing the independent consistency boundary.
+- one hot-path database, transaction snapshot, backup, and recovery procedure;
+- no cross-store confirmation network hop or synchronization machinery;
+- efficient semantic, BM25, entity, temporal, and lineage filtering in one SQL
+  statement;
+- much less P1 code and operational state;
+- no generalized mirror tables or speculative scale architecture.
 
-## 13. Pgvectorscale adoption gate
+Costs:
 
-Pgvectorscale is compatible with the binding P1 query/schema contract but is
-not the initial required index. Promote StreamingDiskANN only when the accepted
-proposal's measured trigger is met and a representative comparison proves:
+- normalized live chunk search text and vectors add PostgreSQL table, index,
+  WAL, backup, vacuum, and replica volume;
+- search and authority share PostgreSQL CPU, I/O, and blast radius;
+- incompatible embedding changes require a planned semantic-search maintenance
+  window; and
+- native extension versions become part of the supported PostgreSQL image.
 
-- filtered recall is no worse than one percentage point below the exact/HNSW
-  baseline at contracted k;
-- the resource problem that triggered evaluation is materially improved;
-- ingestion, vacuum, restart, backup and hard-forget behavior pass;
-- UUID/entity/temporal filters work within the latency envelope despite the
-  extension's specialized `smallint[]` label limitation;
-- the public semantic, fusion and generation contracts do not change.
-
-The switch is an index rebuild, not a new data store or public API version.
-
-## 14. Security
-
-- No RLS is introduced.
-- Every search statement obtains `deployment_id` from the authenticated,
-  deployment-bound executor and applies it explicitly.
-- Projection tables are private and have no caller grants.
-- Native extensions are supply-chain-sensitive code inside PostgreSQL: builds
-  are pinned, scanned and upgraded through reviewed images/migrations.
-- Query text, vectors and filters remain parameterized; user input cannot name
-  indexes, tables, extension functions or GUCs.
-- Entity and temporal filters are repeated at the authority join even when a
-  projection scalar/index also applies them for speed.
-
-## 15. Implementation sequence and exit gate
-
-1. Add the PostgreSQL image/extensions and private schema migrations.
-2. Implement target-specific projection writes and exact-search fixtures.
-3. Backfill claims/chunks/facts/entities from authoritative rows/artifacts.
-4. Build HNSW and BM25 indexes; run filtered exact-versus-ANN and lexical
-   fixtures.
-5. Implement same-statement authority joins and hybrid RRF.
-6. Run the representative parity/scale/recovery gates from the analysis.
-7. Switch P1 reads once; remove Lance dependencies, adapters, ticker, locks,
-   backup handling and data.
-8. Update OSS docs/images and exercise a clean install plus restore.
-
-There is no compatibility dual-write, 30-day shadow-read period or retained
-Lance rollback estate. Before the read switch, rollback is the branch/commit;
-after it, P1 is rebuilt from authority. The paid benchmark is never started
-automatically.
-
-Implementation is complete only when no active binding design, public docs,
-composition path or shipped dependency presents Lance as part of current P1.
-Historical analyses, reviews and implementation notes remain labelled history.
+These costs are accepted. The normalized chunk text is the minimum searchable
+copy required for BM25; the other targets avoid redundant text copies entirely.

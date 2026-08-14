@@ -55,7 +55,8 @@ mentions (immutable — the transcript)        entities (the registry)
   mention_id, surface_form, normalized_lemma,  entity_id        ← NEVER reused
   context, claim_id|chunk_id, doc_id,          type (→ type registry), canonical_name,
   language, char_span                          status, merged_into (redirect chain),
-        │                                       profile_summary, profile_embedding_ref
+        │                                       profile_summary, profile_embedding,
+        │                                       profile_embed_version, profile_embedding_text_hash
         ▼
 resolution_decisions (append-only — the verdict)   aliases
   decision_id, mention_id → entity_id,               alias_id, entity_id, alias_text,
@@ -93,9 +94,10 @@ below**, so their maintenance is owned here. `profile_summary` — a short blurb
 researcher at CTU; works on entity resolution") — is shown on the P2 graph node and the P3
 entity index, and is given to **T4 adjudication as candidate context** (comparing a new
 "J. Novak" mention against a candidate is a much easier judgment when the candidate carries a
-profile — the Graphiti lesson). The **profile embedding** lives in the private
-PostgreSQL P1 entity projection (D94); the canonical registry holds no opaque
-external-store reference. **T3** compares mention embeddings against that projection.
+profile — the Graphiti lesson). The **profile embedding and its attestation**
+live as private derived columns on the canonical entity row (D94); there is no
+opaque reference or `p1_entity` mirror table. **T3** compares mention embeddings
+against the ready current vector on that row.
 
 They are maintained by a dedicated **profile refresher** worker: a batched micro-LLM job
 (small model; stage `refresh_profile`, component `profile_summarizer` — schema §1), versioned
@@ -726,11 +728,13 @@ appends a reversible, provenance-stamped record to `resolution_decisions`/`merge
 
 ## 9. Scale & schema (D23)
 
-- The partition estate has exactly nine parents (schema §12). Seven append-only tables use
+- The D94-amended partition estate has exactly eight parents (schema §12). Six append-only tables use
   monthly RANGE children managed by `pg_partman`: `mentions(created_at)`,
   `resolution_decisions(decided_at)`, `chunks(created_at)`, `chunk_claims(created_at)`,
-  `claims(ingested_at)`, `claim_extraction_decisions(decided_at)`, and
-  `testimony_currency_events(occurred_at)`. Two evidence joins use 64 static,
+  `claim_extraction_decisions(decided_at)`, and
+  `testimony_currency_events(occurred_at)`. Claims are non-partitioned so the
+  current-testimony BM25/HNSW corpus has global ranking statistics without a
+  mirror table. Two evidence joins use 64 static,
   migration-created HASH children: `relation_evidence` by `relation_id`, with PRIMARY KEY
   (`relation_id`, `claim_id`), and `observation_evidence` by `observation_id`, with PRIMARY KEY
   (`observation_id`, `claim_id`). The HASH count of 64 is a measured starting point. These hot
@@ -743,9 +747,9 @@ appends a reversible, provenance-stamped record to `resolution_decisions`/`merge
   `aliases USING gin (daitch_mokotoff(normalized_lemma))`. The alias key is
   `normalized_lemma`. Keep the btree composite `(subject_entity_id, predicate[, object])` on
   `relations`; `btree_gin` is not required.
-- T0–T2 in PostgreSQL authority tables; T3 embedding in the private P1
-  projection (D94). P1 indexes share the database but remain derived and are
-  not exposed as authority tables.
+- T0–T2 in PostgreSQL authority tables; the current T3 profile embedding lives
+  on the canonical entity/profile row and is indexed privately (D94). The
+  derived vector columns remain outside the public authority surface.
 - **Row counts are sized against full extraction** (there is no value gate — D25); size the
   load-test against *ungated* volume.
 

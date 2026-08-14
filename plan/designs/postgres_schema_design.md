@@ -3,13 +3,13 @@
 This document specifies the **complete Postgres schema** for `rememberstack`: every table, column,
 primary key, foreign key, index, enum, and the partitioning / deletion / versioning rules that
 tie them together. Postgres is the **single source of truth for plane E** (evidence) and the
-**only home of validity/invalidation state** (D6). Private PostgreSQL P1 search
-tables are rebuildable derived rows, not authority (D94); LadybugDB and the GCS
+**only home of validity/invalidation state** (D6). PostgreSQL-native P1 vectors
+and indexes are rebuildable derived state, not authority (D94); LadybugDB and the GCS
 corpus filesystem are rebuildable projections, while the K-plane git repo is
 an independently-backed source of truth whose *provenance and triggers* live here.
 
 It is the binding companion to `overall_design.md` (§3 core data model, §9 lists this doc),
-`postgres_p1_search_projection_design.md` (D94 private derived search schema),
+`postgres_p1_search_projection_design.md` (D94 PostgreSQL-native search schema),
 `registries_design.md` (D15–D24), `e0_files_design.md` (D36–D40),
 `e2_e3_claims_relations_design.md` (D31–D35), `p2_graph_design.md` (D6–D11),
 `concepts.md` (the claims/relations/evidence/bi-temporality explainer) and `decisions.md`
@@ -85,16 +85,19 @@ These rules apply to every table unless a module overrides them with a stated re
   `relation_adjudications.superseded_by`). Both rows are by construction in the same deployment (same
   document, same registry), so these remain single-column for brevity; they cannot cross deployments
   because the worker only ever links rows it created within one deployment.
-- **Foreign keys at scale (D23).** Nine large append-only E-plane tables are partitioned and use
+- **Foreign keys at scale (D23/D94).** Eight large append-only E-plane tables are partitioned and use
   **logical foreign keys** — referential integrity is enforced by idempotent workers and verified
-  by a periodic **auditor query**, not by a DB-level `FOREIGN KEY`. Seven use monthly RANGE
-  partitions (`mentions`, `resolution_decisions`, `chunks`, `chunk_claims`, `claims`,
+  by a periodic **auditor query**, not by a DB-level `FOREIGN KEY`. Six use monthly RANGE
+  partitions (`mentions`, `resolution_decisions`, `chunks`, `chunk_claims`,
   `claim_extraction_decisions`, `testimony_currency_events`); two use static HASH partitions
   (`relation_evidence`, `observation_evidence`). Reasons: (1) Postgres requires a FK to a
   partitioned table to reference a unique constraint that includes the partition key, which would
   force that key into every child and join; (2) D23's "btree-only, cap write-amplification" mandate
-  on these hot tables. **All non-partitioned tables use real composite FK constraints** with the
-  `ON DELETE` behavior stated per column. A logical-only FK is tagged
+  on these hot tables. **Non-partitioned tables use real composite FK constraints
+  when the referenced parent exposes a compatible physical key.** The D94
+  exception is `claims`: it is non-partitioned for global BM25/HNSW but keeps
+  logical provenance FKs because its required `chunks` parent remains
+  partitioned by `(chunk_id, created_at)`. A logical-only FK is tagged
   `-- LOGICAL FK → table(col)`. The auditor checks for orphans and any worker-owned logical
   uniqueness not enforced by a primary key; both evidence joins enforce evidence-once directly
   through their partition-compatible primary keys (§§9, 9.A).
@@ -110,10 +113,12 @@ These rules apply to every table unless a module overrides them with a stated re
 - **Naming.** snake_case; tables plural; `_id` = identity reference; `_ref` = opaque key into
   another store; `_uri` = GCS object URI; `_at` = timestamptz; `_version` =
   component version string.
-- **No source document/body text in authority tables (D37/D94).** The authority
-  schema stores compact, query-critical metadata and the section index;
-  bodies/Markdown remain in GCS. Private rebuildable P1 tables store only the
-  canonical search text and embeddings required by pgvector/pg_textsearch. The authority schema
+- **Exact source documents stay outside authority tables (D37/D94).** The
+  authority schema stores compact, query-critical metadata and the section
+  index; exact bodies/Markdown remain in GCS. The one private `chunk_search`
+  sidecar stores the normalized current chunk body and embedding required by
+  pgvector/pg_textsearch. Claims, facts, and entities index their existing text
+  rows and carry one current derived embedding in place. The authority schema
   stores **offsets + URIs**, plus the small generated artifacts that must be *replayed* on rebuild
   (context prefixes, claim text, decision ledgers) — derived metadata, not source bodies.
 
@@ -126,14 +131,14 @@ CREATE EXTENSION IF NOT EXISTS fuzzystrmatch; -- T2 phonetic: daitch_mokotoff() 
 CREATE EXTENSION IF NOT EXISTS unaccent;      -- accent-fold names before trigram/phonetic (registries §5)
 CREATE EXTENSION IF NOT EXISTS btree_gist;    -- composite GiST: relations bi-temporal EXCLUDE constraint (§9)
 CREATE EXTENSION IF NOT EXISTS pg_partman;    -- monthly RANGE partition automation (D23, §12)
-CREATE EXTENSION IF NOT EXISTS vector;        -- D94 private P1 semantic vectors/HNSW
-CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- D94 private P1 BM25; also required in shared_preload_libraries
+CREATE EXTENSION IF NOT EXISTS vector;        -- D94 PostgreSQL-native semantic vectors/HNSW
+CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- D94 chunk/claim BM25; also required in shared_preload_libraries
 ```
 
 PostgreSQL **18**, kept on the current patched 18.x minor, is the binding
 baseline. The selected pg_textsearch release must support PostgreSQL 18.
-`vectorscale` is created only after D94's accepted
-DiskANN proposal is promoted; it is not a baseline extension. Composite-FK
+`vectorscale` is absent from the baseline. Pgvectorscale remains an unchosen
+open proposal; promoting it would require a later binding decision. Composite-FK
 column-list `ON DELETE SET NULL` requires 15+; this is
 relied on for `document_crossrefs`, §6).
 
@@ -291,6 +296,37 @@ CREATE TABLE deployments (
 );
 COMMENT ON TABLE deployments IS
   'Identity root for the independent deployment served by this Postgres instance/schema (D16/D68). Entity spaces, registries, graphs and buckets are never shared across deployments; deployment_id is constant here and participates in every scoped FK as defense in depth.';
+
+-- D94 current-only P1 control state. This is not a search-row mirror or a
+-- generation history: exactly one row describes each target/channel now served.
+CREATE TABLE p1_search_channels (
+  deployment_id uuid NOT NULL REFERENCES deployments ON DELETE CASCADE,
+  target text NOT NULL CHECK (target IN ('chunks','claims','relations','observations','entities')),
+  channel text NOT NULL CHECK (channel IN ('semantic','bm25')),
+  embedding_model text,
+  embedding_dimension integer,
+  embedding_input_policy_version text,
+  text_config text,
+  ready boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, target, channel),
+  CHECK (
+    (channel = 'semantic'
+      AND embedding_model IS NOT NULL
+      AND embedding_dimension = 1536
+      AND embedding_input_policy_version IS NOT NULL
+      AND text_config IS NULL)
+    OR
+    (channel = 'bm25'
+      AND target IN ('chunks','claims')
+      AND embedding_model IS NULL
+      AND embedding_dimension IS NULL
+      AND embedding_input_policy_version IS NULL
+      AND text_config = 'simple')
+  )
+);
+COMMENT ON TABLE p1_search_channels IS
+  'D94 current target/channel configuration and readiness. One row only; no historical generations. Incompatible maintenance sets ready=false, rebuilds/verifies derived state, then overwrites this row with the new current configuration and ready=true.';
 
 -- DATA BOUNDARY (D69): Alembic creates this table but inserts no deployment row. After schema
 -- head, the library-owned bootstrap described below creates or verifies the one real row from
@@ -705,6 +741,9 @@ CREATE TABLE entities (
   merged_into     uuid,                        -- redirect target when status=merged; follow the chain to the survivor (D21)
   type_confidence real,                        -- confidence of the type vote; low + cross-mention disagreement ⇒ over-merge signal (registries §4)
   profile_summary text,                        -- short registry-maintained blurb; improves future LLM adjudication (Graphiti lesson)
+  profile_embedding vector(1536),              -- D94 derived current semantic vector; reference profile dimension
+  profile_embed_version text,                  -- configured model/generation that produced profile_embedding
+  profile_embedding_text_hash text,            -- hash of the exact profile input; readiness attestation
   mention_count   integer NOT NULL DEFAULT 0,  -- cached |mentions|; half of blast_radius (registries §6) and a health metric
   graph_degree    integer NOT NULL DEFAULT 0,  -- cached relation degree from the LATEST PUBLISHED P2 snapshot (§9); other half of blast_radius
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -721,6 +760,9 @@ CREATE INDEX ix_entities_redirect ON entities (merged_into) WHERE merged_into IS
 -- entities is searchable by name but the PRIMARY blocking index lives on aliases (below). D68
 -- gives each deployment its own instance/schema, so the blocking GIN contains only the match key:
 CREATE INDEX ix_entities_name_trgm ON entities USING gin (normalized_name gin_trgm_ops);
+CREATE INDEX ix_entities_profile_hnsw ON entities
+  USING hnsw (profile_embedding vector_cosine_ops)
+  WHERE status = 'active' AND profile_embedding IS NOT NULL;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- aliases — surface forms per entity, the BLOCKING TARGET (D23). Includes the LLM-emitted
@@ -1092,6 +1134,7 @@ CREATE TABLE document_versions (
   source_modified_at timestamptz,              -- immutable after version creation: when the SOURCE says this snapshot was authored/modified → deterministic E2 header + derived claims' asserted_at
   published_at    timestamptz,                 -- document's own date (resolves "last year"); world-time origin
   language        text,                        -- detected primary language (per version — it can change)
+  source_shape    text,                        -- D80 typed filter grain: document | message_atom | thread | channel_export | connector-defined extension
   current_representation_id uuid,              -- → document_representations (D65): the LIVE reading of this snapshot; swapped only after the new representation's conversion→E1→E2 chain completes (real FK added after that table)
   status          document_status NOT NULL DEFAULT 'ingesting', -- ingesting | converting | structuring | ready | failed | deleted
   error           text,
@@ -1110,6 +1153,8 @@ COMMENT ON TABLE document_versions IS
 CREATE INDEX ix_docversions_doc     ON document_versions (doc_id, version_no DESC);
 CREATE INDEX ix_docversions_status  ON document_versions (deployment_id, status) WHERE status <> 'ready';
 CREATE INDEX ix_docversions_hash    ON document_versions (deployment_id, content_hash);
+CREATE INDEX ix_docversions_shape   ON document_versions (deployment_id, source_shape)
+  WHERE source_shape IS NOT NULL;
 
 ALTER TABLE documents ADD FOREIGN KEY (deployment_id, doc_id, current_version_id)
   REFERENCES document_versions (deployment_id, doc_id, version_id);
@@ -1272,7 +1317,8 @@ CREATE INDEX ix_crossrefs_to   ON document_crossrefs (to_doc_id) WHERE to_doc_id
 ## 7. E1 — chunks
 
 Retrieval-sized units that preserve context and trace back to position. Chunk
-**search text and embedding live in private PostgreSQL P1 tables**; authority
+**search text and embedding live in the private PostgreSQL `chunk_search`
+sidecar**; authority
 tables hold metadata, offsets, the section link, and the **generated
 context prefix** (LLM-derived, so it is *replayed* on rebuild, not regenerated — D7 — and therefore
 stored as derived metadata, not body text).
@@ -1299,7 +1345,7 @@ CREATE TABLE chunks (
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
-  -- stored here (D37); P1 holds text+vector for the active passage generation.
+  -- stored here (D37); chunk_search holds normalized body + one current vector.
   location_facts_json jsonb,                   -- typed location-facts snapshot (schema version inside JSON); null until prepare
   location_header text,                        -- optional bounded deterministic header only (not body); null in body_only mode
   embedding_text_hash text,                    -- hash of canonical embedding text under the policy
@@ -1307,19 +1353,43 @@ CREATE TABLE chunks (
   context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
   prefixer_version text,                       -- LEGACY context_prefixer component version
   chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
-  embedding_version text,                      -- LEGACY single embedder stamp; prefer passage generation records (D80 dual-generation)
-  policy_generation text,                      -- embedding_input_policy_version (active pair half)
-  -- embedder half lives in embedding_version / pipeline_component_versions; P1 key is
-  -- (chunk_id, policy_generation, embedder_generation) per e1_embedding_input_policy.md §4.5
+  embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
+  policy_generation text,                      -- configured embedding_input_policy_version
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Canonical search text+embedding live in private PostgreSQL P1 tables (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup
 CREATE INDEX ix_chunks_section ON chunks (section_id);
+
+-- D94 chunk_search is the ONLY P1 sidecar. The reference profile pins
+-- Qwen3-Embedding-8B and pgvector HNSW to 1,536 float32 dimensions.
+-- pg_textsearch creates the BM25 index on search_text. No entity/time/lineage
+-- filter fields are copied here; ranked queries join chunks and their authority
+-- associations in the same statement.
+CREATE TABLE chunk_search (
+  deployment_id uuid NOT NULL,
+  chunk_id uuid NOT NULL,
+  search_text text NOT NULL,
+  embedding vector(1536),                      -- D94 reference profile dimension
+  embedding_model text,
+  embedding_input_policy_version text,
+  embedding_text_hash text,
+  PRIMARY KEY (deployment_id, chunk_id)
+);
+COMMENT ON TABLE chunk_search IS
+  'D94 disposable chunk retrieval state: whitespace-normalized canonical source slice, one current vector, and minimum attestation. No copied entity arrays, temporal state, eligibility, lineage, summaries, neighboring text, or location header.';
+CREATE INDEX ix_chunk_search_embedding_hnsw ON chunk_search
+  USING hnsw (embedding vector_cosine_ops)
+  WHERE embedding IS NOT NULL;
+CREATE INDEX ix_chunk_search_bm25 ON chunk_search
+  USING bm25 (search_text) WITH (text_config='simple');
+-- chunks is range-partitioned and its primary key includes created_at, so this
+-- sidecar cannot use a truthful two-column physical FK. The E1/lifecycle
+-- transaction owns the upsert/delete and the D23 auditor rejects orphans.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- chunk_claims — the claim OCCURRENCE map (D56; Codex review F4) and, since D65, the
@@ -1382,7 +1452,8 @@ verbatim `source_span` + offsets + the `added_context` substrings (D32), so grou
 -- A row in claims is an ACCEPTED claim: the deterministic grounding gate (anchor + window
 -- membership, D32 layers 1-2) MUST pass, enforced by the CHECK — a claim that fails the gate is
 -- never produced (it becomes a grounding_rejected ledger entry, #161; never silently discarded),
--- so the flags exist for audit and are always true here. Large (~5×10⁷) ⇒ monthly partition by ingested_at; logical FKs (D23).
+-- so the flags exist for audit and are always true here. Large (~5×10⁷) but
+-- non-partitioned under D94 so current-testimony BM25 uses one global corpus.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE claims (
   claim_id        uuid NOT NULL,
@@ -1414,9 +1485,12 @@ CREATE TABLE claims (
   claim_valid_precision claim_valid_precision NOT NULL DEFAULT 'unknown', -- unknown|instant|day|month|quarter|year|open — "FY2023" stores a normalized [start,end] without lying about granularity
   claim_valid_kind claim_valid_kind,           -- which world-interval this is: proposition_validity|event_time|measurement_period|effective_period (so a measurement period is never conflated with an event date or with asserted_at)
   extractor_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions (extractor); replay-on-rebuild key (D33)
-  embedding_version text,                       -- LOGICAL FK → pipeline_component_versions (embedder)
-  ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time + partition key; immutable
-  PRIMARY KEY (claim_id, ingested_at),
+  search_embedding vector(1536),               -- D94 derived current claim vector
+  embedding_version text,                      -- model/generation that produced search_embedding
+  embedding_text_hash text,                    -- hash of claim_text embedding input; readiness attestation
+  ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time; immutable
+  PRIMARY KEY (claim_id),
+  UNIQUE (deployment_id, claim_id),             -- composite identity target; provenance FKs remain logical as documented in §0
   CHECK (char_end >= char_start),
   CHECK (anchor_ok AND window_membership_ok),  -- a claims row is an ACCEPTED claim; the deterministic grounding gate passed (D32)
   -- D41 precision/bounds coherence (claim validity carries no status/invalidated_at — it is immutable):
@@ -1426,25 +1500,32 @@ CREATE TABLE claims (
   CHECK (claim_valid_precision <> 'instant' OR (claim_valid_from IS NOT NULL AND claim_valid_until = claim_valid_from)),
   -- a bounded precision must actually carry both bounds (else it silently degrades to unknown/open):
   CHECK (claim_valid_precision NOT IN ('day','month','quarter','year') OR (claim_valid_from IS NOT NULL AND claim_valid_until IS NOT NULL))
-) PARTITION BY RANGE (ingested_at);
+);
 COMMENT ON TABLE claims IS
-  'E2 immutable verifiable propositions (D31/D32). Stores standalone claim_text + verbatim source_span + offsets + added_context for provenance-and-entailment grounding. Three immutable time axes (D41): asserted_at (assertion event), claim_valid_from/until (+precision/kind = source-asserted world-interval — evidence, not belief), ingested_at (system); never superseded (supersession is on relations, D3). A row here passed the deterministic grounding gate. Monthly-partitioned, logical FKs.';
+  'E2 immutable verifiable propositions (D31/D32). Stores standalone claim_text + verbatim source_span + offsets + added_context for provenance-and-entailment grounding. Three immutable time axes (D41): asserted_at (assertion event), claim_valid_from/until (+precision/kind = source-asserted world-interval — evidence, not belief), ingested_at (system); never superseded (supersession is on relations, D3). A row here passed the deterministic grounding gate. Non-partitioned under D94 so current-testimony HNSW/BM25 indexes have one global corpus.';
 CREATE INDEX ix_claims_doc      ON claims (deployment_id, doc_id);
 CREATE INDEX ix_claims_chunk    ON claims (chunk_id);
 CREATE INDEX ix_claims_flagged  ON claims (deployment_id) WHERE kept_flagged = true;        -- review surface (D35)
 CREATE INDEX ix_claims_current  ON claims (deployment_id, doc_id) WHERE is_current_testimony; -- the D54 hot filter (counts; default claim search)
 CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = 'sampled_fail'; -- grounding regressions
--- D41 claim-validity is projected to private PostgreSQL P1 rows as filterable scalar columns (claim_valid_from/until/
--- precision) beside the claim embedding (same pattern as relation windows, D8). Retrieval Batch B
+-- D41 claim validity remains on claims; ranked retrieval filters it through the
+-- normalized row in the same statement as the HNSW/BM25 candidate scan. Retrieval Batch B
 -- supersedes the original no-default-index stance: `claims_as_of(from,to)` first filters in the
 -- authoritative Postgres spine, then optionally ranks only that bounded set semantically. Stamped
--- claims are the minority, so the default is the partial btree below; P1 filtering remains the
--- recorded alternative if benchmark-scale Postgres p95 exceeds 250 ms. This evidence-grain recipe
+-- claims are the minority, so the default is the partial btree below. This evidence-grain recipe
 -- answers "what did sources assert held over T" and is barred from answering "currently true";
 -- fact-as-of stays relations-only (D10).
 CREATE INDEX ix_claims_valid_window ON claims
   (deployment_id, claim_valid_from, claim_valid_until)
   WHERE claim_valid_precision <> 'unknown';
+CREATE INDEX ix_claims_search_embedding_hnsw ON claims
+  USING hnsw (search_embedding vector_cosine_ops)
+  WHERE is_current_testimony AND search_embedding IS NOT NULL;
+CREATE INDEX ix_claims_search_bm25 ON claims
+  USING bm25 (claim_text) WITH (text_config='simple')
+  WHERE is_current_testimony;
+-- Partial BM25 queries name ix_claims_search_bm25 explicitly through
+-- to_bm25query(); implicit index discovery does not select partial indexes.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- claim_extraction_decisions — the append-only, version-stamped extraction transcript (D33). It
@@ -1488,7 +1569,7 @@ CREATE INDEX ix_cxd_drops ON claim_extraction_decisions (deployment_id, reason) 
 CREATE TABLE grounding_audits (
   audit_id        uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims (partitioned)
+  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   verdict         grounding_audit_status NOT NULL, -- sampled_pass | sampled_fail | escalated
   judge_version   text NOT NULL,               -- LOGICAL FK → pipeline_component_versions (independent judge)
   rationale       text,
@@ -1509,7 +1590,7 @@ CREATE INDEX ix_grounding_claim ON grounding_audits (claim_id);
 CREATE TABLE testimony_currency_events (
   event_id        uuid NOT NULL,
   deployment_id   uuid NOT NULL,               -- LOGICAL FK → deployments
-  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims (partitioned)
+  claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the lineage; the recount scope)
   reconciliation_id uuid NOT NULL,             -- identifies ONE reconciliation run = one completed basis change per lineage (a new version's extraction completing, or a version-bump re-extraction completing). Minted when the run starts and stored in processing_state, so a RETRIED run reuses it — its re-emitted events hit the UNIQUE below as no-ops
   became_current  boolean NOT NULL,            -- false = lost currency; true = regained (un-delete, mode change)
@@ -1549,8 +1630,8 @@ predicate or Date-entity (D18).
 -- ─────────────────────────────────────────────────────────────────────────
 -- relations — distinct bi-temporal facts (D2/D3). The (entity_id,predicate) blocking key for
 -- supersession is the composite index below; it is small (distinct facts, not assertions) —
--- what makes supersession affordable at scale (concepts §6). The canonical fact LABEL + its
--- embedding live in private PostgreSQL P1 (D94); the authority row keeps the label text + version. Not partitioned.
+-- what makes supersession affordable at scale (concepts §6). The canonical fact LABEL and its
+-- one current derived embedding live on this row (D94). Not partitioned.
 --
 -- "Live belief" = invalidated_at IS NULL (transaction-time), regardless of valid_until: a
 -- believed-historical fact ("Alice worked at Acme 2020-2022", valid_until set, invalidated_at NULL)
@@ -1581,9 +1662,12 @@ CREATE TABLE relations (
   contradiction_group uuid,                    -- shared id when two live relations contradict and can't be adjudicated — retrieval shows both sides (concepts §4)
   status          relation_status GENERATED ALWAYS AS  -- DERIVED mirror of invalidated_at (single validity home, D6): active iff invalidated_at IS NULL, else invalidated
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
-  -- fact label (D94): the human-readable sentence embedded in private P1; regenerated only on material adjudication change.
+  -- fact label (D94): the human-readable semantic input; regenerated only on material adjudication change.
   fact_label      text,                        -- "Alice Novak works at Acme as VP of Engineering"
   fact_label_version text,                     -- LOGICAL FK → pipeline_component_versions (fact_labeler)
+  fact_label_embedding vector(1536),           -- D94 derived current vector
+  fact_label_embed_version text,               -- configured model/generation that produced the vector
+  fact_label_embedding_text_hash text,         -- hash of exact embedded fact_label
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions (normalizer); replay-on-rebuild
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -1600,7 +1684,7 @@ CREATE TABLE relations (
   ) WHERE (invalidated_at IS NULL AND contradiction_group IS NULL)
 );
 COMMENT ON TABLE relations IS
-  'E3 distinct bi-temporal facts (D2/D3). Identity = (subject,predicate,object) + validity interval; the unit of supersession/contradiction. evidence_count caches corpus redundancy as a confidence signal (D2). status is a generated mirror of invalidated_at (validity has one home, D6). The GiST EXCLUDE forbids overlapping duplicate beliefs while allowing re-occurring facts and carved-out contradictions. fact_label is authoritative metadata; its derived embedding lives in private PostgreSQL P1 (D94).';
+  'E3 distinct bi-temporal facts (D2/D3). Identity = (subject,predicate,object) + validity interval; the unit of supersession/contradiction. evidence_count caches corpus redundancy as a confidence signal (D2). status is a generated mirror of invalidated_at (validity has one home, D6). The GiST EXCLUDE forbids overlapping duplicate beliefs while allowing re-occurring facts and carved-out contradictions. fact_label is authority metadata; its one current derived embedding is stored on this row (D94).';
 -- The supersession blocking key (D4) — small, distinct facts; THE index that makes supersession
 -- detection affordable (concepts §6):
 CREATE INDEX ix_relations_block_subj ON relations (deployment_id, subject_entity_id, predicate, object_entity_id);
@@ -1608,6 +1692,9 @@ CREATE INDEX ix_relations_block_obj  ON relations (deployment_id, object_entity_
 CREATE INDEX ix_relations_predicate  ON relations (deployment_id, predicate);
 CREATE INDEX ix_relations_contradiction ON relations (contradiction_group) WHERE contradiction_group IS NOT NULL;
 CREATE INDEX ix_relations_live       ON relations (deployment_id, subject_entity_id) WHERE invalidated_at IS NULL;
+CREATE INDEX ix_relations_fact_hnsw  ON relations
+  USING hnsw (fact_label_embedding vector_cosine_ops)
+  WHERE fact_label_embedding IS NOT NULL;
 ```
 
 > **Contradiction insert protocol (concepts §4; resolves the §17 spike on the EXCLUDE WHERE
@@ -1714,8 +1801,9 @@ The contrast with `relations` is deliberate and is the whole point of D43:
   to compare first; because `supersede` requires a *positive* match (above), a prior that top-k ranking
   skips results at worst in a **duplicate coexisting observation**, never a wrong supersede. So the only
   residual cost of imperfect narrowing is a redundant row to reconcile later — the safe direction.
-- Observations **never project to the graph** (D18 — a value is not a node); they project to **private PostgreSQL P1**
-  only (semantic search over `statement`/label, entity-anchored timelines).
+- Observations **never project to the graph** (D18 — a value is not a node); their
+  natural rows carry current semantic search state over `statement`/label and
+  remain entity-anchored timelines.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1725,7 +1813,7 @@ The contrast with `relations` is deliberate and is the whole point of D43:
 -- attribute vocabulary, no value_domain/cardinality, NO structured value/period columns, no typed
 -- EXCLUDE — the value AND any reporting period live in `statement` and are matched SEMANTICALLY, exactly
 -- like the property (consistent with the untyped design). status is a GENERATED mirror of invalidated_at
--- (one validity home, D6). The observation LABEL is authority metadata and its embedding lives in private P1 (D94).
+-- (one validity home, D6). The observation label is authority metadata and its one current embedding lives on this row (D94).
 -- THE NO-CAP RULE (D43): only a CHANGING EFFECTIVE STATE (headcount/balance/status) is capped on
 -- valid-time when superseded; a MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped —
 -- it doesn't stop being true at period-end, stays open, and conflicting same-period figures coexist.
@@ -1734,7 +1822,7 @@ CREATE TABLE observations (
   observation_id  uuid PRIMARY KEY,            -- the observation's identity; provenance handle in P1
   deployment_id   uuid NOT NULL REFERENCES deployments,
   subject_entity_id uuid NOT NULL,            -- the ANCHOR + supersession blocking key (a resolved canonical entity); composite FK below
-  statement       text NOT NULL,              -- canonical NL form of the observed fact ("Acme's headcount is 600", "Acme's FY2023 revenue was $5M"); embedded in private P1 (D94). The VALUE and any reporting period live HERE — there is no structured value/period column (D43 lean); the adjudicator reads them semantically, like the property.
+  statement       text NOT NULL,              -- canonical NL form of the observed fact ("Acme's headcount is 600", "Acme's FY2023 revenue was $5M"); natural semantic-search text (D94). The VALUE and any reporting period live HERE — there is no structured value/period column (D43 lean); the adjudicator reads them semantically, like the property.
   -- bi-temporality (concepts §5): two clocks, WORLD-VALIDITY OF THE BELIEF.
   valid_from      timestamptz,                 -- VALID-time start: when the belief began holding in the world (NULL = unknown/always); seeded from the claim's asserted validity (D41)
   valid_until     timestamptz,                 -- VALID-time end. NO-CAP RULE (D43): capped ONLY when a CHANGING EFFECTIVE STATE (headcount/balance/status) is superseded by a later value. A MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped here — it doesn't stop being true at period-end; it stays open and conflicting same-period figures coexist. The adjudicator decides state-vs-measurement from `statement` (semantic), not a typed column. (observations_design.md §3)
@@ -1746,8 +1834,11 @@ CREATE TABLE observations (
   contradiction_group uuid,                    -- shared id when two live observations conflict and both must stand (concepts §4)
   status          relation_status GENERATED ALWAYS AS  -- DERIVED mirror of invalidated_at (single validity home, D6)
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
-  obs_label       text,                        -- the human-readable sentence embedded in private P1 (often = statement); semantic blocking + retrieval
+  obs_label       text,                        -- human-readable semantic input (often = statement); semantic blocking + retrieval
   obs_label_version text,                      -- LOGICAL FK → pipeline_component_versions (labeler)
+  obs_label_embedding vector(1536),            -- D94 derived current vector
+  obs_label_embed_version text,                -- configured model/generation that produced the vector
+  obs_label_embedding_text_hash text,          -- hash of exact embedded obs_label/statement
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; replay-on-rebuild
   adjudicator_version text,                    -- LOGICAL FK → pipeline_component_versions (supersession/contradiction adjudicator, D4)
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -1761,11 +1852,14 @@ CREATE TABLE observations (
   -- "both-stand" is the safe default.
 );
 COMMENT ON TABLE observations IS
-  'D43 non-graph fact layer: a believed value/statement about ONE entity (entity-anchored, bi-temporal, UNTYPED). Sibling of relations; never projects to the graph (D18). The value AND any reporting period live in `statement` (no structured value/period columns); the adjudicator matches same-entity + same-property + same-period + value-compatibility SEMANTICALLY. Supersession is adjudicated by entity-blocking + the D4 cascade (no typed slot, no EXCLUDE); "never silently resolve" is a binding adjudicator contract (supersede only on a positively-matched prior above margin, with a persisted reason; else coexist) + an eval gate, NOT a schema invariant. NO-CAP RULE: only a changing effective state is capped on valid-time; a measurement/fixed-period figure is never capped and conflicting same-period figures coexist. status is a generated mirror of invalidated_at (one validity home, D6); the label is authority metadata and its derived embedding lives in private PostgreSQL P1 (D94).';
+  'D43 non-graph fact layer: a believed value/statement about ONE entity (entity-anchored, bi-temporal, UNTYPED). Sibling of relations; never projects to the graph (D18). The value AND any reporting period live in `statement` (no structured value/period columns); the adjudicator matches same-entity + same-property + same-period + value-compatibility SEMANTICALLY. Supersession is adjudicated by entity-blocking + the D4 cascade (no typed slot, no EXCLUDE); "never silently resolve" is a binding adjudicator contract (supersede only on a positively-matched prior above margin, with a persisted reason; else coexist) + an eval gate, NOT a schema invariant. NO-CAP RULE: only a changing effective state is capped on valid-time; a measurement/fixed-period figure is never capped and conflicting same-period figures coexist. status is a generated mirror of invalidated_at (one validity home, D6); the label is authority metadata and its one current derived embedding is stored on this row (D94).';
 -- The supersession blocking key (D4): all live observations for an entity (exact + exhaustive per entity):
 CREATE INDEX ix_observations_block ON observations (deployment_id, subject_entity_id) WHERE invalidated_at IS NULL;
 CREATE INDEX ix_observations_entity ON observations (deployment_id, subject_entity_id);  -- full history incl. capped/invalidated
 CREATE INDEX ix_observations_contradiction ON observations (contradiction_group) WHERE contradiction_group IS NOT NULL;
+CREATE INDEX ix_observations_fact_hnsw ON observations
+  USING hnsw (obs_label_embedding vector_cosine_ops)
+  WHERE obs_label_embedding IS NOT NULL;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- observation_evidence — many-to-many join claims ⇄ observations (D2), mirroring relation_evidence.
@@ -2424,7 +2518,7 @@ CREATE UNIQUE INDEX uq_assured_operation_active
 
 ## 12. Partitioning & partition pruning (D23)
 
-Exactly **nine** append-only E-plane tables are partitioned for scale. Seven use monthly RANGE
+Exactly **eight** append-only E-plane tables are partitioned for scale. Six use monthly RANGE
 children managed by `pg_partman`; two evidence joins use 64 static HASH children created by the
 schema migration. Monthly RANGE caps btree size, makes detaching an old hot month a partition
 operation, and aligns with projection archival (p2 §8). HASH partitioning puts every evidence row
@@ -2438,27 +2532,27 @@ documented revision to the monthly cadence or the measured HASH starting count o
 | `resolution_decisions` | monthly RANGE (`decided_at`) | (`decision_id`, `decided_at`) | `pg_partman` | logical |
 | `chunks` | monthly RANGE (`created_at`) | (`chunk_id`, `created_at`) | `pg_partman` | logical |
 | `chunk_claims` | monthly RANGE (`created_at`) | (`chunk_id`, `claim_id`, `created_at`) | `pg_partman` | logical |
-| `claims` | monthly RANGE (`ingested_at`) | (`claim_id`, `ingested_at`) | `pg_partman` | logical |
 | `claim_extraction_decisions` | monthly RANGE (`decided_at`) | (`decision_id`, `decided_at`) | `pg_partman` | logical |
 | `testimony_currency_events` | monthly RANGE (`occurred_at`) | (`event_id`, `occurred_at`) | `pg_partman` | logical |
 | `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`) | 64 static migration-created children | logical |
 | `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`) | 64 static migration-created children | logical |
 
-`pg_partman` creates and maintains only the seven monthly RANGE families. It does not manage either
+`pg_partman` creates and maintains only the six monthly RANGE families. It does not manage either
 HASH family; migrations create all remainders `0..63` before inserts can reach those parents.
 `entities` and `aliases` are deliberately **not** partitioned (≤10⁷, the blocking targets whose
 single-column GIN trigram/phonetic indexes span the deployment, D23/D68). `relations`,
 `observations`, and their adjudication tables are not partitioned: distinct facts and their
 decision transcripts are far smaller than assertion-grain evidence.
 
-**Partition pruning on ID lookups.** Most hot queries select by id/parent (`doc_id → claims`,
-`mention_id → resolution_decisions`, `relation_id → relation_evidence`), which do *not* mention the
+**Partition pruning on ID lookups.** Hot queries over the remaining partitioned
+families often select by id/parent (`mention_id → resolution_decisions`,
+`doc_id → chunks`, `relation_id → relation_evidence`), which do *not* mention the
 partition key, so a naive query scans every monthly partition's local index. The mitigation, applied
 by the data-access layer: **UUIDv7 ids embed their creation timestamp**, and a child row's creation
 time is closely correlated with its parent's ingest time, so the application derives a time bound
 from the id (or from the parent's `ingested_at`) and adds it as a predicate (e.g.
 `AND ingested_at BETWEEN $lo AND $hi`), pruning to 1–2 partitions. This works for the
-ingest-time-correlated RANGE families (`claims`, `mentions`, `chunks`, `chunk_claims`,
+ingest-time-correlated RANGE families (`mentions`, `chunks`, `chunk_claims`,
 `claim_extraction_decisions`, `testimony_currency_events`, and — for the first-resolution pass —
 `resolution_decisions`).
 
@@ -2471,7 +2565,7 @@ is). This is the D23 contract. The `claim_id` reverse lookup still fans across h
 it is the cold path. `observation_evidence` applies the same policy to `observation_id`.
 
 **Partition-key consequences in the DDL:** a partitioned table's PRIMARY KEY/UNIQUE must include the
-partition key, so all seven RANGE parents include their time key and the two HASH parents include
+partition key, so all six RANGE parents include their time key and the two HASH parents include
 their fact identifier. The application treats each UUIDv7 alone as row identity (globally unique by
 construction); the wider RANGE keys are the Postgres mechanical requirement. The evidence joins'
 pair keys are also the intended evidence-once identity.
@@ -2579,7 +2673,9 @@ Labs."*
 1. **E0** `documents` row (`ingesting`→`ready`), `document_sections` rows; `processing_state` tracks
    each sub-worker; `cost_ledger` logs the OCR/structure calls (idempotent per
    `(processing_id, attempt, call_key)`).
-2. **E1** `chunks` rows with offsets + `context_prefix`; derived search text/vectors land in private PostgreSQL P1 keyed by `chunk_id`.
+2. **E1** `chunks` rows with offsets + `location_header`; normalized search
+   text and one current vector land in `chunk_search`, keyed by deployment and
+   `chunk_id`.
 3. **E2 Selection** keeps the two verifiable propositions (any drop/edit → `claim_extraction_decisions`).
    Kept propositions → `claims` (`c3`, `c4`) with `source_span`, offsets, `added_context`,
    `anchor_ok`/`window_membership_ok` true (the CHECK); mentions of "Alice Novak", "Acme", "Beacon
@@ -2612,11 +2708,14 @@ Labs."*
   (`claim_extraction_decisions`) + D2 redundancy-collapse + content-hash idempotency.
 - **No `external_ids` table.** Resolution is registry-self-contained (D20); future internal/domain
   authoritative IDs would attach as *aliases*, never as the canonical `entity_id`.
-- **Vectors are private derived PostgreSQL state (D94).** Authority tables do
-  not carry vector columns or opaque Lance references. Target-specific P1
-  tables carry embeddings, content and generation coordinates; HNSW/BM25
-  indexes remain outside `memory_v1` and never become truth.
-- **No document/chunk body text in Postgres** (D37) — bodies in GCS; PG holds offsets + URIs.
+- **Vectors are private derived PostgreSQL state (D94).** Claims, relations,
+  observations, and entities carry one current vector on their natural row;
+  chunks use the sole `chunk_search` sidecar. No opaque external-store
+  references or generalized P1 mirror tables remain. HNSW/BM25 columns and
+  indexes stay outside `memory_v1` and never become truth.
+- **No exact document bodies in Postgres** (D37). Exact bodies remain in GCS;
+  PostgreSQL holds offsets + URIs plus one normalized current chunk search copy
+  in `chunk_search` for BM25 and hydration.
 - **No fact/opinion/prediction claim type** — unattributed opinions are dropped at Selection;
   attributed stances are kept as ordinary claims → stance observations (D59); nothing is stored as a
   typed claim (§8 reconciliation note).
@@ -2647,7 +2746,7 @@ Labs."*
 | D5 governed predicate registry + `other:` | `predicates` (`synonyms`, `tier='other'` upsert, `usage_count` funnel) |
 | D6 graph is a projection; validity has one home | adjudicated validity only on `relations`; generated `status`; claim-validity is evidence, not a second home (D41); analytics writeback §10 |
 | D7 rebuild-first; immutable snapshots | `projection_snapshots`; replay via `*_version` + decision ledgers; snapshot GC |
-| D94 PostgreSQL-native P1 | authority `fact_label`/statement fields plus private target-specific P1 search tables; no opaque cross-store embedding refs |
+| D94 PostgreSQL-native P1 | one `chunk_search` sidecar; one current embedding on natural claim/relation/observation/entity rows; current-only `p1_search_channels` readiness; normalized joins for filters; no opaque cross-store refs or generalized mirror tables |
 | D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; `entity_graph_metrics.pagerank/degree` |
 | D11 communities external → write back to PG | `communities`, `entity_graph_metrics` (+ GC) |
 | D12 idempotency, retries, DLQ, debounced K triggers | `processing_state` identity/status/`attempts`/`max_attempts`; `cost_ledger`; `knowledge_refresh_queue` (retry ownership refined by D67) |
@@ -2658,7 +2757,7 @@ Labs."*
 | D20 no external authority | non-goal §15 |
 | D21 clustering, reversibility, generic-id guard | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `generic_identifier_guard`, `superseded_by` |
 | D22 golden set + eval | `golden_pairs` (+ `expected_blocking_tier`), `golden_claim_labels`, `eval_runs`, `canary_cases` |
-| D23 partition the big tables; btree-only; GIN on registry targets | §12's nine parents (7 monthly RANGE via `pg_partman`, 2 static HASH-64); single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm` |
+| D23/D94 partition the big tables; btree-only; GIN on registry targets | §12's eight parents (6 monthly RANGE via `pg_partman`, 2 static HASH-64); claims are non-partitioned for one global current-testimony BM25/HNSW corpus; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm` |
 | D24 cluster review queue | `review_queue` (band boundaries in `resolver_versions.tier_config`) |
 | D25 no value gate | non-goal §15 |
 | D31/D32 Claimify staged extraction + grounding | `claims` (`source_span`, `added_context`, grounding flags + gate CHECK), `grounding_audits` |
@@ -2667,7 +2766,7 @@ Labs."*
 | D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_crossrefs.crossref_version` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
 | D40 P3 corpus filesystem | `projection_snapshots (plane='P3_corpusfs')` + `document(_sections).placement*` |
-| D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); private P1 scalar projection |
+| D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); same-statement normalized filter |
 | D45 planned K compilation (planner/writer/driver; mechanical routing; manifest staleness) | `knowledge_page_rules`, `knowledge_rule_keys`, `knowledge_plan_decisions`, `knowledge_compilations`; `knowledge_artifacts.inputs_hash/page_summary/parent_artifact_id` |
 | D46 compiled vs authored pages; ownership + quarantine | `knowledge_artifacts.page_kind/curation_path/content_hash` (+ `status='quarantined'`); citations binding in `knowledge_artifact_evidence`; authored review flags via `knowledge_refresh_queue ('authored_review')` |
 | D47/D73 one K mechanism, N scopes; no shipped K3 tier | `knowledge_artifacts.layer` (K1/K2 used by built-in configuration; legacy K3 label inert); scope model page = an artifact all writer runs in that scope depend on; authored K2 pages hold principles and stances |
@@ -2681,7 +2780,7 @@ Labs."*
 | D56 content-addressed reuse | `chunks.chunk_content_hash` + `chunks.extraction_input_hash` (+ `ix_chunks_reuse`); `chunk_claims` — the exact claim-occurrence map (fresh + reused attachments) |
 | D57 block substrate + blockizer; sections on the grid | `document_representations.blocks_uri` + `blockizer_version`; `document_sections.block_start/end`; `pipeline_component = 'blockizer'`; blocks live in `blocks.json` (sidecar), never as rows |
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
-| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role scalar on private P1 chunk rows; no-overlap invariant is worker discipline, not DDL |
+| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | §10.A `v_graph_relates` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
@@ -2725,7 +2824,7 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
    (b) Fiscal-calendar expansion ("FY2023" ≠ calendar 2023 for off-calendar years) — `precision` + the
    grounded source substring keep a wrong expansion auditable, but exact resolution is an
    extraction-quality spike. (c) Whether the optional PG partial btree on `claim_valid_*` is ever
-   needed in authority tables (versus private P1 filtering) — load-test write-amplification against D23 first. (d) If
+   needed beyond the admitted query plan; add it only for a demonstrated filter path. (d) If
    recurrence / un-datable anchor-events prove load-bearing, the expressivity child table (btree-only,
    D23-restamped) is the documented upgrade — a named alternative, not a deferral.
 10. **Invalidated relation retention in P2 (D69).** The executable default is unbounded by age:

@@ -94,12 +94,14 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 
 ### Plane P — Projections (derived, no authority; rebuilt on schedule)
 
-- **P1 — Search indexes**: vector/FTS indexes over chunks, claims, and relation fact labels,
+- **P1 — Search indexes**: PostgreSQL-native vector/BM25 indexes over chunks,
+  claims, facts, and entity profiles; chunks use one private normalized-text
+  sidecar while other targets index their natural rows,
   plus **media segments** (cross-modal embeddings over images, video keyframes, and audio
   segments, so media are discoverable by what they *show and sound like*, not only by what
   their transcript/description happened to mention — D65; the media embedding model is
   per-deployment configuration, and its absence is reported as a stated capability boundary);
-  fully rebuildable from the spine.
+  fully rebuildable from the spine plus immutable artifacts.
 - **P2 — Graph** *(formerly L6)*: relationships between entities; bi-temporal; supports
   as-of queries; ontology starts small and evolves by governance; fully rebuildable from the
   spine.
@@ -214,9 +216,10 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 
 - Relational spine and derived P1 search projection: **PostgreSQL 18**, kept on
   the current patched 18.x minor, with
-  **pgvector** (semantic indexes) and **pg_textsearch** (BM25). **pgvectorscale**
-  is the accepted measured scale upgrade for the vector index, not a second
-  store or automatic default (D94). Graph: **LadybugDB**.
+  **pgvector** (semantic indexes; reference Qwen profile fixed at 1,536
+  dimensions) and **pg_textsearch** (BM25). Pgvectorscale
+  remains an unchosen future proposal, not a baseline dependency or automatic
+  default (D94). Graph: **LadybugDB**.
 - Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**
   principle.
 - Plane K compilation: **Codex / OpenCode** as the planner/writer agents over a **single git

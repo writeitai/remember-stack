@@ -85,9 +85,9 @@ D54, D80, and D87 remain controlling.*
    provenance, not aggregate, absence, or projection bans.
 8. **PostgreSQL-native P1 SQL preserves D80 and D48.** `semantic_claims`,
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
-   `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies` pin one ready
-   P1 projection and every applicable embedding-input-policy/embedder
-   generation per invocation. Ranked P1 scans join target-specific authority
+   `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies` validate the one
+   ready configured embedding-input-policy/embedder state per invocation.
+   Ranked P1 scans join target-specific authority
    views in the same PostgreSQL statement before exposing rows or bytes.
    `lexical_facts` is
    absent until the §10 P1 indexing trigger is met.
@@ -387,7 +387,7 @@ half-bundle.
 
 The bundle layer adds no nomination, ranking, hydration, or entity-resolution
 implementation and does not rebuild either response. Under a frozen store,
-projection generations, and evaluation clock, each member is field-for-field
+active embedding configuration, and evaluation clock, each member is field-for-field
 equal to its direct child call; no child field is exempt or regenerated at the
 bundle layer. This pure composition is the only reason the fourth operation
 exists and is the sole D87 exception to §1.13.
@@ -519,7 +519,7 @@ and MUST NOT reintroduce the legacy LEFT JOIN orphan branch.
 |---|---|
 | Public views | Apply the full live lineage/version/representation chain before projection or aggregation |
 | SQL helpers | Read only invariant-bearing public views or equivalent private subqueries covered by the same tests |
-| PostgreSQL P1 SRFs | Rank private projection rows and join target-specific authority views in one statement before exposing rows |
+| PostgreSQL P1 SRFs | Rank `chunk_search` or private in-row embeddings and apply target-specific authority joins/predicates in one statement before exposing rows |
 | P2 use in core operations | Confirm every node/edge and drop a path as one unit when any member fails |
 | Public P2 Cypher | Apply D48 during the repeatable-read rebuild; disclose the immutable generation and `built_at`; post-build changes wait for rebuild; apply post-hoc PG confirmation only when `confirm=true` |
 | Saved queries and assured operations | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
@@ -605,13 +605,13 @@ optimization.
 | Function | Signature and row contract |
 |---|---|
 | `facts_as_of` | `(valid_at timestamptz, believed_at timestamptz, max_rows int)` → fact fields with `evidence_count_current`, `contradict_count_current`, `support_state_current`, applied instants, and `identity_regime = 'current'`; default/hard bounds are in §4.3 |
-| `semantic_claims` | `(query text, k int, filters jsonb DEFAULT '{}', embedding_input_policy_version text DEFAULT NULL, embedder_generation text DEFAULT NULL)` → confirmed `claim_id`, rank, score, channel and generation/freshness columns; default/hard `k` is in §4.3 |
+| `semantic_claims` | `(query text, k int, filters jsonb DEFAULT '{}')` → confirmed `claim_id`, rank, score, channel and current embedding/freshness columns; default/hard `k` is in §4.3 |
 | `lexical_claims` | `(query text, k int, filters jsonb DEFAULT '{}')` → the same confirmed claim result columns as `semantic_claims`, with lexical-channel rank/score semantics below |
-| `semantic_chunks` | `(query text, k int, filters jsonb DEFAULT '{}', embedding_input_policy_version text DEFAULT NULL, embedder_generation text DEFAULT NULL)` → confirmed `chunk_id`, rank, score, channel, separately labeled `source_text` and `location_header`, coordinate/hash and generation/freshness columns |
+| `semantic_chunks` | `(query text, k int, filters jsonb DEFAULT '{}')` → confirmed `chunk_id`, rank, score, channel, separately labeled `source_text` and `location_header`, coordinate/hash and current embedding/freshness columns |
 | `lexical_chunks` | `(query text, k int, filters jsonb DEFAULT '{}')` → the same confirmed chunk result columns as `semantic_chunks`, with lexical-channel rank/score semantics below |
 | `fetch_chunk_bodies` | `(chunk_ids uuid[])` → `input_ordinal`, confirmed `chunk_id`, current document/version/representation/section coordinate, source/embedding hashes, separately labeled `source_text` and D80 `location_header`, policy/embedder generations, and freshness columns; no nomination or ranking columns |
-| `semantic_facts` | `(query text, k int, filters jsonb DEFAULT '{}', embedding_input_policy_version text DEFAULT NULL, embedder_generation text DEFAULT NULL)` → confirmed `(fact_kind, fact_id)`, rank, score, channel and generation/freshness columns; confirmation is against `facts_current` |
-| `semantic_entities` | `(query text, k int, filters jsonb DEFAULT '{}')` → description/profile-vector search over the private PostgreSQL `p1_entity_search` projection, returning authority-confirmed survivor `entity_id`, entity type/name/profile orientation fields, rank, score, channel and generation/freshness columns; confirmation is against `entities_current` in the same statement. The scored entity-nomination method does not exist on the shared P1 port today and is ADDED by this change (the port exposes only id-addressed `entity_vectors`), parallel to the lexical score extension |
+| `semantic_facts` | `(query text, k int, filters jsonb DEFAULT '{}')` → confirmed `(fact_kind, fact_id)`, rank, score, channel and current embedding/freshness columns; confirmation is against the requested current/history fact authority |
+| `semantic_entities` | `(query text, k int, filters jsonb DEFAULT '{}')` → description/profile-vector search over the existing canonical entity/profile row, returning authority-confirmed survivor `entity_id`, entity type/name/profile orientation fields, rank, score, channel and current embedding/freshness columns; confirmation is against `entities_current` in the same statement. The scored entity-nomination method does not exist on the shared P1 port today and is ADDED by this change (the port exposes only id-addressed `entity_vectors`), parallel to the lexical score extension |
 | `graph_neighborhood` | `(start_entity_id uuid, max_depth int, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_edges int)` → deterministic `(path_id, hop, path_position, relation_id)` plus edge fields; live-at-read support fields are explicitly suffixed `evidence_count_current`, `contradict_count_current`, and `support_state_current`; default/hard traversal bounds are in §4.3 |
 | `graph_path` | `(from_entity_id uuid, to_entity_id uuid, max_depth int, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_paths int, max_edges int)` → deterministic `(path_id, path_length, path_position, relation_id)` plus the same explicitly `_current` support fields; default/hard traversal bounds are in §4.3 |
 
@@ -625,11 +625,10 @@ facts permit `fact_kind`, `predicate`, `subject_entity_id`,
 `fetch_chunk_bodies` accepts no filters. Unknown keys, wrong types, or
 user-authored predicates are rejected. Fact `support_state` is exactly
 `current` or `withdrawn`; stance filters, where exposed, are exactly `supports`
-or `contradicts`. P1 applies indexed projection filters for speed and the
-same-statement authority join repeats every authorization- and
-truth-relevant predicate. In v1 `source_shape` is a derived D80 location-fact
-filter only: it is not authorization-relevant and no `source_shape` column
-exists in the authority spine.
+or `contradicts`. P1 applies these filters through indexed normalized authority
+joins inside the ranked statement; it does not copy them into search rows. In
+v1 `source_shape` is a derived D80 location-fact filter only: it is not
+authorization-relevant and remains on its typed location-fact authority.
 
 This table is the public SRF filter allowlist, not the assured-operation
 nomination contract. The §3.1 context operations additionally use their
@@ -652,24 +651,24 @@ normalized nor comparable to a semantic score. Score ties break by stable item
 ID. Both lexical SRFs perform the same target-specific authority join as their
 semantic siblings inside the ranked statement.
 
-`semantic_entities` embeds the query once and reaches the private
-`p1_entity_search` projection only through the shared P1 search port's
-entity-nomination method. It searches the
-entity description/profile vector rather than aliases, then confirms survivor
-identity and `entity_type` against `entities_current` in the same statement.
-Direct projection-table access from caller SQL is forbidden.
+`semantic_entities` embeds the query once and reaches the canonical entity or
+profile row only through the shared P1 search port's entity-nomination method.
+It searches the description/profile vector rather than aliases, then confirms
+survivor identity and `entity_type` against `entities_current` in the same
+statement. Direct access to private embedding columns from caller SQL is
+forbidden.
 
-Each semantic or lexical nomination invocation selects or validates exactly one
-ready `p1_projection_generation`, `embedding_input_policy_version`, and
-`embedder_generation` before any query embedding or search. An explicitly
-requested unavailable generation fails with `generation_unavailable`; it never
+Each semantic or lexical nomination invocation validates the one configured
+embedding model/policy and target-channel readiness before any query embedding
+or search. There is no caller-selectable historical search generation. An
+unready configured generation fails with `generation_unavailable`; it never
 falls forward. Results are ranked deterministically by score, then stable item ID.
 The function performs ranking and target-specific authority confirmation in
 one PostgreSQL statement. That statement snapshot is the D48 linearization
 point and is emitted as `pg_confirmed_at`.
 A deletion committed before that snapshot removes the row; a commit after it is
-a normal later state change. Lexical invocation skips query embedding but pins
-and reports the same projection and applicable D80 generations.
+a normal later state change. Lexical invocation skips query embedding but
+reports the same current search-configuration attestation and freshness.
 
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
@@ -687,8 +686,8 @@ collapse to that first position, and more than 50 IDs fails
 `ORDER BY input_ordinal` to contract row order under §4.4. Missing, stale,
 tombstoned, coordinate-mismatched,
 prefix-mismatched, or hash-mismatched IDs return no row. Each category and the
-total absent count appear in the invocation drop disclosure. A mixed
-projection/policy/embedder generation fails the entire invocation. All three
+   total absent count appear in the invocation drop disclosure. Mixed or stale
+policy/embedder attestation fails the entire invocation. All three
 body-bearing functions share the §4.3 chunk-text byte caps.
 
 The executor captures every semantic, lexical, and body-fetch invocation,
@@ -1508,10 +1507,10 @@ provenance, or returns partial confirmation output.
 | P2 absent/quarantined | `query_cypher` and `explain_cypher` fail `p2_unavailable` with no partial results; SQL and assured operations remain available |
 | Cypher execution times out or the engine faults | The request fails `statement_timeout` or `execution_error` respectively, with no partial rows; SQL and assured operations remain available |
 | P2 age exceeds target or alert threshold | Cypher remains available with exact `built_at`, `age_seconds`, and a freshness warning; live SQL remains authoritative; the request never triggers a rebuild |
-| Corpusfs/P1 body unavailable | Metadata SQL remains available; body-bearing candidates drop and are counted; a body-required invocation with no valid body fails `corpus_body_unavailable` |
-| P1 row and authority view disagree | The same-statement authority join wins; the row is ineligible, while mixed generation or authorization uncertainty fails the invocation |
+| Artifact/chunk body unavailable | Metadata SQL remains available; body-bearing candidates drop and are counted; a body-required invocation with no valid body fails `corpus_body_unavailable` |
+| P1 state and authority disagree | For chunks, the same-statement authority join rejects an ineligible `chunk_search` row. For in-row targets, null/stale embedding attestation makes the semantic row unready. Authorization uncertainty always fails the invocation. |
 | PG and P2 differ after `built_at` | Unconfirmed Cypher remains the correct snapshot result; `confirm=true` drops failing projected ID rows and counts them, while paths, aggregates, existence, and absence remain snapshot-scoped; live SQL and assured-operation output follow PG |
-| Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch quarantines the projection generation |
+| Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch marks the chunk channel unready and schedules repair |
 | Runtime interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`; confirmed Cypher fails the same code before reading `memory_v1`. Unconfirmed Cypher independently verifies its P2 snapshot contract. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison rather than adding a deparser-dependent per-request hash. The four core operations remain available only if their own descriptors/invariants verify |
 | Forget is pending or incomplete | Live SQL/core lineage paths fail closed under D48/D74; an older P2 generation can reflect the lineage only as of its disclosed pre-forget `built_at`, and the first post-forget rebuild removes it from all later generations |
 
@@ -1630,7 +1629,7 @@ for the shipping surface pass before release.
    missing/stale/tombstoned/hash-mismatched row, and counts each drop exactly.
    Across 10,000 injected stale/mismatched candidates, zero unconfirmed rows or
    bytes return, every drop category is counted exactly, and no invocation
-   mixes projection, policy, or embedder generations.
+   mixes configured policy or embedder attestation.
 8. **Graph authority.** PG helpers equal exhaustive ground truth on generated
    graphs through their caps, use deterministic ordering, prevent cycles, obey
    both clocks, and report all caps. P2-accelerated core outputs equal their
@@ -1733,11 +1732,11 @@ for the shipping surface pass before release.
 
 | Deferred | Bound reason | Adoption trigger and required decision gate |
 |---|---|---|
-| `lexical_facts(query, k, filters)` | D94 moves fact labels to `p1_fact_search` but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and same-statement authority contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `fact_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
+| `lexical_facts(query, k, filters)` | D94 stores fact embeddings on natural relation/observation rows but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and same-statement authority contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `fact_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
 | Complete removal of the assured-operation layer | One-call typed defaults remain product value; this design does not decide their deletion | An open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
 | Automatic P2 rebuild/refresh on query-time staleness | Query latency and admission are not rebuild-control-plane authority; v1 serves the pinned snapshot with exact age and never starts or waits for a rebuild on a query | Reconsider only after at least 1% of Cypher requests across three deployments observe `p2_snapshot_age_seconds > 5,400` for 30 consecutive days despite the scheduled rebuild service meeting its assigned resources. Adoption requires a separate design for authenticated trigger authority, per-deployment deduplication, backpressure, budget isolation, failure storms, no query waiting, and proof that query-triggered work cannot replace or starve the scheduled rebuild path. |
 | Cypher adversarial hardening suite (large fuzz corpora, overflow-class traversal fuzz against the real engine, automatic generation-quarantine state machine, engine-specific abuse caps) | Operator measure-first directive (2026-08-04): no speculative constraints on graph queries or the engine; benchmarking and production telemetry locate real issues first, and an unusable engine is replaced rather than hardened around | Adopt (or replace the engine instead) when telemetry shows engine faults/timeouts on >0.1% of Cypher requests over any 7-day window, any single fault class recurs across three deployments, or a benchmarking campaign reproduces a fault; the §7 fault telemetry and kill switches ship in v1 either way, so the evidence arrives without the machinery |
-| Pgvectorscale StreamingDiskANN as the default ANN index | D94 binds pgvector HNSW first; installing a less mature index without a measured resource problem violates YAGNI | Use the trigger and parity/resource gate in `design/proposals/pgvectorscale_default_index.md`; promotion changes only the private vector index, never the public query contract or storage boundary |
+| Pgvectorscale StreamingDiskANN as the default ANN index | D94 binds pgvector HNSW first; installing an additional index extension without a present need violates YAGNI | The open proposal may inform a later binding decision. D94 does not install, test, benchmark, or pre-authorize it; a future promotion changes only the private vector index, never the public query contract or storage boundary. |
 | Media-segment public views/SRF | The binding media row/embedding contract is not yet part of this schema | First production corpus requiring SQL composition over D65 media segments; a separate design adds typed locators/derivation and rolls the schema/hash. |
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |
 | Saved-query registry import/export | Portable registry bytes need a format, trust boundary, and compatibility rule that local registry v1 does not yet need | First customer migration between deployments requiring registry transfer. Adoption requires a versioned interchange format, explicit trust/signing model, and source/target manifest-hash pinning and compatibility validation before activation. |
@@ -1751,7 +1750,7 @@ for the shipping surface pass before release.
 3. **Batch C — PostgreSQL-native P1 operations:** `semantic_claims`,
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
    `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies`; shared P1-port
-   paths, D80 generation pinning, same-statement authority joins, body
+   paths, D80 current-attestation readiness, same-statement authority joins, body
    verification, rank/score and drop disclosure, caps, cancellation/telemetry,
    manifest signatures, and per-surface OSS pages. `lexical_facts` remains only
    the §10 recorded alternative.

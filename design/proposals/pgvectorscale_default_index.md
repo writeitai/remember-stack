@@ -19,8 +19,9 @@ retaining pgvector's SQL distance operators and PostgreSQL storage boundary.
 
 ## Proposed change
 
-Replace a target's HNSW index with `USING diskann`. Do not change projection
-rows, stable IDs, authority joins, generation pinning, RRF, public operations
+Replace a target's HNSW index with `USING diskann`. Do not change natural rows
+or `chunk_search`, stable IDs, authority joins, the one current channel
+configuration, RRF, public operations
 or failure envelopes.
 
 ## Adoption trigger

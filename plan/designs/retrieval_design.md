@@ -15,7 +15,7 @@ points to measure, not committed constants (CLAUDE.md).
 > **Reading this cold (CLAUDE.md Rule 1).** The memory has three planes: **E** (evidence —
 > immutable claims, adjudicated relations/observations, all anchored on canonical entities with
 > bi-temporal validity), **K** (compiled + authored knowledge pages in git), and **P**
-> (projections: private PostgreSQL P1 search indexes, P2 LadybugDB graph
+> (projections: PostgreSQL-native P1 search state, P2 LadybugDB graph
 > snapshot, P3 corpus filesystem).
 > Two **grains** matter everywhere here: the **evidence grain** (claims — *what sources
 > asserted*, immutable, possibly stale or contradictory) and the **fact grain**
@@ -151,13 +151,14 @@ Deeper byte hydration verifies the current coordinate and reproducible hashes.
 The result is evidence grain with its own typed `chunks` payload: a chunk is
 source text, never an atomic claim or adjudicated fact.
 
-**Amendment (D80):** passage vectors are built under the embedding-input policy
-(`e1_embedding_input_policy.md`). P1 filter scalars expand beyond `section_role` to include
-`source_shape` and generation id; message-level refs (`channel_ref`, …) only when recipes declare
-operators. Scalars without filter support do not satisfy the contract. Search must be
-generation-safe across re-embed cutovers.
+**Amendment (D80/D94):** passage vectors are built under the embedding-input
+policy (`e1_embedding_input_policy.md`). Admitted filters join normalized
+authority such as `document_versions.source_shape` and
+`document_sections.role`; message-level refs (`channel_ref`, …) participate only
+when a recipe declares operators and the typed authority exists. Search validates
+one configured current attestation; it carries no copied generation/filter scalars.
 
-**Claim-channel filters (D80 decision):** claim P1 rows **do not** carry message scalars in v1.
+**Claim-channel filters (D80 decision):** claim rows **do not** carry message filter copies.
 Recipes that need channel/author/time on claim hits **join** claim → origin chunk (or document
 location facts). Do not invent per-claim scalar inheritance in the first implementation.
 
@@ -256,14 +257,15 @@ lexical chunk-ID nominations, hydrates each fused list exactly once through D48,
 returns the two payloads under one evidence envelope. This order avoids
 hydrating candidate-depth rows or counting one stale candidate more than once. Candidate depth
 is larger than returned depth; both bounds are declared in the operation schema and measured rather
-than hidden. Optional confirmed `entity_ids` narrow the P1-eligible set before candidate depth is
-applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
+than hidden. Optional confirmed `entity_ids` narrow the eligible set inside the
+same PostgreSQL ranked statement, through normalized associations, before
+candidate depth is applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
 relevance and before the candidate cut. The operation contains no fact or entity-candidate channel.
 
 `fact_context` is the fact-grain counterpart: semantic facts nomination followed by
 PostgreSQL confirmation under its current, valid-at, overlap, or history world-time mode. It
-applies entity and time eligibility before its internal candidate depth, using rebuildable P1
-metadata or a PostgreSQL-selected eligible-ID set scored by P1; the current-only public
+applies entity and time eligibility before its internal candidate depth by
+joining the normalized fact authority in the ranked PostgreSQL statement; the current-only public
 `semantic_facts` SRF is not the historical implementation. It returns facts with their
 supporting and contradicting evidence associations. `answer_context`
 does not add a retrieval path; it returns the complete testimony and fact responses as separate
@@ -551,7 +553,7 @@ labels, same trust model (§9).
   (hot-swapped per D7); PostgreSQL serves P1 semantic/BM25 entry, authority
   joins and registry lookups. LadybugDB is embedded in-process (D13) — no graph server.
 - **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); PostgreSQL
-  filtered ANN/BM25 search at 10⁷–10⁸ rows (D94 scale gate); multi-hop as-of path predicates
+  filtered ANN/BM25 search; multi-hop as-of path predicates
   (D44's known perf spike); `resolve` under trigram/phonetic load (registry indexes, D23).
 - **Scaling shape:** query nodes are stateless-plus-replicas → horizontal; the spine scales
   reads via the by-ID discipline (no fuzzy scans on the hot path — D23's index philosophy).
@@ -596,10 +598,11 @@ implementation consequences are:
 
 1. **P1 filtered hybrid search:** D94 supersedes the historical Lance/IVFFlat
    spike result as implementation authority. Pgvector HNSW and pg_textsearch
-   BM25 use target-specific private tables, ordinary PostgreSQL filter indexes
-   and same-statement authority joins. The prior Lance measurements remain
-   historical comparison data; the D94 parity/scale battery must establish the
-   new recall, latency, ingest, WAL and memory envelope before cutover.
+   BM25 use one private `chunk_search` sidecar plus embeddings/indexes on natural
+   PostgreSQL rows. Filters use normalized authority joins in the ranked
+   statement. The prior Lance measurements remain historical only; D94 requires
+   focused functional contract checks, not a parity or scale benchmark before
+   the direct replacement.
 2. **Hub pagination:** 500 neighbors fit below the battery's 64 KiB operational starting target
    at the 100,000-edge S49 hub; 1,000 did not. A snapshot-bound offset cursor walked all 100,000
    neighbors exactly once. The final machine-specific p95 was 310 ms, slightly above §10's
