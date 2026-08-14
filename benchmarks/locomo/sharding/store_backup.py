@@ -1471,7 +1471,9 @@ def restore_store(
     nested_mount_root = run_dir / ".mounts"
     if nested_mount_root != mount_root and nested_mount_root.is_dir():
         _rebase_published_mount_links(nested_mount_root)
-    receipt_destination = _receipt_path(run_dir=run_dir, sample_id=receipt.sample_id)
+    receipt_destination = _receipt_path(
+        run_dir=run_dir, sample_id=receipt.sample_id, checkpoint=manifest.checkpoint
+    )
     _write_model(path=receipt_destination, model=receipt)
     _write_model(
         path=_marker_path(run_dir),

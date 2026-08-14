@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import UTC
 import hashlib
+import inspect
 import io
 import json
 from pathlib import Path
@@ -401,6 +402,14 @@ def test_scoring_and_final_receipts_use_separate_stable_paths(tmp_path: Path) ->
         run_dir=tmp_path, sample_id="conv-1.scoring-base", checkpoint="final"
     )
     assert colliding_sample != scoring
+
+
+def test_restore_preserves_the_checkpoint_receipt_namespace() -> None:
+    """A restored scoring base remains usable as scoring authority."""
+
+    source = inspect.getsource(store_backup.restore_store)
+
+    assert "checkpoint=manifest.checkpoint" in source
 
 
 def test_scoring_authorization_binds_live_store_and_destination(
