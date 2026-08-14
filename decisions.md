@@ -295,8 +295,19 @@ columnar, Cypher, native paths, Parquet/Arrow interop, read-only multi-process m
 **Context.** Confirmed via web research and a survey of the vendored source tree
 (`plan/analysis/ladybug_capabilities.md`). Risks accepted: young fork; vector/FTS/algo extension
 implementations live in a separate repo (not vendored) — irrelevant to our usage since
-vectors/FTS stay in Lance (D8) and the engine features we depend on (COPY FROM, paths,
-projected graphs, read-only mode) are core, verified in source.
+P1 vector/BM25 search lives in private PostgreSQL tables (D94), while the Ladybug features
+we depend on (COPY FROM, paths, projected graphs, read-only mode) are core and verified in
+source.
+
+**Reaffirmed 2026-08-14.** PostgreSQL 18 recursive CTEs and Apache AGE were reconsidered after
+D94. Direct SQL is the simpler future candidate only if the product deliberately removes full
+public Cypher. AGE credibly preserves Cypher and PostgreSQL-native backup mechanics, but its
+label tables remain a duplicate projection, graph work shares the authority/P1 resource and
+fault boundary, and the inspected PG18 shortest-path API does not expose the arbitrary
+per-edge predicate needed to prove temporal filtering during traversal. Ladybug therefore
+remains binding until measured operational pain and the recorded parity/isolation gate justify
+a replacement. Analysis: `plan/analysis/postgresql_p2_graph_analysis.md`. Open, unchosen
+proposal: `design/proposals/postgresql_p2_graph.md`.
 
 ---
 
@@ -3776,8 +3787,9 @@ of the independent storage/consistency/backup boundary, not SQL ergonomics.
 **Consequences.** Ordinary DML maintains HNSW/BM25 entries; autovacuum and
 standard PostgreSQL telemetry own routine cleanup. Evidence-driven
 `REINDEX CONCURRENTLY` and optional post-bulk-load BM25 force-merge are
-operator actions, not a P1 ticker or request-path repair. PostgreSQL 17/18 plus
-pinned native extensions becomes a reference/self-host image requirement.
+operator actions, not a P1 ticker or request-path repair. PostgreSQL 18,
+continuously patched to the current 18.x minor, plus pinned native extensions
+becomes a reference/self-host image requirement.
 Search now shares PostgreSQL CPU, WAL, storage and failure blast radius, so
 capacity and autovacuum tuning become explicit. P1 is still rebuildable from
 authority and immutable artifacts and stays outside the public `memory_v1`

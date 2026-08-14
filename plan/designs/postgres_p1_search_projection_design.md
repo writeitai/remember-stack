@@ -87,8 +87,8 @@ snapshot and source bodies remain in the object/artifact estate.
 
 ## 4. Required extensions and supported PostgreSQL
 
-The reference and self-host PostgreSQL images SHALL support PostgreSQL 17 or
-18 and pin tested native builds of:
+The reference and self-host images SHALL run PostgreSQL 18, continuously
+patched to the current 18.x minor, and pin tested native builds of:
 
 - `vector` (required);
 - `pg_textsearch` (required and listed in `shared_preload_libraries`);

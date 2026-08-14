@@ -130,8 +130,9 @@ CREATE EXTENSION IF NOT EXISTS vector;        -- D94 private P1 semantic vectors
 CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- D94 private P1 BM25; also required in shared_preload_libraries
 ```
 
-PostgreSQL **17 or 18** is assumed because the binding pg_textsearch release
-supports those majors. `vectorscale` is created only after D94's accepted
+PostgreSQL **18**, kept on the current patched 18.x minor, is the binding
+baseline. The selected pg_textsearch release must support PostgreSQL 18.
+`vectorscale` is created only after D94's accepted
 DiskANN proposal is promoted; it is not a baseline extension. Composite-FK
 column-list `ON DELETE SET NULL` requires 15+; this is
 relied on for `document_crossrefs`, §6).

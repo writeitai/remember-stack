@@ -148,8 +148,9 @@ lexical replacement.
 This removes the store boundary while preserving independent semantic and
 BM25 nomination channels. Both operate over stable IDs in PostgreSQL and can
 apply the same authority filters in the same statement. HNSW needs no training
-ticker; BM25 maintenance is extension-owned. The costs are a PostgreSQL 17/18
-minimum, native-extension packaging, more PostgreSQL WAL/storage/CPU, and the
+ticker; BM25 maintenance is extension-owned. The costs are the binding
+PostgreSQL 18 baseline, native-extension packaging, more PostgreSQL
+WAL/storage/CPU, and the
 need to tune autovacuum and resource isolation.
 
 ### D. pgvectorscale DiskANN plus pg_textsearch from day one

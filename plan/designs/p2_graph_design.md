@@ -8,6 +8,15 @@ invalidation state).
 For a worked explanation of the claims / relations / evidence model and bi-temporality, see
 `../analysis/concepts.md`.
 
+> **Re-evaluated 2026-08-14.** D13 and LadybugDB remain binding. Moving P1 into
+> PostgreSQL does not imply moving P2: Apache AGE retains a duplicate graph
+> projection, shares the authority database's resource/fault boundary, and has
+> not yet proved the traversal-time temporal predicate required by filtered
+> shortest paths. Direct recursive PostgreSQL is the smaller future candidate
+> only if full public Cypher is deliberately removed. See the
+> [analysis](../analysis/postgresql_p2_graph_analysis.md) and the open,
+> unchosen [proposal](../../design/proposals/postgresql_p2_graph.md).
+
 ## 1. Role: a derived projection, never an authority
 
 The single most important decision. The graph is a **read-optimized projection of facts that

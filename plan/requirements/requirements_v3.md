@@ -212,7 +212,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 
 **Fixed engine choices** — the system's identity, never abstracted behind ports:
 
-- Relational spine and derived P1 search projection: **Postgres 17/18** with
+- Relational spine and derived P1 search projection: **PostgreSQL 18**, kept on
+  the current patched 18.x minor, with
   **pgvector** (semantic indexes) and **pg_textsearch** (BM25). **pgvectorscale**
   is the accepted measured scale upgrade for the vector index, not a second
   store or automatic default (D94). Graph: **LadybugDB**.

@@ -32,7 +32,7 @@ D54, D80, and D87 remain controlling.*
 ## 1. Principles (binding)
 
 1. **PostgreSQL authorizes every live result.** The live public data language IS
-   PostgreSQL 17/18 SQL over the versioned `memory_v1` schema. Physical tables,
+   PostgreSQL 18 SQL over the versioned `memory_v1` schema. Physical tables,
    raw projection tables, and operator schemas are never public. PostgreSQL
    views compile row-level invariants; P1 ranked scans join those authority
    views in the same statement, while P2 nominations promoted to live or
