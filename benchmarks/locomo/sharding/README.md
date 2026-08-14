@@ -129,17 +129,29 @@ publication manifest locally. For every assigned sample the driver:
 4. polls `processing_state` until no pending, running, or retryable failed rows remain, with a
    six-hour default budget, and stops immediately on a dead letter;
 5. builds projections through the Compose `operations` profile;
-6. publishes the ordinary P3 mount, then runs the complete-plane answer agent
+6. publishes the ordinary P3 mount, stops the stack, uploads and verifies a
+   complete recovery unit, then re-verifies that receipt as the mandatory
+   authorization for scoring;
+7. restarts the same stopped store without recreating its containers or
+   volumes, re-verifies the receipt, then runs the complete-plane answer agent
    and judge with run-absolute caps; and
-7. stops the stack; archives Postgres, MinIO, application state, forget
+8. stops the stack again; archives Postgres, MinIO, application state, forget
    manifests, run state, and the published mount root; uploads them to a unique
    immutable GCS prefix with CRC32C transport validation and create-only
    preconditions; checks object sizes; reads back the manifest; and writes a
-   verified receipt.
+   final verified receipt containing the scoring checkpoints. The scoring-base
+   and final receipts use separate stable local paths; neither can masquerade
+   as the other.
 
-Progress is emitted as UTC timestamped log lines. Sample stores are disposable
-only *after* their remote receipt verifies. A backup, upload, comparison, or
-read-back failure exits non-zero with the stack stopped and volumes intact.
+Progress is emitted as UTC timestamped log lines. The first verified receipt
+must exist before the first benchmark answer stage (the ingest credential
+preflight still makes its documented tiny model probe), and the final receipt
+must exist before the store is disposable. Wipe authorization independently
+requires complete answer and judge checkpoints. A backup, upload, comparison,
+or read-back failure exits non-zero with the stack stopped and volumes intact. A restart
+from a fully ingested checkpoint resumes the same marked store; if scoring had
+already begun, the runner first re-verifies its existing receipt and continues
+only missing answers and judgments.
 
 The following environment variables tune the driver without changing its arguments:
 

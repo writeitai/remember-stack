@@ -138,7 +138,9 @@ class BackupManifest(FrozenModel):
     sample_id: NonEmpty
     deployment_id: NonEmpty
     compose_project: NonEmpty
+    checkpoint: Literal["final", "scoring-base"] = "final"
     run: RunIdentity
+    sample_ingests_sha256: Sha256 | None = None
     run_files_sha256: dict[str, Sha256]
     archives: Annotated[tuple[ArchiveRecord, ...], Field(min_length=6, max_length=6)]
 
@@ -353,6 +355,26 @@ def _sample_deployment_id(*, run_dir: Path, sample_id: str) -> str:
     return deployment_ids.pop()
 
 
+def _sample_ingests_sha256(*, run_dir: Path, sample_id: str) -> str:
+    """Hash one sample's exact ingest checkpoints independently of scoring state."""
+
+    state = _load_object(run_dir / "state.json")
+    ingests = state.get("ingests")
+    if not isinstance(ingests, dict):
+        raise StoreBackupError("state.json has no ingest checkpoints")
+    selected = {
+        source_ref: record
+        for source_ref, record in ingests.items()
+        if isinstance(record, dict) and record.get("sample_id") == sample_id
+    }
+    if not selected:
+        raise StoreBackupError(f"state.json has no ingest checkpoints for {sample_id}")
+    payload = json.dumps(
+        selected, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return _bytes_sha256(payload)
+
+
 def _require_manifest_deployment(*, manifest: BackupManifest, run_dir: Path) -> None:
     """Require backup metadata to match the archived ingest checkpoints."""
 
@@ -370,6 +392,52 @@ def _require_manifest_checkpoint_files(
 
     if manifest.run_files_sha256 != _run_file_hashes(run_dir):
         raise StoreBackupError("local run checkpoint differs from the verified backup")
+
+
+def _require_manifest_scoring_base(*, manifest: BackupManifest, run_dir: Path) -> None:
+    """Require the live run to retain the exact ingestion protected for scoring."""
+
+    if manifest.checkpoint != "scoring-base":
+        raise StoreBackupError("verified backup is not a scoring-base checkpoint")
+    if manifest.sample_ingests_sha256 is None:
+        raise StoreBackupError("scoring-base backup has no ingest checkpoint identity")
+    immutable_names = set(RUN_CHECKPOINT_FILES) - {"state.json"}
+    current = _run_file_hashes(run_dir)
+    if any(
+        manifest.run_files_sha256[name] != current[name] for name in immutable_names
+    ):
+        raise StoreBackupError(
+            "local run identity differs from the scoring-base backup"
+        )
+    if manifest.sample_ingests_sha256 != _sample_ingests_sha256(
+        run_dir=run_dir, sample_id=manifest.sample_id
+    ):
+        raise StoreBackupError("local ingests differ from the scoring-base backup")
+
+
+def _require_sample_scoring_complete(*, run_dir: Path, sample_id: str) -> None:
+    """Require every selected question to have answer and judge checkpoints."""
+
+    run_manifest = _load_object(run_dir / "manifest.json")
+    state = _load_object(run_dir / "state.json")
+    item_ids = run_manifest.get("item_ids")
+    answers = state.get("answers")
+    judges = state.get("judges")
+    if (
+        not isinstance(item_ids, list)
+        or not isinstance(answers, dict)
+        or not isinstance(judges, dict)
+    ):
+        raise StoreBackupError("benchmark scoring checkpoints are incomplete")
+    selected = {
+        item_id
+        for item_id in item_ids
+        if isinstance(item_id, str) and item_id.startswith(f"{sample_id}/")
+    }
+    if not selected or not selected <= set(answers) or not selected <= set(judges):
+        raise StoreBackupError(
+            f"sample {sample_id} has no complete answer-and-judge checkpoint"
+        )
 
 
 def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
@@ -842,10 +910,16 @@ def _safe_component(value: str) -> str:
     return safe
 
 
-def _receipt_path(*, run_dir: Path, sample_id: str) -> Path:
-    """Return the stable local verified-receipt path for one sample."""
+def _receipt_path(
+    *,
+    run_dir: Path,
+    sample_id: str,
+    checkpoint: Literal["final", "scoring-base"] = "final",
+) -> Path:
+    """Return the stable local receipt path for one sample checkpoint."""
 
-    return run_dir / RECEIPT_DIRECTORY / f"{_safe_component(sample_id)}.json"
+    suffix = "" if checkpoint == "final" else ".scoring-base"
+    return run_dir / RECEIPT_DIRECTORY / f"{_safe_component(sample_id)}{suffix}.json"
 
 
 def _marker_path(run_dir: Path) -> Path:
@@ -962,9 +1036,41 @@ def authorize_wipe(*, run_dir: Path, compose_project: str) -> None:
         )
     if manifest.compose_project != compose_project:
         raise StoreBackupError("verified backup belongs to a different Compose project")
+    if manifest.checkpoint != "final":
+        raise StoreBackupError("verified backup is not the final scoring checkpoint")
     _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
     _require_manifest_checkpoint_files(manifest=manifest, run_dir=run_dir)
+    _require_sample_scoring_complete(run_dir=run_dir, sample_id=marker.sample_id)
     _log(f"sample={marker.sample_id} wipe-authorized receipt=verified")
+
+
+def authorize_scoring(
+    *, run_dir: Path, sample_id: str, compose_project: str, remote_destination: str
+) -> None:
+    """Require the current live sample to match its verified scoring-base backup."""
+
+    marker_path = _marker_path(run_dir)
+    if not marker_path.is_file():
+        raise StoreBackupError("current store has no live-sample marker")
+    marker = LiveStoreMarker.model_validate_json(marker_path.read_bytes())
+    if marker.sample_id != sample_id:
+        raise StoreBackupError("requested sample does not own the marked live store")
+    _volume_names(compose_project=compose_project)
+    receipt, manifest = verify_receipt(
+        _receipt_path(run_dir=run_dir, sample_id=sample_id, checkpoint="scoring-base")
+    )
+    if receipt.sample_id != sample_id or manifest.sample_id != sample_id:
+        raise StoreBackupError("scoring-base receipt identifies a different sample")
+    if manifest.compose_project != compose_project:
+        raise StoreBackupError(
+            "scoring-base backup belongs to a different Compose project"
+        )
+    destination_prefix = f"{remote_destination.rstrip('/')}/"
+    if not receipt.remote_prefix.startswith(destination_prefix):
+        raise StoreBackupError("scoring-base backup belongs to a different destination")
+    _require_manifest_deployment(manifest=manifest, run_dir=run_dir)
+    _require_manifest_scoring_base(manifest=manifest, run_dir=run_dir)
+    _log(f"sample={sample_id} scoring-authorized receipt=verified")
 
 
 def clear_live_store_marker(*, run_dir: Path) -> None:
@@ -984,6 +1090,7 @@ def backup_store(
     gcp_project: str,
     remote_destination: str,
     staging_root: Path,
+    receipt_checkpoint: Literal["final", "scoring-base"] = "final",
 ) -> BackupReceipt:
     """Stop, archive, upload, and verify one complete LoCoMo sample store."""
 
@@ -1093,7 +1200,11 @@ def backup_store(
         sample_id=sample_id,
         deployment_id=deployment_id,
         compose_project=compose_project,
+        checkpoint=receipt_checkpoint,
         run=identity,
+        sample_ingests_sha256=_sample_ingests_sha256(
+            run_dir=run_dir, sample_id=sample_id
+        ),
         run_files_sha256=_run_file_hashes(run_dir),
         archives=tuple(uploaded_archives),
     )
@@ -1134,7 +1245,10 @@ def backup_store(
     ):
         raise StoreBackupError("remote receipt bytes differ from the local receipt")
     _write_model(
-        path=_receipt_path(run_dir=run_dir, sample_id=sample_id), model=receipt
+        path=_receipt_path(
+            run_dir=run_dir, sample_id=sample_id, checkpoint=receipt_checkpoint
+        ),
+        model=receipt,
     )
     try:
         shutil.rmtree(staging)
@@ -1423,6 +1537,15 @@ def _parser() -> argparse.ArgumentParser:
     authorize.add_argument("--compose-project", default="rememberstack")
     _add_lock_arguments(authorize)
 
+    authorize_score = subparsers.add_parser(
+        "authorize-scoring", help="verify the current store may begin or resume scoring"
+    )
+    authorize_score.add_argument("--run-dir", type=_path, required=True)
+    authorize_score.add_argument("--sample", required=True)
+    authorize_score.add_argument("--compose-project", default="rememberstack")
+    authorize_score.add_argument("--destination", required=True)
+    _add_lock_arguments(authorize_score)
+
     clear = subparsers.add_parser(
         "clear-live", help="clear the marker after confirmed volume deletion"
     )
@@ -1443,6 +1566,12 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--project", required=True)
     backup.add_argument("--destination", required=True)
     backup.add_argument(
+        "--receipt-checkpoint",
+        choices=("final", "scoring-base"),
+        default="final",
+        help="stable local receipt slot written after remote verification",
+    )
+    backup.add_argument(
         "--staging-root",
         type=_path,
         default=Path("/var/lib/rememberstack-locomo-backups"),
@@ -1451,6 +1580,11 @@ def _parser() -> argparse.ArgumentParser:
 
     verify = subparsers.add_parser("verify", help="re-verify one remote receipt")
     verify.add_argument("--receipt", type=_path, required=True)
+    verify.add_argument(
+        "--run-dir",
+        type=_path,
+        help="also bind a scoring-base receipt to the current local run",
+    )
 
     restore = subparsers.add_parser("restore", help="restore one verified backup")
     restore.add_argument("--receipt", type=_path, required=True)
@@ -1506,6 +1640,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 authorize_wipe(
                     run_dir=arguments.run_dir, compose_project=arguments.compose_project
                 )
+            elif arguments.command == "authorize-scoring":
+                authorize_scoring(
+                    run_dir=arguments.run_dir,
+                    sample_id=arguments.sample,
+                    compose_project=arguments.compose_project,
+                    remote_destination=arguments.destination,
+                )
             elif arguments.command == "clear-live":
                 clear_live_store_marker(run_dir=arguments.run_dir)
             elif arguments.command == "preflight":
@@ -1522,9 +1663,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     gcp_project=arguments.project,
                     remote_destination=arguments.destination,
                     staging_root=arguments.staging_root,
+                    receipt_checkpoint=arguments.receipt_checkpoint,
                 )
             elif arguments.command == "verify":
-                verify_receipt(arguments.receipt)
+                _, manifest = verify_receipt(arguments.receipt)
+                if arguments.run_dir is not None:
+                    _require_manifest_scoring_base(
+                        manifest=manifest, run_dir=arguments.run_dir
+                    )
             elif arguments.command == "restore":
                 restore_store(
                     receipt_path=arguments.receipt,

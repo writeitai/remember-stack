@@ -213,6 +213,7 @@ import sys
 run_dir = Path(sys.argv[1])
 sample_id = sys.argv[2]
 manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+documents = json.loads((run_dir / "documents.json").read_text(encoding="utf-8"))
 state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
 item_ids = [
     item_id
@@ -224,17 +225,72 @@ complete = (
     and all(item_id in state["answers"] for item_id in item_ids)
     and all(item_id in state["judges"] for item_id in item_ids)
 )
+sample_source_refs = {
+    document["source_ref"]
+    for document in documents
+    if document["sample_id"] == sample_id
+}
+ingested_source_refs = {
+    source_ref
+    for source_ref, record in state["ingests"].items()
+    if record["sample_id"] == sample_id
+}
+ingested = bool(sample_source_refs) and ingested_source_refs == sample_source_refs
 partial = (
     any(record["sample_id"] == sample_id for record in state["ingests"].values())
     or any(item_id in state["answers"] for item_id in item_ids)
     or any(item_id in state["judges"] for item_id in item_ids)
 )
-print("complete" if complete else "partial" if partial else "empty")
+print(
+    "complete"
+    if complete
+    else "ingested"
+    if ingested
+    else "partial"
+    if partial
+    else "empty"
+)
+PY
+}
+
+sample_scoring_started() {
+  "$python_bin" - "$run_dir" "$1" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+run_dir = Path(sys.argv[1])
+sample_id = sys.argv[2]
+manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+item_ids = {
+    item_id
+    for item_id in manifest["item_ids"]
+    if item_id.startswith(f"{sample_id}/")
+}
+started = bool(item_ids.intersection(state["answers"])) or bool(
+    item_ids.intersection(state["judges"])
+)
+print("yes" if started else "no")
+PY
+}
+
+live_sample_id() {
+  local marker=$run_dir/.locomo-live-store.json
+  [[ -f "$marker" ]] || return 0
+  "$python_bin" - "$marker" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(value["sample_id"])
 PY
 }
 
 backup_sample() {
   local sample_id=$1
+  local checkpoint=${2:-final}
   "$python_bin" "$backup_tool" backup \
     --sample "$sample_id" \
     --run-dir "$run_dir" \
@@ -243,7 +299,45 @@ backup_sample() {
     --project "$backup_project" \
     --destination "$backup_destination" \
     --staging-root "$backup_staging_root" \
+    --receipt-checkpoint "$checkpoint" \
     --lock-fd 9
+}
+
+require_verified_scoring_backup() {
+  local sample_id=$1
+  "$python_bin" "$backup_tool" authorize-scoring \
+    --run-dir "$run_dir" \
+    --sample "$sample_id" \
+    --compose-project "$compose_project" \
+    --destination "$backup_destination" \
+    --lock-fd 9 ||
+    die "sample=$sample_id backup re-verification failed; refusing scoring"
+  log "sample=$sample_id backup=verified scoring=authorized"
+}
+
+require_verified_final_backup() {
+  local sample_id=$1
+  "$python_bin" "$backup_tool" authorize-wipe \
+    --run-dir "$run_dir" \
+    --compose-project "$compose_project" \
+    --lock-fd 9 ||
+    die "sample=$sample_id has no current final backup; refusing completion"
+}
+
+start_existing_store() {
+  "${compose[@]}" up --detach --wait --no-recreate \
+    --scale "worker-extract-claims=$extract_claim_workers" \
+    --scale "worker-normalize-relations=$normalize_relation_workers" \
+    --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
+    --scale "worker-embed-claim=$embed_claim_workers"
+  bind_benchmark_api
+  attest_worker_environment
+}
+
+stop_store_after_failed_scoring_authorization() {
+  log "scoring authorization failed after restart; stopping store"
+  "${compose[@]}" stop --timeout 120 || true
+  return 1
 }
 
 backup_completed_live_store() {
@@ -265,15 +359,20 @@ PY
   status=$(sample_status "$sample_id")
   [[ "$status" == complete ]] || return 0
   receipt=$run_dir/.locomo-backups/receipts/$sample_id.json
-  if [[ -f "$receipt" ]]; then
-    "$python_bin" "$backup_tool" verify --receipt "$receipt"
-  else
-    log "sample=$sample_id stage=backup status=resuming-after-completed-checkpoint"
-    backup_sample "$sample_id"
+  if [[ -f "$receipt" ]] &&
+    "$python_bin" "$backup_tool" authorize-wipe \
+      --run-dir "$run_dir" \
+      --compose-project "$compose_project" \
+      --lock-fd 9; then
+    return 0
   fi
+  log "sample=$sample_id stage=final-backup status=resuming-after-completed-checkpoint"
+  backup_sample "$sample_id" final
+  require_verified_final_backup "$sample_id"
 }
 
 pending_samples=()
+marked_sample=$(live_sample_id)
 for sample_id in "${requested_samples[@]}"; do
   status=$(sample_status "$sample_id")
   case "$status" in
@@ -281,6 +380,12 @@ for sample_id in "${requested_samples[@]}"; do
       log "sample=$sample_id status=already-complete"
       ;;
     empty)
+      pending_samples+=("$sample_id")
+      ;;
+    ingested)
+      [[ "$sample_id" == "$marked_sample" ]] ||
+        die "sample=$sample_id is ingested but does not own the marked live store"
+      log "sample=$sample_id status=resumable-ingested-checkpoint"
       pending_samples+=("$sample_id")
       ;;
     partial)
@@ -292,6 +397,13 @@ for sample_id in "${requested_samples[@]}"; do
   esac
 done
 backup_completed_live_store
+if [[ -n "$marked_sample" ]] && [[ "$(sample_status "$marked_sample")" == ingested ]]; then
+  ordered_pending=("$marked_sample")
+  for sample_id in "${pending_samples[@]}"; do
+    [[ "$sample_id" == "$marked_sample" ]] || ordered_pending+=("$sample_id")
+  done
+  pending_samples=("${ordered_pending[@]}")
+fi
 if [[ ${#pending_samples[@]} -eq 0 ]]; then
   log "shard complete; all requested samples were already checkpointed"
   exit 0
@@ -332,35 +444,75 @@ wait_for_drain() {
 }
 
 for sample_id in "${pending_samples[@]}"; do
-  "$python_bin" "$backup_tool" authorize-wipe \
-    --run-dir "$run_dir" \
-    --compose-project "$compose_project" \
-    --lock-fd 9
-  log "sample=$sample_id stage=wipe status=starting"
-  "${compose[@]}" down --volumes --remove-orphans
-  "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
-  log "sample=$sample_id stage=stack status=starting"
-  "${compose[@]}" up --detach --wait \
-    --scale "worker-extract-claims=$extract_claim_workers" \
-    --scale "worker-normalize-relations=$normalize_relation_workers" \
-    --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
-    --scale "worker-embed-claim=$embed_claim_workers"
-  bind_benchmark_api
-  attest_worker_environment
-  "$python_bin" "$backup_tool" record-live \
-    --run-dir "$run_dir" \
-    --sample "$sample_id" \
-    --compose-project "$compose_project" \
-    --lock-fd 9
+  status=$(sample_status "$sample_id")
+  if [[ "$status" == empty ]]; then
+    "$python_bin" "$backup_tool" authorize-wipe \
+      --run-dir "$run_dir" \
+      --compose-project "$compose_project" \
+      --lock-fd 9
+    log "sample=$sample_id stage=wipe status=starting"
+    "${compose[@]}" down --volumes --remove-orphans
+    "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
+    log "sample=$sample_id stage=stack status=starting"
+    "${compose[@]}" up --detach --wait \
+      --scale "worker-extract-claims=$extract_claim_workers" \
+      --scale "worker-normalize-relations=$normalize_relation_workers" \
+      --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
+      --scale "worker-embed-claim=$embed_claim_workers"
+    bind_benchmark_api
+    attest_worker_environment
+    "$python_bin" "$backup_tool" record-live \
+      --run-dir "$run_dir" \
+      --sample "$sample_id" \
+      --compose-project "$compose_project" \
+      --lock-fd 9
 
-  log "sample=$sample_id stage=ingest status=starting"
-  "$python_bin" -m benchmarks.locomo ingest \
-    --run "$run_dir" \
-    --sample "$sample_id" \
-    --max-documents "$max_documents" \
-    --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
-    --execute \
-    --confirm-isolated-deployment "$sample_id"
+    log "sample=$sample_id stage=ingest status=starting"
+    "$python_bin" -m benchmarks.locomo ingest \
+      --run "$run_dir" \
+      --sample "$sample_id" \
+      --max-documents "$max_documents" \
+      --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
+      --execute \
+      --confirm-isolated-deployment "$sample_id"
+  elif [[ "$status" == ingested ]]; then
+    [[ "$sample_id" == "$(live_sample_id)" ]] ||
+      die "sample=$sample_id cannot resume a different live store"
+    if [[ "$(sample_scoring_started "$sample_id")" == yes ]]; then
+      require_verified_scoring_backup "$sample_id"
+      log "sample=$sample_id stage=stack status=resuming-existing-store"
+      start_existing_store
+      require_verified_scoring_backup "$sample_id" ||
+        stop_store_after_failed_scoring_authorization
+      log "sample=$sample_id stage=answer status=resuming-from-checkpoint"
+      "$python_bin" -m benchmarks.locomo answer \
+        --run "$run_dir" \
+        --sample "$sample_id" \
+        --p3-root "$mount_root/$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID/p3" \
+        --max-questions "$max_questions" \
+        --max-agent-calls "$max_agent_calls" \
+        --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
+        --execute
+
+      log "sample=$sample_id stage=judge status=starting"
+      "$python_bin" -m benchmarks.locomo judge \
+        --run "$run_dir" \
+        --sample "$sample_id" \
+        --max-judge-calls "$max_judge_calls" \
+        --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
+        --execute
+
+      log "sample=$sample_id stage=final-backup status=starting"
+      backup_sample "$sample_id" final
+      require_verified_final_backup "$sample_id"
+      log "sample=$sample_id status=complete"
+      continue
+    fi
+    log "sample=$sample_id stage=stack status=resuming-existing-store"
+    start_existing_store
+  else
+    die "sample=$sample_id cannot enter runner loop with status=$status"
+  fi
 
   log "sample=$sample_id stage=drain status=waiting"
   wait_for_drain
@@ -375,6 +527,15 @@ for sample_id in "${pending_samples[@]}"; do
     --user "$(id -u):$(id -g)" \
     -v "$mount_root:$mount_root" \
     projections mounts --root "$mount_root"
+
+  log "sample=$sample_id stage=post-ingest-backup status=starting"
+  backup_sample "$sample_id" scoring-base
+  require_verified_scoring_backup "$sample_id"
+
+  log "sample=$sample_id stage=stack status=restarting-after-post-ingest-backup"
+  start_existing_store
+  require_verified_scoring_backup "$sample_id" ||
+    stop_store_after_failed_scoring_authorization
 
   log "sample=$sample_id stage=answer status=starting"
   "$python_bin" -m benchmarks.locomo answer \
@@ -394,8 +555,9 @@ for sample_id in "${pending_samples[@]}"; do
     --max-evaluator-cost-usd "$max_evaluator_cost_usd" \
     --execute
 
-  log "sample=$sample_id stage=backup status=starting"
-  backup_sample "$sample_id"
+  log "sample=$sample_id stage=final-backup status=starting"
+  backup_sample "$sample_id" final
+  require_verified_final_backup "$sample_id"
   log "sample=$sample_id status=complete"
 done
 
