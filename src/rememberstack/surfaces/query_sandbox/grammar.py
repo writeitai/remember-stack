@@ -33,6 +33,7 @@ from pglast.enums import CTEMaterialize
 from pglast.enums import SetOperation
 from pglast.parser import ParseError
 from pglast.stream import RawStream
+from pglast.visitors import Ancestor
 from pglast.visitors import Skip
 from pglast.visitors import Visitor
 
@@ -313,12 +314,13 @@ class _AllowlistVisitor(Visitor):
 
     def __init__(self, *, cte_names: frozenset[str]) -> None:
         super().__init__()
+        self.visit = self._visit_default
         self.cte_names = cte_names
         self.views: set[str] = set()
         self.functions: set[str] = set()
         self.srf_calls: list[FuncCall] = []
 
-    def visit(self, ancestors, node):  # noqa: ANN001, ANN201
+    def _visit_default(self, ancestors: Ancestor, node: Node) -> None:
         """The generic fallback: a node class with no dedicated visitor.
 
         pglast dispatches to `visit_<Class>` where one exists and here where it
@@ -845,6 +847,8 @@ def _cte_is_self_referencing(cte: CommonTableExpr) -> bool:
             return None
 
     scan = _SelfRef()
+    if cte.ctequery is None:
+        return False
     scan(cte.ctequery)
     return scan.found
 
@@ -1127,7 +1131,7 @@ def _rewrite_srf_invocations(
     assert isinstance(rewritten, SelectStmt)
     _rewrite_srf_invocations.bindings = tuple(bindings)  # type: ignore[attr-defined]
     if new_ctes:
-        existing = list(rewritten.withClause.ctes) if rewritten.withClause else []
+        existing = list(rewritten.withClause.ctes or ()) if rewritten.withClause else []
         recursive = bool(rewritten.withClause and rewritten.withClause.recursive)
         rewritten.withClause = WithClause(
             ctes=tuple(new_ctes + existing), recursive=recursive

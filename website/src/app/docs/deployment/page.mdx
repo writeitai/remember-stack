@@ -45,6 +45,11 @@ cp .env.example .env
 docker compose up --build --detach --wait
 ```
 
+The PostgreSQL 18 container mounts its named volume at `/var/lib/postgresql`.
+Pre-release volumes created by the older PostgreSQL image are not migrated. For
+this disposable quickstart, remove the old stack with
+`docker compose down --volumes` before starting the PostgreSQL 18 checkout.
+
 `--build` deliberately tests the checked-out source. The public `v0.4.1` release
 also ships this Compose file pinned to
 `ghcr.io/writeitai/remember-stack:0.4.1`; release consumers use
