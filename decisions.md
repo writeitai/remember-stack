@@ -3691,10 +3691,12 @@ request-path metering and `remember login`, so this decision is **D93**:
    skip-unchanged metadata do **not** count. Chunks are more sensitive
    (lower changed-row fraction and change-mass thresholds) than short-text
    facts/claims. `heavy_rebuild_min_hours` is an anti-thrash cap.
-5. Under sustained high write rate, heavy is **best-effort**: rate-defer
-   without burning attempts; conflict after a full train is one long
-   `not_before`; escalate to durable `awaiting_operator` rather than silent
-   thrash.
+5. Under sustained high write rate, heavy is **autonomous and best-effort**:
+   skip retrain while writers are hot; after a post-train commit conflict,
+   wait a long interval and try again. Compact and ensure keep running.
+   **Never** a “needs a human” flag, `awaiting_operator` stop, or required
+   writer hold. If writes never quiet, full IVF may stay deferred; search
+   stays correct. When the wave ends, the next tick retrains by itself.
 
 **Context.** BEAM-scale `label_relation` spent hours in per-row Lance
 `update` after embeds finished (~7.9k facts → thousands of tiny fragments).
@@ -3719,6 +3721,12 @@ because maintain was modeled as a D67 attempt. Analysis:
 `plan/analysis/p1_lance_maintain_ticker_analysis.md`. Rejected path:
 `plan/proposals/p1_lance_maintain_ledger_units.md`.
 
+**Autonomy amendment (2026-08-14).** `awaiting_operator` and `writer_gate`
+are rejected. Maintain is an unattended loop; a flag a person must clear
+is a stop, not honesty. Autonomous policy is backoff-and-retry. Analysis:
+`plan/analysis/p1_lance_autonomous_heavy_analysis.md`. Rejected path:
+`plan/proposals/p1_lance_awaiting_operator.md`.
+
 **Design.** `plan/designs/p1_lance_maintenance_design.md`.
 **Analysis.** `plan/analysis/p1_lance_maintenance_analysis.md`.
 **Companion rulebook.** `plan/analysis/lance_indexing_maintenance.md`.
@@ -3728,7 +3736,8 @@ calendar-only heavy; counting eligibility-only writes as change-mass;
 process-local mutation counters as estate policy; vectors as a live second
 copy in Postgres; claimed `maintain_p1_index` units / reclaim / heartbeat;
 stopping writers during optimize/retrain; wiring maintain into per-version
-readiness.
+readiness; durable `awaiting_operator` / “needs a human” flags;
+`writer_gate=hold` as a required quiet-window.
 
 **Amends.** Clarifies D8 write/maintenance contracts for the Lance
 projection. Does not amend D9 query path or D48 hydration.

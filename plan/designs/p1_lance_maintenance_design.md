@@ -1,11 +1,14 @@
 # Design: P1 Lance bulk writes and two-layer maintenance
 
-**Status:** binding (D93 entered; ticker amendment 2026-08-14)  
+**Status:** binding (D93 entered; ticker amendment 2026-08-14; autonomy amendment 2026-08-14)  
 **Date:** 2026-08-14  
 **Decision log:** [D93](../../decisions.md#d91--p1-lance-bulk-writes-and-two-layer-index-maintenance)  
 **Analysis:** [p1_lance_maintenance_analysis.md](../analysis/p1_lance_maintenance_analysis.md),
 [p1_lance_maintain_ticker_analysis.md](../analysis/p1_lance_maintain_ticker_analysis.md)  
-**Rejected alternative:** [p1_lance_maintain_ledger_units.md](../proposals/p1_lance_maintain_ledger_units.md)  
+**Rejected alternatives:**
+[p1_lance_maintain_ledger_units.md](../proposals/p1_lance_maintain_ledger_units.md),
+[p1_lance_awaiting_operator.md](../proposals/p1_lance_awaiting_operator.md)  
+**Autonomy analysis:** [p1_lance_autonomous_heavy_analysis.md](../analysis/p1_lance_autonomous_heavy_analysis.md)  
 **Companion rulebook (non-binding):** [lance_indexing_maintenance.md](../analysis/lance_indexing_maintenance.md)  
 **Reviews absorbed (r1):**
 - [REVIEW_claude-opus_p1_lance_maintenance_design_2026-08-13.md](../../design/reviews/REVIEW_claude-opus_p1_lance_maintenance_design_2026-08-13.md)
@@ -89,14 +92,14 @@ LanceDB guidance
 10. **Observability, enable gates, and failure contracts** in §5.5, §8–§9 are
     required for ship. Continuous auto-worker defaults **off** until soak
     (`maintenance_enabled` / `heavy_enabled`).
-11. **Heavy IVF under sustained high write rate is best-effort** (§5.7 rule 3):
-    skip retrain when write rate is high; on `create_index` commit conflict
-    after a full train, do **not** re-train 8× with sub-second pauses — record
-    the conflict on the stats row and try again on a later tick. Continuous
-    writers above the defer threshold do **not** guarantee eventual heavy
-    success without operator action; after a defined defer/conflict budget the
-    table enters durable **`awaiting_operator`** (visible, not silent thrash).
-    Operator may force a quiet window or accept stale IVF until natural quiet.
+11. **Heavy IVF under sustained high write rate is autonomous and best-effort**
+    (§5.7 rule 3): skip retrain when write rate is high; on `create_index`
+    commit conflict after a full train, wait a long interval and try again on
+    a later tick. **Never** stop for a human. There is no
+    `awaiting_operator` flag and no required writer hold. Compact and ensure
+    keep running. If writes never quiet, full retrain may stay deferred;
+    search remains correct (unindexed tail). When the wave ends, the next
+    tick retrains by itself.
 12. **Writers stay outside the maintain lock.** The lock serializes ticker vs
     ticker and ticker vs hard-forget `delete_unverified`. It does **not** pause
     `merge_insert`. Official OSS docs allow concurrent writes; collisions retry
@@ -161,8 +164,7 @@ is Lance write/maintenance correctness**, not claim grain fan-out.
 - Explicit heavy reindex when **durable change-mass / changed-row fraction**
   (and leftover unindexed ratio after light) require it, without thrashing
   multi-hour retrains under continuous writers; honest **best-effort** heavy
-  progress under sustained high write rate (terminal `awaiting_operator`, not
-  fake eventual-success while writers never quiet).
+  that keeps trying with backoff (never a “needs a human” stop).
 - Safe concurrent writers via existing commit-conflict retries. A **table-scoped
   maintain lock** serializes the ticker against other ticker ticks and against
   hard-forget `delete_unverified` only — writers stay outside it.
@@ -184,10 +186,8 @@ is Lance write/maintenance correctness**, not claim grain fan-out.
 - A claimed `maintain_p1_index` stage, reclaim, or heartbeat (rejected
   alternative: `plan/proposals/p1_lance_maintain_ledger_units.md`).
 - Expanding `label_lock` to wait on maintain workers (hot-path quiesce that
-  blocks labeling). **Supported ops path** is a separate bounded
-  `maintenance_writer_gate=hold` (or compose scale-down of label/embed for the
-  deployment) that pauses **new** Lance-mutating batches for a table without
-  holding `label_lock` across multi-hour `create_index` — see §5.7 rule 3.
+  blocks labeling). Writers stay outside the maintain lock. There is no
+  operator writer-hold gate.
 
 ## 5. Proposed design
 
@@ -480,11 +480,7 @@ New settings group (implementation chooses one namespace under
 | `heavy_rebuild_min_hours` | `24` | Anti-thrash **cap**: do not heavy more often than this unless admin / force. **Not** the discovery signal. |
 | `heavy_rebuild_unindexed_ratio` | `0.15` | Heavy candidate if unindexed/total ≥ 15% **after** a successful light pass still leaves high ratio (train quality proxy — **not** raw fragment debt) |
 | `heavy_defer_write_rate` | measure; start e.g. `N` merges/min or recent maintain-enqueue count | Defer heavy while write / maintain-enqueue rate exceeds this (§5.7 rule 3) |
-| `heavy_conflict_not_before_s` | `900`–`3600` (15–60 min) | After `create_index` commit conflict: ledger fail retryable with this `not_before` floor (one attempt) |
-| `heavy_rate_defer_escalate_n` | `12` | Consecutive pure rate-defers (no train) before unit enters `awaiting_operator` |
-| `heavy_conflict_defer_escalate_m` | `3` | Consecutive post-train conflict_defers before `awaiting_operator` |
-| `heavy_defer_age_escalate_h` | `24` | Wall-clock age of continuous heavy deferring (rate or conflict) before `awaiting_operator` if N/M not hit first |
-| `maintenance_writer_gate` | `open` (default) \| `hold` | Ops quiet-window gate: when `hold`, P1 writers **enqueue but do not start new Lance-mutating batches** for the gated table/deployment for a bounded period (§5.7 rule 3). Does **not** expand `label_lock` |
+| `heavy_conflict_not_before_s` | `900`–`3600` (15–60 min) | After `create_index` commit conflict: skip further trains this tick; next eligible tick is at least this far away. Autonomous — no human clear |
 | `maintain_poll_hours` | `1` | Self-seed light check cadence when idle |
 | `maintain_probe_min_s` | `60` | Floor between Lance stats probes inside `ensure_maintain_due` (durable stats first) |
 | `maintain_reclaim_min_s` | `60` | Floor between reclaim scans on the maintain tick |
@@ -509,26 +505,14 @@ New settings group (implementation chooses one namespace under
 - Never heavy-rebuild on read path.
 - Never hold `label_lock` across light or heavy Lance maintenance.
 - Never call synchronous `optimize()` / `create_index` from writers under lease.
-- Admin/ops may enqueue `mode=heavy` regardless of hours floor when
-  `heavy_enabled` (or via an explicit force path that bypasses the floor but
-  still respects table lock). Force still respects write-rate defer unless
-  ops has established a quiet window (`maintenance_writer_gate=hold` or
-  compose scale-down) or explicitly accepts conflict risk with
-  `force=true` after acknowledging possible `conflict_defer`.
 - Threshold evaluation uses **durable table-scoped stats** (§5.6).
 - **Baseline init:** if `last_heavy_row_count` is null and a vector index
   already exists, set baseline to current `count_rows()` **without** rebuilding
   (record-current). If no vector index and rows ≥ min gate, heavy/ensure builds
   now. If null and below min gate, wait.
-- **Stale cutoff vs heavy duration:** operators set
-  `maintain_running_stale_s` from `p1_lance_rebuild_duration_ms` p99 (must
-  exceed expected heavy duration when not using heartbeat). With heartbeat
-  enabled (binding for heavy, §5.5.2), reclaim uses heartbeat freshness and
-  the wall-clock floor is a secondary safety net only.
-- **`awaiting_operator`:** while set for a `(root, table, mode=heavy)`,
-  continuous `ensure_maintain_due` must **not** auto-enqueue another heavy for
-  that table (no silent thrash). Only admin clear / force-after-quiet / accept-
-  stale clears the flag (§5.7 rule 3).
+- **No human-escalation state.** Do not write `operator_state` or
+  `writer_gate=hold`. Those columns, if present from the first stats
+  migration, stay unused and may be dropped later.
 
 ### 5.4.1 How each operation is chosen (binding)
 
@@ -548,7 +532,7 @@ older than `maintain_probe_min_s`). Writers only bump counters.
 | --- | --- | --- |
 | **ensure** | A contracted index is missing, or vector IVF min-row gate (256) is newly crossed and no vector index exists | Ticker `list_indices`; finalizer after drain; admin. |
 | **compact** (`optimize`) | `num_unindexed_rows` ≥ `optimize_unindexed_rows` **or** `num_small_fragments` ≥ `optimize_small_fragments` | Ticker reads stats / Lance. |
-| **retrain** (`create_index replace=True`) | Durable **amount of change** since last successful train (below) **and** `heavy_enabled` **and** not `awaiting_operator` **and** write-rate defer does not apply **and** `heavy_rebuild_min_hours` has elapsed (unless force) | Ticker only. Writers never trigger retrain. |
+| **retrain** (`create_index replace=True`) | Durable **amount of change** since last successful train (below) **and** `heavy_enabled` **and** write-rate defer does not apply **and** `heavy_rebuild_min_hours` has elapsed **and** any conflict backoff has expired | Ticker only. Writers never trigger retrain. |
 
 Priority on one locked tick: **ensure first**, then compact if still dirty, then retrain only if compact is not also due (do not start a multi-hour IVF train on a table that still needs a cheap compact — compact first, re-evaluate retrain on the next tick).
 
@@ -615,13 +599,13 @@ loop:
         ensure_search_indexes(tables=(table,))
       elif light dirt:
         optimize_tables(tables=(table,))
-      elif heavy_enabled and not awaiting_operator and not rate_defer and retrain due:
+      elif heavy_enabled and not rate_defer and not conflict_backoff and retrain due:
         try:
           rebuild_vector_indexes(tables=(table,))
           maybe rebuild_text_indexes
           clear defer counters; reset change-mass; stamp last_heavy_*
         except CommitConflict:
-          bump conflict_defer_count; maybe awaiting_operator
+          stamp next_eligible_at += heavy_conflict_not_before_s
           do not re-train in this tick
       write stats + metrics
     finally:
@@ -635,9 +619,6 @@ because the user asked to erase now.
 
 **No heartbeat, no reclaim.** Session advisory locks die with the process.
 `optimize` and `create_index(..., replace=True)` are safe to run again.
-
-**Admin force** is a flag on the stats row (or a CLI that takes the lock and
-calls the port). It is not a ledger unit.
 
 **Lane / backfill.** The ticker is not a ledger row, so it cannot deadlock
 `BackfillFinalizer`'s "unresolved backfill rows" drain. Finalizer still
@@ -659,14 +640,9 @@ Keep:
 - `last_error`
 - **Change since last heavy (authoritative, §5.4.1):**
   `changed_rows_since_heavy`, `change_mass_since_heavy`
-- **Heavy escalation (authoritative):** `rate_defer_count`,
-  `conflict_defer_count`, `first_defer_at`, `operator_state`
-  (`null` \| `awaiting_operator`)
-- **Runtime writer gate (authoritative for hold/run):**
-  `writer_gate` (`run` \| `hold`) — set/cleared by admin/ops; live P1 writers
-  that mutate this table must re-read the gate **each batch** (not only process
-  start). Env/settings may supply the default on cold start; durable truth is
-  this row (or a sibling control row with the same key).
+- **Autonomous defer (optional, PR4b):** last write-rate hint,
+  `next_heavy_eligible_at` after a conflict. **Do not** use
+  `operator_state` / `writer_gate` even if the first migration created them.
 
 Updated at end of each maintain unit; writers may bump a cheap enqueue/write
 hint when `maintenance_enabled`. Optional `mutations_pending` counter is
@@ -717,54 +693,30 @@ material, all three sites.
    commit conflicts use `_LANCE_COMMIT_RETRIES` + jitter on the **writer** side.
 3. **Heavy progress under continuous writes (binding product contract):**
 
-   **Honesty over fake guarantee:** heavy IVF rebuild under **sustained
-   continuous write rate above the defer threshold** is **best-effort**, not
-   guaranteed eventual success while writers never quiet. The continuous path
-   may keep IVF training quality stale indefinitely until either a natural
-   quiet window appears or an operator acts. The system **must not** claim
-   automatic eventual progress in that regime; it **must** surface a durable
-   terminal operator-visible state instead of infinite silent thrash.
+   Retrain is **autonomous**. The engine never raises a “needs a human”
+   flag and never requires a writer hold. Analysis:
+   `plan/analysis/p1_lance_autonomous_heavy_analysis.md`. Rejected path:
+   `plan/proposals/p1_lance_awaiting_operator.md`.
 
-   **Steady-state policy (while under budget):**
-   - **Preferred:** **skip retrain** this tick while write rate exceeds
+   **Honesty:** a multi-hour IVF rebuild under a never-quiet write stream is
+   **best-effort**. Compact still folds tails into the existing index. Search
+   stays correct. Full retrain runs when write rate is low enough (or a
+   conflict backoff has expired). The system does **not** promise a successful
+   train while ingest never pauses; it **does** promise to keep trying without
+   a person.
+
+   **Policy:**
+   - **Skip retrain** this tick while write rate exceeds
      `heavy_defer_write_rate` (durable stats, not a hot `label_lock` probe).
-     Metric: `p1_lance_deferred_heavy`. Bump `rate_defer_count` /
-     `first_defer_at`. Compact may still run.
+     Compact may still run. Try again on the next tick — forever.
    - On `create_index` **commit conflict after a full train:** do **not**
-     re-train up to `_LANCE_COMMIT_RETRIES` (8) times in this tick. Record
-     one conflict on the stats row and leave. Metric: `p1_lance_conflict_defer`.
+     re-train up to `_LANCE_COMMIT_RETRIES` (8) times in this tick. Stamp
+     `next_heavy_eligible_at` at least `heavy_conflict_not_before_s` ahead
+     and leave. The later tick tries again. No terminal stop.
    - Light `optimize` may still use existing short `_LANCE_COMMIT_RETRIES`
      backoff (conflicts cost milliseconds of lost work).
-
-   **Terminal escalation:**
-   - After **`heavy_rate_defer_escalate_n`** consecutive pure rate-defers
-     (default **12**), **or** **`heavy_conflict_defer_escalate_m`** consecutive
-     conflict_defers (default **3**), **or** continuous defer age >
-     **`heavy_defer_age_escalate_h`** (default **24h**), the **stats row**
-     enters durable **`operator_state = awaiting_operator`**. This state
-     **does not** claim automatic eventual heavy progress.
-   - Metrics + alert: `p1_lance_awaiting_operator{table}`. The ticker must
-     **not** auto-retrain that table while the flag is set. Compact may run.
-   - **Supported operator actions** (both documented in runbook / D66 docs):
-     1. **Admin force quiet window then heavy:** set
-        `maintenance_writer_gate=hold` for the table/deployment (P1 writers
-        **enqueue but do not start new Lance-mutating batches** for a bounded
-        period), **or** compose scale-down of label/embed for that
-        deployment; then admin-force one heavy unit (`force=true`, clears
-        `awaiting_operator` on success). Release the gate after success (or
-        TTL). This is the path that actually creates the quiet window.
-     2. **Accept stale IVF until natural quiet (default if ops does nothing):**
-        leave `awaiting_operator`; IVF remains best-effort stale; light
-        optimize may still run. Clear flag only when ops re-enables continuous
-        heavy or a natural quiet window is observed and ops re-queues.
-   - After ledger attempt exhaustion on **conflict / hard-fail** paths (not
-     pure rate-defer): `dead_letter` via attempt-fenced `fail`; unit is not
-     open. If not already `awaiting_operator`, escalate to that state rather
-     than silent fresh-unit thrash under sustained high write rate.
-
-   - **No** expansion of `label_lock` to wait on maintain. The quiet gate is a
-     separate setting / compose action, not a label-path lock hold across
-     multi-hour `create_index`.
+   - **No** `awaiting_operator`. **No** `writer_gate=hold`. **No** expansion
+     of `label_lock` across `create_index`.
 
 4. **`label_lock` must not expand** to wait on maintain workers.
 5. **Hard-forget purge vs maintain (corruption hazard):**
@@ -825,8 +777,7 @@ FactIndexPort.upsert_facts:
 `MaintainReport` / `TableMaintainStats` are frozen models including per-table
 before/after row counts, unindexed, fragment stats, duration_ms,
 conflicts_retried, skipped reason (e.g. `below_min_rows`, `deferred_heavy`,
-`conflict_defer`, `awaiting_operator`, `heavy_needs_quiet_window`), and
-operation completed.
+`conflict_defer`), and operation completed.
 
 ### 6.2 Adapter `lance.py`
 
@@ -853,8 +804,7 @@ operation completed.
 - CLI `maintain-p1` + compose service `worker-maintain-p1` (not
   `worker --stage`)
 - Ticker uses try-lock + `P1IndexMaintenancePort`
-- enable gates default off; `maintenance_writer_gate` + admin force-quiet
-  runbook surface
+- enable gates default off; no writer-hold runbook
 - `BackfillFinalizer` takes table locks around `build_search_indexes`
 
 ## 7. Data model changes
@@ -879,8 +829,6 @@ No `pipeline_stage` / `processing_target` additions. No `p1_maintain_units`.
 | `p1_lance_commit_conflicts{op}` | counter | writer / compact short retries |
 | `p1_lance_deferred_heavy{table}` | counter | write-rate skip of retrain |
 | `p1_lance_conflict_defer{table}` | counter | post-train commit conflict |
-| `p1_lance_awaiting_operator{table}` | gauge | 1 while table is `awaiting_operator` |
-| `p1_lance_writer_gate{table}` | gauge | 1 while `maintenance_writer_gate=hold` |
 | `p1_lance_metadata_merge_rows` | counter | |
 | `p1_lance_metadata_merge_batches` | counter | |
 | `p1_lance_metadata_skipped_unchanged` | counter | |
@@ -889,7 +837,7 @@ No `pipeline_stage` / `processing_target` additions. No `p1_maintain_units`.
 | Structured logs | info | operation, table, durations, skip reason |
 
 Alerts: unindexed_rows high for >N hours; optimize/rebuild failures; disk free
-on the `lance_root` volume; **`awaiting_operator` transition**.
+on the `lance_root` volume. No human-escalation alert.
 
 Ship metrics **before** enabling the ticker in production.
 
@@ -901,7 +849,7 @@ Ship metrics **before** enabling the ticker in production.
 | Crash mid-optimize or mid-`create_index` | Session lock dies; next ticker tick retries the idempotent op |
 | Concurrent writer during compact | Writer and/or compact use short `_LANCE_COMMIT_RETRIES` |
 | Concurrent writer during retrain | Prefer skip retrain this tick; on post-train conflict record once and leave |
-| Sustained high write rate, retrain due | Rate-defer streak → `awaiting_operator` on the stats row |
+| Sustained high write rate, retrain due | Skip retrain this tick; compact still runs; try again next tick |
 | Disk full | Fail the tick; log critical; do not spin |
 | Purge vs ticker | Same table lock; ticker try-lock skips; forget bounded-waits |
 | Finalizer vs ticker | Finalizer holds same table lock per table around ensure+retrain |
@@ -936,7 +884,8 @@ Ship metrics **before** enabling the ticker in production.
 | Calendar-only heavy | Misses flat `count_rows` updates |
 | Stop writers during optimize/retrain | Not a Lance requirement; would recreate the stall |
 | Drop `delete_unverified` lock | Corruption hazard on forget |
-| Guaranteed eventual heavy under continuous high write | Dishonest without a quiet window |
+| Guaranteed eventual heavy under continuous high write | Dishonest; compact still works and retrain retries when quiet |
+| Durable `awaiting_operator` / writer hold | A human stop. Rejected — see proposal |
 | Gate `BackfillFinalizer` on `heavy_enabled` | Barrier exists to build indexes |
 
 ## 13. Open questions
@@ -944,11 +893,11 @@ Ship metrics **before** enabling the ticker in production.
 1. Exact settings namespace (`P1Settings` vs `SelfHostSettings` vs dedicated).
 2. Whether FTS rebuild shares heavy vector thresholds after first soak.
 3. Exact `heavy_defer_write_rate` unit after first BEAM metrics.
-4. Exact TTL for `maintenance_writer_gate=hold`.
 
 **Not open:** physical table grain; ticker not a pipeline stage; writers
 outside the maintain lock; bulk matched-only merge; skip-unchanged; two-layer
-ops; index matrix; gates default off; change-mass; vectors Lance-only.
+ops; index matrix; gates default off; change-mass; vectors Lance-only;
+**no human-escalation flag**.
 
 ## 14. Key decisions
 
@@ -969,7 +918,7 @@ ops; index matrix; gates default off; change-mass; vectors Lance-only.
 | K13 | Embedding migration rebuild remains a separate family |
 | K14 | Observability before auto activation |
 | K15 | Decision log **D93** entered; ticker amendment 2026-08-14 |
-| K16 | Heavy is **best-effort** under sustained high write rate → `awaiting_operator` |
+| K16 | Heavy is autonomous best-effort: backoff and retry; **never** a human flag |
 | K17 | Heavy discovery is durable change-mass; chunks more sensitive than short text |
 | K18 | PR1 ensures facts join-key indexes before large metadata merges |
 | K19 | Ledger-units design is a proposal, not binding |
@@ -982,11 +931,11 @@ ops; index matrix; gates default off; change-mass; vectors Lance-only.
 | **PR2** | Port: ensure/optimize/rebuild/stats + index matrix; purge lock; finalizer per-table locks | Adapter tests; ensure twice is non-destructive; IVF type match |
 | **PR3** | `p1_lance_table_stats` + ticker loop + compose `maintain-p1` + gates default off | Catalog verify; try-lock skip; ensure/compact chosen; writers not locked |
 | **PR4** | Writer change-mass bump + per-table heavy *triggers* (frac/mass/growth; unindexed ratio only after compact) | Flat row-count updates trip heavy via mass; eligibility and no-op upserts do not |
-| **PR4b** | Rate-defer / conflict-defer / `awaiting_operator` / `writer_gate` quiet window | Sustained writes escalate instead of silent thrash; compact still allowed |
+| **PR4b** | Autonomous rate-defer + conflict backoff only (no human flag, no writer hold) | Hot writes skip retrain this tick; conflict waits then retries; compact still runs |
 | **PR5** | BEAM soak | Sign-off |
 
-PR4b is a later PR. The stats columns already exist; PR4 must not pretend the
-escalation machine is live. Gates stay default-off until PR4b + metrics.
+PR4b is optional later work. Unused `operator_state` / `writer_gate` columns
+must not be written. Gates stay default-off until compact/ensure soak.
 
 Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 
@@ -1002,7 +951,7 @@ Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 | Ticker choose | Missing index → ensure; small fragments → optimize; mass + `heavy_enabled` → retrain |
 | Gates off | Ticker no-ops Lance ops |
 | Crash mid-optimize | Next tick retries; no ledger row |
-| Sustained high write + heavy | `awaiting_operator` on stats; compact still allowed |
+| Sustained high write + heavy | Retrain skipped this tick; compact still runs; later tick retries |
 | Backfill finalizer | Refuses when undrained; shared port under table locks |
 | Catalog contract | `p1_lance_table_stats` comments/constraints pass verify |
 
@@ -1012,7 +961,9 @@ Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 
 - Analysis: `plan/analysis/p1_lance_maintenance_analysis.md`
 - Ticker amendment analysis: `plan/analysis/p1_lance_maintain_ticker_analysis.md`
+- Autonomy analysis: `plan/analysis/p1_lance_autonomous_heavy_analysis.md`
 - Rejected ledger units: `plan/proposals/p1_lance_maintain_ledger_units.md`
+- Rejected human flag: `plan/proposals/p1_lance_awaiting_operator.md`
 - Rulebook: `plan/analysis/lance_indexing_maintenance.md`
 - Workers map: `plan/analysis/workers.md` §6.3
 - Code: `src/rememberstack/adapters/selfhost/lance.py`
