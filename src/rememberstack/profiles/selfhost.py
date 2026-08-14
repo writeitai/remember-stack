@@ -625,6 +625,26 @@ class SelfHostProfile:
         while True:
             loop.run_for(duration_s=self._settings.worker_session_s)
 
+    def run_p1_maintain_ticker(self) -> int:
+        """Run the D91 Lance ticker until the process is stopped."""
+        import time
+
+        from rememberstack.adapters.selfhost.lance import LanceChunkIndex
+        from rememberstack.spine.p1_maintain_ticker import P1MaintainSettings
+        from rememberstack.spine.p1_maintain_ticker import P1MaintainTicker
+
+        settings = P1MaintainSettings()
+        ticker = P1MaintainTicker(
+            engine=self._engine,
+            lance_root=self._settings.lance_root,
+            maintenance=LanceChunkIndex(root=self._settings.lance_root),
+            settings=settings,
+            deployment_id=self._settings.deployment_id,
+        )
+        while True:
+            ticker.tick()
+            time.sleep(settings.poll_s)
+
     def run_projection(self, *, plane: str) -> dict[str, object]:
         """Build P2, P3, or both once after continuous ingestion settles."""
         from rememberstack.spine import ForgetCatalog
@@ -853,6 +873,9 @@ def main(argv: list[str] | None = None) -> int:
         choices=tuple(stage.value for stage in _SUPPORTED_WORKER_STAGES),
         required=True,
     )
+    subparsers.add_parser(
+        "maintain-p1", help="run the D91 Lance maintain ticker (not a ledger stage)"
+    )
     projection = subparsers.add_parser(
         "project", help="build aggregate projections once"
     )
@@ -887,6 +910,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "mounts":
             print(profile.publish_mounts(root=args.root).model_dump_json())
             return 0
+        if args.command == "maintain-p1":
+            return profile.run_p1_maintain_ticker()
         profile.run_worker(stage=PipelineStage(args.stage))
         return 0
     finally:
@@ -897,7 +922,7 @@ def _initialize_error_tracking(
     *, command: str, deployment_slug: str
 ) -> TelemetryPort | None:
     """Initialize the optional Sentry sink only for long-lived profile entrypoints."""
-    if command not in {"api", "setup", "worker"}:
+    if command not in {"api", "setup", "worker", "maintain-p1"}:
         return None
     settings = SentrySettings.model_validate({})
     dsn = settings.configured_dsn()
