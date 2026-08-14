@@ -210,6 +210,109 @@ def test_fact_time_eligibility_is_applied_before_vector_top_k(tmp_path) -> None:
     assert selected(time=CurrentFactTime()) == set()
 
 
+def test_fact_metadata_merge_preserves_vector_and_label(tmp_path) -> None:
+    """Matched-only metadata merge must not wipe or insert embedding columns."""
+    deployment_id = uuid4()
+    present_id = uuid4()
+    missing_id = uuid4()
+    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_facts(
+        rows=(
+            _fact(
+                fact_id=present_id,
+                deployment_id=deployment_id,
+                ingested_at=ingested,
+                label="Alice works at Acme",
+                vector=(0.25, 0.75, 0.125),
+            ),
+        )
+    )
+    connection = lancedb.connect(str(tmp_path / "lance"))
+    before = _fact_lance_row(table=connection.open_table("facts"), fact_id=present_id)
+    index.update_fact_metadata(
+        rows=(
+            P1FactMetadataRow(
+                fact_id=present_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="invalidated",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=ingested,
+            ),
+            P1FactMetadataRow(
+                fact_id=missing_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="active",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=None,
+            ),
+            P1FactMetadataRow(
+                fact_id=present_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="invalidated",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=ingested,
+            ),
+        )
+    )
+    table = connection.open_table("facts")
+    after = _fact_lance_row(table=table, fact_id=present_id)
+    assert after["vector"] == before["vector"] == [0.25, 0.75, 0.125]
+    assert after["label"] == before["label"] == "Alice works at Acme"
+    assert after["status"] == "invalidated"
+    assert table.count_rows() == 1
+    indices = {(item.index_type, tuple(item.columns)) for item in table.list_indices()}
+    assert ("BTree", ("fact_id",)) in indices
+    assert ("BTree", ("deployment_id",)) in indices
+
+
+def test_fact_metadata_skip_unchanged_does_not_grow_versions(tmp_path) -> None:
+    """A second identical refresh must not issue another Lance merge commit."""
+    deployment_id = uuid4()
+    fact_id = uuid4()
+    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    root = tmp_path / "lance"
+    index = LanceChunkIndex(root=root)
+    index.upsert_facts(
+        rows=(
+            _fact(
+                fact_id=fact_id,
+                deployment_id=deployment_id,
+                ingested_at=ingested,
+                status="active",
+            ),
+        )
+    )
+    metadata = P1FactMetadataRow(
+        fact_id=fact_id,
+        deployment_id=deployment_id,
+        kind="relation",
+        status="invalidated",
+        valid_from=None,
+        valid_until=None,
+        ingested_at=ingested,
+        invalidated_at=ingested,
+    )
+    index.update_fact_metadata(rows=(metadata,))
+    connection = lancedb.connect(str(root))
+    version_after_change = connection.open_table("facts").version
+    index.update_fact_metadata(rows=(metadata,))
+    table = connection.open_table("facts")
+    assert table.version == version_after_change
+    row = _fact_lance_row(table=table, fact_id=fact_id)
+    assert row["status"] == "invalidated"
+    assert tuple(row["vector"]) == (1.0, 0.0)
+
+
 def test_upgraded_store_bootstraps_fts_and_chunk_id_index_on_read(tmp_path) -> None:
     """First read repairs pre-feature stores without requiring a new write."""
     deployment_id = uuid4()
@@ -334,8 +437,113 @@ def test_writes_and_maintenance_retry_commit_conflicts(
     )
 
     assert create_attempts >= 2
-    assert optimize_attempts == 2
+    assert optimize_attempts == 0
     assert merge_attempts == 3
+
+
+def test_fact_metadata_honors_kind_in_join_key(tmp_path) -> None:
+    """A shared fact_id across kinds must not hide the requested row."""
+    deployment_id = uuid4()
+    shared_id = uuid4()
+    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_facts(
+        rows=(
+            P1FactRow(
+                fact_id=shared_id,
+                deployment_id=deployment_id,
+                kind="observation",
+                label="obs label",
+                status="active",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=None,
+                vector=(0.0, 1.0),
+            ),
+            P1FactRow(
+                fact_id=shared_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                label="rel label",
+                status="active",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=None,
+                vector=(1.0, 0.0),
+            ),
+        )
+    )
+    index.update_fact_metadata(
+        rows=(
+            P1FactMetadataRow(
+                fact_id=shared_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="invalidated",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=ingested,
+            ),
+        )
+    )
+    table = lancedb.connect(str(tmp_path / "lance")).open_table("facts")
+    rows = {
+        row["kind"]: row
+        for row in table.search().where(f"fact_id = '{shared_id}'").limit(2).to_list()
+    }
+    assert rows["relation"]["status"] == "invalidated"
+    assert rows["observation"]["status"] == "active"
+    assert tuple(rows["relation"]["vector"]) == (1.0, 0.0)
+    assert tuple(rows["observation"]["vector"]) == (0.0, 1.0)
+
+
+def test_fact_writes_do_not_call_optimize(tmp_path, monkeypatch: Any) -> None:
+    """D91 PR1: ordinary fact writers never compact on the lease path."""
+    optimize_calls = 0
+    deployment_id = uuid4()
+    fact_id = uuid4()
+    ingested = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    # Seed the table so we can patch the concrete LanceTable type.
+    index.upsert_facts(
+        rows=(
+            _fact(fact_id=fact_id, deployment_id=deployment_id, ingested_at=ingested),
+        )
+    )
+    table_type = type(lancedb.connect(str(tmp_path / "lance")).open_table("facts"))
+    original = table_type.optimize
+
+    def banned_optimize(table: Any, *args: Any, **kwargs: Any) -> Any:
+        """Fail the test if a write path reaches Lance optimize."""
+        nonlocal optimize_calls
+        optimize_calls += 1
+        return original(table, *args, **kwargs)
+
+    monkeypatch.setattr(table_type, "optimize", banned_optimize)
+    monkeypatch.setattr(lance_adapter, "_INDEX_OPTIMIZE_MUTATIONS", 1)
+    index.upsert_facts(
+        rows=(
+            _fact(fact_id=fact_id, deployment_id=deployment_id, ingested_at=ingested),
+        )
+    )
+    index.update_fact_metadata(
+        rows=(
+            P1FactMetadataRow(
+                fact_id=fact_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                status="invalidated",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=ingested,
+                invalidated_at=ingested,
+            ),
+        )
+    )
+    assert optimize_calls == 0
 
 
 def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:
@@ -360,17 +568,26 @@ def _fact(
     valid_from: datetime | None = None,
     valid_until: datetime | None = None,
     invalidated_at: datetime | None = None,
+    label: str | None = None,
+    vector: tuple[float, ...] = (1.0, 0.0),
 ) -> P1FactRow:
     """Build one fact projection row for temporal prefilter acceptance."""
     return P1FactRow(
         fact_id=fact_id,
         deployment_id=deployment_id,
         kind="relation",
-        label=str(fact_id),
+        label=label if label is not None else str(fact_id),
         status=status,
         valid_from=valid_from,
         valid_until=valid_until,
         ingested_at=ingested_at,
         invalidated_at=invalidated_at,
-        vector=(1.0, 0.0),
+        vector=vector,
     )
+
+
+def _fact_lance_row(*, table: Any, fact_id: UUID) -> dict[str, Any]:
+    """Read one facts-channel row from the shipped Lance table."""
+    rows = table.search().where(f"fact_id = '{fact_id}'").limit(1).to_list()
+    assert rows
+    return rows[0]
