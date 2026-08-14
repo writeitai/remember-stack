@@ -8988,7 +8988,9 @@
                               "sval": "cur"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "NullTest",
@@ -9210,7 +9212,9 @@
                                     "sval": "cur"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             "rarg": {
                               "@": "RangeVar",
@@ -9394,7 +9398,9 @@
                             "sval": "entity_id"
                           }
                         ]
-                      }
+                      },
+                      "rexpr_list_end": 0,
+                      "rexpr_list_start": 0
                     },
                     "rarg": {
                       "@": "RangeVar",
@@ -9448,7 +9454,9 @@
                               "sval": "survivor"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -9487,7 +9495,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -10214,7 +10224,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -10253,7 +10265,9 @@
                                 "sval": "claim_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -10292,7 +10306,9 @@
                                 "sval": "doc_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -10629,7 +10645,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -10668,7 +10686,9 @@
                                 "sval": "claim_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -10707,7 +10727,9 @@
                                 "sval": "doc_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -11137,7 +11159,9 @@
                                       "sval": "deployment_id"
                                     }
                                   ]
-                                }
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
                               },
                               {
                                 "@": "A_Expr",
@@ -11176,7 +11200,9 @@
                                       "sval": "subject_entity_id"
                                     }
                                   ]
-                                }
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
                               }
                             ],
                             "boolop": {
@@ -11236,7 +11262,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -11275,7 +11303,9 @@
                                     "sval": "survivor_entity_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -11336,7 +11366,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -11375,7 +11407,9 @@
                                   "sval": "object_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -11435,7 +11469,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -11474,7 +11510,9 @@
                                 "sval": "survivor_entity_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -11800,7 +11838,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -11839,7 +11879,9 @@
                                     "sval": "claim_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -11878,7 +11920,9 @@
                                     "sval": "doc_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -11962,7 +12006,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -12001,7 +12047,9 @@
                                 "sval": "relation_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -12088,7 +12136,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -12127,7 +12177,9 @@
                                   "sval": "subject_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -12187,7 +12239,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -12226,7 +12280,9 @@
                                 "sval": "survivor_entity_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -12558,7 +12614,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -12597,7 +12655,9 @@
                                     "sval": "claim_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -12636,7 +12696,9 @@
                                     "sval": "doc_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -12720,7 +12782,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -12759,7 +12823,9 @@
                                 "sval": "observation_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -12960,7 +13026,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -12999,7 +13067,9 @@
                                     "sval": "chunk_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -13038,7 +13108,9 @@
                                     "sval": "doc_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -13099,7 +13171,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -13138,7 +13212,9 @@
                                   "sval": "claim_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -13177,7 +13253,9 @@
                                   "sval": "doc_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -13417,7 +13495,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -13456,7 +13536,9 @@
                                     "sval": "mention_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "NullTest",
@@ -13529,7 +13611,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -13568,7 +13652,9 @@
                               "sval": "entity_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -14341,7 +14427,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -14398,7 +14486,9 @@
                                     ]
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -14684,7 +14774,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -14718,7 +14810,9 @@
                                   "@": "String",
                                   "sval": "relation"
                                 }
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -14757,7 +14851,9 @@
                                     "sval": "relation_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -14791,7 +14887,7 @@
         }
       ],
       "definition_ast_serializer": "memory_v1.pglast_ast/1",
-      "postgresql_major": 16,
+      "postgresql_major": 18,
       "schema": "memory_v1",
       "schema_major": 1,
       "views": [
@@ -15074,7 +15170,9 @@
                                   "@": "String",
                                   "sval": "relation"
                                 }
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           },
                           "limitOption": {
@@ -15255,7 +15353,9 @@
                                       "@": "String",
                                       "sval": "relation"
                                     }
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 },
                                 {
                                   "@": "NullTest",
@@ -15355,7 +15455,9 @@
                                           "sval": "deployment_id"
                                         }
                                       ]
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   },
                                   {
                                     "@": "A_Expr",
@@ -15389,7 +15491,9 @@
                                         "@": "String",
                                         "sval": "relation"
                                       }
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   },
                                   {
                                     "@": "A_Expr",
@@ -15428,7 +15532,9 @@
                                           "sval": "relation_id"
                                         }
                                       ]
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   }
                                 ],
                                 "boolop": {
@@ -15601,7 +15707,9 @@
                                 "@": "String",
                                 "sval": "supersede"
                               }
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         }
                       },
@@ -15780,7 +15888,9 @@
                               "@": "String",
                               "sval": "observation"
                             }
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       }
                     },
@@ -15962,7 +16072,9 @@
                                 "@": "String",
                                 "sval": "observation"
                               }
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "NullTest",
@@ -16062,7 +16174,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -16096,7 +16210,9 @@
                                   "@": "String",
                                   "sval": "observation"
                                 }
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -16135,7 +16251,9 @@
                                     "sval": "observation_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -16308,7 +16426,9 @@
                           "@": "String",
                           "sval": "supersede"
                         }
-                      }
+                      },
+                      "rexpr_list_end": 0,
+                      "rexpr_list_start": 0
                     }
                   }
                 },
@@ -16536,7 +16656,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -16575,7 +16697,9 @@
                                 "sval": "artifact_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -17127,7 +17251,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -17166,7 +17292,9 @@
                                 "sval": "doc_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -17205,7 +17333,9 @@
                                 "sval": "version_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -17244,7 +17374,9 @@
                                 "sval": "representation_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "ColumnRef",
@@ -17318,7 +17450,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -17357,7 +17491,9 @@
                               "sval": "section_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -17396,7 +17532,9 @@
                               "sval": "doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -17435,7 +17573,9 @@
                               "sval": "version_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -17474,7 +17614,9 @@
                               "sval": "representation_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -18173,7 +18315,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -18212,7 +18356,9 @@
                                 "sval": "chunk_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -18273,7 +18419,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -18312,7 +18460,9 @@
                               "sval": "claim_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -18351,7 +18501,9 @@
                               "sval": "doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -19893,7 +20045,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -19932,7 +20086,9 @@
                                     "sval": "chunk_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -19971,7 +20127,9 @@
                                     "sval": "doc_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -20031,7 +20189,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -20070,7 +20230,9 @@
                                   "sval": "version_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -20109,7 +20271,9 @@
                                   "sval": "doc_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -20170,7 +20334,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -20209,7 +20375,9 @@
                                 "sval": "version_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -20248,7 +20416,9 @@
                                 "sval": "representation_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -20282,7 +20452,9 @@
                               "@": "String",
                               "sval": "ready"
                             }
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -20342,7 +20514,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -20381,7 +20555,9 @@
                               "sval": "doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -20881,7 +21057,9 @@
                           "@": "String",
                           "sval": ":"
                         }
-                      }
+                      },
+                      "rexpr_list_end": 0,
+                      "rexpr_list_start": 0
                     },
                     "name": [
                       {
@@ -20934,7 +21112,9 @@
                           }
                         }
                       ]
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   }
                 },
                 {
@@ -21574,7 +21754,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -21613,7 +21795,9 @@
                                 "sval": "from_doc_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -21674,7 +21858,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -21713,7 +21899,9 @@
                               "sval": "to_doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -22170,7 +22358,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -22209,7 +22399,9 @@
                               "sval": "doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "NullTest",
@@ -22523,7 +22715,9 @@
                           "sval": "current_version_id"
                         }
                       ]
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   }
                 }
               ],
@@ -22868,7 +23062,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -22907,7 +23103,9 @@
                                 "sval": "doc_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -22946,7 +23144,9 @@
                                 "sval": "current_version_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "NullTest",
@@ -23027,7 +23227,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -23066,7 +23268,9 @@
                               "sval": "version_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -23105,7 +23309,9 @@
                               "sval": "current_representation_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -23139,7 +23345,9 @@
                             "@": "String",
                             "sval": "ready"
                           }
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -23497,7 +23705,9 @@
                             "@": "String",
                             "sval": "ready"
                           }
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -23944,7 +24154,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -23983,7 +24195,9 @@
                                   "sval": "entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -24253,7 +24467,9 @@
                         "@": "String",
                         "sval": "active"
                       }
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   },
                   {
                     "@": "SubLink",
@@ -24366,7 +24582,9 @@
                                                       "sval": "deployment_id"
                                                     }
                                                   ]
-                                                }
+                                                },
+                                                "rexpr_list_end": 0,
+                                                "rexpr_list_start": 0
                                               },
                                               {
                                                 "@": "A_Expr",
@@ -24405,7 +24623,9 @@
                                                       "sval": "chunk_id"
                                                     }
                                                   ]
-                                                }
+                                                },
+                                                "rexpr_list_end": 0,
+                                                "rexpr_list_start": 0
                                               },
                                               {
                                                 "@": "A_Expr",
@@ -24444,7 +24664,9 @@
                                                       "sval": "doc_id"
                                                     }
                                                   ]
-                                                }
+                                                },
+                                                "rexpr_list_end": 0,
+                                                "rexpr_list_start": 0
                                               }
                                             ],
                                             "boolop": {
@@ -24504,7 +24726,9 @@
                                                     "sval": "deployment_id"
                                                   }
                                                 ]
-                                              }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
                                             },
                                             {
                                               "@": "A_Expr",
@@ -24543,7 +24767,9 @@
                                                     "sval": "version_id"
                                                   }
                                                 ]
-                                              }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
                                             },
                                             {
                                               "@": "A_Expr",
@@ -24582,7 +24808,9 @@
                                                     "sval": "doc_id"
                                                   }
                                                 ]
-                                              }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
                                             }
                                           ],
                                           "boolop": {
@@ -24643,7 +24871,9 @@
                                                   "sval": "deployment_id"
                                                 }
                                               ]
-                                            }
+                                            },
+                                            "rexpr_list_end": 0,
+                                            "rexpr_list_start": 0
                                           },
                                           {
                                             "@": "A_Expr",
@@ -24682,7 +24912,9 @@
                                                   "sval": "version_id"
                                                 }
                                               ]
-                                            }
+                                            },
+                                            "rexpr_list_end": 0,
+                                            "rexpr_list_start": 0
                                           },
                                           {
                                             "@": "A_Expr",
@@ -24721,7 +24953,9 @@
                                                   "sval": "representation_id"
                                                 }
                                               ]
-                                            }
+                                            },
+                                            "rexpr_list_end": 0,
+                                            "rexpr_list_start": 0
                                           },
                                           {
                                             "@": "A_Expr",
@@ -24755,7 +24989,9 @@
                                                 "@": "String",
                                                 "sval": "ready"
                                               }
-                                            }
+                                            },
+                                            "rexpr_list_end": 0,
+                                            "rexpr_list_start": 0
                                           }
                                         ],
                                         "boolop": {
@@ -24922,7 +25158,9 @@
                                                     "sval": "deployment_id"
                                                   }
                                                 ]
-                                              }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
                                             },
                                             {
                                               "@": "A_Expr",
@@ -24961,7 +25199,9 @@
                                                     "sval": "mention_id"
                                                   }
                                                 ]
-                                              }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
                                             },
                                             {
                                               "@": "NullTest",
@@ -25034,7 +25274,9 @@
                                               "sval": "deployment_id"
                                             }
                                           ]
-                                        }
+                                        },
+                                        "rexpr_list_end": 0,
+                                        "rexpr_list_start": 0
                                       },
                                       {
                                         "@": "A_Expr",
@@ -25073,7 +25315,9 @@
                                               "sval": "entity_id"
                                             }
                                           ]
-                                        }
+                                        },
+                                        "rexpr_list_end": 0,
+                                        "rexpr_list_start": 0
                                       }
                                     ],
                                     "boolop": {
@@ -25208,7 +25452,9 @@
                                               "sval": "deployment_id"
                                             }
                                           ]
-                                        }
+                                        },
+                                        "rexpr_list_end": 0,
+                                        "rexpr_list_start": 0
                                       },
                                       {
                                         "@": "A_Expr",
@@ -25247,7 +25493,9 @@
                                               "sval": "document_entity_id"
                                             }
                                           ]
-                                        }
+                                        },
+                                        "rexpr_list_end": 0,
+                                        "rexpr_list_start": 0
                                       }
                                     ],
                                     "boolop": {
@@ -25398,7 +25646,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -25437,7 +25687,9 @@
                                   "sval": "entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -25667,7 +25919,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -25706,7 +25960,9 @@
                                 "sval": "entity_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -25766,7 +26022,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -25805,7 +26063,9 @@
                               "sval": "survivor_entity_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -26181,7 +26441,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -26220,7 +26482,9 @@
                               "sval": "survivor_entity_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -26254,7 +26518,9 @@
                             "@": "String",
                             "sval": "active"
                           }
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -26721,7 +26987,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -26760,7 +27028,9 @@
                               "sval": "fact_kind"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -26799,7 +27069,9 @@
                               "sval": "fact_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -27139,7 +27411,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -27178,7 +27452,9 @@
                               "sval": "fact_kind"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -27217,7 +27493,9 @@
                               "sval": "fact_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -27908,7 +28186,9 @@
                           "sval": "evaluated_at"
                         }
                       ]
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   },
                   {
                     "@": "NullTest",
@@ -27992,7 +28272,9 @@
                               "sval": "evaluated_at"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -28061,7 +28343,9 @@
                               "sval": "evaluated_at"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -28418,7 +28702,9 @@
                                     "@": "String",
                                     "sval": "supports"
                                   }
-                                }
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
                               },
                               "agg_star": true,
                               "agg_within_group": false,
@@ -28492,7 +28778,9 @@
                                     "@": "String",
                                     "sval": "contradicts"
                                   }
-                                }
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
                               },
                               "agg_star": true,
                               "agg_within_group": false,
@@ -28567,7 +28855,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -28606,7 +28896,9 @@
                                   "sval": "fact_kind"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -28645,7 +28937,9 @@
                                   "sval": "fact_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -29015,7 +29309,9 @@
                                         "sval": "deployment_id"
                                       }
                                     ]
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 },
                                 {
                                   "@": "A_Expr",
@@ -29049,7 +29345,9 @@
                                       "@": "String",
                                       "sval": "support_withdrawn"
                                     }
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 },
                                 {
                                   "@": "A_Expr",
@@ -29093,7 +29391,9 @@
                                         "sval": "deferred"
                                       }
                                     }
-                                  ]
+                                  ],
+                                  "rexpr_list_end": 912,
+                                  "rexpr_list_start": 890
                                 },
                                 {
                                   "@": "A_Expr",
@@ -29133,7 +29433,9 @@
                                         "@": "String",
                                         "sval": "fact_kind"
                                       }
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   },
                                   "name": [
                                     {
@@ -29153,7 +29455,9 @@
                                         "sval": "fact_kind"
                                       }
                                     ]
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 },
                                 {
                                   "@": "A_Expr",
@@ -29193,7 +29497,9 @@
                                         "@": "String",
                                         "sval": "fact_id"
                                       }
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   },
                                   "name": [
                                     {
@@ -29228,7 +29534,9 @@
                                       "setof": false,
                                       "typemod": -1
                                     }
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 }
                               ],
                               "boolop": {
@@ -29725,7 +30033,9 @@
                         "@": "String",
                         "sval": "relation"
                       }
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   },
                   {
                     "@": "SubLink",
@@ -29812,7 +30122,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -29851,7 +30163,9 @@
                                   "sval": "subject_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -29946,7 +30260,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -29985,7 +30301,9 @@
                                   "sval": "object_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -30458,7 +30776,9 @@
                         "@": "String",
                         "sval": "relation"
                       }
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   },
                   {
                     "@": "SubLink",
@@ -30545,7 +30865,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -30584,7 +30906,9 @@
                                   "sval": "subject_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -30679,7 +31003,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -30718,7 +31044,9 @@
                                   "sval": "object_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -31011,7 +31339,9 @@
                                     "sval": "deployment_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             },
                             {
                               "@": "A_Expr",
@@ -31050,7 +31380,9 @@
                                     "sval": "entity_id"
                                   }
                                 ]
-                              }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
                             }
                           ],
                           "boolop": {
@@ -31110,7 +31442,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -31149,7 +31483,9 @@
                                   "sval": "survivor_entity_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -31210,7 +31546,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -31249,7 +31587,9 @@
                                 "sval": "mention_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -31614,7 +31954,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -31653,7 +31995,9 @@
                                   "sval": "survivor_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -31713,7 +32057,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -31752,7 +32098,9 @@
                                 "sval": "survivor_entity_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -32397,7 +32745,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -32436,7 +32786,9 @@
                               "sval": "survivor_entity_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -33161,7 +33513,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -33200,7 +33554,9 @@
                               "sval": "artifact_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -33234,7 +33590,9 @@
                             "@": "String",
                             "sval": "tombstoned"
                           }
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -33864,7 +34222,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -33903,7 +34263,9 @@
                                 "sval": "parent_artifact_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -33937,7 +34299,9 @@
                               "@": "String",
                               "sval": "tombstoned"
                             }
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "SubLink",
@@ -34023,7 +34387,9 @@
                                         "sval": "deployment_id"
                                       }
                                     ]
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 },
                                 {
                                   "@": "A_Expr",
@@ -34062,7 +34428,9 @@
                                         "sval": "artifact_id"
                                       }
                                     ]
-                                  }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
                                 }
                               ],
                               "boolop": {
@@ -34211,7 +34579,9 @@
                                               "@": "String",
                                               "sval": "redaction_required"
                                             }
-                                          }
+                                          },
+                                          "rexpr_list_end": 0,
+                                          "rexpr_list_start": 0
                                         },
                                         "typeName": {
                                           "@": "TypeName",
@@ -34305,7 +34675,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -34344,7 +34716,9 @@
                                   "sval": "artifact_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -34378,7 +34752,9 @@
                                 "@": "String",
                                 "sval": "authored_review"
                               }
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "NullTest",
@@ -34433,7 +34809,9 @@
                                 "@": "String",
                                 "sval": "authored"
                               }
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -34698,7 +35076,9 @@
                             "@": "String",
                             "sval": "compiled"
                           }
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "BoolExpr",
@@ -34735,7 +35115,9 @@
                                 "@": "String",
                                 "sval": "stale"
                               }
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "SubLink",
@@ -34821,7 +35203,9 @@
                                           "sval": "deployment_id"
                                         }
                                       ]
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   },
                                   {
                                     "@": "A_Expr",
@@ -34860,7 +35244,9 @@
                                           "sval": "artifact_id"
                                         }
                                       ]
-                                    }
+                                    },
+                                    "rexpr_list_end": 0,
+                                    "rexpr_list_start": 0
                                   },
                                   {
                                     "@": "NullTest",
@@ -34972,7 +35358,9 @@
                         "@": "String",
                         "sval": "tombstoned"
                       }
-                    }
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   },
                   {
                     "@": "SubLink",
@@ -35058,7 +35446,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -35097,7 +35487,9 @@
                                   "sval": "artifact_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -35464,7 +35856,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -35503,7 +35897,9 @@
                                   "sval": "doc_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -35542,7 +35938,9 @@
                                   "sval": "version_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -35581,7 +35979,9 @@
                                   "sval": "representation_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "ColumnRef",
@@ -35655,7 +36055,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -35694,7 +36096,9 @@
                                 "sval": "version_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -35733,7 +36137,9 @@
                                 "sval": "representation_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -35772,7 +36178,9 @@
                                 "sval": "structure_generation_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -35832,7 +36240,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -35871,7 +36281,9 @@
                               "sval": "parent_section_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -35910,7 +36322,9 @@
                               "sval": "doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -35949,7 +36363,9 @@
                               "sval": "version_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -35988,7 +36404,9 @@
                               "sval": "representation_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -36027,7 +36445,9 @@
                               "sval": "structure_generation_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -36632,7 +37052,9 @@
                                   "sval": "deployment_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           },
                           {
                             "@": "A_Expr",
@@ -36671,7 +37093,9 @@
                                   "sval": "doc_id"
                                 }
                               ]
-                            }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
                           }
                         ],
                         "boolop": {
@@ -36732,7 +37156,9 @@
                                 "sval": "deployment_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -36771,7 +37197,9 @@
                                 "sval": "claim_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         },
                         {
                           "@": "A_Expr",
@@ -36810,7 +37238,9 @@
                                 "sval": "doc_id"
                               }
                             ]
-                          }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
                         }
                       ],
                       "boolop": {
@@ -36871,7 +37301,9 @@
                               "sval": "deployment_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -36910,7 +37342,9 @@
                               "sval": "from_version_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       },
                       {
                         "@": "A_Expr",
@@ -36949,7 +37383,9 @@
                               "sval": "doc_id"
                             }
                           ]
-                        }
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
                       }
                     ],
                     "boolop": {
@@ -37207,5 +37643,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "2cd5f80c0dab258d82dc3fb2129a47a3624132887a4397e776d44090b85d4853"
+  "surface_manifest_hash": "b6e7a6079beb43df728d03aa909791e69c2dcd7c7ec13b130e1fff557c194c96"
 }

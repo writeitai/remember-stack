@@ -52,6 +52,7 @@ adapters:
 compose:
   - 'compose.yaml'
   - 'Dockerfile'
+  - 'Dockerfile.postgres'
   - '.github/compose/**'
   - '.env.example'
   - 'src/rememberstack/profiles/**'

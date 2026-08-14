@@ -44,7 +44,7 @@ QUERY_SPACE_SCHEMA_MAJOR: Final = 1
 #: a manifest field and therefore a hash input; the minor version deliberately
 #: is not, because the surface must not change when the server is patched. The
 #: schema gate asserts the running server reports this major.
-POSTGRESQL_MAJOR: Final = 16
+POSTGRESQL_MAJOR: Final = 18
 
 #: Finite vocabularies shared by several views, bound once.
 _DOCUMENT_STATUS: Final = (
