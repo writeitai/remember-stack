@@ -106,7 +106,7 @@ PRs; they must not be required to start D80.
 
 **Rules (keep small):**
 
-1. **Stable refs vs display names** — Lance/P1 filters use refs; names resolve via PG/P3.  
+1. **Stable refs vs display names** — P1 filters use refs; names resolve via PG/P3.
 2. **Multi-message chunks** — a chunk covering several messages carries a **set** (or
    ordered list) of span metadata; do **not** collapse to a single author/time. Headers
    and groundable text use a deterministic compact form (e.g. first–last time range,
@@ -292,14 +292,14 @@ retirement. Do not use sole in-place upsert-by-`chunk_id` as the migration story
 Scalars enable **typed prefilters** on the passage channel. A scalar that no
 recipe can filter on does **not** satisfy the retrieval contract.
 
-### 5.2 Universal Lance dimensions (v1)
+### 5.2 Universal P1 scalar dimensions (v1)
 
 - `source_kind` (connector)  
 - `source_shape`  
 - `section_role` (existing D58 pattern)  
 - **policy_generation** and **embedder_generation** (filter/search only the active pair)
 
-### 5.3 Source-specific Lance dimensions (only with recipe support)
+### 5.3 Source-specific P1 scalar dimensions (only with recipe support)
 
 Stable deployment-scoped refs: `channel_ref`, `thread_ref`, `author_ref`, and/or
 time range — bitmap/range indexes by measurement. **Opaque stable ids** preferred;
@@ -433,7 +433,7 @@ A deployment may swap conventional embedders when:
 - Hotfix-only “flush every N inside the old monolithic handler” as the end state  
 - Contextual embedder product support  
 - Default per-chunk LLM location sentences  
-- Ungoverned connector JSON in Lance  
+- Ungoverned connector JSON in P1
 - Global `i of N` in default headers  
 - Storing full embedding text in PG for every chunk  
 - Claiming scalars fix retrieval without recipe/filter support  

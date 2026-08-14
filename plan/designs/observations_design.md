@@ -4,8 +4,8 @@ How the system records and time-travels facts that are **about one entity but no
 entities** — a headcount, a balance, a fiscal revenue, a founding date, a status — *without* forcing
 them into the typed graph and *without* a governed attribute vocabulary. Binding design for decision
 **D43**. It sits beside the **relations** layer (D2–D5/D18, unchanged) and builds on D3 (supersession
-over verdicts, never claims), D4 (the cheap-first blocking cascade), D6 (validity has one home), D8
-(vectors live in Lance), D18 (the graph holds only entities), and D41 (claims carry an immutable
+over verdicts, never claims), D4 (the cheap-first blocking cascade), D6 (validity has one home), D94
+(P1 is a private PostgreSQL projection), D18 (the graph holds only entities), and D41 (claims carry an immutable
 asserted-validity interval).
 
 > **Reading this cold (CLAUDE.md Rule 1).** You need no prior context. A **claim** is an atomic,
@@ -39,7 +39,7 @@ headcount time-travels exactly as a changing employment does. They differ in two
 | typed by | a **governed predicate** (registry) | **nothing** — no attribute vocabulary |
 | supersession slot | `(subject, predicate, object)` exact key | the **resolved entity** (+ semantic narrowing) |
 | projects to graph (P2)? | **yes** (D18) | **no** |
-| projects to search (P1/Lance)? | yes (fact-label) | yes (observation label + optional value) |
+| projects to search (P1)? | yes (fact-label) | yes (observation label + optional value) |
 
 **Why two tables, not one merged "facts" table.** A relation and an observation can never describe the
 *same* belief (entity-object vs value-object are disjoint), so the D6 "one belief home" rule — which
@@ -67,7 +67,7 @@ and evidence. The row is deliberately lean (full DDL: `postgres_schema_design.md
   blocking key.
 - `statement` — the canonical natural-language form of the observed fact ("Acme's headcount is 600",
   "Acme's FY2023 revenue was \$5M"). This holds **everything** the value carries — the number, the unit,
-  and any reporting period ("FY2023") — and is embedded in Lance for semantic narrowing and retrieval.
+  and any reporting period ("FY2023") — and is embedded in the P1 fact projection for retrieval.
   There is deliberately **no structured `value` column, no period column, no fingerprint**: the value and
   the period are matched *semantically* by the adjudicator, exactly the way the *property* is (see §3).
   This keeps the layer fully consistent with its own untyped premise — nothing about a fact is given a
@@ -100,12 +100,12 @@ When a claim asserts a value/property about entity *E*:
    the key property — **exhaustive for that entity**. Nothing about *E* can be missed.
 2. **Narrow (only for hubs).** If *E* has many observations, rank them by **embedding similarity** to the
    new statement over open observation **statements** (versioned write-path vector cache; ordering
-   only — not Lance membership) to choose *which to compare first*. This is an ordering optimization,
+   only — not P1 membership) to choose *which to compare first*. This is an ordering optimization,
    not a membership filter: the entity block already makes **all** of *E*'s live observations
    *available* (an exact key — no clustering can hide one). Crucially, because `supersede` requires a
    **positive** match (step 3), a prior that top-k ranking happens to skip yields at worst a
    *duplicate coexisting observation* to reconcile later — **never** a wrong supersede. (Contrast pure
-   clustering, where a mis-clustered prior is invisible and silently duplicated.) P1/Lance fact
+   clustering, where a mis-clustered prior is invisible and silently duplicated.) P1 fact
    vectors remain a separate retrieval projection and are not required at write time.
 3. **Adjudicate (cheap-first cascade, D4).** Every outcome below first requires a **positive match on the
    same thing** — the adjudicator reading both `statement`s and judging *same property* (and, for a
@@ -282,7 +282,7 @@ keeps the one hard guarantee intact.
 
 Observations are **storage**; queries go through projections (D9), exactly like everything else:
 
-- **P1 / Lance** — each observation's `statement`/label is embedded for **semantic search**:
+- **P1 / PostgreSQL** — each observation's `statement`/label is embedded for **semantic search**:
   *"what has Acme's headcount been over time?"* resolves Acme, pulls its observations, orders by
   `valid_from`.
 - **P2 / graph** — observations are **never** projected (a value is not a node — D18). Only relations
@@ -294,7 +294,7 @@ Observations are **storage**; queries go through projections (D9), exactly like 
   capped, both conflicting `contradiction_group` members come back (both surfaced).
 
 The cost of untyped storage shows up here: a query for a *specific* property or value is **semantic**
-(over `statement`/label), not an exact typed-key or numeric-column lookup. That is what P1/Lance is built
+(over `statement`/label), not an exact typed-key or numeric-column lookup. That is what P1 is built
 for. The one thing it does *not* do cheaply is a **cross-entity numeric range scan** ("all entities with
 revenue > \$5M") — there is no structured `value` to range over. That is the explicit price of dropping
 the typed columns; if such scans become a real requirement, an optional structured `value` is a clean

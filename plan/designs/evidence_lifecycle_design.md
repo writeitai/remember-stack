@@ -192,7 +192,7 @@ lineage's current extraction basis *under the lineage's mode*:
 **What currency is not.** Not supersession, not invalidation, not a validity judgment — no
 adjudicator is involved, no `invalidated_at` exists, and nothing about the claim itself
 changes (text, spans, asserted validity, assertion time: immutable forever, D3 fully intact).
-Currency is processing bookkeeping — the same epistemic category as "this Lance row belongs
+Currency is processing bookkeeping — the same epistemic category as "this P1 row belongs
 to a superseded embedding version." Mechanically it is the D33 pattern: an **append-only
 transitions ledger** is the truth (timestamped, reason-coded, replayable — D7), and a cached
 flag + partial index on `claims` is the hot-path filter. Because transitions are timestamped

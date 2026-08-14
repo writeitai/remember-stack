@@ -325,7 +325,7 @@ internals (entity resolution, predicate registry, the supersession cascade) are 
   claims (claims stay immutable records of what was asserted).
 - **Adjudicate observations (D43).** Non-relational facts supersede by the *same* cascade, but block on
   the **resolved entity** (an exact, exhaustive key) instead of `(entity, predicate)`, narrowing a hub
-  entity's observations by semantic similarity (P1/Lance). The adjudicator decides supersede (cap the
+  entity's observations by semantic similarity using its versioned write-path rank cache. The adjudicator decides supersede (cap the
   prior window) / contradict (both stand, shared `contradiction_group`) / evidence / new, and **fails
   safe to coexist** when unsure — so a both-stand figure is never silently overwritten without any typed
   attribute vocabulary. Full design: `observations_design.md`.

@@ -1,6 +1,8 @@
 # Design: P1 Lance bulk writes and two-layer maintenance
 
-**Status:** binding (D93 entered; ticker amendment 2026-08-14)  
+**Status:** superseded by D94 and
+[`postgres_p1_search_projection_design.md`](postgres_p1_search_projection_design.md);
+retained as historical implementation rationale
 **Date:** 2026-08-14  
 **Decision log:** [D93](../../decisions.md#d91--p1-lance-bulk-writes-and-two-layer-index-maintenance)  
 **Analysis:** [p1_lance_maintenance_analysis.md](../analysis/p1_lance_maintenance_analysis.md),

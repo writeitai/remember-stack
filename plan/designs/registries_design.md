@@ -93,8 +93,9 @@ below**, so their maintenance is owned here. `profile_summary` — a short blurb
 researcher at CTU; works on entity resolution") — is shown on the P2 graph node and the P3
 entity index, and is given to **T4 adjudication as candidate context** (comparing a new
 "J. Novak" mention against a candidate is a much easier judgment when the candidate carries a
-profile — the Graphiti lesson). The **profile embedding** (stored in Lance, D8; the registry
-holds only `profile_embedding_ref`) is what **T3** compares mention embeddings against.
+profile — the Graphiti lesson). The **profile embedding** lives in the private
+PostgreSQL P1 entity projection (D94); the canonical registry holds no opaque
+external-store reference. **T3** compares mention embeddings against that projection.
 
 They are maintained by a dedicated **profile refresher** worker: a batched micro-LLM job
 (small model; stage `refresh_profile`, component `profile_summarizer` — schema §1), versioned
@@ -119,7 +120,7 @@ One canonical cascade. Stop at the first confident match. **Registry-self-contai
 | **T0** | exact match on the canonical name form (LLM-emitted, §5) | decision | Postgres |
 | **T1** | fuzzy blocking — `pg_trgm` GIN, recall-first low floor | **candidate generation, NOT a decision** | Postgres |
 | **T2** | phonetic — Daitch-Mokotoff (`fuzzystrmatch`), **not Soundex** | candidate generation | Postgres |
-| **T3** | embedding similarity, residue only | decision (mid band) | Lance (D8) |
+| **T3** | embedding similarity, residue only | decision (mid band) | PostgreSQL P1 (D94) |
 | **T4** | LLM adjudication (small→frontier); human review for high blast-radius | decision (ambiguous band) | worker |
 
 - **Thresholds are per-type, golden-set-measured, versioned** (`resolver_versions`), stamped on
@@ -742,7 +743,9 @@ appends a reversible, provenance-stamped record to `resolution_decisions`/`merge
   `aliases USING gin (daitch_mokotoff(normalized_lemma))`. The alias key is
   `normalized_lemma`. Keep the btree composite `(subject_entity_id, predicate[, object])` on
   `relations`; `btree_gin` is not required.
-- T0–T2 in Postgres; T3 embedding in Lance (D8); HNSW never in OLTP.
+- T0–T2 in PostgreSQL authority tables; T3 embedding in the private P1
+  projection (D94). P1 indexes share the database but remain derived and are
+  not exposed as authority tables.
 - **Row counts are sized against full extraction** (there is no value gate — D25); size the
   load-test against *ungated* volume.
 

@@ -60,7 +60,7 @@ manifest root before restored data can become readable; the library does not own
 
 The erasure capabilities are narrow protocols implemented by the already-selected adapters:
 `ObjectPurgePort`, `P1PurgePort`, `ProjectionPurgePort`, and `KGitPurgePort`. Each takes a typed
-manifest subset and must be idempotent. The self-host LocalFS/Lance/local-Git adapters and reference
+manifest subset and must be idempotent. The self-host LocalFS/PostgreSQL-P1/local-Git adapters and reference
 object/P1/mount/K adapters are both required in WP-7.5; these are purge capabilities of D61's
 existing stores, not alternative engines or new provider families.
 
@@ -229,8 +229,9 @@ gate.
 
 ## 6. Rejected complexity and explicit limitations
 
-- No distributed transaction or rollback across PostgreSQL, object storage, Lance, snapshots, and
-  Git. Append-first + idempotent replay + fail-closed admission is smaller and safer.
+- No distributed transaction or rollback across PostgreSQL, object storage, snapshots, and Git.
+  P1 rows can be purged in the PostgreSQL transaction; append-first + idempotent replay +
+  fail-closed admission handles the remaining boundaries.
 - No semantic "find similar private text" eraser. Exact lineage provenance, IDs, keys, citations,
   and source/content fingerprints are the boundary.
 - No soft-delete mode hidden in hard-forget. Normal deletion already owns reversible audit history.
@@ -246,8 +247,8 @@ gate.
 ## 7. WP-7.5 acceptance
 
 The deterministic S55 gate is intentionally compositional rather than one monolithic fixture: a
-real-PostgreSQL catalog canary proves inventory/scrub/residual SQL, a real self-host canary proves
-filesystem/Lance/projection/Git purge and independent restore re-honor, and a small coordinator
+real-PostgreSQL catalog canary proves inventory/scrub/residual SQL, including private P1 rows; a real
+self-host canary proves filesystem/projection/Git purge and independent restore re-honor, and a small coordinator
 canary proves ordering, fail-closed behavior, and never-existed envelope equality. They share the
 same typed manifest and handler contracts. This keeps each failure attributable while together
 planting a unique token in one lineage and independently supported control facts and proving:

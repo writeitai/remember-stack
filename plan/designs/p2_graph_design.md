@@ -21,7 +21,7 @@ Concretely:
   The graph mirrors the outcome. (Graphiti
   runs LLM-driven edge invalidation at graph-write time; we deliberately don't — that judgment
   already happened at E2. The graph writer is dumb and deterministic.)
-- **No embeddings in the graph.** Semantic entry points come from LanceDB/Postgres. Storing
+- **No embeddings in the graph.** Semantic entry points come from PostgreSQL P1. Storing
   vectors in two places is how stores drift apart (documented Mem0 failure mode). The graph's
   job starts when you already have an entity ID.
 - **No supersession blocking in the graph.** `(entity_id, predicate)` blocking runs on Postgres
@@ -87,7 +87,7 @@ CREATE REL TABLE IS_DOCUMENT(FROM Entity TO Document);  // bridge: a Document-ty
 
 > **Observations and claims do NOT project (D43/D18).** A non-relational fact (a value about one entity —
 > "Acme's headcount is 600") has no entity object, so it cannot be a REL (a LadybugDB endpoint must be a
-> node, never a literal); it lives in Postgres + Lance only. Two correctness rules govern the projection
+> node, never a literal); it lives in Postgres authority + the private P1 projection only. Two correctness rules govern the projection
 > (§10.A / D44): **merge-redirect** endpoints to surviving entities (a merge is a redirect, not a rewrite,
 > so a naive `status='active'` join silently drops merged-endpoint edges), and **keep every retracted
 > edge** (`invalidated_at` set, with no invalidation-age filter, D69) for transaction-time as-of — dropping
@@ -119,7 +119,7 @@ Rules:
   the Postgres registry before projection. The graph never contains two nodes for one entity.
 - **Edges project relations, not claims.** Edge count scales with distinct facts, not corpus
   redundancy. Attribute claims ("X was founded in 1998") and non-normalizable claims stay
-  E2-only — retrievable via Lance/Postgres. This keeps the graph lean (rough sizing at 1M
+  E2-only — retrievable via PostgreSQL P1 and authority hydration. This keeps the graph lean (rough sizing at 1M
   docs: ~50M claims → far fewer distinct relations → graph of a few GB, comfortably embedded).
 - **Contradictions project too**: an unresolved contradiction between relations becomes two
   live edges with a shared `contradiction_group` property, so retrieval can surface both sides.
@@ -306,10 +306,10 @@ Two design touch-ups this verification forces:
 ## 6. Retrieval flow — each store does one job
 
 "No embeddings in the graph" means no vectors inside the LadybugDB snapshot — it does NOT mean
-relations aren't semantically searchable. The semantic index for relations lives in **Lance,
-keyed by `relation_id`**.
+relations aren't semantically searchable. The semantic index for relations lives in the
+private PostgreSQL **P1 fact projection**, keyed by `relation_id`.
 
-### Decision record: why relation vectors live in Lance, not LadybugDB
+### Decision record: why relation vectors live in P1, not LadybugDB
 
 Considered and rejected: putting fact-label embeddings + HNSW into the graph snapshot for
 one-engine hybrid search. Four reasons:
@@ -321,30 +321,32 @@ one-engine hybrid search. Four reasons:
    every snapshot (vs. a few GB without), plus a full HNSW build per rebuild cycle (hours, not
    minutes). This kills the rebuild-first + ship-to-readers model that the rest of the design
    depends on.
-3. **Lance exists regardless.** E1 chunks and E2 claims are not graph objects; their vectors
-   must live in Lance anyway. Splitting the vector estate across two engines means two
+3. **P1 exists regardless.** E1 chunks and E2 claims are not graph objects; their vectors
+   must live in P1 anyway. Splitting the vector estate across two engines means two
    embedding pipelines, two index-maintenance regimes, two sets of failure modes.
 4. **The join we avoid is cheap.** Vector search returns top-k (~100s) relation_ids; the graph
    then does ID-keyed expansion/BFS on them. That cross-store hop is microseconds of ID
    lookups — not worth an architecture to eliminate.
 
-Division of labor: **Lance = entry** (semantic + BM25 + scalar-filtered candidate generation),
+Division of labor: **PostgreSQL P1 = entry** (semantic candidate generation for facts,
+semantic + BM25 candidate generation for claims/chunks, and scalar filters),
 **LadybugDB = structure** (expansion, paths, graph-distance reranking, as-of traversal via
 projected graphs). Revisit only if the snapshot model itself changes (e.g. an incremental
 writer makes in-graph HNSW maintenance plausible) — and even then, reason #1 must first
 disappear upstream.
 
-### The relations search table (Lance)
+### The relations search table (PostgreSQL P1)
 
 One row per distinct fact: `relation_id`, a canonical **fact label** ("Alice Novak works at
 Acme as VP of Engineering") with its embedding, plus scalar columns `subject_id, predicate,
 object_id, valid_from, valid_until, invalidated_at, evidence_count`. The label is regenerated
 when adjudication materially changes the relation (one short sentence — cheap).
 
-This is Graphiti's edge-fact search relocated to the designated vector store. Searching
+This is Graphiti's edge-fact search relocated to the designated P1 projection. Searching
 distinct facts instead of raw claims shrinks the search space ~5–10× and stops high-redundancy
-facts from crowding the result list; scalar columns give filtered hybrid search (predicate,
-entity scope, as-of windows) before the vector stage.
+facts from crowding the result list; scalar columns give filtered semantic search (predicate,
+entity scope, as-of windows) before the vector stage. Fact-label BM25 remains an explicit
+open-query deferral; D94 does not silently add a public lexical-facts channel.
 
 ### Search paths by query shape
 
@@ -352,7 +354,7 @@ entity scope, as-of windows) before the vector stage.
 |---|---|
 | "How are A and B related?" | entity resolution → graph adjacency (no vectors) |
 | "Who works at Acme?" | structured: relations `object=acme, predicate=works_for` (scalar only; D18 registry predicate) |
-| "Alice's career changes?" | semantic+BM25 over Lance relations, scoped to subject=alice, RRF-fused |
+| "Alice's career changes?" | semantic over P1 relations, scoped to subject=alice; structured and graph signals may rerank |
 | vague / no clear entity | semantic over relations AND claims; claim hits join to relations via evidence |
 | "what did source X say" | claim/chunk search (E1/E2); relations hydrate *down* to evidence |
 
@@ -360,11 +362,12 @@ entity scope, as-of windows) before the vector stage.
 
 ```
 query ──► entry points ──────────► expansion + rerank ──► hydration
-          Lance relations          LadybugDB              Postgres
-          (semantic + BM25)        neighborhood, paths,   relation → evidence
-          Lance claims/chunks      as-of filtering,       claims → sources,
-          PG FTS (lexical)         graph-distance         validity metadata,
-          PG registry (entity      reranking from         GCS pointers
+          PG P1 relations          LadybugDB              Postgres authority
+          (semantic)               neighborhood, paths,   relation → evidence
+          PG P1 claims/chunks      as-of filtering,       claims → sources,
+          (pgvector +              graph-distance         validity metadata,
+           pg_textsearch)          reranking from         GCS pointers
+          PG registry (entity
           name/alias lookup)       focal entities
 ```
 

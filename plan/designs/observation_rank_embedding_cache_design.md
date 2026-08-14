@@ -52,7 +52,7 @@ remaining true.
 | --- | --- |
 | `_rank` memoization + write-through rules | Changing novelty / supersede margins |
 | Same embedder_generation as observation rank settings | Multi-model vector spaces |
-| Process-local cache (required) | Requiring Lance at E3 write time |
+| Process-local cache (required) | Requiring the durable P1 search projection at E3 write time |
 | Optional durable PG cache | Replacing exhaustive SQL block with ANN |
 
 ## 5. Contracts
@@ -149,14 +149,13 @@ CREATE TABLE observation_rank_embeddings (
 - Included in hard-forget / deployment deletion via FK cascade or explicit
   purge hooks (Rule 3: no derived personal data outside deletion scope).
 
-### 5.7 Not Lance (write path)
+### 5.7 Not the durable P1 projection (write path)
 
 Rank cache is independent of the P1 facts channel. E3 may run before P1;
 rank text is `statement`.  
 
-**Binding prose chore on acceptance:** reword `observations_design.md` §3
-hub-narrowing from “P1/Lance” to “embedding similarity over open statements
-(versioned vector cache; ordering only).”
+`observations_design.md` §3 describes this as embedding similarity over open
+statements (versioned vector cache; ordering only).
 
 ## 6. Failure and recovery
 
@@ -179,7 +178,7 @@ hub-narrowing from “P1/Lance” to “embedding similarity over open statement
 | Alternative | Why not sole solution |
 | --- | --- |
 | Keep re-embedding | Quadratic hub cost |
-| Lance-only rank source | Timing/coupling; text drift |
+| P1-only rank source | Timing/coupling; text drift |
 | Drop embed rank | More LLM or worse ordering |
 
 ## 9. Acceptance criteria (implementation)

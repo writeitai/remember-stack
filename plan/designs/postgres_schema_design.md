@@ -3,11 +3,13 @@
 This document specifies the **complete Postgres schema** for `rememberstack`: every table, column,
 primary key, foreign key, index, enum, and the partitioning / deletion / versioning rules that
 tie them together. Postgres is the **single source of truth for plane E** (evidence) and the
-**only home of validity/invalidation state** (D6); every other store (LanceDB, LadybugDB, the
-GCS corpus filesystem, the K-plane git repo) is either a rebuildable projection of what lives
-here or an independently-backed source of truth whose *provenance and triggers* live here.
+**only home of validity/invalidation state** (D6). Private PostgreSQL P1 search
+tables are rebuildable derived rows, not authority (D94); LadybugDB and the GCS
+corpus filesystem are rebuildable projections, while the K-plane git repo is
+an independently-backed source of truth whose *provenance and triggers* live here.
 
 It is the binding companion to `overall_design.md` (§3 core data model, §9 lists this doc),
+`postgres_p1_search_projection_design.md` (D94 private derived search schema),
 `registries_design.md` (D15–D24), `e0_files_design.md` (D36–D40),
 `e2_e3_claims_relations_design.md` (D31–D35), `p2_graph_design.md` (D6–D11),
 `concepts.md` (the claims/relations/evidence/bi-temporality explainer) and `decisions.md`
@@ -106,10 +108,12 @@ These rules apply to every table unless a module overrides them with a stated re
 - **JSONB** is used only for open-ended, not-queried-by-key payloads (resolver feature vectors,
   tier configs, validation reports, DLQ payloads). Anything filtered or joined is a column.
 - **Naming.** snake_case; tables plural; `_id` = identity reference; `_ref` = opaque key into
-  another store (e.g. a Lance row key); `_uri` = GCS object URI; `_at` = timestamptz; `_version` =
+  another store; `_uri` = GCS object URI; `_at` = timestamptz; `_version` =
   component version string.
-- **No document/body text in Postgres (D37).** Postgres stores compact, query-critical metadata
-  and the section index; bodies/Markdown/chunk text/embeddings live in GCS / Lance. The schema
+- **No source document/body text in authority tables (D37/D94).** The authority
+  schema stores compact, query-critical metadata and the section index;
+  bodies/Markdown remain in GCS. Private rebuildable P1 tables store only the
+  canonical search text and embeddings required by pgvector/pg_textsearch. The authority schema
   stores **offsets + URIs**, plus the small generated artifacts that must be *replayed* on rebuild
   (context prefixes, claim text, decision ledgers) — derived metadata, not source bodies.
 
@@ -122,9 +126,14 @@ CREATE EXTENSION IF NOT EXISTS fuzzystrmatch; -- T2 phonetic: daitch_mokotoff() 
 CREATE EXTENSION IF NOT EXISTS unaccent;      -- accent-fold names before trigram/phonetic (registries §5)
 CREATE EXTENSION IF NOT EXISTS btree_gist;    -- composite GiST: relations bi-temporal EXCLUDE constraint (§9)
 CREATE EXTENSION IF NOT EXISTS pg_partman;    -- monthly RANGE partition automation (D23, §12)
+CREATE EXTENSION IF NOT EXISTS vector;        -- D94 private P1 semantic vectors/HNSW
+CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- D94 private P1 BM25; also required in shared_preload_libraries
 ```
 
-PostgreSQL **16+** is assumed (composite-FK column-list `ON DELETE SET NULL` requires 15+; this is
+PostgreSQL **17 or 18** is assumed because the binding pg_textsearch release
+supports those majors. `vectorscale` is created only after D94's accepted
+DiskANN proposal is promoted; it is not a baseline extension. Composite-FK
+column-list `ON DELETE SET NULL` requires 15+; this is
 relied on for `document_crossrefs`, §6).
 
 ---
@@ -686,7 +695,7 @@ defined in `concepts.md` §6.
 -- composite-FK target that keeps every entity reference inside one deployment (§0).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE entities (
-  entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to Lance/Ladybug
+  entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to P1/Ladybug
   deployment_id   uuid NOT NULL REFERENCES deployments,
   type            text NOT NULL,               -- canonical type = majority/highest-confidence vote across mentions (registries §4)
   canonical_name  text NOT NULL,               -- preferred display/blocking name; mirrored as an alias row (invariant below)
@@ -695,7 +704,6 @@ CREATE TABLE entities (
   merged_into     uuid,                        -- redirect target when status=merged; follow the chain to the survivor (D21)
   type_confidence real,                        -- confidence of the type vote; low + cross-mention disagreement ⇒ over-merge signal (registries §4)
   profile_summary text,                        -- short registry-maintained blurb; improves future LLM adjudication (Graphiti lesson)
-  profile_embedding_ref text,                  -- opaque Lance key for the profile embedding used in T3 (no vectors in PG/graph — D6/D8)
   mention_count   integer NOT NULL DEFAULT 0,  -- cached |mentions|; half of blast_radius (registries §6) and a health metric
   graph_degree    integer NOT NULL DEFAULT 0,  -- cached relation degree from the LATEST PUBLISHED P2 snapshot (§9); other half of blast_radius
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -1262,15 +1270,16 @@ CREATE INDEX ix_crossrefs_to   ON document_crossrefs (to_doc_id) WHERE to_doc_id
 
 ## 7. E1 — chunks
 
-Retrieval-sized units that preserve context and trace back to position. Chunk **text and embedding
-live in Lance (P1)**; Postgres holds metadata, offsets, the section link, and the **generated
+Retrieval-sized units that preserve context and trace back to position. Chunk
+**search text and embedding live in private PostgreSQL P1 tables**; authority
+tables hold metadata, offsets, the section link, and the **generated
 context prefix** (LLM-derived, so it is *replayed* on rebuild, not regenerated — D7 — and therefore
 stored as derived metadata, not body text).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
 -- chunks — semchunk units, section-aware (never split mid-section, D39). Body = markdown_uri sliced
--- by [char_start,char_end] (NOT stored in PG, D37). Embedding in Lance keyed by chunk_id. Large
+-- by [char_start,char_end] (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1297,7 +1306,6 @@ CREATE TABLE chunks (
   context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
   prefixer_version text,                       -- LEGACY context_prefixer component version
   chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
-  embedding_ref   text,                        -- opaque Lance row key for this chunk's vector under active generation (vectors in P1 — D8)
   embedding_version text,                      -- LEGACY single embedder stamp; prefer passage generation records (D80 dual-generation)
   policy_generation text,                      -- embedding_input_policy_version (active pair half)
   -- embedder half lives in embedding_version / pipeline_component_versions; P1 key is
@@ -1306,7 +1314,7 @@ CREATE TABLE chunks (
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Text+embedding live in Lance (P1); PG stores offsets, section link, D80 location-facts/header/hash/policy stamps (not full embedding body — D37), version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Canonical search text+embedding live in private PostgreSQL P1 tables (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup
@@ -1405,7 +1413,6 @@ CREATE TABLE claims (
   claim_valid_precision claim_valid_precision NOT NULL DEFAULT 'unknown', -- unknown|instant|day|month|quarter|year|open — "FY2023" stores a normalized [start,end] without lying about granularity
   claim_valid_kind claim_valid_kind,           -- which world-interval this is: proposition_validity|event_time|measurement_period|effective_period (so a measurement period is never conflated with an event date or with asserted_at)
   extractor_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions (extractor); replay-on-rebuild key (D33)
-  embedding_ref   text,                        -- opaque Lance key (claims are searchable in P1)
   embedding_version text,                       -- LOGICAL FK → pipeline_component_versions (embedder)
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time + partition key; immutable
   PRIMARY KEY (claim_id, ingested_at),
@@ -1426,7 +1433,7 @@ CREATE INDEX ix_claims_chunk    ON claims (chunk_id);
 CREATE INDEX ix_claims_flagged  ON claims (deployment_id) WHERE kept_flagged = true;        -- review surface (D35)
 CREATE INDEX ix_claims_current  ON claims (deployment_id, doc_id) WHERE is_current_testimony; -- the D54 hot filter (counts; default claim search)
 CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = 'sampled_fail'; -- grounding regressions
--- D41 claim-validity is projected to Lance (P1) as filterable scalar columns (claim_valid_from/until/
+-- D41 claim-validity is projected to private PostgreSQL P1 rows as filterable scalar columns (claim_valid_from/until/
 -- precision) beside the claim embedding (same pattern as relation windows, D8). Retrieval Batch B
 -- supersedes the original no-default-index stance: `claims_as_of(from,to)` first filters in the
 -- authoritative Postgres spine, then optionally ranks only that bounded set semantically. Stamped
@@ -1542,7 +1549,7 @@ predicate or Date-entity (D18).
 -- relations — distinct bi-temporal facts (D2/D3). The (entity_id,predicate) blocking key for
 -- supersession is the composite index below; it is small (distinct facts, not assertions) —
 -- what makes supersession affordable at scale (concepts §6). The canonical fact LABEL + its
--- embedding live in Lance (D8); PG keeps the label text + version + a Lance ref. Not partitioned.
+-- embedding live in private PostgreSQL P1 (D94); the authority row keeps the label text + version. Not partitioned.
 --
 -- "Live belief" = invalidated_at IS NULL (transaction-time), regardless of valid_until: a
 -- believed-historical fact ("Alice worked at Acme 2020-2022", valid_until set, invalidated_at NULL)
@@ -1557,7 +1564,7 @@ predicate or Date-entity (D18).
 -- new claim's time.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE relations (
-  relation_id     uuid PRIMARY KEY,            -- the fact's identity; provenance handle in the graph/Lance projections
+  relation_id     uuid PRIMARY KEY,            -- the fact's identity; provenance handle in graph/P1 projections
   deployment_id   uuid NOT NULL REFERENCES deployments,
   subject_entity_id uuid NOT NULL,             -- canonical subject (composite FK below; only canonical entities enter relations/graph — p2 §2)
   predicate       text NOT NULL,               -- governed predicate; composite FK below
@@ -1573,10 +1580,9 @@ CREATE TABLE relations (
   contradiction_group uuid,                    -- shared id when two live relations contradict and can't be adjudicated — retrieval shows both sides (concepts §4)
   status          relation_status GENERATED ALWAYS AS  -- DERIVED mirror of invalidated_at (single validity home, D6): active iff invalidated_at IS NULL, else invalidated
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
-  -- fact label (D8): the human-readable sentence embedded in Lance; regenerated only on material adjudication change.
+  -- fact label (D94): the human-readable sentence embedded in private P1; regenerated only on material adjudication change.
   fact_label      text,                        -- "Alice Novak works at Acme as VP of Engineering"
   fact_label_version text,                     -- LOGICAL FK → pipeline_component_versions (fact_labeler)
-  fact_label_embedding_ref text,               -- opaque Lance key for the fact-label vector (P1; no vectors in PG/graph — D8)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions (normalizer); replay-on-rebuild
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -1593,7 +1599,7 @@ CREATE TABLE relations (
   ) WHERE (invalidated_at IS NULL AND contradiction_group IS NULL)
 );
 COMMENT ON TABLE relations IS
-  'E3 distinct bi-temporal facts (D2/D3). Identity = (subject,predicate,object) + validity interval; the unit of supersession/contradiction. evidence_count caches corpus redundancy as a confidence signal (D2). status is a generated mirror of invalidated_at (validity has one home, D6). The GiST EXCLUDE forbids overlapping duplicate beliefs while allowing re-occurring facts and carved-out contradictions. fact_label+embedding live in Lance (D8).';
+  'E3 distinct bi-temporal facts (D2/D3). Identity = (subject,predicate,object) + validity interval; the unit of supersession/contradiction. evidence_count caches corpus redundancy as a confidence signal (D2). status is a generated mirror of invalidated_at (validity has one home, D6). The GiST EXCLUDE forbids overlapping duplicate beliefs while allowing re-occurring facts and carved-out contradictions. fact_label is authoritative metadata; its derived embedding lives in private PostgreSQL P1 (D94).';
 -- The supersession blocking key (D4) — small, distinct facts; THE index that makes supersession
 -- detection affordable (concepts §6):
 CREATE INDEX ix_relations_block_subj ON relations (deployment_id, subject_entity_id, predicate, object_entity_id);
@@ -1707,7 +1713,7 @@ The contrast with `relations` is deliberate and is the whole point of D43:
   to compare first; because `supersede` requires a *positive* match (above), a prior that top-k ranking
   skips results at worst in a **duplicate coexisting observation**, never a wrong supersede. So the only
   residual cost of imperfect narrowing is a redundant row to reconcile later — the safe direction.
-- Observations **never project to the graph** (D18 — a value is not a node); they project to **P1/Lance**
+- Observations **never project to the graph** (D18 — a value is not a node); they project to **private PostgreSQL P1**
   only (semantic search over `statement`/label, entity-anchored timelines).
 
 ```sql
@@ -1718,16 +1724,16 @@ The contrast with `relations` is deliberate and is the whole point of D43:
 -- attribute vocabulary, no value_domain/cardinality, NO structured value/period columns, no typed
 -- EXCLUDE — the value AND any reporting period live in `statement` and are matched SEMANTICALLY, exactly
 -- like the property (consistent with the untyped design). status is a GENERATED mirror of invalidated_at
--- (one validity home, D6). The observation LABEL + its embedding live in Lance (D8).
+-- (one validity home, D6). The observation LABEL is authority metadata and its embedding lives in private P1 (D94).
 -- THE NO-CAP RULE (D43): only a CHANGING EFFECTIVE STATE (headcount/balance/status) is capped on
 -- valid-time when superseded; a MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped —
 -- it doesn't stop being true at period-end, stays open, and conflicting same-period figures coexist.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE observations (
-  observation_id  uuid PRIMARY KEY,            -- the observation's identity; provenance handle in Lance
+  observation_id  uuid PRIMARY KEY,            -- the observation's identity; provenance handle in P1
   deployment_id   uuid NOT NULL REFERENCES deployments,
   subject_entity_id uuid NOT NULL,            -- the ANCHOR + supersession blocking key (a resolved canonical entity); composite FK below
-  statement       text NOT NULL,              -- canonical NL form of the observed fact ("Acme's headcount is 600", "Acme's FY2023 revenue was $5M"); embedded in Lance (D8). The VALUE and any reporting period live HERE — there is no structured value/period column (D43 lean); the adjudicator reads them semantically, like the property.
+  statement       text NOT NULL,              -- canonical NL form of the observed fact ("Acme's headcount is 600", "Acme's FY2023 revenue was $5M"); embedded in private P1 (D94). The VALUE and any reporting period live HERE — there is no structured value/period column (D43 lean); the adjudicator reads them semantically, like the property.
   -- bi-temporality (concepts §5): two clocks, WORLD-VALIDITY OF THE BELIEF.
   valid_from      timestamptz,                 -- VALID-time start: when the belief began holding in the world (NULL = unknown/always); seeded from the claim's asserted validity (D41)
   valid_until     timestamptz,                 -- VALID-time end. NO-CAP RULE (D43): capped ONLY when a CHANGING EFFECTIVE STATE (headcount/balance/status) is superseded by a later value. A MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped here — it doesn't stop being true at period-end; it stays open and conflicting same-period figures coexist. The adjudicator decides state-vs-measurement from `statement` (semantic), not a typed column. (observations_design.md §3)
@@ -1739,9 +1745,8 @@ CREATE TABLE observations (
   contradiction_group uuid,                    -- shared id when two live observations conflict and both must stand (concepts §4)
   status          relation_status GENERATED ALWAYS AS  -- DERIVED mirror of invalidated_at (single validity home, D6)
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
-  obs_label       text,                        -- the human-readable sentence embedded in Lance (often = statement); semantic blocking + retrieval
+  obs_label       text,                        -- the human-readable sentence embedded in private P1 (often = statement); semantic blocking + retrieval
   obs_label_version text,                      -- LOGICAL FK → pipeline_component_versions (labeler)
-  obs_label_embedding_ref text,                -- opaque Lance key for the label vector (P1; no vectors in PG — D8)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; replay-on-rebuild
   adjudicator_version text,                    -- LOGICAL FK → pipeline_component_versions (supersession/contradiction adjudicator, D4)
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -1755,7 +1760,7 @@ CREATE TABLE observations (
   -- "both-stand" is the safe default.
 );
 COMMENT ON TABLE observations IS
-  'D43 non-graph fact layer: a believed value/statement about ONE entity (entity-anchored, bi-temporal, UNTYPED). Sibling of relations; never projects to the graph (D18). The value AND any reporting period live in `statement` (no structured value/period columns); the adjudicator matches same-entity + same-property + same-period + value-compatibility SEMANTICALLY. Supersession is adjudicated by entity-blocking + the D4 cascade (no typed slot, no EXCLUDE); "never silently resolve" is a binding adjudicator contract (supersede only on a positively-matched prior above margin, with a persisted reason; else coexist) + an eval gate, NOT a schema invariant. NO-CAP RULE: only a changing effective state is capped on valid-time; a measurement/fixed-period figure is never capped and conflicting same-period figures coexist. status is a generated mirror of invalidated_at (one validity home, D6); label+embedding live in Lance (D8).';
+  'D43 non-graph fact layer: a believed value/statement about ONE entity (entity-anchored, bi-temporal, UNTYPED). Sibling of relations; never projects to the graph (D18). The value AND any reporting period live in `statement` (no structured value/period columns); the adjudicator matches same-entity + same-property + same-period + value-compatibility SEMANTICALLY. Supersession is adjudicated by entity-blocking + the D4 cascade (no typed slot, no EXCLUDE); "never silently resolve" is a binding adjudicator contract (supersede only on a positively-matched prior above margin, with a persisted reason; else coexist) + an eval gate, NOT a schema invariant. NO-CAP RULE: only a changing effective state is capped on valid-time; a measurement/fixed-period figure is never capped and conflicting same-period figures coexist. status is a generated mirror of invalidated_at (one validity home, D6); the label is authority metadata and its derived embedding lives in private PostgreSQL P1 (D94).';
 -- The supersession blocking key (D4): all live observations for an entity (exact + exhaustive per entity):
 CREATE INDEX ix_observations_block ON observations (deployment_id, subject_entity_id) WHERE invalidated_at IS NULL;
 CREATE INDEX ix_observations_entity ON observations (deployment_id, subject_entity_id);  -- full history incl. capped/invalidated
@@ -2497,8 +2502,9 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
    (cascade) and sets dependent `document_crossrefs.to_doc_id = NULL, resolved = false` while
    **retaining `raw_citation`** so the link can be re-resolved if the target is re-ingested.
 4. **`chunks`** (logical FK): rows are **retained** (they are the occurrence record, D56/F4) but
-   their Lance vectors drop on the next P1 maintenance/rebuild (the deleted lineage/version is
-   filtered from every index). The auditor ignores rows for documents with `deleted_at` set.
+   their P1 rows are deleted by the lifecycle transaction/repair path and are
+   immediately ineligible through the authority join. The auditor ignores rows
+   for documents with `deleted_at` set.
 5. **`claims` are NOT deleted on a normal delete** (Codex review F12 — this is the fix that keeps
    "normal delete retains audit history" true): normal deletion **ends the claims' testimony
    currency** (`version_deleted` events; `is_current_testimony=false`) so they stop counting,
@@ -2572,7 +2578,7 @@ Labs."*
 1. **E0** `documents` row (`ingesting`→`ready`), `document_sections` rows; `processing_state` tracks
    each sub-worker; `cost_ledger` logs the OCR/structure calls (idempotent per
    `(processing_id, attempt, call_key)`).
-2. **E1** `chunks` rows with offsets + `context_prefix`; vectors land in Lance keyed by `chunk_id`.
+2. **E1** `chunks` rows with offsets + `context_prefix`; derived search text/vectors land in private PostgreSQL P1 keyed by `chunk_id`.
 3. **E2 Selection** keeps the two verifiable propositions (any drop/edit → `claim_extraction_decisions`).
    Kept propositions → `claims` (`c3`, `c4`) with `source_span`, offsets, `added_context`,
    `anchor_ok`/`window_membership_ok` true (the CHECK); mentions of "Alice Novak", "Acme", "Beacon
@@ -2605,8 +2611,10 @@ Labs."*
   (`claim_extraction_decisions`) + D2 redundancy-collapse + content-hash idempotency.
 - **No `external_ids` table.** Resolution is registry-self-contained (D20); future internal/domain
   authoritative IDs would attach as *aliases*, never as the canonical `entity_id`.
-- **No vectors in Postgres.** All embeddings live in Lance (P1); PG stores opaque `*_ref` keys +
-  model/version. HNSW never in OLTP (D8/D23).
+- **Vectors are private derived PostgreSQL state (D94).** Authority tables do
+  not carry vector columns or opaque Lance references. Target-specific P1
+  tables carry embeddings, content and generation coordinates; HNSW/BM25
+  indexes remain outside `memory_v1` and never become truth.
 - **No document/chunk body text in Postgres** (D37) — bodies in GCS; PG holds offsets + URIs.
 - **No fact/opinion/prediction claim type** — unattributed opinions are dropped at Selection;
   attributed stances are kept as ordinary claims → stance observations (D59); nothing is stored as a
@@ -2638,7 +2646,7 @@ Labs."*
 | D5 governed predicate registry + `other:` | `predicates` (`synonyms`, `tier='other'` upsert, `usage_count` funnel) |
 | D6 graph is a projection; validity has one home | adjudicated validity only on `relations`; generated `status`; claim-validity is evidence, not a second home (D41); analytics writeback §10 |
 | D7 rebuild-first; immutable snapshots | `projection_snapshots`; replay via `*_version` + decision ledgers; snapshot GC |
-| D8 relation fact-label embeddings in Lance | `relations.fact_label*` + `*_embedding_ref` (no PG vectors) |
+| D94 PostgreSQL-native P1 | authority `fact_label`/statement fields plus private target-specific P1 search tables; no opaque cross-store embedding refs |
 | D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; `entity_graph_metrics.pagerank/degree` |
 | D11 communities external → write back to PG | `communities`, `entity_graph_metrics` (+ GC) |
 | D12 idempotency, retries, DLQ, debounced K triggers | `processing_state` identity/status/`attempts`/`max_attempts`; `cost_ledger`; `knowledge_refresh_queue` (retry ownership refined by D67) |
@@ -2658,7 +2666,7 @@ Labs."*
 | D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_crossrefs.crossref_version` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
 | D40 P3 corpus filesystem | `projection_snapshots (plane='P3_corpusfs')` + `document(_sections).placement*` |
-| D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); Lance scalar projection |
+| D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); private P1 scalar projection |
 | D45 planned K compilation (planner/writer/driver; mechanical routing; manifest staleness) | `knowledge_page_rules`, `knowledge_rule_keys`, `knowledge_plan_decisions`, `knowledge_compilations`; `knowledge_artifacts.inputs_hash/page_summary/parent_artifact_id` |
 | D46 compiled vs authored pages; ownership + quarantine | `knowledge_artifacts.page_kind/curation_path/content_hash` (+ `status='quarantined'`); citations binding in `knowledge_artifact_evidence`; authored review flags via `knowledge_refresh_queue ('authored_review')` |
 | D47/D73 one K mechanism, N scopes; no shipped K3 tier | `knowledge_artifacts.layer` (K1/K2 used by built-in configuration; legacy K3 label inert); scope model page = an artifact all writer runs in that scope depend on; authored K2 pages hold principles and stances |
@@ -2672,7 +2680,7 @@ Labs."*
 | D56 content-addressed reuse | `chunks.chunk_content_hash` + `chunks.extraction_input_hash` (+ `ix_chunks_reuse`); `chunk_claims` — the exact claim-occurrence map (fresh + reused attachments) |
 | D57 block substrate + blockizer; sections on the grid | `document_representations.blocks_uri` + `blockizer_version`; `document_sections.block_start/end`; `pipeline_component = 'blockizer'`; blocks live in `blocks.json` (sidecar), never as rows |
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
-| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role scalar on P1 chunk rows (Lance-side); no-overlap invariant is worker discipline, not DDL |
+| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role scalar on private P1 chunk rows; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | §10.A `v_graph_relates` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
@@ -2716,7 +2724,7 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
    (b) Fiscal-calendar expansion ("FY2023" ≠ calendar 2023 for off-calendar years) — `precision` + the
    grounded source substring keep a wrong expansion auditable, but exact resolution is an
    extraction-quality spike. (c) Whether the optional PG partial btree on `claim_valid_*` is ever
-   needed (vs. Lance-only filtering) — load-test write-amplification against D23 first. (d) If
+   needed in authority tables (versus private P1 filtering) — load-test write-amplification against D23 first. (d) If
    recurrence / un-datable anchor-events prove load-bearing, the expressivity child table (btree-only,
    D23-restamped) is the documented upgrade — a named alternative, not a deferral.
 10. **Invalidated relation retention in P2 (D69).** The executable default is unbounded by age:

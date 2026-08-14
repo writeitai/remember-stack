@@ -2,7 +2,7 @@
 
 How a converted document becomes the units the system embeds, extracts from, and anchors
 claims to — and how those units survive document edits. Binding design for decisions
-**D57–D58**, building on D8 (vectors in Lance), D25 (no value gate), D32 (grounding offsets),
+**D57–D58**, building on D94 (vectors in private PostgreSQL P1), D25 (no value gate), D32 (grounding offsets),
 D38/D39 (conversion, PageIndex), D48–D50 (retrieval channels), D54–D56 (evidence lifecycle —
 this design owns the reuse *mechanics* that `evidence_lifecycle_design.md` §6 defers here).
 Shaped by a multi-round design discussion recorded in
@@ -251,7 +251,7 @@ and that changes the conclusion:**
   embedding dilution (S52); RRF fuses the channels (D9).
 - Therefore chunks are sized for **passage coherence**, not needle recall — moderate,
   block-aligned, no overlap, no heroics.
-- **Role-filtered P1 defaults**: chunks carry their section's role as a Lance scalar column;
+- **Role-filtered P1 defaults**: chunks carry their section's role as a P1 scalar column;
   default search recipes exclude `references / nav / boilerplate / legal` chunks from the
   semantic channel. This is **retrieval-side filtering of what was indexed** — everything is
   still extracted (D25 untouched) and reachable by explicit filter; it just stops a paper's

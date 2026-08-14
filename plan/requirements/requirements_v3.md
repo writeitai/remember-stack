@@ -212,7 +212,10 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 
 **Fixed engine choices** — the system's identity, never abstracted behind ports:
 
-- Relational spine: **Postgres**. Vectors: **LanceDB**. Graph: **LadybugDB**.
+- Relational spine and derived P1 search projection: **Postgres 17/18** with
+  **pgvector** (semantic indexes) and **pg_textsearch** (BM25). **pgvectorscale**
+  is the accepted measured scale upgrade for the vector index, not a second
+  store or automatic default (D94). Graph: **LadybugDB**.
 - Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**
   principle.
 - Plane K compilation: **Codex / OpenCode** as the planner/writer agents over a **single git
