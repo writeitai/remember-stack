@@ -448,9 +448,10 @@ for sample_id in "${pending_samples[@]}"; do
   elif [[ "$status" == ingested ]]; then
     [[ "$sample_id" == "$(live_sample_id)" ]] ||
       die "sample=$sample_id cannot resume a different live store"
-    log "sample=$sample_id stage=stack status=resuming-existing-store"
-    start_existing_store
     if [[ "$(sample_scoring_started "$sample_id")" == yes ]]; then
+      require_verified_backup "$sample_id"
+      log "sample=$sample_id stage=stack status=resuming-existing-store"
+      start_existing_store
       require_verified_backup "$sample_id"
       log "sample=$sample_id stage=answer status=resuming-from-checkpoint"
       "$python_bin" -m benchmarks.locomo answer \
@@ -476,6 +477,8 @@ for sample_id in "${pending_samples[@]}"; do
       log "sample=$sample_id status=complete"
       continue
     fi
+    log "sample=$sample_id stage=stack status=resuming-existing-store"
+    start_existing_store
   else
     die "sample=$sample_id cannot enter runner loop with status=$status"
   fi
