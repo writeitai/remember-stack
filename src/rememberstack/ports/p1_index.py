@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -13,6 +14,8 @@ from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.p1_maintain import MaintainReport
+from rememberstack.model.p1_maintain import TableMaintainStats
 
 
 @runtime_checkable
@@ -68,7 +71,7 @@ class FactIndexPort(Protocol):
     """Write the P1 facts channel — relation/observation labels (D8)."""
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
-        """Insert or replace rows by fact_id; re-runs are idempotent."""
+        """Insert or replace rows by (deployment_id, kind, fact_id); idempotent."""
         ...
 
     def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
@@ -287,8 +290,39 @@ class EntityIndexPort(Protocol):
 
 @runtime_checkable
 class P1IndexMaintenancePort(Protocol):
-    """Explicit post-bulk-load maintenance for the P1 search indexes."""
+    """Explicit P1 Lance index maintenance (D91); deployment-free."""
 
     def build_search_indexes(self) -> None:
-        """Build or refresh search indexes after a backfill has drained."""
+        """Ensure contracted indexes then heavy-retrain all present tables."""
+        ...
+
+    def ensure_search_indexes(
+        self, *, tables: tuple[str, ...] | None = None
+    ) -> MaintainReport:
+        """Create missing matrix indexes; do not replace a healthy index."""
+        ...
+
+    def optimize_tables(
+        self,
+        *,
+        tables: tuple[str, ...] | None = None,
+        cleanup_older_than: timedelta | None = None,
+    ) -> MaintainReport:
+        """Light compact / prune / incremental index fold for the named tables."""
+        ...
+
+    def rebuild_vector_indexes(
+        self, *, tables: tuple[str, ...] | None = None
+    ) -> MaintainReport:
+        """Retrain IVF_FLAT with replace=True; skip below the min-row gate."""
+        ...
+
+    def rebuild_text_indexes(
+        self, *, tables: tuple[str, ...] | None = None
+    ) -> MaintainReport:
+        """Rebuild FTS indexes with replace=True where a text column exists."""
+        ...
+
+    def maintenance_stats(self, *, table: str) -> TableMaintainStats:
+        """Snapshot row, unindexed-tail, and fragment counts for one table."""
         ...

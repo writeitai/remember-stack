@@ -1,5 +1,6 @@
 """Bounded version-bump enumeration over the authoritative work ledger."""
 
+from pathlib import Path
 from uuid import UUID
 
 from pydantic import Field
@@ -16,6 +17,8 @@ from rememberstack.model import LaneRouteError
 from rememberstack.model import ProcessingLane
 from rememberstack.ports.p1_index import P1IndexMaintenancePort
 from rememberstack.spine.catalog_contract import lane_is_valid
+from rememberstack.spine.p1_maintain_lock import hold_p1_table_maintain_locks
+from rememberstack.spine.p1_maintain_lock import P1_MAINTAIN_TABLES
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -100,11 +103,16 @@ class BackfillFinalizer:
     """Run explicit P1 index maintenance only after backfill work has drained."""
 
     def __init__(
-        self, *, engine: Engine, search_index_maintenance: P1IndexMaintenancePort
+        self,
+        *,
+        engine: Engine,
+        search_index_maintenance: P1IndexMaintenancePort,
+        lance_root: Path,
     ) -> None:
         """Bind the completion barrier to the ledger and configured P1 adapter."""
         self._engine = engine
         self._search_index_maintenance = search_index_maintenance
+        self._lance_root = lance_root
 
     def build_search_indexes(self, *, deployment_id: UUID) -> None:
         """Build P1 indexes after the caller has finished seeding and work is terminal.
@@ -122,7 +130,19 @@ class BackfillFinalizer:
             raise BackfillNotDrainedError(
                 f"deployment {deployment_id} has {unresolved} unresolved backfill rows"
             )
-        self._search_index_maintenance.build_search_indexes()
+        for table_name in P1_MAINTAIN_TABLES:
+            with hold_p1_table_maintain_locks(
+                engine=self._engine, lance_root=self._lance_root, tables=(table_name,)
+            ):
+                self._search_index_maintenance.ensure_search_indexes(
+                    tables=(table_name,)
+                )
+                self._search_index_maintenance.rebuild_vector_indexes(
+                    tables=(table_name,)
+                )
+                self._search_index_maintenance.rebuild_text_indexes(
+                    tables=(table_name,)
+                )
 
 
 _SELECT_CANDIDATES = text(

@@ -14,6 +14,7 @@ from rememberstack.adapters.selfhost import LanceChunkIndex
 import rememberstack.adapters.selfhost.lance as lance_adapter
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
+from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
@@ -544,6 +545,148 @@ def test_fact_writes_do_not_call_optimize(tmp_path, monkeypatch: Any) -> None:
         )
     )
     assert optimize_calls == 0
+
+
+def test_build_search_indexes_is_rerunnable_and_covers_entities(
+    tmp_path, monkeypatch: Any
+) -> None:
+    """Second build_search_indexes is ensure+replace, and entities get indexes."""
+    monkeypatch.setattr(lance_adapter, "_MIN_VECTOR_INDEX_ROWS", 1)
+    deployment_id = uuid4()
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=deployment_id,
+                text="Context.\n\nEntity cover token.",
+            ),
+        )
+    )
+    index.upsert_entities(
+        rows=(
+            P1EntityRow(
+                entity_id=uuid4(),
+                deployment_id=deployment_id,
+                type="person",
+                canonical_name="Ada Lovelace",
+                vector=(1.0, 0.0),
+            ),
+        )
+    )
+    index.build_search_indexes()
+    index.build_search_indexes()
+    connection = lancedb.connect(str(tmp_path / "lance"))
+    entity_indices = {
+        (item.index_type, tuple(item.columns))
+        for item in connection.open_table("entities").list_indices()
+    }
+    assert ("BTree", ("entity_id",)) in entity_indices
+    assert ("BTree", ("deployment_id",)) in entity_indices
+    assert ("Bitmap", ("type",)) in entity_indices
+    assert any(
+        kind.replace("_", "").lower() == "ivfflat" and cols == ("vector",)
+        for kind, cols in entity_indices
+    )
+    report = index.optimize_tables(tables=("chunks",))
+    assert report.tables[0].operation == "optimize"
+    stats = index.maintenance_stats(table="chunks")
+    assert stats.row_count == 1
+    assert stats.num_fragments >= 1
+
+
+def test_ensure_repairs_dropped_scalar_index(tmp_path) -> None:
+    """Explicit ensure must re-read physical indexes, not process-local caches."""
+    deployment_id = uuid4()
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=deployment_id,
+                text="Context.\n\nRepair token.",
+            ),
+        )
+    )
+    connection = lancedb.connect(str(tmp_path / "lance"))
+    table = connection.open_table("chunks")
+    for item in table.list_indices():
+        if item.columns == ["deployment_id"]:
+            table.drop_index(item.name)
+    report = index.ensure_search_indexes(tables=("chunks",))
+    assert report.tables[0].operation == "ensure"
+    repaired = {
+        (item.index_type, tuple(item.columns))
+        for item in connection.open_table("chunks").list_indices()
+    }
+    assert ("BTree", ("deployment_id",)) in repaired
+
+
+def test_ensure_does_not_retrain_a_healthy_ivf_flat(tmp_path, monkeypatch: Any) -> None:
+    """A second ensure must leave a healthy IvfFlat index and table version."""
+    monkeypatch.setattr(lance_adapter, "_MIN_VECTOR_INDEX_ROWS", 1)
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=uuid4(),
+                text="Context.\n\nHealthy IVF token.",
+            ),
+        )
+    )
+    index.ensure_search_indexes(tables=("chunks",))
+    first = lancedb.connect(str(tmp_path / "lance")).open_table("chunks")
+    first_version = first.version
+    first_types = {
+        item.index_type for item in first.list_indices() if item.columns == ["vector"]
+    }
+    assert any(kind.replace("_", "").lower() == "ivfflat" for kind in first_types)
+    index.ensure_search_indexes(tables=("chunks",))
+    second = lancedb.connect(str(tmp_path / "lance")).open_table("chunks")
+    assert second.version == first_version
+    second_types = {
+        item.index_type for item in second.list_indices() if item.columns == ["vector"]
+    }
+    assert first_types == second_types
+
+
+def test_ensure_repairs_wrong_vector_type_and_dropped_fts(
+    tmp_path, monkeypatch: Any
+) -> None:
+    """Ensure replaces HNSW with IVF_FLAT and recreates a dropped FTS index."""
+    from lancedb.index import IvfHnswFlat
+
+    monkeypatch.setattr(lance_adapter, "_MIN_VECTOR_INDEX_ROWS", 1)
+    index = LanceChunkIndex(root=tmp_path / "lance")
+    index.upsert_chunks(
+        rows=(
+            _chunk(
+                chunk_id=uuid4(),
+                deployment_id=uuid4(),
+                text="Context.\n\nWrong type token.",
+            ),
+        )
+    )
+    index.ensure_search_indexes(tables=("chunks",))
+    connection = lancedb.connect(str(tmp_path / "lance"))
+    table = connection.open_table("chunks")
+    for item in table.list_indices():
+        if item.columns == ["vector"] or item.index_type == "FTS":
+            table.drop_index(item.name)
+    table.create_index("vector", config=IvfHnswFlat())
+    report = index.ensure_search_indexes(tables=("chunks",))
+    assert report.tables[0].operation == "ensure"
+    repaired = {
+        (item.index_type, tuple(item.columns))
+        for item in connection.open_table("chunks").list_indices()
+    }
+    assert any(
+        kind.replace("_", "").lower() == "ivfflat" and cols == ("vector",)
+        for kind, cols in repaired
+    )
+    assert ("FTS", ("text",)) in repaired
+    assert not any(kind == "IvfHnswFlat" for kind, _cols in repaired)
 
 
 def _chunk(*, chunk_id: UUID, deployment_id: UUID, text: str) -> P1ChunkRow:
