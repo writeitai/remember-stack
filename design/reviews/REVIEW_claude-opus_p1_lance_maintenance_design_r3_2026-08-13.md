@@ -1,4 +1,4 @@
-# Design re-review (r3) — D91 P1 Lance bulk writes and two-layer maintenance
+# Design re-review (r3) — D93 P1 Lance bulk writes and two-layer maintenance
 
 **Reviewer:** claude-opus
 **Date:** 2026-08-13
@@ -30,7 +30,7 @@ for each.
 
 Five nits remain (R12–R16). Each is a one-to-two-line text tweak; **none gates
 the `decisions.md` entry and no r4 re-review is needed** — fix them in the same
-commit that enters D91. The one worth doing first is R12, which removes an
+commit that enters D93. The one worth doing first is R12, which removes an
 internal contradiction in §5.5.3's pure-rate-defer wording that could quietly
 reintroduce a degraded form of the P1.5 failure.
 
@@ -108,7 +108,7 @@ retrain" test.
    every interleaving lands in exactly one of: coalesced-open, flag-consumed
    successor, or fresh unit. No loss window remains.
 
-## Remaining nits (R12–R16 — fix in the D91 entry commit; no re-review)
+## Remaining nits (R12–R16 — fix in the D93 entry commit; no re-review)
 
 - **R12 — §5.5.3's pure-rate-defer sentence contradicts itself; strike the
   fail-retryable alternative.** The paragraph says pure rate defer "should not
@@ -178,8 +178,8 @@ retrain" test.
 
 ## Closing
 
-The r2 approval gate was "fix R1 and R2 in the design text before D91 is
+The r2 approval gate was "fix R1 and R2 in the design text before D93 is
 entered". Both are fixed as specified, everything else landed alongside, and
-the new text is accurate against the code it cites. **Enter D91 in
+the new text is accurate against the code it cites. **Enter D93 in
 `decisions.md`.** Apply R12–R16 (five one-to-two-line edits, R12 first) in the
 same commit; none changes a decision and none needs another review round.

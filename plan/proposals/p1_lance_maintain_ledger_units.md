@@ -5,13 +5,13 @@
 **Adoption trigger:** we need more than one maintain replica per
 `lance_root`, **or** product requires maintain failures to share the D67
 dead-letter / replay surface with extract/embed.  
-**Superseded by:** D91 ticker amendment (2026-08-14) in
+**Superseded by:** D93 ticker amendment (2026-08-14) in
 `plan/designs/p1_lance_maintenance_design.md`  
 **Analysis:** `plan/analysis/p1_lance_maintain_ticker_analysis.md`
 
 ## What this is
 
-The first D91 draft (design PR #270 through r4, implementation PR #276)
+The first D93 draft (design PR #270 through r4, implementation PR #276)
 modeled continuous Lance maintenance as:
 
 - `pipeline_stage = maintain_p1_index` (unlaned)

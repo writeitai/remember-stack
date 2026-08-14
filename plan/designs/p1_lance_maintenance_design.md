@@ -1,8 +1,8 @@
 # Design: P1 Lance bulk writes and two-layer maintenance
 
-**Status:** binding (D91 entered; ticker amendment 2026-08-14)  
+**Status:** binding (D93 entered; ticker amendment 2026-08-14)  
 **Date:** 2026-08-14  
-**Decision log:** [D91](../../decisions.md#d91--p1-lance-bulk-writes-and-two-layer-index-maintenance)  
+**Decision log:** [D93](../../decisions.md#d91--p1-lance-bulk-writes-and-two-layer-index-maintenance)  
 **Analysis:** [p1_lance_maintenance_analysis.md](../analysis/p1_lance_maintenance_analysis.md),
 [p1_lance_maintain_ticker_analysis.md](../analysis/p1_lance_maintain_ticker_analysis.md)  
 **Rejected alternative:** [p1_lance_maintain_ledger_units.md](../proposals/p1_lance_maintain_ledger_units.md)  
@@ -917,7 +917,7 @@ Ship metrics **before** enabling the ticker in production.
 
 ## 11. Rollout plan
 
-1. Land this ticker amendment on design PR #270 and update D91.
+1. Land this ticker amendment on design PR #270 and update D93.
 2. Close ledger-units implementation PR #276 (superseded).
 3. PR order in §15: bulk write (PR1) and port/locks (PR2) stay; PR3 becomes
    stats + ticker; PR4 change-mass writer hooks + heavy policy; PR5 soak.
@@ -968,7 +968,7 @@ ops; index matrix; gates default off; change-mass; vectors Lance-only.
 | K12 | Self-host Lance stays on `lance_root` local FS |
 | K13 | Embedding migration rebuild remains a separate family |
 | K14 | Observability before auto activation |
-| K15 | Decision log **D91** entered; ticker amendment 2026-08-14 |
+| K15 | Decision log **D93** entered; ticker amendment 2026-08-14 |
 | K16 | Heavy is **best-effort** under sustained high write rate → `awaiting_operator` |
 | K17 | Heavy discovery is durable change-mass; chunks more sensitive than short text |
 | K18 | PR1 ensures facts join-key indexes before large metadata merges |
@@ -1040,4 +1040,4 @@ Do not block PR1 on the ticker. Close superseded ledger-units PR #276.
 ---
 
 *Revised r4 after dual re-review r3; dual APPROVE_WITH_NITS on r4 (Claude +
-Codex). D91 entered. PR #270 dual-reviewed APPROVE_WITH_NITS.*
+Codex). D93 entered. PR #270 dual-reviewed APPROVE_WITH_NITS.*

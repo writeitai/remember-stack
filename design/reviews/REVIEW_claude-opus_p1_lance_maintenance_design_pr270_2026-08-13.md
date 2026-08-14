@@ -1,4 +1,4 @@
-# Design PR review — PR #270: D91 P1 Lance bulk writes and two-layer maintenance
+# Design PR review — PR #270: D93 P1 Lance bulk writes and two-layer maintenance
 
 **Reviewer:** claude-opus
 **Date:** 2026-08-13
@@ -6,14 +6,14 @@
 (after dual r4 APPROVE_WITH_NITS and the subsequent trigger/change-mass
 amendment). Files under review:
 `plan/designs/p1_lance_maintenance_design.md` (esp. §5.4.1),
-`plan/analysis/p1_lance_maintenance_analysis.md`, `decisions.md` D91,
+`plan/analysis/p1_lance_maintenance_analysis.md`, `decisions.md` D93,
 `design/README.md` index line, review corpus r1–r4.
 **Prior rounds:** r1–r4 dual reviews in this PR; r4 verdicts
 APPROVE_WITH_NITS (Claude R17–R18; Codex nits 1–2, where Codex nit 1 = R17).
 **Focus asked for this round:** trigger observers (writer / idle
 `ensure_maintain_due` / finalizer-admin); three modes; change-mass vs
 calendar; chunks more sensitive than short text; skip-unchanged excluded from
-heavy mass; `decisions.md` D91 completeness.
+heavy mass; `decisions.md` D93 completeness.
 
 **Re-verified against code (this round):**
 `adapters/selfhost/lance.py` — the forbidden per-row loop exists exactly as
@@ -40,7 +40,7 @@ and drives the prefilter rows of the §5.3.1 matrix.
 **APPROVE_WITH_NITS**
 
 The PR is design-corpus only (no runtime code), matching its stated scope.
-The post-r4 amendment (§5.4.1 + D91 items 3–4) closes the gap it set out to
+The post-r4 amendment (§5.4.1 + D93 items 3–4) closes the gap it set out to
 close: mode discovery is now an explicit observer contract, and heavy
 discovery is durable change-mass, not calendar. All six requested focus areas
 pass. The r4 nits (Claude R17–R18, Codex 1–2) are verifiably absorbed. The
@@ -69,7 +69,7 @@ division of authority is clean and consistently repeated:
 - **Finalizer / admin / CLI:** ensure + force heavy; finalizer explicitly not
   gated by `heavy_enabled` (§5.4 knob row, §5.5.4, K11).
 
-D91 item 3 mirrors all three observers correctly ("not three crons"). Two
+D93 item 3 mirrors all three observers correctly ("not three crons"). Two
 drafting slips in this area are R21 and R22 below.
 
 ### 2. Three modes — pass
@@ -81,7 +81,7 @@ fold; `retrain` is a deprecated no-op on pinned 0.34.0 — light **cannot**
 retrain); heavy = `create_index(..., replace=True)` retrain, never on the
 read path, never under `label_lock`; ensure = list-first create-if-missing,
 never destructive. The third job family (content rebuild / embedding
-migration) stays out of band (§1.8, §5.5.6). D91 item 2 carries the two
+migration) stays out of band (§1.8, §5.5.6). D93 item 2 carries the two
 load-bearing negatives ("Light is not a retrain. Heavy is not on the read
 path"). Mode trigger table (§5.4.1) assigns each mode a distinct discovery
 channel; `ensure_indexes` is correctly "not on a clock."
@@ -89,7 +89,7 @@ channel; `ensure_indexes` is correctly "not on a clock."
 ### 3. Change-mass vs calendar — pass
 
 The binding inversion is stated three times consistently (§1.14, §5.4.1
-"Heavy = change-mass (binding)", D91 item 4): calendar
+"Heavy = change-mass (binding)", D93 item 4): calendar
 (`heavy_rebuild_min_hours`) is an **anti-thrash cap**, not the discovery
 signal, and the §5.4 knob table's own description row says the same. The
 four-condition trigger is complete for the failure modes named in the
@@ -118,7 +118,7 @@ three knobs with a stated *why* per row, and — correctly under Rule 2's
 "numbers are starting points" — binds the **ordering** (chunks strictest),
 not the numbers. Values are consistent everywhere they appear (§5.4 knob
 rows for `heavy_changed_row_frac`, `heavy_change_mass`,
-`change_mass_char_cap` all match §5.4.1). D91 item 4 carries the ordering
+`change_mass_char_cap` all match §5.4.1). D93 item 4 carries the ordering
 ("Chunks are more sensitive … than short-text facts/claims"). The rationale
 is legible cold: longer embedded text per row ⇒ each rewrite moves more of
 the trained IVF distribution.
@@ -133,14 +133,14 @@ delete-and-reinsert property (§5.2.1): eligibility-only rows still re-enter
 the unindexed tail, which is deliberately **light's** problem (dirt
 thresholds) and not heavy's (mass), with condition 4 as the backstop if
 light leaves a high ratio. "Eligibility churn must not look like retrain"
-(§5.4.1 table) states the intent in one line a cold reader can hold. D91
+(§5.4.1 table) states the intent in one line a cold reader can hold. D93
 item 4 mirrors the exclusion, and the Rejected list rejects the converse
 ("counting eligibility-only writes as change-mass"). PR5's validation column
 carries the matching tests (flat row-count updates still trip heavy via
 change-mass; eligibility-only does not increment mass; chunks trip sooner
 than facts).
 
-### 6. `decisions.md` D91 completeness — pass
+### 6. `decisions.md` D93 completeness — pass
 
 All five focus concepts appear in the entry itself, not only in the design:
 observers (item 3), three modes with the two negatives (item 2), change-mass
@@ -155,7 +155,7 @@ is terse where the design is self-contained, which is the division CLAUDE.md
 Rule 1 prescribes.
 
 One optional addition (fold into R22 if taken): the only user-visible
-consequence of D91 not surfaced in the entry is the index-matrix behavior
+consequence of D93 not surfaced in the entry is the index-matrix behavior
 change at the backfill barrier — entities gain a vector index, so entity ANN
 search stops being exhaustive once the min-row gate is met (§5.3). One line
 under Consequences would let a decision-log reader see it without opening
@@ -203,20 +203,20 @@ the design.
   `heavy_rebuild_row_growth_pct` row cites "§5.4.1" for its per-table values
   (chunks 5, claims 15), but the §5.4.1 sensitivity table does not carry a
   growth-pct column — either add the column or drop the cross-reference.
-  Optionally add the D91 entities-index consequence line from focus item 6.
+  Optionally add the D93 entities-index consequence line from focus item 6.
 
 ## Checklist
 
 | # | Contract | Verdict |
 | --- | --- | --- |
 | 1 | PR scope = design corpus only (no runtime code) | **Pass** (matches PR description; `design/README.md` index line present) |
-| 2 | §5.4.1 observers consistent with §5.5.4 / D91 item 3 | **Pass** (R21/R22 drafting residue) |
+| 2 | §5.4.1 observers consistent with §5.5.4 / D93 item 3 | **Pass** (R21/R22 drafting residue) |
 | 3 | Three modes distinct; light ≠ retrain; heavy off read path | **Pass** |
 | 4 | Heavy = durable change-mass; calendar = cap only | **Pass** |
 | 5 | Chunk-strictest ordering binding; numbers labeled measurable | **Pass** |
 | 6 | Skip-unchanged / eligibility-only excluded from heavy mass | **Pass** |
 | 7 | Counters survive successors; reset only on successful heavy | **Pass** (R17 absorbed; R19 residue in pseudocode reads) |
-| 8 | D91 entry complete and consistent with design | **Pass** (optional entities-consequence line) |
+| 8 | D93 entry complete and consistent with design | **Pass** (optional entities-consequence line) |
 | 9 | r4 nits (R17, R18, Codex 1–2) absorbed | **Pass** |
 | 10 | As-built claims accurate against code | **Pass** (re-verified this round; list in header) |
 | 11 | Rule 1 (cold-reader legibility) | **Pass** (observer/trigger tables are plain-language; jargon anchored) |
@@ -227,7 +227,7 @@ the design.
 ## Closing
 
 The amendment this PR was re-opened for — making trigger observers and
-change-mass discovery explicit — is done, bindingly, and D91 carries it into
+change-mass discovery explicit — is done, bindingly, and D93 carries it into
 the decision log. Every as-built claim I re-checked this round is accurate,
 and the r4 nit trail is closed. R19 is the only finding with teeth (the
 same fresh-successor trap R17 identified, surviving in two pseudocode

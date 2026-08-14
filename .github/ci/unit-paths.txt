@@ -44,7 +44,9 @@ src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py
 src/tests/surfaces/test_assured_operation_authorities.py
 src/tests/surfaces/test_client_sdk.py
+src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_forget_admission.py
+src/tests/surfaces/test_login.py
 src/tests/surfaces/test_mcp_memory_tools.py
 src/tests/test_forget_port_contract.py
 src/tests/test_port_inventory_and_conformance.py

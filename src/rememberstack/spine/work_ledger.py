@@ -788,6 +788,10 @@ class WorkLedger:
         so an acknowledged-late retry cannot double-bill.
         """
         with self._engine.begin() as connection:
+            connection.execute(text("SET LOCAL statement_timeout = '15s'"))
+            connection.execute(
+                text("SET LOCAL idle_in_transaction_session_timeout = '15s'")
+            )
             row = (
                 connection.execute(
                     _SELECT_FOR_COST, {"processing_id": call.processing_id}
@@ -823,6 +827,7 @@ class WorkLedger:
                     "tokens_out": call.tokens_out,
                     "cost_usd": call.cost_usd,
                     "latency_ms": call.latency_ms,
+                    "outcome": call.outcome,
                 },
             ).rowcount
             return inserted == 1
@@ -1576,11 +1581,12 @@ _INSERT_COST = text(
     INSERT INTO cost_ledger (
         cost_id, deployment_id, processing_id, stage, lane, target_kind,
         target_id, component_version, attempt, call_key, model_name, tier,
-        tokens_in, tokens_out, cost_usd, latency_ms
+        tokens_in, tokens_out, cost_usd, latency_ms, outcome, occurred_at
     ) VALUES (
         :cost_id, :deployment_id, :processing_id, :stage, :lane, :target_kind,
         :target_id, :component_version, :attempt, :call_key, :model_name, :tier,
-        :tokens_in, :tokens_out, :cost_usd, :latency_ms
+        :tokens_in, :tokens_out, :cost_usd, :latency_ms,
+        CAST(:outcome AS surface_cost_outcome), clock_timestamp()
     )
     ON CONFLICT (deployment_id, processing_id, attempt, call_key) DO NOTHING
     """

@@ -1,4 +1,4 @@
-# Design re-review (r4) — D91 P1 Lance bulk writes and two-layer maintenance
+# Design re-review (r4) — D93 P1 Lance bulk writes and two-layer maintenance
 
 **Reviewer:** claude-opus
 **Date:** 2026-08-13
@@ -48,7 +48,7 @@ remaining codex-sol blockers are closed with binding mechanisms:
 Two nits remain (**R17–R18**), both in the escalation machinery added this
 round. Each is a one-to-three-sentence binding clarification; **neither gates
 the `decisions.md` entry and no r5 re-review is needed** — fix them in the
-same commit that enters D91. R17 is the one that matters: as written, a cold
+same commit that enters D93. R17 is the one that matters: as written, a cold
 implementer could zero the defer-streak counters on each successor unit,
 which would silently break the N-consecutive escalation trigger (the §16
 acceptance test would catch it, but the doc should not rely on the test to
@@ -112,7 +112,7 @@ material decision. R4 does both at once:
   fake eventual-success"), K17, and two §12 rejected-alternatives rows
   ("Guaranteed eventual heavy under continuous high write — dishonest without
   a quiet window"; "Writer quiesce via expanded `label_lock`"). This is a
-  material decision change entering D91 through the front door, which is what
+  material decision change entering D93 through the front door, which is what
   the blocker required if this route was taken.
 - **Terminal escalation is binding, budgeted, and durable:** after
   `heavy_rate_defer_escalate_n` (12) consecutive pure rate-defers, or
@@ -141,7 +141,7 @@ material decision. R4 does both at once:
   "Pure rate-defer does not burn attempts" and the PR5 validation column
   cover the budget arithmetic.
 
-## Remaining nits (R17–R18 — fix in the D91 entry commit; no re-review)
+## Remaining nits (R17–R18 — fix in the D93 entry commit; no re-review)
 
 - **R17 — bind where the cross-unit defer streak and `awaiting_operator`
   durably live.** The escalation counters (`rate_defer_count`,
@@ -212,6 +212,6 @@ contract — is fully met, and the new text is accurate against the code and
 port signatures it cites (re-verified this round, including the previously
 wrong `announce` sketch). The heavy best-effort narrowing is handled the way
 Codex required: as a visible, recorded decision with real escalation and
-quiet-window machinery, not a hedge. **Enter D91 in `decisions.md`.** Apply
+quiet-window machinery, not a hedge. **Enter D93 in `decisions.md`.** Apply
 R17–R18 (two short binding clarifications, R17 first) in the same commit;
 neither changes a decision and neither needs another review round.

@@ -871,6 +871,7 @@ class StructureHandler:
                     call_key="structure_fallback_failure",
                     tier="fallback_failed_response",
                     usage=error.usage,
+                    outcome="provider_error",
                 )
             return (
                 resolve_fallback_skeleton(
@@ -1036,6 +1037,7 @@ class StructureHandler:
                         call_key="section_roles_failure",
                         tier="title_classifier_failed_response",
                         usage=error.usage,
+                        outcome="provider_error",
                     )
             except Exception:  # noqa: BLE001 - undecided titles become body
                 pass

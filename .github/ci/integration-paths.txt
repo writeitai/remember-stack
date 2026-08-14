@@ -24,6 +24,7 @@ src/tests/spine/test_review_queue.py
 src/tests/spine/test_supersession.py
 src/tests/spine/test_unmerge_ripple.py
 src/tests/spine/test_work_ledger.py
+src/tests/surfaces/test_cost_export.py
 src/tests/surfaces/test_envelope_contract.py
 src/tests/surfaces/test_graph_queries.py
 src/tests/surfaces/test_open_query_batch_f.py
@@ -39,6 +40,7 @@ src/tests/surfaces/test_retrieval_batch_d.py
 src/tests/surfaces/test_retrieval_batch_e.py
 src/tests/surfaces/test_retrieval_primitives.py
 src/tests/surfaces/test_saved_queries_batch_e.py
+src/tests/surfaces/test_surface_cost.py
 src/tests/surfaces/test_surfaces_parity.py
 src/tests/workers/test_claimify_loss_ledger_pg.py
 src/tests/workers/test_e0_chain.py

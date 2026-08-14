@@ -143,7 +143,12 @@ class _LedgerCostMeter:
         self._processing_id = processing_id
 
     def record(
-        self, *, call_key: str, tier: str | None, usage: ProviderCallUsage
+        self,
+        *,
+        call_key: str,
+        tier: str | None,
+        usage: ProviderCallUsage,
+        outcome: str = "ok",
     ) -> None:
         """Persist one provider-reported call through the spine attribution path."""
         self._ledger.record_call(
@@ -156,6 +161,7 @@ class _LedgerCostMeter:
                 tokens_out=usage.tokens_out,
                 cost_usd=usage.cost_usd,
                 latency_ms=usage.latency_ms,
+                outcome=outcome,
             )
         )
 
@@ -382,6 +388,7 @@ class Worker:
                 call_key="provider_failure",
                 tier="failed_response",
                 usage=exception.usage,
+                outcome="provider_error",
             )
         except Exception as accounting_exception:  # pragma: no cover - DB outage path
             exception.add_note(

@@ -1,10 +1,10 @@
-# Design review — D91 P1 Lance bulk writes and two-layer maintenance
+# Design review — D93 P1 Lance bulk writes and two-layer maintenance
 
 **Reviewer:** claude-opus
 **Date:** 2026-08-13
 **Branch:** `feat/d90-entity-obs-flush-fanout` (docs untracked)
 **Under review:**
-`plan/designs/p1_lance_maintenance_design.md` (binding draft, proposed D91),
+`plan/designs/p1_lance_maintenance_design.md` (binding draft, proposed D93),
 `plan/analysis/p1_lance_maintenance_analysis.md` (non-binding)
 **Verified against:** `src/rememberstack/adapters/selfhost/lance.py`,
 `src/rememberstack/workers/p1.py`, `src/rememberstack/spine/backfill.py`,
@@ -196,7 +196,7 @@ processing_state discipline: worker session end fails/requeues"), §5.4
 (`maintain_lease_heartbeat_s`), §5.5.3 coalesce ("if a pending/running light
 unit exists for deployment, do not insert another"), §5.5.2 self-seed ("if no
 pending unit and last success older than …"), §13 open question 5 ("may ship as
-follow-up PR outside D91 core").
+follow-up PR outside D93 core").
 **Code:** `grep -rn "heartbeat\|reaper\|stale_running" src/rememberstack` returns
 one unrelated connector column and nothing else; `work_ledger.py:111-169` +
 `_CLAIM_START` set `status='running'`, and only `complete()`/`fail()` leave it;
@@ -227,7 +227,7 @@ state.
 
 **Required change.** Pick one and bind it:
 
-- bring the heartbeat + reaper into D91 core, on `processing_state` (and say so
+- bring the heartbeat + reaper into D93 core, on `processing_state` (and say so
   in §15 as its own PR before PR4 — it cannot stay open question 5); **or**
 - make coalesce consider only `pending` plus `running` newer than a stated age
   cutoff, and state the double-run safety argument explicitly (`optimize()` and
@@ -442,7 +442,7 @@ the table/column comments. Adding enum *values* is fine and precedented
 Separately: if the maintain component version is to be registered under D1
 (`spine/component_versions.py`), there is no fitting `pipeline_component` enum
 value — `model/component_version.py:25-50` has none for maintenance. Say whether
-D91 registers one or deliberately does not (the `processing_state` reference is
+D93 registers one or deliberately does not (the `processing_state` reference is
 only a logical FK, so "does not" is defensible — but it should be stated).
 
 ### B12 (P2) — The PR plan has no same-PR docs row (D66)
@@ -583,7 +583,7 @@ notes" in PR6 is not the same obligation and lands two PRs late.
 | 9 | Readiness / profile wiring consequences understood | **Fail** | §5.5.4's `_expected_components` instruction makes every document version report the stage `missing` forever (`readiness.py:188-215`) (B2). The changes actually needed are `_SUPPORTED_WORKER_STAGES` + `_handler`. |
 | 10 | Concurrency: writer ↔ maintain | **Concern** | Retry-with-jitter reuse is right (`_LANCE_COMMIT_RETRIES`, `lance.py:58-59, 934-937`) and adequate for optimize/create_index. Unaddressed: a partial matched merge is a full-row rewrite, so two concurrent partial merges on one fact are a read-modify-write pair — today `label_lock` (`workers/p1.py:202`) serializes fact writers per deployment, which the design should state as a standing invariant rather than leave implied. |
 | 11 | Concurrency: maintain ↔ hard-forget purge | **Fail** | `delete_unverified=True` (`lance.py:1106`) is documented as safe only when no other process is working on the dataset; `ForgetInProgressError` gates claims, not already-running work (B5). §5.3 blesses the current behaviour without naming the hazard. |
-| 12 | Crash / stuck-lease recovery is implementable | **Fail** | §9's premise ("mirror processing_state discipline") is false — no heartbeat or reaper exists anywhere in `src/rememberstack`. Combined with coalesce-on-`running`, one crashed heavy silently stops all future maintenance (B4), while §13 defers the fix outside D91 core. |
+| 12 | Crash / stuck-lease recovery is implementable | **Fail** | §9's premise ("mirror processing_state discipline") is false — no heartbeat or reaper exists anywhere in `src/rememberstack`. Combined with coalesce-on-`running`, one crashed heavy silently stops all future maintenance (B4), while §13 defers the fix outside D93 core. |
 | 13 | `BackfillFinalizer` unified onto the shared port | **Pass (with concern)** | §5.3's "`build_search_indexes()` = ensure + heavy for all present tables" is the right unification. Concern: today it covers only chunks/claims/facts (`lance.py:799-833`), so "all present tables" is a behaviour change at the barrier (entities gains a vector index) — review it deliberately (B9). |
 | 14 | Migrations complete against the executable catalog contract | **Fail** | §6.3/§15 PR3 omit `catalog_contract.py` (`EXPECTED_TABLES`, per-contype constraint counts, table/column comments, downgrade absence) and the `pipeline_component` question (B11). Enum-value additions themselves are precedented and fine. |
 | 15 | Rollout plan realistic | **Concern** | "Ship PR1 first, don't block on the worker" is the right call and PR1 has a real anchor test (`test_lance_retrieval.py:196`). But the PR1→PR4 window has no defined maintenance owner while tails grow at least as fast as today (N5), and §13.4 leaves the governing knob open. |
@@ -606,7 +606,7 @@ notes" in PR6 is not the same obligation and lands two PRs late.
    `lane='backfill'` forbidden with the drain-barrier reason, and
    `_expected_components` explicitly excluded with the readiness reason
    (B2, B3).
-3. Bring stuck-lease recovery into D91 core, or weaken coalesce and state the
+3. Bring stuck-lease recovery into D93 core, or weaken coalesce and state the
    idempotency argument that makes a duplicate maintain safe — and delete §9's
    claim about a discipline that does not exist (B4).
 4. Bind the hard-forget purge interaction, naming `delete_unverified`'s

@@ -9,7 +9,7 @@ work truth), D87 (fact eligibility scalars), R3 in
 [`lance_indexing_maintenance.md`](lance_indexing_maintenance.md)  
 **Designed-but-missing worker family:** `plan/analysis/workers.md` §6.3
 (`p1_batch_rebuild` + Lance compaction)  
-**Binding decision:** D91 (entered; trigger/change-mass amendment 2026-08-13)  
+**Binding decision:** D93 (entered; trigger/change-mass amendment 2026-08-13)  
 **Driver:** BEAM-scale P1 write-path pain observed 2026-08-13 on self-host
 compose after Phase E embeds finish quickly, then stall on fact metadata
 refresh and long-lived fragment/index debt.
@@ -74,7 +74,7 @@ path is Lance **per-row update**, not the embedder.
 same host window. That is a **separate** grain/progress problem (version-level
 lease, long handler, zombie `running` if the process dies without fail). This
 analysis notes it; the primary design track is **Lance write/maintenance
-correctness at scale**, not claim/relation fan-out. (D91 ships stage-scoped
+correctness at scale**, not claim/relation fan-out. (D93 ships stage-scoped
 reclaim for maintain only; a shared reaper for embed jobs remains a later
 track.)
 
@@ -141,7 +141,7 @@ Implications:
   space + optimize/rebuild, not "repair Postgres."
 - Cloud may later mount network disk under the same `lance_root` port; adapters
   must not hardcode Docker volume paths. Shared multi-deployment root is out of
-  D91 continuous-maintain scope.
+  D93 continuous-maintain scope.
 
 ## 3. Code map (cold reader)
 
@@ -255,12 +255,12 @@ Plane-E `steady`/`backfill` lanes. `lane=backfill` would deadlock
 | Per-row metadata writes at 10k+ facts | **High** | Multi-hour wall clock; disk blowup; blocks deployment label lock |
 | Unbounded unindexed tail | **High** for query latency | Correctness preserved; D9 path degrades to flat/exhaustive. Merge updates also re-tail rows — skip-unchanged is required |
 | Full rebuild on hot path | **High** | Starves label/embed; commit conflicts |
-| Concurrent writer + optimize/heavy | **Medium** | Light uses short `_LANCE_COMMIT_RETRIES`; heavy must **not** re-train 8× with sub-second pauses — D91 binds write-rate defer (no attempt burn) + long conflict_defer `not_before` + best-effort product contract with terminal `awaiting_operator` under sustained high write (no fake eventual-success). Table lock serializes light+heavy; writers remain outside lock; ops quiet gate is `maintenance_writer_gate=hold` / compose scale-down |
+| Concurrent writer + optimize/heavy | **Medium** | Light uses short `_LANCE_COMMIT_RETRIES`; heavy must **not** re-train 8× with sub-second pauses — D93 binds write-rate defer (no attempt burn) + long conflict_defer `not_before` + best-effort product contract with terminal `awaiting_operator` under sustained high write (no fake eventual-success). Table lock serializes light+heavy; writers remain outside lock; ops quiet gate is `maintenance_writer_gate=hold` / compose scale-down |
 | Disk full mid-compact | **High** ops | Compaction can temporarily **increase** space before prune ([reindexing](https://docs.lancedb.com/indexing/reindexing)) |
-| Stuck maintenance lease | **High** without reclaim | No estate reaper today; D91 binds stage-scoped reclaim via attempt-fenced `WorkLedger.fail(retryable=True, expected_attempt=…)` + side-thread heartbeat + wall-clock advisory-lock probe (never hand-rolled CHECK-violating `status='failed'` UPDATE) |
-| Stale attempt steals replacement | **High** without attempt fence | `status='running'` alone is insufficient; D91 binds `ClaimedWork.attempt` through complete / fail / reclaim / heartbeat |
-| Lost `rerun_requested` successor | **High** without atomic complete | Generic `complete()` after handler return races enqueue; D91 binds attempt-fenced `complete_maintain_p1` in one TX |
-| Unindexed nominator prefilters | **Medium** latency | `LANCE_FILTER_COLUMNS` (`doc_id`, chunk categoricals) used with `prefilter=True` but not all indexed today — D91 matrix closes |
+| Stuck maintenance lease | **High** without reclaim | No estate reaper today; D93 binds stage-scoped reclaim via attempt-fenced `WorkLedger.fail(retryable=True, expected_attempt=…)` + side-thread heartbeat + wall-clock advisory-lock probe (never hand-rolled CHECK-violating `status='failed'` UPDATE) |
+| Stale attempt steals replacement | **High** without attempt fence | `status='running'` alone is insufficient; D93 binds `ClaimedWork.attempt` through complete / fail / reclaim / heartbeat |
+| Lost `rerun_requested` successor | **High** without atomic complete | Generic `complete()` after handler return races enqueue; D93 binds attempt-fenced `complete_maintain_p1` in one TX |
+| Unindexed nominator prefilters | **Medium** latency | `LANCE_FILTER_COLUMNS` (`doc_id`, chunk categoricals) used with `prefilter=True` but not all indexed today — D93 matrix closes |
 | Process-local optimize counters | **Medium** | Under-maintain after restarts or multi-replica |
 | Partial-column `merge_insert` with insert clause | **High if misused** | **Verified** on `lancedb==0.34.0`: with `when_not_matched_insert_all()`, unmatched keys land as `label=None, vector=None`. Matched-only (`when_matched_update_all` alone): preserves omitted columns; missing keys no-op |
 | `delete_unverified=True` concurrent with maintain | **High** corruption | LanceDB requires no other process on the dataset; purge must take the table maintain lock |
@@ -329,7 +329,7 @@ Still implementation-detail / soak questions:
 - `plan/analysis/workers.md` §6.3
 - `plan/analysis/lance_indexing_maintenance.md`
 - `design/benchmarks/review-pr193-risks.md` R3
-- `plan/designs/p1_lance_maintenance_design.md` (D91)
+- `plan/designs/p1_lance_maintenance_design.md` (D93)
 - `design/reviews/REVIEW_claude-opus_p1_lance_maintenance_design_2026-08-13.md`
 - `design/reviews/REVIEW_codex-sol_p1_lance_maintenance_design_2026-08-13.md`
 
@@ -347,4 +347,4 @@ Still implementation-detail / soak questions:
 ---
 
 *Non-binding. Implementation follows the binding design
-`plan/designs/p1_lance_maintenance_design.md` (D91).*
+`plan/designs/p1_lance_maintenance_design.md` (D93).*

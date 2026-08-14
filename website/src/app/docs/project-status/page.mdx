@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.2.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.2.0) on [PyPI](https://pypi.org/project/rememberstack/0.2.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.4.1`](https://github.com/writeitai/remember-stack/releases/tag/v0.4.1) on [PyPI](https://pypi.org/project/rememberstack/0.4.1/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -36,6 +36,8 @@ Current public release: [`v0.2.0`](https://github.com/writeitai/remember-stack/r
 
 - Docker Compose single-deployment self-host (Postgres, object storage, API, continuous workers)
 - Work ledger with retries, dead-letter queue, optional spend ceilings
+- Request-path surface metering plus a content-free `v_cost_receipts` export (`remember ops cost-export` and optional second-bind HTTP)
+- `remember login` / `logout` via a token-host device grant (CLI credential file only)
 - Machine-verifiable readiness; projection rebuilds; hard-forget; portable restore order
 - Optional observability exporters (off until configured)
 
@@ -53,9 +55,16 @@ Current public release: [`v0.2.0`](https://github.com/writeitai/remember-stack/r
 | Query-time entity resolve | Exact-name match; richer matching runs at write time |
 | Competitive benchmark scores | Operator-run protocols; not a continuous public scoreboard |
 
-## Planned for v0.3.0 (not in the v0.2.0 release)
+## What landed after v0.3.0 (in v0.4.0)
 
-- MCP memory write verbs: `ingest` + `pipeline_readiness` (async write; poll until ready). Documented on the [MCP reference](/docs/reference/mcp); not present in installs pinned to `0.2.0`.
+- MCP memory write verbs `ingest` + `pipeline_readiness` shipped in **v0.3.0**.
+- **v0.4.0** adds request-path surface metering, `rememberstack.cost_export.v1` (CLI + optional second-bind HTTP), and `remember login` / `logout`.
+
+## What landed after v0.4.0 (in v0.4.1)
+
+- Remote MCP `tools/list` treats `GET /operations` **404** as “registry not
+  mounted” and still advertises `ingest` + `pipeline_readiness` (managed UMC
+  token surface). Auth and transport failures still fail the list.
 
 ## Intentionally not in the library
 

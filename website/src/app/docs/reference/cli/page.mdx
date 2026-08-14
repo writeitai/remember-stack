@@ -24,14 +24,43 @@ why the system believes or believed the fact.
 The `remember` command ships in the dependency-light base wheel. Query, ingest,
 connector management, and MCP all talk to the deployment API at `REMEMBERSTACK_API_URL`
 (default `http://127.0.0.1:8000`). Set `REMEMBERSTACK_API_AUTHORIZATION` to the complete
-`Authorization` header value when the deployment has an auth perimeter. The
-CLI carries no provider adapters: connector execution and E0 processing stay
+`Authorization` header value when the deployment has an auth perimeter. Humans
+can also run `remember login --token-host <url>` (D92); the CLI then loads
+`credentials.json` after flags and env. `MemoryClient` never reads that file.
+The CLI carries no provider adapters: connector execution and E0 processing stay
 in the deployment. One deployment is one trust domain.
 
 ```bash
 remember --version
-# RememberStack 0.2.0
+# RememberStack 0.4.1
 ```
+
+## `remember login` / `remember logout`
+
+Device-grant login lives in the base wheel. `--token-host` (or
+`REMEMBERSTACK_TOKEN_HOST`) is required on login and is **never** derived from
+`--api-url`. The token host is the service that mints deployment tokens; it is
+not the query API.
+
+```bash
+remember login --token-host https://token-host.example --api-url http://127.0.0.1:8000
+remember logout
+```
+
+`login` prints the user code and both verification URLs, then polls
+`POST {token_host}/v1/device/token`. It never prints `device_code` or
+`access_token`. The credential file is
+`$REMEMBERSTACK_CONFIG_DIR/credentials.json` (else
+`$XDG_CONFIG_HOME/rememberstack/credentials.json`, else
+`~/.config/rememberstack/credentials.json`) with directory `0700` and file
+`0600`.
+
+`logout` calls `DELETE {token_host}/v1/api-tokens/self` with the stored bearer
+and unlinks the file only after 2xx, 401, or 404. A 5xx or network error keeps
+the file and exits 1.
+
+Client command precedence: `--token` / `--api-url` on the subcommand, then
+`REMEMBERSTACK_API_*`, then the credential file, then SDK defaults.
 
 ## `remember operations`
 
@@ -135,7 +164,8 @@ connector manager.
 ## `remember mcp`
 
 Stdio MCP server over the remote client: static write tools (`ingest`,
-`pipeline_readiness`), four assured operations from `GET /operations`, and open-query tools
+`pipeline_readiness`), assured operations from `GET /operations` when that
+route exists (a 404 is not a `tools/list` failure), and open-query tools
 when the deployment composes them. See [MCP reference](/docs/reference/mcp).
 
 Runs the base wheel's MCP stdio server. It discovers operations from the remote
@@ -204,6 +234,17 @@ only that many additional handler executions. The stage is immutable, an
 optional lane must be valid for it, and the committed row is then announced
 through the normal delivery port. Replaying a non-DLQ row fails rather than
 silently duplicating work.
+
+### `remember ops cost-export`
+
+```bash
+remember ops cost-export --deployment <deployment-uuid> [--cursor …] [--limit 100]
+```
+
+Prints one `rememberstack.cost_export.v1` page as JSON on stdout (logs on
+stderr). Empty `receipts` is a healthy heartbeat. `--deployment` must match the
+single spine deployment. This reads `v_cost_receipts`; it is not a query-API
+route. HTTP export, when configured, lives on a **separate bind**.
 
 ### `remember ops rebuild`
 

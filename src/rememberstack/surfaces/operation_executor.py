@@ -10,6 +10,8 @@ from rememberstack.model import AssuredOperationName
 from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.spine.surface_cost import open_surface_scope
+from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.surfaces.query_engine import QueryEngine
 
 
@@ -36,6 +38,23 @@ class OperationExecutor:
         evaluated_at: datetime | None = None,
     ) -> OperationResult:
         """Execute exactly the authority named by a validated descriptor."""
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            return self._execute_named(
+                deployment_id=deployment_id,
+                operation=operation,
+                arguments=arguments,
+                evaluated_at=evaluated_at,
+            )
+
+    def _execute_named(
+        self,
+        *,
+        deployment_id: UUID,
+        operation: AssuredOperation,
+        arguments: dict[str, object],
+        evaluated_at: datetime | None,
+    ) -> OperationResult:
+        """Run one named plan inside an already-open request scope."""
         name = operation.name
         if name is AssuredOperationName.RESOLVE_ENTITY:
             return self._engine.resolve(

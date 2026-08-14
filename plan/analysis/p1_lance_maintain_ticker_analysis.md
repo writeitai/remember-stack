@@ -4,14 +4,14 @@
 **Date:** 2026-08-14  
 **Question:** Does OSS Lance require claimed `processing_state` work for
 `optimize()` / `create_index()`, or is a locked ticker enough?  
-**Related binding (amended after this note):** D91,
+**Related binding (amended after this note):** D93,
 `plan/designs/p1_lance_maintenance_design.md`  
 **Rejected-but-viable:**
 [`plan/proposals/p1_lance_maintain_ledger_units.md`](../proposals/p1_lance_maintain_ledger_units.md)
 
 ## 1. The question
 
-The first D91 draft modeled continuous maintain as an unlaned ledger stage
+The first D93 draft modeled continuous maintain as an unlaned ledger stage
 (`maintain_p1_index`) with table-scoped units, coalesce, attempt-fenced
 complete/fail, reclaim, and a heartbeat side-thread. That draft was internally
 consistent with D67. It is not required by Lance.
@@ -25,7 +25,7 @@ This note records why the simpler control plane is the better default.
 | Concurrent **writes** are supported; too many writers can exhaust commit retries | [FAQ — concurrent operations](https://docs.lancedb.com/faq/faq-oss) |
 | `optimize()` is compaction + prune + **incremental** index update; run after large writes or on a schedule | [Performance — maintenance](https://docs.lancedb.com/performance), [Reindexing](https://docs.lancedb.com/indexing/reindexing) |
 | While new rows arrive during reindex, queries use the old index plus a brute-force scan of the unindexed tail | [Reindexing](https://docs.lancedb.com/indexing/reindexing) |
-| `optimize(retrain=True)` is a deprecated no-op on pinned `lancedb==0.34.0` | Engine API (same pin as D91 r4) |
+| `optimize(retrain=True)` is a deprecated no-op on pinned `lancedb==0.34.0` | Engine API (same pin as D93 r4) |
 | Full IVF/FTS retrain is `create_index(..., replace=True)` | [Vector indexes](https://docs.lancedb.com/indexing/vector-index) |
 | `optimize(..., delete_unverified=True)` is only safe when **no other process** is working the dataset | LanceDB 0.34 `Table.optimize` docstring |
 
@@ -64,13 +64,13 @@ we modeled a filesystem call as a claimed attempt.
 | Option | Shape | Cost | Verdict |
 | --- | --- | --- | --- |
 | **A. Locked ticker (chosen)** | One compose process; per-table try-lock; choose ensure / optimize / retrain; writers bump a stats row and never take the lock | One loop, one stats table, no reclaim | Fits Lance; matches forget lock already in PR2 |
-| **B. Ledger units (first D91 draft)** | Unlaned stage, units, coalesce, reclaim, heartbeat, attempt fence | Large, review-heavy, easy to get CHECK/lock-order wrong | Viable if we later need many maintain replicas or DLQ semantics; not needed for self-host one-root |
+| **B. Ledger units (first D93 draft)** | Unlaned stage, units, coalesce, reclaim, heartbeat, attempt fence | Large, review-heavy, easy to get CHECK/lock-order wrong | Viable if we later need many maintain replicas or DLQ semantics; not needed for self-host one-root |
 | **C. Cron only** | `optimize`/`create_index` on a timer with no stats | Misses change-mass; cannot tell chunks from facts; no `awaiting_operator` | Too dumb for BEAM-scale tails |
 | **D. Inline optimize on writers** | Status quo before PR1 | Multi-hour `label_lock`; fragment storms | Rejected (the incident) |
 
 ## 5. Recommendation
 
-Amend D91:
+Amend D93:
 
 - Keep bulk merge, skip-unchanged, index matrix, table advisory lock, writer
   exclusion from that lock, change-mass on a durable stats row, gates default

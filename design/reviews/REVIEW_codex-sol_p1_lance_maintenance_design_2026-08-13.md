@@ -70,10 +70,10 @@ neutral wiring details in the current implementation:
   maintenance decision needs an explicit profile change, not only a new enum and
   handler.
 
-Before D91 is binding, choose and document one route model. If maintenance stays
+Before D93 is binding, choose and document one route model. If maintenance stays
 a scheduled P1 aggregate, make it unlaned, update the worker-loop construction,
 and keep its component generation out of per-version `_expected_components`.
-If D91 intentionally makes it a laned stage, amend the D67 lane semantics and
+If D93 intentionally makes it a laned stage, amend the D67 lane semantics and
 define why `backfill` promotion and route budgets are meaningful for maintenance.
 In either case, provide a separate deployment-maintenance health/readiness
 surface rather than inserting a deployment unit into version readiness.
@@ -152,7 +152,7 @@ running indefinitely. Updating only a unit-table heartbeat does not make that
 row claimable.
 
 The design's open question says the shared heartbeat/reaper may ship outside the
-D91 core (`plan/designs/p1_lance_maintenance_design.md:595-605`), which conflicts
+D93 core (`plan/designs/p1_lance_maintenance_design.md:595-605`), which conflicts
 with §1's statement that failure contracts are required for ship and with the
 multi-hour heavy-work design. Bind the heartbeat executor (separate thread or
 process/connection), stale threshold, fencing/ownership token, atomic
@@ -230,7 +230,7 @@ process-local tail maintenance (§5.2.3). That description is false for entities
 
 The companion rulebook explicitly requires a per-table complete index matrix
 (`plan/analysis/lance_indexing_maintenance.md:101-105,171-176`). Add that matrix
-to D91: exact vector, FTS, BTREE, and BITMAP columns for each table; behavior for
+to D93: exact vector, FTS, BTREE, and BITMAP columns for each table; behavior for
 missing/legacy columns; min-row gates; and ensure-versus-replace semantics. Add
 entity-heavy and upgraded-store acceptance. Otherwise an implementation that
 only extracts today's private methods can ship a nominal “all tables” worker
@@ -329,7 +329,7 @@ while entities remain permanently indexless.
 ## Final recommendation
 
 Keep the storage-level decisions and ship the isolated PR1 bulk merge after the
-vector/label preservation test is added. Do not bind D91 or enable the
+vector/label preservation test is added. Do not bind D93 or enable the
 maintenance worker until the lane/readiness model, scheduler/coalescing state
 machine, bounded-execution/lease recovery, maintenance serialization, complete
 index matrix, and gated rollout order are resolved.

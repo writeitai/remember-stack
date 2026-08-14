@@ -1,4 +1,4 @@
-# Design re-review (r2) — D91 P1 Lance bulk writes and two-layer maintenance
+# Design re-review (r2) — D93 P1 Lance bulk writes and two-layer maintenance
 
 **Reviewer:** claude-opus
 **Date:** 2026-08-13
@@ -36,7 +36,7 @@ matrix. §5.5.1 now states one protocol instead of four.
 Six items remain open. Two of them (R1, R2) are **binding statements that are
 wrong as written**, in sections that were rewritten to close prior P0/P1 items —
 each is a one-to-three-sentence correction, not a reopened decision. They should
-be fixed in the design text **before** D91 is entered in `decisions.md`, not
+be fixed in the design text **before** D93 is entered in `decisions.md`, not
 during implementation. The rest are P2/nits.
 
 ## Disposition of prior blocking items (B1–B12)
@@ -46,7 +46,7 @@ during implementation. The rest are P2/nits.
 | **B1** (P0) | Maintenance unit deployment-scoped; maintained objects are not | **Addressed** | §1.4 makes physical grain binding; §5.5.1 keys units on `(lance_root_key, table_name, mode)`; §5.6 keys stats on `(lance_root_key, table_name)` and forbids `deployment_id` in the growth key; §5.7 rule 1 keys the lock on `(lance_root_key, table_name)`; §4.2 states shared-root multi-deployment as a non-goal; §12 records the rejected shape. `deployment_id` retained for routing/attribution only, as asked. |
 | **B2** (P0) | `_expected_components` wiring makes every version permanently not-ready | **Addressed** | §5.5.5 binds "**do not add**" with the per-version readiness reason; §5.5.1 states the `component_version` is logical-only and needs no `pipeline_component` enum value; §5.5.5 names `_SUPPORTED_WORKER_STAGES` + `_handler` as the changes that *are* required, and routes maintenance health to §8 metrics instead; §12 and K5 record it. Verified: `_expected_components()` at `profiles/selfhost.py:877` is consumed per `document_version`. |
 | **B3** (P0) | Lane left open; `lane=backfill` deadlocks the drain barrier | **Addressed** | §1.5 binds unlaned; §5.5.1 `lane = NULL always`; §5.5.5 binds `UNLANED_STAGES += maintain_p1_index` and `worker_loop` passing `lane=None` rather than hardcoded `STEADY`; §5.5.6 states the deadlock reason and makes a non-null lane a hard error. Verified accurate: `lane_is_valid` is `(lane is None) == (stage in UNLANED_STAGES)` (`catalog_contract.py:296-302`) and is enforced at `enqueue_on` via `_require_valid_lane` (`work_ledger.py:1265`), so the "hard error" claim holds once the stage is added. |
-| **B4** (P0) | §9 rests on a non-existent reaper; coalesce-on-`running` turns one crash into permanent silent stall | **Addressed in substance — see R1 for a defect in the mechanism** | The false premise is deleted. §5.5.2 takes *both* options I offered: coalesce on `pending`/retryable `failed` only, `rerun_requested` for running races, an explicit stated idempotency argument for why a double-run is safe, **and** a stage-scoped `reclaim_stale_maintain` bound to ship with D91 (§4.2 scopes the general reaper out; §9 and §12 are consistent; §15 puts reclaim in PR3, before the PR4 worker). The convergence argument holds. The **SQL sketch** implementing it does not — R1. |
+| **B4** (P0) | §9 rests on a non-existent reaper; coalesce-on-`running` turns one crash into permanent silent stall | **Addressed in substance — see R1 for a defect in the mechanism** | The false premise is deleted. §5.5.2 takes *both* options I offered: coalesce on `pending`/retryable `failed` only, `rerun_requested` for running races, an explicit stated idempotency argument for why a double-run is safe, **and** a stage-scoped `reclaim_stale_maintain` bound to ship with D93 (§4.2 scopes the general reaper out; §9 and §12 are consistent; §15 puts reclaim in PR3, before the PR4 worker). The convergence argument holds. The **SQL sketch** implementing it does not — R1. |
 | **B5** (P1) | `delete_unverified=True` becomes a corruption hazard once a second process maintains the dataset | **Addressed** | §5.7 rule 5 names the corruption precondition (not just disk), binds purge to acquire the same table maintain lock, permits `cleanup_older_than=0` + `delete_unverified` only while holding it, states the bounded-wait/fail-with-retry behaviour, and notes `ForgetInProgressError` gates only *new* claims; §6.2 and §9 repeat it; §12 records the rejected "drop `delete_unverified`". Residual: which layer takes the lock — R3. |
 | **B6** (P1) | §5.5.1 is a transcript of a decision, not a decision (Rule 1) | **Addressed** | §5.5.1 is now one identity table + one payload + one unit table, with no self-argument. The `content_hash` uniqueness confusion is gone from the body and correctly parked in §12 ("`content_hash` is not in the ledger unique key"). |
 | **B7** (P1) | Pervasive `v1` / phase framing (Rule 2) | **Addressed** | `grep -nE "\bv1\b\|v1\.1\|MVP\|Phase 1\|for now\|defer(red\|ral)"` over design + analysis returns zero phase hedges. Surviving "later" instances are genuine non-goals or documented alternatives in the shape Rule 2 permits (§1.5 stage split, §4.2 estate-wide reaper, §12 S3). §5.4 numbers are labelled "measure; not sacred". |
@@ -358,5 +358,5 @@ R3–R6 are a sentence or two each and can land alongside; R7–R11 are editoria
 The decision itself — batched matched-only merge with skip-unchanged, light
 `optimize` vs heavy `create_index`, a table-grained ledger-backed unlaned
 maintenance worker, one exclusive lock per physical table, and three separate
-job families — is sound and should go into `decisions.md` as D91 once R1 and R2
+job families — is sound and should go into `decisions.md` as D93 once R1 and R2
 are corrected.
