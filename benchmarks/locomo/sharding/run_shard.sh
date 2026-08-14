@@ -310,8 +310,7 @@ require_verified_scoring_backup() {
     --sample "$sample_id" \
     --compose-project "$compose_project" \
     --destination "$backup_destination" \
-    --lock-fd 9 ||
-    die "sample=$sample_id backup re-verification failed; refusing scoring"
+    --lock-fd 9
   log "sample=$sample_id backup=verified scoring=authorized"
 }
 
@@ -358,7 +357,7 @@ PY
   )
   status=$(sample_status "$sample_id")
   [[ "$status" == complete ]] || return 0
-  receipt=$run_dir/.locomo-backups/receipts/$sample_id.json
+  receipt=$run_dir/.locomo-backups/receipts/final/$sample_id.json
   if [[ -f "$receipt" ]] &&
     "$python_bin" "$backup_tool" authorize-wipe \
       --run-dir "$run_dir" \
@@ -397,7 +396,11 @@ for sample_id in "${requested_samples[@]}"; do
   esac
 done
 backup_completed_live_store
-if [[ -n "$marked_sample" ]] && [[ "$(sample_status "$marked_sample")" == ingested ]]; then
+marked_pending=false
+for sample_id in "${pending_samples[@]}"; do
+  [[ "$sample_id" == "$marked_sample" ]] && marked_pending=true
+done
+if [[ "$marked_pending" == true ]] && [[ "$(sample_status "$marked_sample")" == ingested ]]; then
   ordered_pending=("$marked_sample")
   for sample_id in "${pending_samples[@]}"; do
     [[ "$sample_id" == "$marked_sample" ]] || ordered_pending+=("$sample_id")
@@ -483,7 +486,10 @@ for sample_id in "${pending_samples[@]}"; do
       log "sample=$sample_id stage=stack status=resuming-existing-store"
       start_existing_store
       require_verified_scoring_backup "$sample_id" ||
-        stop_store_after_failed_scoring_authorization
+        {
+          stop_store_after_failed_scoring_authorization
+          die "sample=$sample_id backup re-verification failed; refusing scoring"
+        }
       log "sample=$sample_id stage=answer status=resuming-from-checkpoint"
       "$python_bin" -m benchmarks.locomo answer \
         --run "$run_dir" \
@@ -535,7 +541,10 @@ for sample_id in "${pending_samples[@]}"; do
   log "sample=$sample_id stage=stack status=restarting-after-post-ingest-backup"
   start_existing_store
   require_verified_scoring_backup "$sample_id" ||
-    stop_store_after_failed_scoring_authorization
+    {
+      stop_store_after_failed_scoring_authorization
+      die "sample=$sample_id backup re-verification failed; refusing scoring"
+    }
 
   log "sample=$sample_id stage=answer status=starting"
   "$python_bin" -m benchmarks.locomo answer \

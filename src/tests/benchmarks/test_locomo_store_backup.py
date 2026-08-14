@@ -187,7 +187,7 @@ def test_failed_stop_preserves_store_without_a_receipt(
         )
 
     assert volume_root.is_dir()
-    assert not (run_dir / store_backup.RECEIPT_DIRECTORY / "conv-1.json").exists()
+    assert not store_backup._receipt_path(run_dir=run_dir, sample_id="conv-1").exists()
 
 
 def test_backup_writes_receipt_only_after_remote_readback(
@@ -252,7 +252,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
         staging_root=staging_root,
     )
 
-    receipt_path = run_dir / store_backup.RECEIPT_DIRECTORY / "conv-1.json"
+    receipt_path = store_backup._receipt_path(run_dir=run_dir, sample_id="conv-1")
     assert receipt_path.is_file()
     assert (
         store_backup.BackupReceipt.model_validate_json(receipt_path.read_bytes())
@@ -392,9 +392,15 @@ def test_scoring_and_final_receipts_use_separate_stable_paths(tmp_path: Path) ->
     )
     final = store_backup._receipt_path(run_dir=tmp_path, sample_id="conv-1")
 
-    assert scoring.name == "conv-1.scoring-base.json"
+    assert scoring.name == "conv-1.json"
+    assert scoring.parent.name == "scoring-base"
     assert final.name == "conv-1.json"
+    assert final.parent.name == "final"
     assert scoring != final
+    colliding_sample = store_backup._receipt_path(
+        run_dir=tmp_path, sample_id="conv-1.scoring-base", checkpoint="final"
+    )
+    assert colliding_sample != scoring
 
 
 def test_scoring_authorization_binds_live_store_and_destination(
@@ -598,7 +604,7 @@ def test_failed_remote_manifest_readback_preserves_store_without_receipt(
             staging_root=staging_root,
         )
 
-    assert not (run_dir / store_backup.RECEIPT_DIRECTORY / "conv-1.json").exists()
+    assert not store_backup._receipt_path(run_dir=run_dir, sample_id="conv-1").exists()
     assert (volume_root).is_dir()
     assert any(staging_root.iterdir())
 
@@ -998,6 +1004,7 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert 'backup_sample "$sample_id" final' in loop
     assert 'require_verified_final_backup "$sample_id"' in loop
     assert "stop_store_after_failed_scoring_authorization" in script
+    assert '[[ "$sample_id" == "$marked_sample" ]] && marked_pending=true' in script
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
