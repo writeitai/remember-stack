@@ -918,8 +918,9 @@ def _receipt_path(
 ) -> Path:
     """Return the stable local receipt path for one sample checkpoint."""
 
-    suffix = "" if checkpoint == "final" else ".scoring-base"
-    return run_dir / RECEIPT_DIRECTORY / f"{_safe_component(sample_id)}{suffix}.json"
+    return (
+        run_dir / RECEIPT_DIRECTORY / checkpoint / f"{_safe_component(sample_id)}.json"
+    )
 
 
 def _marker_path(run_dir: Path) -> Path:
