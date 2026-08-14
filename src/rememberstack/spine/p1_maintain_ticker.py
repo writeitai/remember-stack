@@ -196,7 +196,9 @@ class P1MaintainTicker:
             age = datetime.now(tz=UTC) - last_heavy
             if age < timedelta(hours=self._settings.heavy_rebuild_min_hours):
                 return False
-        raw_changed = stored.get("changed_rows_since_heavy") if stored is not None else 0
+        raw_changed = (
+            stored.get("changed_rows_since_heavy") if stored is not None else 0
+        )
         changed_rows = raw_changed if isinstance(raw_changed, int) else 0
         if changed_rows > 0:
             return True
