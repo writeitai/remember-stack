@@ -28,9 +28,9 @@ Keep this current: when something here is decided, move it to a decision and pru
    port configuration (D61); shipped default `qwen/qwen3-embedding-8b` via the OpenRouter
    adapter (self-hosted open weights = second adapter). Conventional model → the E1
    context-prefix stage exists (the branch in `e1_chunks_design.md` §5 binds to
-   conventional + prefix). What remains is a *measurement*, not a decision: the
-   Matryoshka-truncated stored dimension vs recall on the D22 golden set — which is what
-   still gates final P1 index parameters.
+   conventional + prefix). **D94 amendment:** the PostgreSQL reference profile
+   now pins Qwen output and pgvector columns to 1,536 dimensions; dimension no
+   longer gates the P1 engine migration through a benchmark.
 4. ~~**LLM per stage**~~ **RESOLVED for the extractor seat (D70)** — defaults are model-provider
    port configuration: extraction (and the cascades' small rung) defaults to `gpt-5.6-luna`,
    the frontier rung to `gpt-5.6-sol`; checker seats cross-family per D53. The phase-2/6
@@ -131,8 +131,9 @@ Keep this current: when something here is decided, move it to a decision and pru
     written, driven by the S1–S63 scenario battery (`plan/analysis/retrieval_scenarios.md`):
     zero-LLM primitives + registry recipes, the response envelope (grain / contradictions /
     freshness / typed negatives), propose-dispose hydration, four mounts + filesystem-first
-    precedence, the consumption skill. Remaining retrieval items: the spikes in
-    `retrieval_design.md` §13 (Lance scale, hub pagination, rerank weights, envelope overhead,
+    precedence, the consumption skill. D94 replaces Lance with PostgreSQL-native
+    P1 without a new benchmark gate. Remaining retrieval items: the spikes in
+    `retrieval_design.md` §13 (hub pagination, rerank weights, envelope overhead,
     the S58 cold-agent protocol) and the deployment-security slice of #8.
 17. **Spine schema (`postgres_schema_design.md`).** ~15 tables are sketched across separate decisions
     with no consolidated schema, FK map, indexes (only D23, registry-only), constraints, partitioning

@@ -296,10 +296,11 @@ file it never retrieved. Without this section, anything a description omits is i
 forever. (Same for sound: transcripts capture speech; the alarm in the background exists in
 no text.)
 
-**The mechanism — one more P1 target, riding existing machinery (D8/D63 unchanged):**
+**The mechanism — one more P1 target on accepted natural media rows (D63/D94):**
 
 - `search(channel=semantic, target=media_segments, query=<text | image | audio>, …)` —
-  a **logical target over per-modality Lance subindexes**: one row per standalone image, per
+  a **logical target over accepted per-modality segment/representation rows and
+  indexes**: one row per standalone image, per
   adaptive video keyframe/shot, per bounded audio segment; each row carries its **modality**
   (image | keyframe | acoustic), its **embedding family + version + dimension**, its
   `representation_id`, and its **immutable locator** (§4), hydrating to the representation
@@ -354,7 +355,7 @@ and players understand it; a filesystem does not. So:
 | D32 | **extended**: two-hop grounding; modality-aware layer-4 audits |
 | D54–D56 | **precision fix + one new object**: representations become identified immutable objects (`document_representations`, representation-addressed artifact paths, current-pointer swap on completion); the extraction basis is `(representation_id, blockizer_version, structurer_version, extractor_version)`; upgrades flow the processing-driven ruleset; D56 reuse and `chunk_claims` occurrence provenance become representation-aware |
 | D59 | **served**: diarization is what makes recorded stance attributable; conservative resolution protects it |
-| D8/D9/D63 | **unchanged**: media embeddings are one more Lance target + one more port config; zero-LLM query path holds |
+| D9/D63/D94 | **composes**: media embeddings are one more PostgreSQL P1 target + one more port config; zero-LLM query path holds |
 | D49 | **extended**: envelope provenance carries locators + derivation disclosure; missing media channel is a typed `boundary` |
 | D42 | **composes**: derivation-family provenance kept visible for future independence/confidence math |
 

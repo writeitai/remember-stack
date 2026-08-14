@@ -7,9 +7,11 @@ accepted).
 `design/reviews/REVIEW_codex-sol_2026-08-06.md`  
 **Analysis:** `plan/analysis/pipeline_checkpointing.md`  
 **Primary target:** `label_relation` (`LabelFactsHandler`).  
-**Code truth:** `fact_catalog.py` `_STAMP_FACT_LABEL` currently sets
-`fact_label_embedding_ref = relation_id::text` in the **same** update as the
-label — there is **no** separate “needs embed” marker today.
+**D94 amendment (2026-08-14):** P1 is now PostgreSQL-native.
+The pre-D94 code still sets `fact_label_embedding_ref = relation_id::text` in
+the same update as the label; implementation of D94 removes that opaque
+external-store reference and stores the current derived vector and attestation
+on the natural relation/observation row.
 
 ---
 
@@ -43,7 +45,7 @@ Define markers on Postgres (names illustrative; migration required):
 | --- | --- |
 | `fact_label` + `fact_label_version` | Label text for `label_generation` |
 | `fact_label_embed_version` | Embed generation last successfully indexed |
-| `fact_label_embedding_ref` | Opaque ref after Lance write (optional; not sole readiness) |
+| non-null embedding + attestation columns | Current derived vector for this row matches `fact_label`, input hash and embed generation |
 
 Logical states:
 
@@ -51,17 +53,17 @@ Logical states:
 | --- | --- |
 | **U** Unlabeled | `fact_label_version` ≠ current `label_generation` |
 | **L** Labeled, not embedded for current embed gen | label current, `fact_label_embed_version` ≠ current `embed_generation` |
-| **E** Embedded current | both generations current and Lance row present for that embed gen |
+| **E** Embedded current | both generations current and the row's embedding attestation matches its current label/input hash |
 
 Transitions:
 
 ```text
-U --produce_label--> L --lance_upsert+stamp_embed_version--> E
+U --produce_label--> L --embed_and_stamp--> E
 ```
 
 **Re-label** (new `label_generation`): U/L path again; **must** force re-embed
-(clear or advance embed version expectation) so Lance cannot serve old vectors
-under a new label generation without Phase E.
+(clear or advance embed version expectation) so the row's old vector cannot
+satisfy current attestation under a new label generation without Phase E.
 
 **Re-embed only** (new `embed_generation`, same label): L→E without re-LLM.
 
@@ -100,7 +102,7 @@ evidencing the same relation can race label production.
 for relation in relations needing label_generation:
     label = produce_label(relation)  # LLM or deterministic (orthogonal design)
     CAS stamp fact_label + fact_label_version
-    # Does NOT set embed version; does NOT claim Lance readiness
+    # Does NOT set embed version; does NOT claim P1 readiness
 ```
 
 ### 4.3 Phase E — embed checkpoint
@@ -109,33 +111,20 @@ for relation in relations needing label_generation:
 for batch in relations/observations needing embed_generation
             (and label already current if relation requires label):
     vectors = embed(batch texts)  # chunked to provider cap
-    upsert_facts(Lance, ids + vectors + embed_generation metadata)
-    CAS stamp fact_label_embed_version (and ref) only after Lance success
+    transaction:
+        CAS update each natural fact row with
+            embedding + model/dimension + input hash + embed generation
 ```
 
-**Invariant:** never advertise embed completion in PG before Lance upsert for
-that id and embed_generation succeeds.
+**Invariant:** the vector and its completion attestation update atomically on
+the natural PostgreSQL row. Neither may become visible alone.
 
 ### 4.4 Readiness (truthful)
 
-**Current implementation fact:** public fact semantic search goes to **Lance**,
-not a PG “ref missing” filter (`p1_index` path). Therefore:
-
-| Claim | Status |
-| --- | --- |
-| “Missing PG ref ⇒ not searchable” | **False today** if Lance still holds a row |
-| Required behavior | Lance rows carry **embed_generation** (or equivalent); search filters or rebuilds so **stale generation is not returned as current**, OR query hydrates PG and drops stale nominees with overfetch |
-
-This design requires **one** readiness authority to be chosen and implemented
-consistently:
-
-- **Preferred:** Lance row metadata includes `embed_generation`; readers filter
-  to current generation.  
-- **Acceptable:** overfetch from Lance + PG join drop where
-  `fact_label_embed_version` ≠ current.
-
-Document the chosen authority in the implementation PR; do not claim PG-ref
-alone gates the channel.
+D94 chooses one readiness rule. A fact is searchable only when the row's vector,
+input hash, label version, and configured embed generation agree. The ranked
+statement reads that row under one MVCC snapshot and applies deployment,
+validity, current/history, and evidence predicates before returning it.
 
 ### 4.5 Lock duration vs checkpoints
 
@@ -153,7 +142,7 @@ Resume selects unstamped claims for the active embedder generation.
 | Failure | Result |
 | --- | --- |
 | Crash mid Phase L | Resume unlabeled only (CAS) |
-| Crash after Lance before PG embed stamp | Re-upsert Lance (idempotent) then CAS stamp; or reconcile orphans via rebuild |
+| Crash during vector/stamp transaction | Transaction rolls back; resume re-embeds or reuses a validated batch result and retries the conditional row update |
 | Provider 5xx mid Phase E | Prior batches remain embedded; retry remainder |
 | Generation bump | Selectors re-drive L and/or E as above |
 
@@ -168,18 +157,18 @@ work**, not necessarily duplicate HTTP.
 | End-only stamp | Demonstrated data loss |
 | “embedding_ref IS NULL” as needs-embed | **Broken on real schema** after first stamp |
 | Child processing_state per fact | Heavy; defer |
-| Stamp embed before Lance | False readiness |
+| Stamp embed separately from the vector update | False readiness |
 
 ## 8. Acceptance criteria
 
 1. Kill after ≥1 CAS label stamp; restart; no re-produce_label for stamped ids.  
-2. Label generation bump forces re-embed path (no silent old Lance under new
-   label gen).  
+2. Label generation bump forces the re-embed path; an old vector cannot satisfy
+   the new generation.
 3. Embed generation bump alone does not re-LLM labels.  
 4. Provider batch size ≤ configured cap (≤1024 texts).  
 5. Race test: two concurrent label attempts → one winner, no double success
    stamp without CAS.  
-6. Readiness test aligned with chosen Lance/PG authority.  
+6. Readiness test proves same-row vector attestation and authority predicates.
 7. Schema migration for embed version columns reviewed for delete/forget.
 
 ## 9. Implementation touchpoints
@@ -187,7 +176,7 @@ work**, not necessarily duplicate HTTP.
 - `workers/p1.py` — split Phase L / E  
 - `fact_catalog.py` — selectors, CAS stamps, **stop setting embed ref in label
   stamp**  
-- Lance fact schema / `p1_index` — generation metadata if preferred authority  
+- relation/observation embedding columns and HNSW indexes — current vector plus attestation
 - Migrations + hard-forget inventory  
 
 ## 10. Review disposition

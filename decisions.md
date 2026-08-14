@@ -159,6 +159,10 @@ READ_ONLY processes — snapshot serving is the intended usage, not a workaround
 
 ## D8. Relation fact-label embeddings live in LanceDB, not in the graph
 
+**Status:** placement superseded by D94. Fact-label embeddings remain outside
+the LadybugDB snapshot and now live as current derived columns on natural
+relation/observation rows.
+
 **Decision.** Each relation gets a canonical fact label ("Alice Novak works at Acme as VP of
 Engineering") embedded in a Lance `relations` table keyed by `relation_id`, with scalar
 columns (subject_id, predicate, object_id, validity window, evidence_count) for filtered
@@ -191,8 +195,12 @@ adjudication changes).
 
 ## D9. Search architecture: Graphiti-inspired, zero LLM calls on the query path
 
-**Decision.** Parallel retrieval channels (semantic over Lance relations + claims, BM25,
-lexical PG FTS, structured scalar lookups, registry entity resolution) fused with **RRF**;
+**Status:** channel/RRF/no-LLM decision remains binding; Lance-specific
+placement is superseded by D94.
+
+**Decision.** Parallel retrieval channels (semantic over PostgreSQL P1 fact
+labels + claims/chunks, pg_textsearch BM25 over claims/chunks, structured
+scalar lookups, registry entity resolution) fused with **RRF**;
 reranked by **graph distance from focal entities** (native SHORTEST/BFS in the snapshot) and
 **evidence count**; optional cross-encoder as a flagged final stage. Composable primitives
 plus named **search recipes** (`relation_hybrid_rrf`, `relation_near_entity`,
@@ -201,24 +209,20 @@ plus named **search recipes** (`relation_hybrid_rrf`, `relation_near_entity`,
 **Context.** Graphiti's search stack (edge-fact embeddings + BM25 + graph traversal, RRF
 default, node-distance/episode-mentions/MMR/cross-encoder rerankers, canned recipes, no
 query-time LLM — how Zep reaches ~300ms P95), adapted to our store layout: their edge-fact
-embedding relocates to Lance (D8); their episode-mentions reranker is our `evidence_count`,
+embedding maps to P1 (D94); their episode-mentions reranker is our `evidence_count`,
 free from D2.
 
 **Consequences.** Query latency is bounded by retrieval+rerank, not generation. Agents pick
 strategies instead of assembling plumbing. Center-node reranking requires focal-entity
 resolution first — the registry is on the hot path.
 
-**Implemented default-path clarification (2026-07-30).** A channel named hybrid must contain
-independent nominations: the shipped claims hybrid is semantic + native lexical/BM25 over the
-same P1 text, never two copies of one vector search. P1 chunk text gains the same two searchable
-channels as a source-text fallback. The ordinary `question_context` recipe returns confirmed
-claims and current-source chunks as separately typed evidence payloads; it does not mix their
-UUIDs into an untyped ranking or promote source text to fact grain. Hybrid recipes fuse
-projection-only IDs before confirming each final list once. Ordinary writes optimize indexed
-tails after 20 mutations or 100,000 unindexed rows; first reads repair missing FTS and chunk-ID
-indexes on upgraded stores. Reads never compact; index creation, idempotent upserts, and
-write-path optimization use bounded retries with jitter for Lance commit conflicts on the shared
-API/worker volume. Design and rationale:
+**Implemented default-path clarification (2026-07-30; storage amended by D94).**
+A channel named hybrid must contain independent nominations: the shipped
+claims/chunks hybrid is semantic + BM25 over the same P1 text, never two copies
+of one vector search. Context results preserve fact/evidence/source grains.
+PostgreSQL maintains ordinary P1 index entries automatically; generation
+backfills and explicit rebuild/reindex remain controlled maintenance. Design
+and rationale:
 [`plan/designs/retrieval_design.md` §§3–5](plan/designs/retrieval_design.md) and
 [`plan/analysis/retrieval_default_path.md`](plan/analysis/retrieval_default_path.md).
 
@@ -292,8 +296,20 @@ columnar, Cypher, native paths, Parquet/Arrow interop, read-only multi-process m
 **Context.** Confirmed via web research and a survey of the vendored source tree
 (`plan/analysis/ladybug_capabilities.md`). Risks accepted: young fork; vector/FTS/algo extension
 implementations live in a separate repo (not vendored) — irrelevant to our usage since
-vectors/FTS stay in Lance (D8) and the engine features we depend on (COPY FROM, paths,
-projected graphs, read-only mode) are core, verified in source.
+P1 vector/BM25 search uses PostgreSQL-native derived columns/indexes plus the
+sole `chunk_search` sidecar (D94), while the Ladybug features
+we depend on (COPY FROM, paths, projected graphs, read-only mode) are core and verified in
+source.
+
+**Reaffirmed 2026-08-14.** PostgreSQL 18 recursive CTEs and Apache AGE were reconsidered after
+D94. Direct SQL is the simpler future candidate only if the product deliberately removes full
+public Cypher. AGE credibly preserves Cypher and PostgreSQL-native backup mechanics, but its
+label tables remain a duplicate projection, graph work shares the authority/P1 resource and
+fault boundary, and the inspected PG18 shortest-path API does not expose the arbitrary
+per-edge predicate needed to prove temporal filtering during traversal. Ladybug therefore
+remains binding until measured operational pain and the recorded parity/isolation gate justify
+a replacement. Analysis: `plan/analysis/postgresql_p2_graph_analysis.md`. Open, unchosen
+proposal: `design/proposals/postgresql_p2_graph.md`.
 
 ---
 
@@ -313,10 +329,11 @@ of truth, mutability, rebuild semantics):
   *canonicalize*).
 - **Plane K — Knowledge** (aggregate, LLM-compiled, debounced; git is truth): **K1 general,
   K2 special-purpose scopes, K3 core beliefs**.
-- **Plane P — Projections** (derived, no authority, rebuilt on schedule, immutable
-  snapshots): **P1 search indexes** (Lance), **P2 graph** (LadybugDB).
+- **Plane P — Projections** (derived, no authority): **P1 search state**
+  (PostgreSQL-native indexes plus `chunk_search`, D94), **P2 graph**
+  (LadybugDB snapshots).
 
-Mapping: L0→E0, L1→E1, L2→E2, L3→K1, L4→K2, L5→K3, L6→P2. Relations (E3) and the Lance
+Mapping: L0→E0, L1→E1, L2→E2, L3→K1, L4→K2, L5→K3, L6→P2. Relations (E3) and the search
 indexes (P1) previously had no name at all. L-numbers survive as colloquial shorthand;
 "(formerly LX)" annotations are kept for one doc generation.
 
@@ -417,7 +434,7 @@ scope-view / performance tool of arm (3).
 **Decision.** One authoritative entity-resolution cascade, replacing the scattered/folklore
 thresholds: **T0** exact match on the LLM-emitted canonical name form (§5/D19) → **T1** fuzzy
 *blocking* (`pg_trgm` GIN, recall-first low floor — candidate generation, NOT a decision) →
-**T2** phonetic (Daitch-Mokotoff, **not** Soundex) → **T3** embedding similarity (Lance, residue
+**T2** phonetic (Daitch-Mokotoff, **not** Soundex) → **T3** embedding similarity (PostgreSQL P1, residue
 only) → **T4** LLM adjudication (small→frontier) on the ambiguous middle band → human review for
 high blast-radius. **Registry-self-contained — no 3rd-party external-authority tier (D20).** Each
 tier's accept/reject bands are **per-type, golden-set-measured, versioned config** stamped with
@@ -542,11 +559,13 @@ claim-verifiability golden set (D25 — junk-control moved to in-call Selection,
 
 ## D23. Registry scale & schema
 
-**Decision.** The partition estate has exactly nine parents. Seven large append-only tables use
+**Decision.** D94 amends the partition estate to exactly eight parents. Six large append-only tables use
 monthly RANGE partitions managed by `pg_partman`: `mentions(created_at)`,
 `resolution_decisions(decided_at)`, `chunks(created_at)`, `chunk_claims(created_at)`,
-`claims(ingested_at)`, `claim_extraction_decisions(decided_at)`, and
-`testimony_currency_events(occurred_at)`. Two evidence joins use static HASH partitions:
+`claim_extraction_decisions(decided_at)`, and `testimony_currency_events(occurred_at)`.
+`claims` becomes non-partitioned so its current-testimony HNSW/BM25 indexes
+form one global retrieval corpus; pg_textsearch partition-local statistics
+cannot provide one comparable cross-month BM25 rank. Two evidence joins use static HASH partitions:
 `relation_evidence` by `relation_id` with PRIMARY KEY (`relation_id`, `claim_id`), and
 `observation_evidence` by `observation_id` with PRIMARY KEY (`observation_id`, `claim_id`). Each
 HASH parent has 64 migration-created children; 64 is a measured starting point, not a committed
@@ -559,7 +578,9 @@ schema-/database-per-deployment contract, the blocking GIN indexes are single-co
 `ix_aliases_lemma_dm` on `aliases USING gin (daitch_mokotoff(normalized_lemma))`. The alias key is
 `normalized_lemma`, not `normalized_name`. Keep the btree composite
 `(subject_entity_id, predicate[, object])` on `relations`. Supersession + tiers T0–T2 run in
-Postgres; embedding tier T3 in Lance (D8); HNSW never in OLTP. Load-test a representative corpus
+Postgres authority; embedding tier T3 uses the current derived vector on the
+canonical entity/profile row (D94). The HNSW columns share the database but are
+not exposed through the public authority surface. Load-test a representative corpus
 slice before revising partition cadence, HASH child count, or index choices. Size row counts and
 the load test against full, ungated extraction volume (D25).
 
@@ -980,7 +1001,7 @@ restructuring, concluded the claim/relation split, D6, and relation-only superse
 
 **Consequences.**
 - New evidence-grain retrieval: a `claims_as_of(t)` search recipe answers "what did sources assert held
-  over T," over Lance scalar columns, zero LLM (D9). Belief-as-of stays relations-only (D10); the recipe
+  over T," through normalized claim validity columns, zero LLM (D9). Belief-as-of stays relations-only (D10); the recipe
   registry/linter **bars** `claims_as_of` from answering "currently true."
 - The relation adjudicator gets structured temporal inputs (a claim "Alice joined in March 2024" can
   seed `works_for.valid_from`; "Alice left in January 2026" can seed closure) instead of re-parsing
@@ -1073,7 +1094,8 @@ decision↔evidence-snapshot links) remain documented non-goals.
 pattern relations already use — *blocking + cheap-first adjudication* (D4) — but blocks on the
 **resolved entity** (an exact key) instead of a `(subject, predicate)` pair: a new value-claim about
 entity *E* → fetch *E*'s live observations (indexed; exhaustive for that entity) → for a hub entity with
-many, narrow by **semantic similarity** over the observation label (P1/Lance) → the adjudicator decides
+many, order by **semantic similarity** over the observation label using the
+versioned write-path cache → the adjudicator decides
 per candidate (each gated on a **positive same-thing match** judged *semantically* from the `statement` —
 same property, and for a period figure same period and value-compatibility — exactly as relations judge
 "same predicate", with **no typed value/period column**): **supersede** (cap the prior `valid_until` at
@@ -1123,7 +1145,7 @@ disjoint canonical layers, not one polymorphic table, is the simpler correct sha
   (exact key), every prior observation about that entity is found by the exact block — semantic search
   only *ranks* candidates for a hub entity; it never gates membership. The only residual fuzziness is
   the supersede-vs-coexist *judgment*, which fails safe to coexist.
-- **Retrieval is through projections** (D9): observations are embedded in P1/Lance (semantic + value
+- **Retrieval is through projections** (D9/D94): observations are embedded in PostgreSQL P1 (semantic + value
   search; entity-anchored timelines); they **never** enter the P2 graph (D18 holds — a value is not a
   node). The canonical layer is storage; projections serve queries.
 - **Claims stay immutable** (D2/D3), entity-linked (mentions), with asserted validity (D41) feeding an
@@ -1299,11 +1321,16 @@ the D15 principle one plane up; `k_layers_design.md` §2).
 
 ## D48. Projections propose, the spine disposes — hydration re-verifies against live Postgres
 
-**Decision.** Every **query-engine result** (API / CLI / MCP) passes through **by-ID hydration
-against live Postgres** before reaching a caller; the fast entry channels (P1 Lance, the P2
-snapshot) only **nominate candidates**. Hydration re-reads validity windows, invalidation
-state, and contradiction membership from the spine; candidates the spine no longer holds live
-are dropped, and the drop count is reported in the response envelope. **Compound results
+**D94 amendment:** for PostgreSQL-native P1, nomination and authority
+confirmation execute in one statement/MVCC snapshot; separate by-ID hydration
+remains for P2 and progressive evidence/source deepening.
+
+**Decision.** Every **query-engine result** (API / CLI / MCP) is confirmed
+against live PostgreSQL authority before reaching a caller. PostgreSQL-native
+P1 ranking joins its authority view in the same statement and MVCC snapshot;
+P2 nominations still pass through by-ID hydration. Confirmation re-reads validity
+windows, invalidation state, and contradiction membership; ineligible candidates
+are dropped, and relevant drop/candidate counts are reported. **Compound results
 revalidate as units** (a graph path with one invalidated edge drops whole — never returned
 with a hole, never silently re-routed). Two surfaces are explicitly *outside* the invariant:
 **mounted reads** (snapshot reads by construction — covered by visible freshness metadata +
@@ -1316,9 +1343,8 @@ snapshot per D7, K debounced). Without a single confirmation point, mixed freshn
 (`questions.md` #23) forces every consumer to reason about three store ages — or worse, serves a
 superseded fact as current (the zombie-fact class D3 exists to kill). With the rule, staleness
 can only cost **recall** (bounded by projection cadence, reported per source), never
-**correctness** (live, always). The rule also aligns with the physical topology for free:
-entry/expansion run on local replicas (Lance datasets + the P2 snapshot on the API node's disk);
-the one cross-cloud hop is the batched by-ID hydration that enforces the invariant.
+**correctness** (live, always). D94 removes the P1 cross-store confirmation hop;
+P2 remains independently projected and keeps its batched by-ID confirmation.
 
 **Consequences.** Mixed-freshness reasoning becomes data (per-source freshness stamps in the
 envelope, D49) instead of consumer folklore. Projections stay dumb and rebuildable (D6/D7
@@ -1773,7 +1799,7 @@ problem is answered by architecture, not tiny chunks — **claims are the needle
 embeds every decontextualized claim; the ideal fine-grain unit by construction), **chunks are
 the passage index** (sized for coherence; BM25 catches verbatim needles; RRF fuses), and
 default search recipes **filter out `references`/`nav`/`boilerplate`/`legal` chunks by role**
-(a Lance scalar — retrieval-side filtering of what was indexed; D25 untouched). **Extraction
+(a normalized section-authority join inside ranked search; D25 untouched). **Extraction
 batching** decouples cost from granularity: E2 batches a section's contiguous chunks per call
 (bundle shared; claims still anchor per-chunk; idempotency keys stay per-chunk). The
 **embedding-model choice (questions #3) is the design's one open branch point**: conventional
@@ -1915,9 +1941,9 @@ and the **reference adapter** (which is also what the cloud offering runs):
 | Model / embedding providers | BYO keys | configured providers |
 | Telemetry export | OTLP / stdout | managed collection |
 | Auth perimeter | API keys (the D50 trust model) | swappable middleware (SSO lives outside the library) |
-| Hard-forget manifest + store purge capabilities (D74) | dedicated append-only manifest root + LocalFS/Lance/local-Git erasure | separately durable manifest store + reference object/P1/mount/K erasure |
+| Hard-forget manifest + store purge capabilities (D74/D94) | dedicated append-only manifest root + LocalFS/local-Git erasure; PostgreSQL transaction scrubs P1 state | separately durable manifest store + reference object/mount/K erasure; PostgreSQL transaction scrubs P1 state |
 
-**Anti-goal — the engine is not abstracted.** Postgres, LanceDB, LadybugDB, the E/K/P data model,
+**Anti-goal — the engine is not abstracted.** PostgreSQL with pgvector/pg_textsearch, LadybugDB, the E/K/P data model,
 PageIndex/semchunk/Claimify, and the K compile machine are the system's *identity*, not substrate; no
 port wraps them, and no design should hedge on them. The requirements' former "Imposed constraints"
 section is re-titled the **reference deployment**: the fixed production profile (Postgres on Hetzner;
@@ -1954,12 +1980,14 @@ DLQ. The self-host initial wake is a schema-owned transactional `AFTER INSERT` n
 port-side insert; explicit port announcements only wake existing rows. Cloud Tasks delivery
 attempts and self-host wake-ups cannot consume an application attempt.
 
-**Refined by D74 (portable hard-forget).** `ForgetManifestPort` is the sole durable source of
-lineage-forget intent outside the ordinary restore set. `ObjectPurgePort`, `P1PurgePort`,
-`ProjectionPurgePort`, and `KGitPurgePort` are narrow erasure capabilities implemented by the same
-two maintained store adapters above, not new engine abstractions or provider families. Every serving
-readiness pass re-honors every manifest; PostgreSQL completion is progress, never permission to skip
-a separately restored store.
+**Refined by D74/D94 (portable hard-forget).** `ForgetManifestPort` is the sole
+durable source of lineage-forget intent outside the ordinary restore set.
+`ObjectPurgePort`, `ProjectionPurgePort`, and `KGitPurgePort` are narrow erasure
+capabilities implemented by the same two maintained store adapters above, not
+new engine abstractions or provider families. PostgreSQL P1 state is scrubbed
+inside the PostgreSQL transaction, not through a separate adapter. Every
+serving readiness pass re-honors every manifest; local completion is progress,
+never permission to skip a separately restored store or database.
 
 ---
 
@@ -2046,11 +2074,12 @@ documented adapter** of the same port. This resolves the E1 branch point
 (`e1_chunks_design.md` §5): the default is a **conventional** (non-contextual) embedder, so the
 **context-prefix stage exists as designed**; the contextual mode (voyage-context-class / late
 chunking) remains the fully designed alternate configuration a deployment may choose — the
-choice is port config plus a re-embed migration, never new design work. The **stored dimension
-is a measured knob, not a constant**: the model emits 4096-dim vectors with Matryoshka
-truncation; the starting point is a truncated stored dimension (order 1024–2048) validated for
-recall against the D22 golden set — 4096 is the ceiling, not the commitment (P1 index sizing
-and the Lance cost math depend on this number; `lance_indexing_maintenance.md` §2).
+choice is port config plus a re-embed migration, never new design work. **D94
+amendment (2026-08-14):** the PostgreSQL reference profile pins Qwen output and
+pgvector columns to **1,536 dimensions**. Pgvector float32 HNSW cannot index the
+model's 4,096-dimensional default. Another deployment may provision one
+supported fixed dimension, but changing it is an explicit semantic-channel
+maintenance migration, not a runtime knob or a benchmark gate.
 
 **Context.** F8 named extraction-side spend and the embedding model as the dominant unmade cost
 decisions, and questions #3 called the model "the single hardest thing to change later". The
@@ -2170,8 +2199,8 @@ system old claims resolve against; the **extraction basis** is `(representation_
 blockizer_version, structurer_version, extractor_version)` (precision-fixes D54/D56): an
 ASR/VLM upgrade is a processing-driven re-derivation (currency swap, counts unmoved,
 `support_withdrawn` on non-rederivation — never retraction). (7) **P1 gains the
-`media_segments` semantic target** — a logical target over per-modality cross-modal
-subindexes (one row per image / keyframe / bounded audio segment; modality + embedding
+`media_segments` semantic target** — a logical target over per-modality PostgreSQL P1
+tables/indexes (one row per image / keyframe / bounded audio segment; modality + embedding
 family/version/dimension + representation + immutable locator per row; RRF-fused, zero LLM on
 the query path, rebuildable); embedders are port configuration (D63), capability is
 advertised **per query→target modality pair**, and any unconfigured pair answers as D49's
@@ -2191,7 +2220,7 @@ can open any file it has found, but it cannot decide to open a file it never ret
 derivations are selective — the VLM never mentioned the small red connector, the transcript
 says nothing about the alarm sound; under CLAUDE.md Rule 2 the earlier "documented boundary
 with an admission condition" framing was deferral dressed as a boundary, and the mechanism is
-cheap by design (one more Lance target riding existing port machinery).
+cheap by design (one more P1 target riding existing projection machinery).
 
 **Consequences.** Design home: `plan/designs/media_design.md` (routes, locators, disclosure,
 lifecycle, search, mounts, spikes). Cross-edits: `e0_files_design.md` §2–§3 (canonical-text
@@ -3098,7 +3127,7 @@ completion:
    optional **bounded deterministic header** + body → **embedding text**.
 3. **Conditional headers** — present when they disambiguate multi-context passages; **absent**
    for many short **message_atom** bodies so headers do not dominate vectors. Location remains
-   available as spine facts and **P1 filter scalars** (with real recipe filter support).
+   available as normalized spine facts joined by admitted recipe filters.
 4. **No default LLM** on the location/render path. D79 **summaries** stay orientation-only:
    not default embedding text; not grounding sources.
 5. **E2 grounding:** free-form rendered headers are **not** grounding-union members; **typed
@@ -3127,14 +3156,21 @@ the summary→prefix input channel for the default policy). D56: vector reuse ru
 above; block extraction reuse unchanged.
 
 **Consequences.** New binding design `e1_embedding_input_policy.md`; e1 §5 points here; E2
-grounding and retrieval scalar/filter surfaces gain explicit contracts; workers inventory
-drops default per-chunk location LLM; P1 gains `source_shape` and generation-aware scalars;
+grounding and retrieval filter surfaces gain explicit contracts; workers inventory
+drops default per-chunk location LLM; `document_versions.source_shape` and
+`document_sections.role` are normalized filter authorities, while P1 keeps one
+configured current attestation rather than copied generation scalars;
 implementation is a multi-PR program (schema, policy module, embed graph, connectors), not a
 single handler patch.
 
+**D94 amendment (2026-08-14).** P1 search rows do not copy location/filter
+scalars. Ranked queries join normalized location authority inside the same
+PostgreSQL statement. Permanent search generations are replaced by one current
+configuration plus unready/rebuild/verify/publish maintenance.
+
 **Rejected.** Contextual embedders as product requirement; always-on location headers; default
 per-chunk location LLM; hotfix-only durability inside the old monolith; ungoverned connector
-JSON as Lance filters; free-form header as sole E2 location grounding channel without typed
+JSON as P1 filters; free-form header as sole E2 location grounding channel without typed
 replacement.
 
 ## D81. Query-sandbox contracts follow enforceable authorities, not parallel approximations (refines D68)
@@ -3264,8 +3300,8 @@ three operations; renaming every recipe transport is not part of this cut.
 
 Before SQL or saved-query execution, the runtime verifies the live `memory_v1`
 shape against the checked-in manifest and fails `schema_version_mismatch` on
-drift. Cypher separately verifies the P2 snapshot's pinned surface contract. Lance-backed
-SQL functions are executor-resolved bridges, not in-database runtimes. Body
+drift. Cypher separately verifies the P2 snapshot's pinned surface contract. P1-backed
+SQL functions are executor-resolved query-embedding + ranked-statement bridges. Body
 fetch verifies the reproducible embedding-text hash and source/prefix
 separation; the source-content hash remains a coordinate until the body store
 contains enough ordered-block material to reproduce it.
@@ -3358,8 +3394,8 @@ HTTP-200 `QueryResult/v1` failures; quota, concurrency, schema drift,
 projection/store, transport, and server failures remain terminal.
 
 **Rejected.** Calling the three-operation seat “full”; adding only SQL/Cypher
-while omitting primitives/P3; private benchmark reads from Postgres, Lance,
-MinIO, or graph files; inventing a P3 HTTP endpoint; pretending absent K ran.
+while omitting primitives/P3; private benchmark reads from PostgreSQL internals,
+object storage, or graph files; inventing a P3 HTTP endpoint; pretending absent K ran.
 
 ## D86. E3 unknown entity types: retry then drop (not coerce)
 
@@ -3437,7 +3473,7 @@ runs with its canonical defaults. A completed bundle always contains both
 literal child envelopes, including their independent negatives, freshness,
 truncation, and hydration-drop disclosure. A schema or execution failure in
 either child fails the whole request with no half-bundle. Under a frozen store,
-projection generations, and evaluation clock, the children are field-for-field
+active embedding configuration, and evaluation clock, the children are field-for-field
 equal to direct child calls; the bundle layer may add or alter no child field.
 
 **Context.** The former three-operation catalog was small but conceptually
@@ -3662,6 +3698,9 @@ Logout revokes then unlinks. No engine-native second credential.
 
 ## D93. P1 Lance bulk writes and ticker index maintenance
 
+**Status:** superseded by D94. Retained as the historical contract for the
+Lance implementation that D94 removes.
+
 **Decision (2026-08-13; remumbered 2026-08-14).** P1 Lance writes and indexes
 are maintained as a rebuildable projection (D8), not as a second spine.
 Drafted as D91 while that number was still free; `main` assigned D91/D92 to
@@ -3732,3 +3771,85 @@ readiness.
 
 **Amends.** Clarifies D8 write/maintenance contracts for the Lance
 projection. Does not amend D9 query path or D48 hydration.
+
+## D94. P1 search is PostgreSQL-native
+
+**Decision (2026-08-14).** P1 moves from LanceDB into PostgreSQL 18. Pgvector
+with HNSW is the required semantic implementation, and pg_textsearch is the
+required BM25 implementation for admitted claims/chunks lexical channels.
+Built-in `ts_rank`/`ts_rank_cd` are not relabelled as BM25. Semantic and BM25
+lists remain independent and fuse by RRF over stable IDs. LanceDB is removed;
+it is not a fallback, optional backend, compatibility store, or dual-write
+target.
+
+P1 remains a logical, rebuildable retrieval plane, but it does not get a
+generalized set of mirror tables. One private `chunk_search` sidecar stores the
+normalized searchable chunk body and its current embedding because exact chunk
+bodies remain object-store artifact slices. Claims, relations, observations,
+and entities already have natural PostgreSQL text rows, so each stores one
+current derived embedding on that row and indexes the existing text in place
+where a lexical channel is admitted. Future media search follows its accepted
+natural segment/representation row; D94 does not invent a `p1_media` table.
+
+Search rows do not duplicate entity arrays, temporal state, lineage,
+eligibility, or other filtering scalars. Every P1 result joins the normalized
+invariant-bearing authority tables/views inside the ranked PostgreSQL statement
+and transaction snapshot. Projection lag may cost recall, but an invalidated,
+wrong-deployment, wrong-lineage, or temporally ineligible row cannot become
+output. Query embeddings are still produced through the configured embedding
+provider and passed to PostgreSQL; no LLM or in-database embedding generation
+is added.
+
+There is one active embedding per searchable record. An incompatible model,
+dimension, or embedding-input-policy change makes the affected semantic channel
+unready, rebuilds and verifies disposable state during maintenance, publishes
+the new configuration, and discards temporary build state. Permanent dual
+generations and mixed-generation reads are removed from the P1 contract.
+
+**Context.** The Lance estate on `cc8cb23e` contains 2,496 lines of direct
+adapter/maintenance production code plus 1,274 lines of dedicated tests before
+query-bridge, backup, and cross-store recovery branches are counted. D93 needed
+a 451-line ticker for Lance fragment and index maintenance. PostgreSQL now has
+the complete minimum search stack. The deciding benefit is removal of an
+independent consistency, maintenance, backup, and recovery boundary—not SQL
+ergonomics or a benchmark claim.
+
+**Consequences.** Ordinary DML maintains HNSW/BM25 entries; autovacuum and
+standard PostgreSQL telemetry own routine cleanup. PostgreSQL 18, continuously
+patched to the current 18.x minor, plus pinned pgvector and pg_textsearch builds
+becomes a reference/self-host image requirement. Search shares PostgreSQL CPU,
+WAL, storage, backup volume, and failure blast radius. P1 stays derived and
+private, outside `memory_v1`, and can be rebuilt from authority and immutable
+artifacts.
+
+There are no compatibility consumers. Implementation directly rebuilds P1,
+switches the single supported runtime, and deletes all Lance dependencies,
+adapters, configuration, maintenance state, migrations, backup paths, runtime
+documentation, tests, fixtures, and data. It runs focused functional contract
+checks, not dual writes, shadow reads, Lance parity, scale benchmarks, or paid
+retrieval benchmarks.
+
+**Design.** `plan/designs/postgres_p1_search_projection_design.md`.
+**Analysis.** `plan/analysis/postgres_p1_search_projection_analysis.md`.
+**Open, unchosen scale proposal.**
+`design/proposals/pgvectorscale_default_index.md`.
+
+**Rejected.** Keep D93 indefinitely; pgvector plus built-in FTS while calling
+it BM25; IVFFlat as the default; install or benchmark DiskANN without a present
+need; generalized P1 mirror tables; copied entity/filter scalars; permanent
+dual embedding generations; ParadeDB's broader AGPL/commercial search surface;
+an automatic row-count index switch; Lance/PostgreSQL dual writes; query-time
+index builds; RLS.
+
+**Supersedes/amends.** Supersedes D8's Lance placement and D93. Amends D9's
+physical channels while preserving independent semantic/BM25 lists, RRF and
+zero LLM calls. Amends D48 so P1 confirmation is an authority join in the same
+PostgreSQL statement; P2/deep hydration rules remain. Amends D37 narrowly so
+normalized current chunk search text may live in private `chunk_search` while
+exact source documents/bodies remain in object storage. Amends D61's fixed
+engine inventory by replacing LanceDB with pgvector and pg_textsearch. Amends
+D80's permanent dual-generation P1 cutover with one active embedding and an
+explicit unready/rebuild/publish maintenance procedure. Amends D63 by pinning
+the reference Qwen/pgvector profile to 1,536 dimensions. Amends D23 by removing
+`claims` from monthly partitioning so its in-row BM25 index has global corpus
+statistics without a duplicated claim-search table.

@@ -8,6 +8,10 @@ accepted).
 **Analysis:** `plan/analysis/observation_rank_embedding_cache.md`  
 **Related:** `plan/designs/observations_design.md` §3 (D43); D63 embedding
 generation identity.
+**D94 amendment (2026-08-14):** observations carry one current derived vector
+on their natural row. The optional durable cache table below is removed; the
+write path reuses that row when attestation matches and otherwise uses only its
+bounded process-local cache.
 
 ---
 
@@ -20,7 +24,8 @@ open texts repeatedly, driving multi-hour E3 tails and unnecessary spend.
 
 ## 2. Decision
 
-**Write-path rank uses a versioned embedding memoization cache.** Each
+**Write-path rank uses existing current observation vectors plus a bounded
+process-local memoization cache for misses and new statements.** Each
 distinct open observation statement is embedded at most once per
 **embedder_generation** (best-effort under memory bounds), then reused for
 cosine ranking. The exhaustive SQL entity block, fail-safe coexist, no-cap
@@ -52,8 +57,8 @@ remaining true.
 | --- | --- |
 | `_rank` memoization + write-through rules | Changing novelty / supersede margins |
 | Same embedder_generation as observation rank settings | Multi-model vector spaces |
-| Process-local cache (required) | Requiring Lance at E3 write time |
-| Optional durable PG cache | Replacing exhaustive SQL block with ANN |
+| Process-local cache (required) | Requiring every prior to be search-ready at E3 write time |
+| Reuse attested vector on the observation row | Replacing exhaustive SQL block with ANN |
 
 ## 5. Contracts
 
@@ -67,7 +72,8 @@ Cache identity is **not** only the model name string. Per D63, resolve an
 - distance / input policy parameters that affect the vector  
 - adapter/component generation when it changes encoding  
 
-Durable keys use `embedder_generation`, not bare `embedding_model`.
+Process-cache keys and row attestation use `embedder_generation`, not bare
+`embedding_model`.
 
 ### 5.2 Cache key
 
@@ -101,7 +107,7 @@ RankEmbedKey =
 2. Resolve vectors via cache; **chunk provider embeds** to the active text
    count / token cap (never one unbounded “all misses” call on huge hubs).  
 3. **Single-flight** concurrent misses for the same key (thread-safe).  
-4. Validate every vector before cache write **and** on durable read: count,
+4. Validate every vector before cache write **and** on observation-row read: count,
    expected dims, finite components, nonzero norm. Invalid ⇒ miss; repeated
    invalid provider output ⇒ error (never cache).  
 5. Cosine rank; return `(candidate, score)` list as today.  
@@ -120,53 +126,40 @@ RankEmbedKey =
 - Durable store unavailable ⇒ fall back to process/live embed; **never**
   shrink the candidate set.
 
-### 5.6 Durable cache (optional)
+### 5.6 Durable reuse without another cache table
 
-Postgres sketch (revised):
+For an open prior, reuse `observations.obs_label_embedding` only when its model,
+dimension, and text-hash attestation exactly match the rank input. A missing or
+stale row vector is a cache miss and is embedded in the bounded provider batch;
+it never removes the prior from the exhaustive candidate set.
 
-```sql
-CREATE TABLE observation_rank_embeddings (
-  deployment_id        uuid NOT NULL,
-  observation_id       uuid NOT NULL,
-  embedder_generation  text NOT NULL,
-  dims                 int  NOT NULL,
-  encoding_version     text NOT NULL,  -- float width / endianness / layout
-  vector               bytea NOT NULL,
-  checksum             bytea NOT NULL,
-  statement_sha256     bytea NOT NULL,
-  created_at           timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, observation_id, embedder_generation),
-  FOREIGN KEY (deployment_id, observation_id)
-    REFERENCES observations (deployment_id, observation_id)
-    ON DELETE CASCADE
-);
-```
+For a NEW assertion there is no row yet, so only the process-local digest key is
+used. If insertion succeeds, the adjudication transaction may write the vector
+and current attestation onto the new observation row. Evidence collapse onto a
+different existing statement must not write the NEW vector under that row.
 
-- `INSERT … ON CONFLICT DO NOTHING` (or replace only when sha matches
-  policy).  
-- Write-through of NEW ids only **inside** the adjudication transaction or
-  **after** commit (no orphan durable rows for rolled-back inserts).  
-- Included in hard-forget / deployment deletion via FK cascade or explicit
-  purge hooks (Rule 3: no derived personal data outside deletion scope).
+There is no `observation_rank_embeddings` table and no permanent multi-generation
+rank cache. This follows D94's one-current-vector rule and removes another
+derived lifecycle.
 
-### 5.7 Not Lance (write path)
+### 5.7 Write-path independence
 
-Rank cache is independent of the P1 facts channel. E3 may run before P1;
-rank text is `statement`.  
+E3 may run before a current vector exists. Rank uses the same exact text selected
+by the observation search-label policy (`statement` when no distinct label is
+produced), so matching attestation can be reused; missing derived state falls
+back to the process-local/live embed path.
 
-**Binding prose chore on acceptance:** reword `observations_design.md` §3
-hub-narrowing from “P1/Lance” to “embedding similarity over open statements
-(versioned vector cache; ordering only).”
+`observations_design.md` §3 describes this as embedding similarity over open
+statements (versioned vector cache; ordering only).
 
 ## 6. Failure and recovery
 
 | Failure | Behavior |
 | --- | --- |
 | Embed API error | Propagate; no cache write |
-| Corrupt durable row | Miss → re-embed |
-| Embedder generation change | New key space |
-| Durable store down | Degrade to process/live embed |
-| Process crash | Cold process cache; durable survives if present |
+| Invalid/stale row vector | Miss → re-embed |
+| Embedder generation change | Semantic channel rebuild plus cold process cache |
+| Process crash | Cold process cache; attested row vectors remain reusable |
 
 ## 7. Observability
 
@@ -179,7 +172,7 @@ hub-narrowing from “P1/Lance” to “embedding similarity over open statement
 | Alternative | Why not sole solution |
 | --- | --- |
 | Keep re-embedding | Quadratic hub cost |
-| Lance-only rank source | Timing/coupling; text drift |
+| Require row vectors for rank | Timing/coupling; a new or not-yet-embedded row must remain rankable |
 | Drop embed rank | More LLM or worse ordering |
 
 ## 9. Acceptance criteria (implementation)
@@ -191,7 +184,8 @@ hub-narrowing from “P1/Lance” to “embedding similarity over open statement
 4. Provider chunking respected for large miss sets; candidate count preserved.  
 5. Invalid vectors never cached.  
 6. `observations_design.md` §3 prose updated.  
-7. Durable table (if shipped) has FK/delete behavior and conflict tests.
+7. No separate durable rank-cache table is created; row-vector write-through
+   obeys the observation transaction and hard-forget behavior.
 
 ## 10. Review disposition
 

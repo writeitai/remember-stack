@@ -2,8 +2,9 @@
 
 How agents get answers out of the memory: the primitives, assured operations, the response contract,
 the consumption surfaces (API / CLI / MCP / mounted filesystems), and the rules that keep a
-multi-store system honest. Binding design for decisions **D48–D51**, building on D8 (vectors in
-Lance), D9 (parallel channels + RRF, zero LLM on the query path), D10/D44 (as-of mechanics),
+multi-store system honest. Binding design for decisions **D48–D51** as amended
+by D94 (PostgreSQL-native P1), building on D9 (parallel channels + RRF, zero
+LLM on the query path), D10/D44 (as-of mechanics),
 D16 (scope views), D41 (`claims_as_of` and its bar), D43 (observation retrieval), D22 (the
 retrieval eval). Driven by the scenario battery `plan/analysis/retrieval_scenarios.md`
 (S1–S63) — every design element below cites the scenarios that forced it — and the
@@ -14,7 +15,8 @@ points to measure, not committed constants (CLAUDE.md).
 > **Reading this cold (CLAUDE.md Rule 1).** The memory has three planes: **E** (evidence —
 > immutable claims, adjudicated relations/observations, all anchored on canonical entities with
 > bi-temporal validity), **K** (compiled + authored knowledge pages in git), and **P**
-> (projections: P1 Lance search indexes, P2 LadybugDB graph snapshot, P3 corpus filesystem).
+> (projections: PostgreSQL-native P1 search state, P2 LadybugDB graph
+> snapshot, P3 corpus filesystem).
 > Two **grains** matter everywhere here: the **evidence grain** (claims — *what sources
 > asserted*, immutable, possibly stale or contradictory) and the **fact grain**
 > (relations/observations — *what the system holds or held true*, with adjudicated validity
@@ -55,15 +57,17 @@ agent that wants NL planning does it in its own head — that is what it is. (An
 
 ## 2. The correctness rule: projections propose, the spine disposes (D48)
 
-Every fast entry channel is a projection with **lag**: Lance is written inline but rebuildable
-(P1), the graph is an hours-old snapshot (P2, D7), K is debounced. The design resolves the
+Every fast entry channel is a projection with **lag**: P1 embeddings are
+written asynchronously into private PostgreSQL search tables, the graph is an
+hours-old snapshot (P2, D7), and K is debounced. The design resolves the
 mixed-freshness problem (`questions.md` #23) with one invariant — **scoped precisely to the
 query engine**:
 
-> **Stale projections may nominate candidates; only Postgres confirms truth.** Every
-> **query-engine result** (API / CLI / MCP) has passed through by-ID hydration against the
-> live spine, where its validity windows, invalidation state, and contradiction membership are
-> re-read.
+> **Stale projections may nominate candidates; only authoritative PostgreSQL
+> rows confirm truth.** P1 nomination and confirmation share one PostgreSQL
+> statement/MVCC snapshot. P2 nominations pass through by-ID hydration against
+> the live spine. In both cases validity, invalidation and contradiction state
+> come from invariant-bearing authority views, never the projection row.
 
 **Where the invariant does NOT apply — and what covers those surfaces instead.** Two
 consumption paths never pass through hydration, and the design says so rather than
@@ -87,22 +91,23 @@ overclaiming:
 Consequences, spelled out (S42, S43):
 
 - On the query engine, staleness can only cost **recall** (a fact too new to be indexed is
-  not found), never **correctness** (a superseded fact can never be served as current —
-  hydration would see its closed window). Recall lag is bounded by projection cadence and
+  not found), never **correctness** (a superseded fact cannot pass the
+  same-statement P1 authority join or P2 hydration). Recall lag is bounded by projection cadence and
   *reported* (§5 freshness stamps); correctness is live, always.
-- The one caller-visible artifact is **nominate-then-drop**: a projection may nominate a
-  candidate that hydration rejects (just invalidated). The envelope reports dropped-count so
-  ranked results are honest about their denominator.
+- P1 authority rejection is ordinary filtering within the ranked statement and
+  is reported through candidate/eligible counters. The caller-visible
+  **nominate-then-drop** hydration artifact remains for P2 and deep source-body
+  hydration; the envelope reports those drops honestly.
 - **Compound results revalidate as units, not rows (S17, S21).** A graph *path* is only
   meaningful whole: if hydration invalidates one edge of a nominated path, the **path is
   dropped as a unit** (and counted in `dropped_by_hydration`) — never returned with a hole.
   The engine does not silently recompute an alternative live path (that would hide snapshot
   staleness); the honest answer is the drop plus the P2 snapshot timestamp, and the caller
   re-queries if freshness matters. The same unit rule applies to any future compound shape.
-- Cross-cloud topology aligns with this rule for free: entry and expansion run on **local**
-  replicas (Lance datasets + the P2 snapshot on the API node's disk); the single cross-cloud
-  hop is the **batched by-ID hydration** to Hetzner Postgres — the same hop that enforces the
-  invariant (overall_design §7).
+- P1 entry and authority filtering now run together in PostgreSQL; P2 expansion
+  remains on the API node's local snapshot. This removes P1's cross-store
+  confirmation round trip while preserving progressive hydration to evidence
+  and source bytes (overall_design §7).
 
 ## 3. Primitives — the typed, zero-LLM operations
 
@@ -114,7 +119,7 @@ never trigger anything** — all K/E triggering originates from writes).
 |---|---|---|---|
 | `resolve` | text, type?, context_entities? → ranked entity candidates | query-time entity resolution over the registry's **non-LLM tiers T0–T3** (T0 canonical-alias exact, T1 trigram, T2 phonetic, T3 embedding similarity — embedding a query string is not an LLM call and the semantic channel does it anyway; **no T4 adjudication on the hot path**, D17). Inflected names (S50) ride the stored canonical aliases + T1/T2. Ambiguity → ranked candidates, never a silent guess (S51). Returns **current** identities, following `merged_into` survivor chains with the redirect disclosed (S60); *pre-merge* identity reconstruction is the transcript-based `identity_as_of` recipe (S61), never automatic | S1, S50, S51, S60 |
 | `lookup` | relations(s?, p?, o?) / observations(entity, property?) / claims(doc?, entity?) / entity(id) / document(id) | scalar reads on the spine and its indexes; observation property matching is semantic-over-statement (D43) | S1–S4, S26 |
-| `search` | channel × target × query, filters, k — channels: semantic \| bm25 \| fts; targets: chunks \| claims \| relations \| observations \| k_pages \| **media_segments** (D65) | the entry channels (P1 Lance + PG FTS), scalar-filtered before vectors (D8). `media_segments` is the **cross-modal** target — a logical target over per-modality subindexes: one Lance row per standalone image / video keyframe-or-shot / bounded audio segment, embedded by CLIP-class models that map pixels (or audio) and *text queries* into a shared vector space — so "the photo with the small red connector" matches pixels the description never mentioned (access is not discovery: an agent can open any file it *found*, never one it didn't retrieve). Rows carry modality + embedding family/version + representation + immutable source locator, hydrate to representation passage + preview + raw deep link, and RRF-fuse with the text channels (rank fusion only — different embedding families are never compared by raw distance); embedders are port config (D63), capability advertised **per query→target modality pair** — **any unconfigured pair reports as a typed `boundary`** (§5), never a silent gap | S6, S46, S52, S62 |
+| `search` | channel × target × query, filters, k — channels: semantic \| bm25 \| fts; targets: chunks \| claims \| relations \| observations \| k_pages \| **media_segments** (D65) | PostgreSQL-native P1 entry: pgvector semantic indexes, pg_textsearch BM25 indexes, and authority joins in one statement (D94). `media_segments` is the **cross-modal** target — a logical target over per-modality PostgreSQL indexes: one row per standalone image / video keyframe-or-shot / bounded audio segment, embedded by CLIP-class models that map pixels (or audio) and *text queries* into a shared vector space — so "the photo with the small red connector" matches pixels the description never mentioned (access is not discovery: an agent can open any file it *found*, never one it didn't retrieve). Rows carry modality + embedding family/version + representation + immutable source locator, hydrate to representation passage + preview + raw deep link, and RRF-fuse with the text channels (rank fusion only — different embedding families are never compared by raw distance); embedders are port config (D63), capability advertised **per query→target modality pair** — **any unconfigured pair reports as a typed `boundary`** (§5), never a silent gap | S6, S46, S52, S62 |
 | `graph` | neighborhood(entity, hops, predicates?) / path(a, b, max_hops) | P2 snapshot traversal; as-of via inline path predicates (D44) | S17–S22 |
 | `fuse` | result_sets → RRF-merged set | reciprocal-rank fusion of parallel channels (D9), exposed as an operator so *agent-composed* channel sets fuse the same way recipes do | S46 |
 | `rerank` | candidates × signal — graph_distance(focal), evidence_count, cross_encoder (flagged) | the D9 rerankers as explicit, inspectable stages | S46, S48 |
@@ -125,43 +130,35 @@ never trigger anything** — all K/E triggering originates from writes).
 | `aggregate` | enumerated forms: count / group-by-predicate / group-by-object / timeline(entity) / delta-top-entities(since T) / typed-absence(type, predicate) | see §9 — enumerated, not general | S12, S26–S28, S30, S40 |
 | `scan` | filter → stream | the batch surface (§9): full exports for compilers, auditors, external analytics — same zero-LLM reads, streaming contract, separate resource pool from interactive | S53 |
 
-**Shipped P1 default-path clarification (2026-07-30).** The `search` rows above are independent
-nomination channels, not two names for one vector lookup. For claims and chunks, `semantic`
-embeds the query and searches the Lance vector column; `bm25` runs native full-text search over
-the same P1 table's text column. The first ordinary P1 write bootstraps each
-table's explicit FTS index; the first lexical read repairs an upgraded store
-that predates that index. Ordinary writes incrementally optimize every index
-after 20 mutations or 100,000 unindexed rows, while the explicit maintenance
-operation rebuilds after bulk loads. Reads search any residual indexed tail but
-never compact synchronously. Chunk hydration likewise bootstraps a
-`chunk_id` B-tree before its ID lookup; claim/chunk reads also bootstrap the
-deployment filter indexes and the claim-current bitmap they prefilter on.
-One-time index creation, ordinary idempotent upserts, and write-path
-optimization use bounded retries with jitter for Lance commit conflicts across
-the shared API/worker volume. These bounds keep
-BM25 and live-source hydration from degrading into corpus scans without
-requiring the backfill-only finalizer. The shipped tokenizer is language-neutral
-(punctuation/whitespace tokens, case + ASCII folding, no English stemming or stop-word removal);
-language-specific morphology requires a measured per-language policy rather than a silent
-English default.
+**D94 P1 amendment (2026-08-14; implementation pending).** The `search` rows
+above remain independent nomination channels, not two names for one lookup.
+For claims and chunks, `semantic` embeds the query once and searches a pgvector
+HNSW index; `bm25` searches a pg_textsearch BM25 index over the same canonical
+text and stable ID. RRF combines ranks, never raw vector/BM25 scores.
 
-A chunk nomination is still subject to D48. Postgres confirms that the chunk belongs to the
-lineage's current ready version and its current ready representation under the active
-`(policy_generation, embedder_generation)` pointer; P1 then supplies the **body text** it owns
-(D80: P1 text column is normalized body only — not header+body). The query engine verifies
-`embedding_text_hash` against the PG stamp, returns optional `location_header` **separately**
-from the source body when present, preserves source offsets and document/version/representation
-handles, and counts every failed confirmation as a hydration drop. The result is evidence grain
-but has its own typed `chunks` payload: a chunk is source text, never an atomic claim and never
-an adjudicated fact.
+Both channels join the invariant-bearing authority view inside the ranked
+PostgreSQL statement. Projection lag can omit a new row, but an invalidated,
+wrong-lineage or wrong-generation row cannot leave the statement. Ordinary DML
+maintains both indexes and autovacuum cleans dead rows; index creation belongs
+to migrations/backfill and evidence-driven reindexing, not reads or a P1
+maintenance ticker. The analyzer/text configuration is versioned rather than
+silently assuming English.
 
-**Amendment (D80):** passage vectors are built under the embedding-input policy
-(`e1_embedding_input_policy.md`). P1 filter scalars expand beyond `section_role` to include
-`source_shape` and generation id; message-level refs (`channel_ref`, …) only when recipes declare
-operators. Scalars without filter support do not satisfy the contract. Search must be
-generation-safe across re-embed cutovers.
+A chunk result still preserves D80 separation: the P1 text is normalized body
+only, an optional deterministic `location_header` is returned separately, and
+source offsets plus document/version/representation handles remain explicit.
+Deeper byte hydration verifies the current coordinate and reproducible hashes.
+The result is evidence grain with its own typed `chunks` payload: a chunk is
+source text, never an atomic claim or adjudicated fact.
 
-**Claim-channel filters (D80 decision):** claim P1 rows **do not** carry message scalars in v1.
+**Amendment (D80/D94):** passage vectors are built under the embedding-input
+policy (`e1_embedding_input_policy.md`). Admitted filters join normalized
+authority such as `document_versions.source_shape` and
+`document_sections.role`; message-level refs (`channel_ref`, …) participate only
+when a recipe declares operators and the typed authority exists. Search validates
+one configured current attestation; it carries no copied generation/filter scalars.
+
+**Claim-channel filters (D80 decision):** claim rows **do not** carry message filter copies.
 Recipes that need channel/author/time on claim hits **join** claim → origin chunk (or document
 location facts). Do not invent per-claim scalar inheritance in the first implementation.
 
@@ -260,14 +257,15 @@ lexical chunk-ID nominations, hydrates each fused list exactly once through D48,
 returns the two payloads under one evidence envelope. This order avoids
 hydrating candidate-depth rows or counting one stale candidate more than once. Candidate depth
 is larger than returned depth; both bounds are declared in the operation schema and measured rather
-than hidden. Optional confirmed `entity_ids` narrow the P1-eligible set before candidate depth is
-applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
+than hidden. Optional confirmed `entity_ids` narrow the eligible set inside the
+same PostgreSQL ranked statement, through normalized associations, before
+candidate depth is applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
 relevance and before the candidate cut. The operation contains no fact or entity-candidate channel.
 
 `fact_context` is the fact-grain counterpart: semantic facts nomination followed by
 PostgreSQL confirmation under its current, valid-at, overlap, or history world-time mode. It
-applies entity and time eligibility before its internal candidate depth, using rebuildable P1
-metadata or a PostgreSQL-selected eligible-ID set scored by P1; the current-only public
+applies entity and time eligibility before its internal candidate depth by
+joining the normalized fact authority in the ranked PostgreSQL statement; the current-only public
 `semantic_facts` SRF is not the historical implementation. It returns facts with their
 supporting and contradicting evidence associations. `answer_context`
 does not add a retrieval path; it returns the complete testimony and fact responses as separate
@@ -522,7 +520,7 @@ The rules:
   API/CLI/mounts at all is IAM / network / key management (`questions.md` #8, ops slice); the
   raw-mount audit logging (D51) stands, as an audit — not authorization — mechanism.
 - **Why not in-library authz:** scope-level filtering would have to hold consistently across
-  *every* channel (Lance, graph, PG FTS, K pages, P3, raw) — mounts cannot query-time-filter,
+  *every* channel (PostgreSQL P1, graph, K pages, P3, raw) — mounts cannot query-time-filter,
   so it degenerates to per-scope filtered projections of everything, i.e. a deployment inside
   a deployment. The deployment boundary *is* that mechanism, already designed. (D16's
   filtered-snapshot arm remains available as a *scope-view/performance* tool; it is no longer
@@ -551,11 +549,11 @@ labels, same trust model (§9).
 - **Interactive budget (starting point):** P95 ≤ ~300 ms for entry+expand+hydrate operations or saved queries at
   the 1M-doc target (the Zep/Graphiti reference point D9 cites), measured per plan in the
   eval harness. Batch: throughput-bound, no latency promise.
-- **Locality:** API nodes hold the Lance datasets and the current P2 snapshot on local disk
-  (hot-swapped per D7); Postgres is the only cross-cloud hop (batched by-ID hydration +
-  FTS/registry lookups). LadybugDB is embedded in-process (D13) — no graph server.
-- **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); Lance
-  scalar-filtered vector search at 10⁷–10⁸ rows (spike); multi-hop as-of path predicates
+- **Locality:** API nodes hold the current P2 snapshot on local disk
+  (hot-swapped per D7); PostgreSQL serves P1 semantic/BM25 entry, authority
+  joins and registry lookups. LadybugDB is embedded in-process (D13) — no graph server.
+- **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); PostgreSQL
+  filtered ANN/BM25 search; multi-hop as-of path predicates
   (D44's known perf spike); `resolve` under trigram/phonetic load (registry indexes, D23).
 - **Scaling shape:** query nodes are stateless-plus-replicas → horizontal; the spine scales
   reads via the by-ID discipline (no fuzzy scans on the hot path — D23's index philosophy).
@@ -598,12 +596,13 @@ The executable measurements and their machine-specific results are recorded in
 [`retrieval_spike_battery.md`](../analysis/retrieval_spike_battery.md). Their
 implementation consequences are:
 
-1. **Lance filtered hybrid search:** scalar prefilters run before ANN; claims and facts get
-   deployment B-trees, flag bitmaps, and explicit post-bulk-load IVF_FLAT indexes targeting
-   roughly 8,192 rows per partition with 20 query probes. The 10-million-row lower-bound run
-   stayed within the §10 starting budget; this machine-specific point is not presented as a
-   latency claim for every corpus up to 10⁸ rows. WP-7.1 owns the backfill-orchestration caller
-   for the explicit index build, and WP-7.2 validates its realized shape under load.
+1. **P1 filtered hybrid search:** D94 supersedes the historical Lance/IVFFlat
+   spike result as implementation authority. Pgvector HNSW and pg_textsearch
+   BM25 use one private `chunk_search` sidecar plus embeddings/indexes on natural
+   PostgreSQL rows. Filters use normalized authority joins in the ranked
+   statement. The prior Lance measurements remain historical only; D94 requires
+   focused functional contract checks, not a parity or scale benchmark before
+   the direct replacement.
 2. **Hub pagination:** 500 neighbors fit below the battery's 64 KiB operational starting target
    at the 100,000-edge S49 hub; 1,000 did not. A snapshot-bound offset cursor walked all 100,000
    neighbors exactly once. The final machine-specific p95 was 310 ms, slightly above §10's
@@ -623,7 +622,9 @@ implementation consequences are:
    the cap. The target is neither a protocol limit nor an SLA.
 6. **Skill + S58:** closed by WP-5.5's deployment-rendered skill and repeatable cold-agent
    acceptance harness.
-7. **Remote hydration batching:** chunk interactive by-ID confirmation at 256 ids. A narrow
+7. **Historical remote hydration batching:** the Lance-era chunk confirmation
+   battery used 256-ID batches. D94 removes that separate P1 confirmation hop;
+   the measurement remains relevant only to P2/deep source hydration. A narrow
    indexed entity-id proxy was measured with eight concurrent clients; it is not the production
    claim join or a full hydration envelope, and the 25 ms network hop is an explicit model input,
    not a hosted-topology commitment. WP-7.2 keeps the bounded-round-trip invariant under portable

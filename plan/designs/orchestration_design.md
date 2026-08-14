@@ -156,7 +156,7 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    stage). Pure prepare (location facts + render) may run in that job before provider calls;
    it does not require separate ledger rows.
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
-   active `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
+   configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
    (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
    generation.
 3. **`call_key`.** Each provider embed call uses  
@@ -165,14 +165,15 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 4. **Poison split.** On a batch provider failure that is not a total outage, split the batch
    (halve until size 1) and retry; a single-chunk poison is typed fail/skip for that chunk,
    not a document dead-letter of already-finished siblings.
-5. **Cross-store order.** For each successful batch: (a) upsert P1 rows keyed by
-   `(chunk_id, policy_generation, embedder_generation)` with stored `embedding_text_hash`,
-   (b) stamp PG. **Crash between (a) and (b):** on retry, if P1 already has that triple and
-   hash equals prepared hash, **do not** re-call the provider — only complete the PG stamp.
-   A P1 row for the wrong generation must not be accepted.
+5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
+   transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
+   vector/hash/current attestation and stamps the chunk authority row. There is
+   no cross-store gap. A crash after provider response but before commit may
+   repeat a billable call; the design does not claim exactly-once provider spend.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
-   stamp under the **active** `(policy_generation, embedder_generation)` pointer (or a closed
-   typed skip: at minimum `empty_body`). Mixed generations are not “ready” for that pointer.
+   stamp matching the **configured** `(policy_generation, embedder_generation)`
+   and input hash (or a closed typed skip: at minimum `empty_body`). Mixed or
+   stale attestation is not ready.
 
 K/P and other stages are unchanged by this subsection.
 

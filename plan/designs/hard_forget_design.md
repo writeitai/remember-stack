@@ -17,7 +17,7 @@ The library owns:
 - the portable, content-free forget manifest and its append/replay port;
 - the fail-closed admission barrier;
 - the PostgreSQL scrub and existing lifecycle/counting cascade;
-- exact object-store, P1, P2/P3, and K adapter hooks;
+- exact object-store, PostgreSQL P1-state, P2/P3, and K purge hooks;
 - idempotent replay after restore; and
 - a deterministic S55 + restore canary.
 
@@ -40,7 +40,8 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 - schema version, `forget_id`, `deployment_id`, `doc_id`, and `requested_at`;
 - a SHA-256 fingerprint of `(deployment_id, source_kind, source_ref)` when a stable source identity
   exists, plus every raw `content_hash` observed for the lineage;
-- exact non-content row IDs that must be removed from a restored P1 index (chunks, claims, relation
+- exact non-content row IDs whose P1 state must be removed after a restored
+  PostgreSQL database (chunks, claims, relation
   and observation facts whose last live support was this lineage, and entities whose last live
   mention was this lineage);
 - exact immutable object keys/prefixes that may contain the source;
@@ -58,11 +59,13 @@ The self-host adapter uses a dedicated append-only local root; the cloud impleme
 durability live in `ultimate-memory-cloud`. D75/WP-7.7 require operators to transfer this separate
 manifest root before restored data can become readable; the library does not own byte transport.
 
-The erasure capabilities are narrow protocols implemented by the already-selected adapters:
-`ObjectPurgePort`, `P1PurgePort`, `ProjectionPurgePort`, and `KGitPurgePort`. Each takes a typed
-manifest subset and must be idempotent. The self-host LocalFS/Lance/local-Git adapters and reference
-object/P1/mount/K adapters are both required in WP-7.5; these are purge capabilities of D61's
-existing stores, not alternative engines or new provider families.
+External erasure capabilities are narrow protocols implemented by the
+already-selected adapters: `ObjectPurgePort`, `ProjectionPurgePort`, and
+`KGitPurgePort`. Each takes a typed manifest subset and must be idempotent.
+PostgreSQL P1 cleanup is part of the existing PostgreSQL scrub transaction, not
+a separate adapter or store. The self-host and reference object/mount/K
+adapters are required in WP-7.5; these are purge capabilities of D61's existing
+stores, not alternative engines or new provider families.
 
 ### 2.1 PostgreSQL materialization and work identity
 
@@ -131,8 +134,8 @@ whose append succeeded just before the local status update.
 
 The admission barrier is a **composition/perimeter rule**, not a guard inside every spine method.
 It blocks traffic and ordinary work claims; it explicitly authorizes only the coordinator for that
-`forget_id` and the coordinator's direct calls to the existing lifecycle, rebuild, K, object, and P1
-services. Those internal calls do not re-enter public admission, so the purge cannot deadlock on its
+`forget_id` and the coordinator's direct calls to the existing lifecycle,
+PostgreSQL scrub, rebuild, K, and object services. Those internal calls do not re-enter public admission, so the purge cannot deadlock on its
 own barrier. Hard-forget is rare; temporary deployment unavailability is the deliberate price for
 one understandable correctness path.
 
@@ -151,7 +154,8 @@ table or deletion-specific scheduler is added.
    end current testimony, recount shared facts, close facts with no current support, retire entities
    with no surviving mentions, and emit the existing K tombstone delta. This preserves D54's
    distinct-lineage counting and prevents hard-forget from becoming a second truth transition.
-2. **PostgreSQL scrub.** Delete source-exclusive chunks, claims, occurrences, mentions, sections,
+2. **PostgreSQL scrub and P1 cleanup.** Delete source-exclusive chunks,
+   `chunk_search` rows, claims, occurrences, mentions, sections,
    extraction/audit payloads, review payloads, and evidence links. Clear source refs, titles, URIs,
    errors, free-text rationales/features, locators, and representation metadata associated only with
    the lineage. Shared facts and entities survive only when independently supported; exclusive
@@ -162,18 +166,18 @@ table or deletion-specific scheduler is added.
    edges remain. The generic-identifier cache, planner audit transcripts, and legacy eval/golden
    fixtures have no reliable lineage provenance, so a rare forget conservatively clears those
    deployment-wide rather than guessing; they are derived/control/test data and can be rebuilt.
+   Clear the derived embedding columns on surviving claim/fact/entity rows when
+   their input text changed or was scrubbed. These changes commit in the same
+   PostgreSQL transaction; there is no separate P1 compaction or acknowledgement.
 3. **Raw and artifact objects.** `ObjectPurgePort` deletes every manifest raw, artifact, asset, and
    transcript key/prefix. A deduplicated content object is deleted only when no other live lineage
    references it; otherwise the other lineage remains the lawful owner of that identical byte
-   object. Missing keys count as success. Projection snapshot prefixes are handled in stage 5.
-4. **P1.** `P1PurgePort` deletes the manifest's chunk, claim, exclusive-fact, and exclusive-entity
-   rows and compacts the affected tables. It accepts IDs, never provider filters or SQL fragments.
-   Hydration was already a correctness backstop; this step removes the stale nominated payload too.
-5. **P2 and P3.** Use the existing `GraphRebuildWorker` and `CorpusFsBuilder` to publish clean
+   object. Missing keys count as success. Projection snapshot prefixes are handled in stage 4.
+4. **P2 and P3.** Use the existing `GraphRebuildWorker` and `CorpusFsBuilder` to publish clean
    snapshots from the scrubbed spine. Then delete every manifest-listed older snapshot prefix and
    its registry/analytics rows. Readers and mounts may reopen only the new pointers; self-host cache
    cleanup is part of the projection adapter's purge acknowledgement, not a best-effort side task.
-6. **K.** Compiled pages recompile through the existing driver without the forgotten evidence.
+5. **K.** Compiled pages recompile through the existing driver without the forgotten evidence.
    `KGitPurgePort` then removes every affected body/curation path from all reachable Git history and
    re-adds only its already-sanitized current file. This intentionally discards unrelated history
    of an affected path rather than risking residual source text. Authored/curation preflight makes
@@ -185,8 +189,8 @@ table or deletion-specific scheduler is added.
    hard-forget conservatively nominates every registered K artifact and archived K transcript in
    the deployment. Sanitized current files are re-added unchanged, but their prior path history is
    discarded. This is an intentional correctness-first cost of the rare irreversible operation.
-7. **Verify and reopen.** Production verification proves every manifest ID, hash, key/prefix, old
-   projection version, P1 row, and forbidden K reference is absent from its declared active store;
+6. **Verify and reopen.** Production verification proves every manifest ID, hash, key/prefix, old
+   projection version, P1 derived state, and forbidden K reference is absent from its declared active store;
    PostgreSQL has no remaining nominated source-bearing payload. Those mechanical store checks make
    public lookup by the forgotten IDs return the ordinary never-existed negative; the handler does
    not self-call a serving surface as a second verifier. The planted unique token and five-channel
@@ -201,7 +205,8 @@ retries/dead-letters normally, and the barrier remains closed. There is no parti
 Every serving composition has one readiness step before it accepts traffic:
 
 1. enumerate the deployment's portable manifests and materialize any missing PostgreSQL rows;
-2. for **every** manifest, including locally `complete` records, re-honor its exact object, P1, old
+2. for **every** manifest, including locally `complete` records, re-honor its
+   PostgreSQL authority/P1 state, exact objects, old
    projection/cache/mount, and K erasure through the idempotent purge capabilities;
 3. replay the full spine + clean-rebuild workflow when PostgreSQL is unsanitized or its current
    projection pointers do not resolve to verified clean snapshots built after the accepted
@@ -216,7 +221,7 @@ sole intent. Projection adapters likewise delete every manifest-listed old durab
 serving copy even when PostgreSQL still points at a clean current snapshot.
 
 Readiness stays false until re-honor/replay and S55 verification complete. Therefore restoring an older
-PostgreSQL dump, object bucket, P1 dataset, P2/P3 snapshot, K remote, or any combination cannot make
+PostgreSQL dump, object bucket, P2/P3 snapshot, K remote, or any combination cannot make
 forgotten data queryable: the append-only manifest lives outside that restore and re-closes the
 barrier first. The restore path is not special purge machinery; it feeds the same worker.
 
@@ -229,13 +234,18 @@ gate.
 
 ## 6. Rejected complexity and explicit limitations
 
-- No distributed transaction or rollback across PostgreSQL, object storage, Lance, snapshots, and
-  Git. Append-first + idempotent replay + fail-closed admission is smaller and safer.
+- No distributed transaction or rollback across PostgreSQL, object storage, snapshots, and Git.
+  P1 derived state can be purged in the PostgreSQL transaction; append-first + idempotent replay +
+  fail-closed admission handles the remaining boundaries.
 - No semantic "find similar private text" eraser. Exact lineage provenance, IDs, keys, citations,
   and source/content fingerprints are the boundary.
 - No soft-delete mode hidden in hard-forget. Normal deletion already owns reversible audit history.
 - No backup scheduler, retention setting, provider lifecycle policy, deletion dashboard, or hosted
   control plane in the library.
+- PostgreSQL physical backups/PITR now include `chunk_search.search_text`, a
+  normalized source-body copy. The portable manifest and restore re-honor gate
+  scrub restored PostgreSQL P1 state before admission; provider backup expiry
+  remains the operator obligation above.
 - No machine-authored redaction of authored K content. A typed preflight makes accountable
   redaction a prerequisite instead of leaving a half-complete operation.
 - No claim that immutable projections purge "for free." A clean rebuild changes the pointer;
@@ -246,8 +256,9 @@ gate.
 ## 7. WP-7.5 acceptance
 
 The deterministic S55 gate is intentionally compositional rather than one monolithic fixture: a
-real-PostgreSQL catalog canary proves inventory/scrub/residual SQL, a real self-host canary proves
-filesystem/Lance/projection/Git purge and independent restore re-honor, and a small coordinator
+real-PostgreSQL catalog canary proves inventory/scrub/residual SQL, including
+`chunk_search` and in-row derived vectors; a real
+self-host canary proves filesystem/projection/Git purge and independent restore re-honor, and a small coordinator
 canary proves ordering, fail-closed behavior, and never-existed envelope equality. They share the
 same typed manifest and handler contracts. This keeps each failure attributable while together
 planting a unique token in one lineage and independently supported control facts and proving:
@@ -259,9 +270,11 @@ planting a unique token in one lineage and independently supported control facts
 4. proves forgotten and never-existed public envelopes are equal;
 5. restores the whole pre-forget fixture while retaining the manifest root and proves readiness
    blocks, replays, and returns S55 to green; and
-6. after a completed forget, independently restores each of object storage, P1, P2/P3 serving
-   copies, and K while leaving PostgreSQL `complete`, proving each readiness pass re-honors the
-   manifest instead of trusting the local completion bit.
+6. after a completed forget, independently restores object storage, P2/P3
+   serving copies, and K while leaving PostgreSQL `complete`, proving each
+   readiness pass re-honors the manifest; and separately restores a pre-forget
+   PostgreSQL database and proves its authority plus `chunk_search`/in-row
+   vectors are scrubbed before readiness.
 
 The canary uses deterministic providers and makes no hosted LLM calls. Focused component tests cover
 manifest idempotency/conflicts, ingest guards, missing-object idempotency, adapter failure visibility,

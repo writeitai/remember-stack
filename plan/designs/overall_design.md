@@ -24,8 +24,8 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
                  │          │            │   │
                  ▼          ▼            ▼   ▼      PLANE P — PROJECTIONS (scheduled
             ┌─────────────────────────────────────┐  rebuild; derived, no authority)
-            │ P1 search indexes (Lance: chunks,   │
-            │    claims, relation fact labels)    │
+            │ P1 search indexes (Postgres:        │
+            │    pgvector + pg_textsearch BM25)   │
             │ P2 graph snapshot (LadybugDB)       │
             │ P3 corpus filesystem (GCS tree,     │
             │    mounted read-only to agents)     │
@@ -33,7 +33,7 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
                               │
                               ▼
                  RETRIEVAL: API / CLI / MCP / mounted FS
-            entry (P1/PG) → expand (P2) → hydrate (PG → GCS); browse (P3)
+            entry (Postgres P1) → expand (P2) → hydrate (PG → GCS); browse (P3)
 ```
 
 *(Diagram note: the arrows descending into plane P come from the E columns (E0 artifacts → P3;
@@ -51,16 +51,16 @@ projection — D40 refined; `e0_files_design.md` §6.)*
 
 | Store | Role | Authority | Rebuildable from |
 |---|---|---|---|
-| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state, costs | **source of truth** for plane E | — (PITR backups) |
+| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94) | **source of truth** for plane E; P1 state remains derived | authority is PITR-backed; P1 rebuilds from authority + artifacts |
 | **GCS — raw** | immutable original files | source of truth for file bytes | — |
 | **GCS — artifacts** | per-document markdown + `pageindex.json` + conversion sidecars, one immutable **representation** per conversion run (E0, D37/D65: `…/<content_hash>/<representation_id>/…`) | source of truth for converted bodies (nondeterministic converter output is **replayed from storage**, D7 — a toolchain bump creates a new representation beside the old, never regenerates in place) | — (like raw: backed up, not regenerated) |
 | **GCS — corpus fs** | **P3**: corpus organized as a mounted directory tree (D40) | derived | Postgres + artifacts (every cycle) |
-| **LanceDB** | **P1**: vector + FTS indexes over chunks, claims, relation fact labels + **media segments** (cross-modal, D65) | derived | Postgres + artifacts |
 | **git repo** | plane K: compiled + authored knowledge (K1 plus K2 purpose scopes, D47/D73) | **source of truth** — irreducibly the human-authored content; compiled pages are semantically regenerable from the spine + recorded inputs (D45/D46) | — (own backups) |
 | **LadybugDB** | **P2**: graph projection of entities + relations | derived | Postgres (every cycle) |
 
-Two hard rules: validity/invalidation state exists **only** in Postgres — Lance and Ladybug
-carry filtered copies, never independently mutated (D6); and every derived store must be
+Two hard rules: validity/invalidation state exists **only** in authoritative Postgres
+columns — derived P1 state and Ladybug never independently decide
+truth (D6/D94); and every derived store must be
 reproducible by a tested batch path, exercised routinely (D7).
 
 ## 3. Core data model (D2, D3, D5)
@@ -90,7 +90,7 @@ documents ─< chunks                    entities ──< entity_aliases
 - **Observations** — non-graph facts about **one entity** (a value/statement: headcount, revenue, a
   status); entity-anchored, **untyped** (no governed attribute vocabulary), same bi-temporal validity;
   supersession adjudicated by entity-blocking + the D4 cascade, fail-safe to coexist (D43). Never enter
-  the graph; project to P1/Lance only.
+  the graph; project to PostgreSQL P1 only.
 - **Evidence** — many-to-many (for both relations and observations); corpus redundancy collapses into
   evidence counts (free confidence/salience signal).
 - **Entities** — canonical registry with aliases, types, cached resolutions; only canonical
@@ -130,9 +130,11 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    relations → cheap-first escalation → write-time outcomes (`supersedes` closes windows,
    `contradicts` flags, `same_as` proposes merges). Registry detail: `registries_design.md`.
 
-Note on P1: search indexes are *written inline* by E-plane workers (chunks/claims/relation
-labels embedded as they land) but remain plane-P objects — fully rebuildable from Postgres by
-batch, carrying no authority.
+Note on P1: embedding work is scheduled from E-plane readiness and committed
+asynchronously as one current vector/attestation on natural claim, fact, and
+entity rows, or as the `chunk_search` row for a chunk. P1 remains a logical
+plane-P object—fully rebuildable from authority and immutable artifacts,
+carrying no authority itself (D94).
 
 ## 5. Planes K and P: aggregate derivation (debounced/scheduled, D12)
 
@@ -168,22 +170,23 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
   the E0 artifacts, generated `_index.md`/`llms.txt` at each level. Cross-links with K
   (understanding ↔ source). Full design: `e0_files_design.md` §6.
 
-## 6. Retrieval architecture (D8, D9)
+## 6. Retrieval architecture (D9, D48, D94)
 
 ```
 entry                          expand                    hydrate
-Lance: relations (fact-label   LadybugDB snapshot:       Postgres:
-  embeddings + scalar cols),   neighborhood, paths,      relation → evidence
-  claims, chunks               as-of traversal           claims → documents
-PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
+PostgreSQL P1: fact-label       LadybugDB snapshot:       Postgres authority:
+  semantics; claim/chunk        neighborhood, paths,      relation → evidence
+  semantic + BM25; scalars      as-of traversal           claims → documents
+PG entity registry             (D10/D44)                 → GCS bytes
         └──── RRF fusion ──── graph-distance + evidence-count rerank ────┘
 ```
 
 - Channels run in parallel; **RRF** fuses; rerankers: graph distance from focal entities,
   evidence count; optional cross-encoder. **Zero LLM calls** on the core path.
-- **Projections propose, the spine disposes (D48):** entry channels only *nominate*; every
-  result is re-verified by-ID against live Postgres at hydration — staleness can cost recall,
-  never correctness.
+- **Projections propose, the spine disposes (D48):** P1 rank and authority
+  confirmation run in one PostgreSQL statement/MVCC snapshot. P2 still
+  nominates IDs that are re-verified against live Postgres; staleness can cost
+  recall, never correctness.
 - **The response contract (D49/D87):** each single-authority answer carries a
   grain-labeled envelope (fact / evidence / compiled), inline contradiction
   co-members, per-source freshness stamps (including K page staleness + open
@@ -210,8 +213,9 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 - **GCS**: input files, markdown, Parquet exports, graph snapshots.
 - **git repo** (plane K): hosted remote + independent backup; written only by the aggregate
   workers and humans.
-- Retrieval API holds local LanceDB datasets and LadybugDB snapshots; Postgres is the only
-  cross-cloud dependency on the hot path (kept to ID hydration).
+- Retrieval API holds the local LadybugDB snapshot; semantic/BM25 entry and
+  authority filtering run in PostgreSQL. Source-byte hydration continues from
+  PostgreSQL coordinates to GCS.
 
 ## 8. Cross-cutting concerns
 
@@ -224,8 +228,9 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
   purges object/P1/old P2/P3/local-serving copies, erases affected K history after owner redaction,
   and re-honors one portable manifest before every serving readiness
   (`hard_forget_design.md`).
-- **Maintenance**: Lance compaction schedule; rebuild drills; semantic linter cadence;
-  predicate-registry review.
+- **Maintenance**: PostgreSQL autovacuum/index telemetry and evidence-driven
+  reindexing; P1 rebuild drills; semantic linter cadence; predicate-registry
+  review. There is no P1 index-maintenance ticker (D94).
 - **Observability**: typed pipeline telemetry plus CLI/admin inspection of DLQ, per-stage
   throughput, freshness, and spend; collection backends, dashboards, and alert routing belong to
   the deployment operator/cloud (D60).
@@ -245,6 +250,7 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 | `p2_graph_design.md` | graph projection, rebuild, snapshots, search | **current** |
 | `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
 | `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
+| `postgres_p1_search_projection_design.md` | PostgreSQL-native P1 storage, retrieval indexes, readiness, rebuild, and Lance removal (D94) | **current** |
 | `orchestration_design.md` | worker runtime: queue topology, lanes, backfill seeding, budget enforcement, DLQ operations (D52–D53) | **current** |
 | `evidence_lifecycle_design.md` | document versions, testimony currency, the counting rule, content-addressed reuse (D54–D56) | **current** |
 | `packaging_distribution_design.md` | delivery artifacts, delivery-only task execution, enforced code architecture (D62) | **current** |
@@ -256,5 +262,6 @@ PG: FTS, entity registry       (projected graphs, D10)   → GCS bytes
 ## 10. Open questions
 
 Tracked in `questions.md` (root). Hard-delete obligations are resolved by D74; remaining open
-items do not alter the active-store purge contract. (The embedding model is decided — D63: port
-config, default `qwen3-embedding-8b`; what remains is the stored-dimension measurement.)
+items do not alter the active-store purge contract. (The embedding model is
+decided — D63: port config, default `qwen3-embedding-8b`; D94 pins the reference
+PostgreSQL profile to 1,536 dimensions.)
