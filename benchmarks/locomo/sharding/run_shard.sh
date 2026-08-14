@@ -43,7 +43,7 @@ extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}
 normalize_relation_workers=${LOCOMO_NORMALIZE_RELATION_WORKERS:-6}
 adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}
 embed_claim_workers=${LOCOMO_EMBED_CLAIM_WORKERS:-2}
-backup_tool=benchmarks/locomo/sharding/store_backup.py
+backup_tool=${LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py}
 compose=(docker compose --project-name "$compose_project")
 
 export GOOGLE_APPLICATION_CREDENTIALS=${LOCOMO_GCP_CREDENTIALS_FILE:-/etc/rememberstack/locomo-gcs/credentials.json}

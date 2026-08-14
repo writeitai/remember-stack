@@ -1017,6 +1017,7 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert "^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$" in script
     assert '[[ "$sample_id" == "$marked_sample" ]] && marked_pending=true' in script
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
+    assert "LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
     assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script

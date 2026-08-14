@@ -190,6 +190,7 @@ as source-derived data.
 | `LOCOMO_BACKUP_DESTINATION` | **required** | private `gs://` bucket/base prefix |
 | `LOCOMO_GCP_PROJECT` | **required** | GCP project used by the external-account Storage client |
 | `LOCOMO_BACKUP_STAGING_ROOT` | `/var/lib/rememberstack-locomo-backups` | local staging retained on failure |
+| `LOCOMO_BACKUP_TOOL` | `benchmarks/locomo/sharding/store_backup.py` | backup tool path; use an absolute path only when operating a pinned clean campaign checkout with a newer compatible safety runner |
 | `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
 | `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
 | `LOCOMO_EXTRACT_CLAIM_WORKERS` | `8` | chunk-level Claimify worker replicas |
