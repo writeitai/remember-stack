@@ -209,14 +209,22 @@ class LanceChunkIndex:
         ]
         # D80: dual-generation cutover keys on the full triple, not chunk_id alone.
         self._ensure_chunk_generation_columns()
+        changed_texts = self._changed_embedded_texts(
+            table=_CHUNK_TABLE,
+            texts=tuple(row.text for row in rows),
+            keys=tuple(
+                (str(row.chunk_id), row.policy_generation, row.embedder_generation)
+                for row in rows
+            ),
+            key_names=("chunk_id", "policy_generation", "embedder_generation"),
+            vectors=tuple(tuple(row.vector) for row in rows),
+        )
         self._upsert(
             table=_CHUNK_TABLE,
             key=["chunk_id", "policy_generation", "embedder_generation"],
             payload=payload,
         )
-        self._note_vector_rewrites(
-            table=_CHUNK_TABLE, texts=tuple(row.text for row in rows)
-        )
+        self._note_vector_rewrites(table=_CHUNK_TABLE, texts=changed_texts)
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="chunk_id")
@@ -305,26 +313,28 @@ class LanceChunkIndex:
         """Insert or replace claims-channel rows by claim_id; idempotent."""
         if not rows:
             return
-        self._upsert(
+        claim_payload = [
+            {
+                "claim_id": str(row.claim_id),
+                "deployment_id": str(row.deployment_id),
+                "doc_id": str(row.doc_id),
+                "chunk_id": str(row.chunk_id),
+                "text": row.text,
+                "is_current_testimony": row.is_current_testimony,
+                "is_attributed": row.is_attributed,
+                "vector": list(row.vector),
+            }
+            for row in rows
+        ]
+        changed_texts = self._changed_embedded_texts(
             table=_CLAIM_TABLE,
-            key="claim_id",
-            payload=[
-                {
-                    "claim_id": str(row.claim_id),
-                    "deployment_id": str(row.deployment_id),
-                    "doc_id": str(row.doc_id),
-                    "chunk_id": str(row.chunk_id),
-                    "text": row.text,
-                    "is_current_testimony": row.is_current_testimony,
-                    "is_attributed": row.is_attributed,
-                    "vector": list(row.vector),
-                }
-                for row in rows
-            ],
+            texts=tuple(row.text for row in rows),
+            keys=tuple((str(row.claim_id),) for row in rows),
+            key_names=("claim_id",),
+            vectors=tuple(tuple(row.vector) for row in rows),
         )
-        self._note_vector_rewrites(
-            table=_CLAIM_TABLE, texts=tuple(row.text for row in rows)
-        )
+        self._upsert(table=_CLAIM_TABLE, key="claim_id", payload=claim_payload)
+        self._note_vector_rewrites(table=_CLAIM_TABLE, texts=changed_texts)
         self._ensure_text_index(table_name=_CLAIM_TABLE)
         self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
         self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="claim_id")
@@ -354,6 +364,15 @@ class LanceChunkIndex:
         """Insert or replace facts by their complete deployment/kind/id key."""
         if not rows:
             return
+        changed_texts = self._changed_embedded_texts(
+            table=_FACT_TABLE,
+            texts=tuple(row.label for row in rows),
+            keys=tuple(
+                (str(row.deployment_id), row.kind, str(row.fact_id)) for row in rows
+            ),
+            key_names=("deployment_id", "kind", "fact_id"),
+            vectors=tuple(tuple(row.vector) for row in rows),
+        )
         self._upsert(
             table=_FACT_TABLE,
             key=["deployment_id", "kind", "fact_id"],
@@ -379,9 +398,7 @@ class LanceChunkIndex:
                 for row in rows
             ],
         )
-        self._note_vector_rewrites(
-            table=_FACT_TABLE, texts=tuple(row.label for row in rows)
-        )
+        self._note_vector_rewrites(table=_FACT_TABLE, texts=changed_texts)
         self._ensure_scalar_index(table_name=_FACT_TABLE, column="deployment_id")
         self._ensure_bitmap_index(table_name=_FACT_TABLE, column="kind")
         self._ensure_bitmap_index(table_name=_FACT_TABLE, column="status")
@@ -1140,6 +1157,7 @@ class LanceChunkIndex:
             unindexed_rows=unindexed,
             num_fragments=num_fragments,
             num_small_fragments=num_small,
+            indexes_healthy=self._indexes_healthy(table_name=table),
         )
 
     def _selected_tables(self, *, tables: tuple[str, ...] | None) -> tuple[str, ...]:
@@ -1154,6 +1172,39 @@ class LanceChunkIndex:
         self._scalar_indexes_ready = {
             key for key in self._scalar_indexes_ready if key[0] != table_name
         }
+
+    def _indexes_healthy(self, *, table_name: str) -> bool:
+        """Whether every contracted matrix index that applies is present."""
+        if not self._has_table(table_name=table_name):
+            return True
+        table = self._connection.open_table(table_name)
+        columns = {field.name for field in table.schema}
+        indices = list(table.list_indices())
+        rows = table.count_rows()
+        for matrix_table, column, kind in P1_INDEX_MATRIX:
+            if matrix_table != table_name or column not in columns:
+                continue
+            if kind == "vector" and rows < _MIN_VECTOR_INDEX_ROWS:
+                continue
+            matching = [index for index in indices if index.columns == [column]]
+            if kind == "vector":
+                ok = any(_is_ivf_flat(index.index_type) for index in matching)
+            elif kind == "fts":
+                ok = any(
+                    _index_type_matches(index.index_type, "FTS") for index in matching
+                )
+            elif kind == "bitmap":
+                ok = any(
+                    _index_type_matches(index.index_type, "Bitmap")
+                    for index in matching
+                )
+            else:
+                ok = any(
+                    _index_type_matches(index.index_type, "BTree") for index in matching
+                )
+            if not ok:
+                return False
+        return True
 
     def _ensure_matrix_indexes(self, *, table_name: str) -> int:
         """Create or type-correct every matrix index whose column exists."""
@@ -1343,6 +1394,13 @@ class LanceChunkIndex:
 
     def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
         """Insert or replace entity-profile rows by entity_id; idempotent."""
+        changed_texts = self._changed_embedded_texts(
+            table=_ENTITY_TABLE,
+            texts=tuple(row.canonical_name for row in rows),
+            keys=tuple((str(row.entity_id),) for row in rows),
+            key_names=("entity_id",),
+            vectors=tuple(tuple(row.vector) for row in rows),
+        )
         self._upsert(
             table=_ENTITY_TABLE,
             key="entity_id",
@@ -1357,9 +1415,7 @@ class LanceChunkIndex:
                 for row in rows
             ],
         )
-        self._note_vector_rewrites(
-            table=_ENTITY_TABLE, texts=tuple(row.canonical_name for row in rows)
-        )
+        self._note_vector_rewrites(table=_ENTITY_TABLE, texts=changed_texts)
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
@@ -1436,13 +1492,59 @@ class LanceChunkIndex:
             return 0
         return self._connection.open_table(table).count_rows()
 
+    def _changed_embedded_texts(
+        self,
+        *,
+        table: str,
+        texts: tuple[str, ...],
+        keys: tuple[tuple[str, ...], ...],
+        key_names: tuple[str, ...],
+        vectors: tuple[tuple[float, ...], ...],
+    ) -> tuple[str, ...]:
+        """Texts for rows whose vector is new or different. Empty if no hook."""
+        if self._on_vector_rewrite is None or not texts:
+            return ()
+        existing = self._existing_vectors(table=table, keys=keys, key_names=key_names)
+        return tuple(
+            text
+            for key, text, vector in zip(keys, texts, vectors, strict=True)
+            if existing.get(key) != vector
+        )
+
     def _note_vector_rewrites(self, *, table: str, texts: tuple[str, ...]) -> None:
-        """Bump durable change-mass after a successful vector upsert."""
+        """Bump durable change-mass after a successful vector rewrite."""
         if self._on_vector_rewrite is None or not texts:
             return
         cap = CHANGE_MASS_CHAR_CAP[table]
         change_mass = float(sum(min(len(text), cap) for text in texts))
         self._on_vector_rewrite(table, len(texts), change_mass)
+
+    def _existing_vectors(
+        self,
+        *,
+        table: str,
+        keys: tuple[tuple[str, ...], ...],
+        key_names: tuple[str, ...],
+    ) -> dict[tuple[str, ...], tuple[float, ...]]:
+        """Load current vectors for the incoming merge keys, if the table exists."""
+        if not keys or not self._has_table(table_name=table):
+            return {}
+        lance_table = self._connection.open_table(table)
+        id_column = key_names[0]
+        ids = ", ".join(f"'{item[0]}'" for item in keys)
+        rows = (
+            lance_table.search()
+            .where(f"{id_column} IN ({ids})")
+            .limit(max(len(keys) * 4, 1))
+            .to_list()
+        )
+        found: dict[tuple[str, ...], tuple[float, ...]] = {}
+        for row in rows:
+            key = tuple(str(row[name]) for name in key_names)
+            vector = row.get("vector")
+            if isinstance(vector, list):
+                found[key] = tuple(float(item) for item in vector)
+        return found
 
     def _upsert(
         self, *, table: str, key: str | list[str], payload: list[dict[str, object]]

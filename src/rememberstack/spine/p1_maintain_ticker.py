@@ -128,13 +128,13 @@ class P1MaintainTicker:
         )
 
     def _tick_table(self, *, table: str) -> TickOutcome:
-        """Try-lock one table and run at most one Lance op."""
+        """One try-lock attempt; skip immediately if purge or another tick holds."""
         try:
             with hold_p1_table_maintain_locks(
                 engine=self._engine,
                 lance_root=self._lance_root,
                 tables=(table,),
-                timeout=timedelta(milliseconds=self._settings.lock_try_ms),
+                try_once=True,
             ):
                 return self._run_locked(table=table)
         except P1MaintainLockTimeout:
@@ -152,38 +152,56 @@ class P1MaintainTicker:
         if stats.row_count == 0 and stats.num_fragments == 0:
             return TickOutcome(table=table, operation="skip", reason="absent")
         if self._needs_ensure(stats=stats):
-            report = self._maintenance.ensure_search_indexes(tables=(table,))
-            self._stamp_success(table=table, stats=stats, operation="ensure")
-            return TickOutcome(
-                table=table,
-                operation="ensure",
-                reason="missing_or_wrong_index",
-                report=report,
-            )
+            return self._run_operation(table=table, stats=stats, operation="ensure")
         if self._needs_compact(stats=stats):
-            report = self._maintenance.optimize_tables(tables=(table,))
-            self._stamp_success(table=table, stats=stats, operation="compact")
-            return TickOutcome(
-                table=table, operation="compact", reason="dirt", report=report
-            )
+            return self._run_operation(table=table, stats=stats, operation="compact")
         if self._settings.heavy_enabled and self._needs_retrain(stats=stats):
-            report = self._maintenance.rebuild_vector_indexes(tables=(table,))
-            self._stamp_success(table=table, stats=stats, operation="retrain")
-            return TickOutcome(
-                table=table,
-                operation="retrain",
-                reason="change_or_unindexed",
-                report=report,
-            )
+            return self._run_operation(table=table, stats=stats, operation="retrain")
         return TickOutcome(table=table, operation="skip", reason="clean")
 
-    def _needs_ensure(self, *, stats: TableMaintainStats) -> bool:
-        """Prefer ensure when the last report or skipped reason says so.
+    def _run_operation(
+        self, *, table: str, stats: TableMaintainStats, operation: P1Operation
+    ) -> TickOutcome:
+        """Run one Lance op, stamp only a real success, survive op errors."""
+        stored = self._read_stats_row(table=table)
+        due_rows = _as_int(stored.get("changed_rows_since_heavy") if stored else 0)
+        due_mass = _as_float(stored.get("change_mass_since_heavy") if stored else 0.0)
+        try:
+            if operation == "ensure":
+                report = self._maintenance.ensure_search_indexes(tables=(table,))
+            elif operation == "compact":
+                report = self._maintenance.optimize_tables(tables=(table,))
+            else:
+                report = self._maintenance.rebuild_vector_indexes(tables=(table,))
+        except Exception as error:  # noqa: BLE001 — keep the ticker loop alive
+            self._stamp_error(table=table, error=str(error))
+            return TickOutcome(table=table, operation="skip", reason="op_failed")
+        skipped = next((item.skipped for item in report.tables if item.skipped), None)
+        if operation == "retrain" and skipped:
+            self._stamp_error(table=table, error=f"retrain_skipped:{skipped}")
+            return TickOutcome(
+                table=table, operation="skip", reason=f"retrain_skipped:{skipped}"
+            )
+        self._stamp_success(
+            table=table,
+            stats=_after_stats(report=report, fallback=stats),
+            operation=operation,
+            due_rows=due_rows,
+            due_mass=due_mass,
+        )
+        reason = {
+            "ensure": "missing_or_wrong_index",
+            "compact": "dirt",
+            "retrain": "change_or_unindexed",
+        }[operation]
+        return TickOutcome(
+            table=table, operation=operation, reason=reason, report=report
+        )
 
-        The port's ensure is list-first and cheap when indexes are healthy.
-        Call it when the table has rows but we have never recorded a light/heavy
-        success, or when the last error mentions a missing index.
-        """
+    def _needs_ensure(self, *, stats: TableMaintainStats) -> bool:
+        """Ensure when live indexes are missing/wrong or the last error said so."""
+        if stats.row_count > 0 and not stats.indexes_healthy:
+            return True
         stored = self._read_stats_row(table=stats.table)
         if stored is None:
             return stats.row_count > 0
@@ -234,9 +252,14 @@ class P1MaintainTicker:
             >= HEAVY_ROW_GROWTH_PCT[stats.table]
         ):
             return True
-        if stats.row_count <= 0:
-            return False
-        return stats.unindexed_rows / stats.row_count >= HEAVY_UNINDEXED_RATIO
+        last_operation = stored.get("last_operation") if stored is not None else None
+        if (
+            last_operation == "compact"
+            and stats.row_count > 0
+            and stats.unindexed_rows / stats.row_count >= HEAVY_UNINDEXED_RATIO
+        ):
+            return True
+        return False
 
     def _forget_is_open(self) -> bool:
         """Skip the whole estate while hard-forget is honoring a manifest."""
@@ -264,7 +287,13 @@ class P1MaintainTicker:
         return dict(row) if row is not None else None
 
     def _stamp_success(
-        self, *, table: str, stats: TableMaintainStats, operation: str
+        self,
+        *,
+        table: str,
+        stats: TableMaintainStats,
+        operation: str,
+        due_rows: int = 0,
+        due_mass: float = 0.0,
     ) -> None:
         """Write after-snapshot counters after a successful op."""
         with self._engine.begin() as connection:
@@ -281,6 +310,8 @@ class P1MaintainTicker:
                     "stamp_light": operation == "compact",
                     "stamp_heavy": operation == "retrain",
                     "clear_mass": operation == "retrain",
+                    "due_rows": due_rows,
+                    "due_mass": due_mass,
                 },
             )
 
@@ -318,10 +349,27 @@ def record_p1_vector_rewrites(
         )
 
 
+def _after_stats(
+    *, report: MaintainReport, fallback: TableMaintainStats
+) -> TableMaintainStats:
+    """Prefer the port's after-snapshot when the op reported one."""
+    return report.tables[0] if report.tables else fallback
+
+
+def _as_int(value: object) -> int:
+    """Coerce a stats counter; unknown types count as zero."""
+    return value if isinstance(value, int) else 0
+
+
+def _as_float(value: object) -> float:
+    """Coerce a stats mass; unknown types count as zero."""
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
 _SELECT_STATS = text(
     """
     SELECT last_heavy_at, last_error, operator_state, changed_rows_since_heavy,
-           change_mass_since_heavy, last_heavy_row_count
+           change_mass_since_heavy, last_heavy_row_count, last_operation
     FROM p1_lance_table_stats
     WHERE lance_root_key = :lance_root_key AND table_name = :table_name
     """
@@ -358,9 +406,9 @@ _UPSERT_SUCCESS = text(
       NULL,
       CASE WHEN :stamp_light THEN now() ELSE NULL END,
       CASE WHEN :stamp_heavy THEN now() ELSE NULL END,
-      CASE WHEN :stamp_heavy THEN :row_count ELSE NULL END,
-      CASE WHEN :clear_mass THEN 0 ELSE 0 END,
-      CASE WHEN :clear_mass THEN 0 ELSE 0 END,
+      :row_count,
+      0,
+      0,
       now()
     )
     ON CONFLICT (lance_root_key, table_name) DO UPDATE SET
@@ -374,12 +422,17 @@ _UPSERT_SUCCESS = text(
                            ELSE p1_lance_table_stats.last_light_at END,
       last_heavy_at = CASE WHEN :stamp_heavy THEN now()
                            ELSE p1_lance_table_stats.last_heavy_at END,
-      last_heavy_row_count = CASE WHEN :stamp_heavy THEN EXCLUDED.row_count
-                                  ELSE p1_lance_table_stats.last_heavy_row_count END,
-      changed_rows_since_heavy = CASE WHEN :clear_mass THEN 0
-                                      ELSE p1_lance_table_stats.changed_rows_since_heavy END,
-      change_mass_since_heavy = CASE WHEN :clear_mass THEN 0
-                                     ELSE p1_lance_table_stats.change_mass_since_heavy END,
+      last_heavy_row_count = CASE
+        WHEN :stamp_heavy THEN EXCLUDED.row_count
+        WHEN p1_lance_table_stats.last_heavy_row_count IS NULL THEN EXCLUDED.row_count
+        ELSE p1_lance_table_stats.last_heavy_row_count
+      END,
+      changed_rows_since_heavy = CASE WHEN :clear_mass
+        THEN GREATEST(0, p1_lance_table_stats.changed_rows_since_heavy - :due_rows)
+        ELSE p1_lance_table_stats.changed_rows_since_heavy END,
+      change_mass_since_heavy = CASE WHEN :clear_mass
+        THEN GREATEST(0.0, p1_lance_table_stats.change_mass_since_heavy - :due_mass)
+        ELSE p1_lance_table_stats.change_mass_since_heavy END,
       updated_at = now()
     """
 )

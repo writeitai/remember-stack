@@ -626,7 +626,8 @@ class SelfHostProfile:
             loop.run_for(duration_s=self._settings.worker_session_s)
 
     def run_p1_maintain_ticker(self) -> int:
-        """Run the D91 Lance ticker until the process is stopped."""
+        """Run the D93 Lance ticker until the process is stopped."""
+        import logging
         import time
 
         from rememberstack.adapters.selfhost.lance import LanceChunkIndex
@@ -641,8 +642,12 @@ class SelfHostProfile:
             settings=settings,
             deployment_id=self._settings.deployment_id,
         )
+        log = logging.getLogger(__name__)
         while True:
-            ticker.tick()
+            try:
+                ticker.tick()
+            except Exception:
+                log.exception("D93 maintain tick failed")
             time.sleep(settings.poll_s)
 
     def run_projection(self, *, plane: str) -> dict[str, object]:
@@ -890,7 +895,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
     )
     subparsers.add_parser(
-        "maintain-p1", help="run the D91 Lance maintain ticker (not a ledger stage)"
+        "maintain-p1", help="run the D93 Lance maintain ticker (not a ledger stage)"
     )
     projection = subparsers.add_parser(
         "project", help="build aggregate projections once"

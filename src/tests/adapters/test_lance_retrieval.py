@@ -568,6 +568,17 @@ def test_vector_upsert_notifies_change_mass_metadata_does_not(tmp_path) -> None:
         )
     )
     assert events == [("facts", 1, 9.0)]
+    index.upsert_facts(
+        rows=(
+            _fact(
+                fact_id=fact_id,
+                deployment_id=deployment_id,
+                ingested_at=ingested,
+                label="rel label",
+            ),
+        )
+    )
+    assert events == [("facts", 1, 9.0)]
     index.update_fact_metadata(
         rows=(
             P1FactMetadataRow(

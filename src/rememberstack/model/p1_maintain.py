@@ -23,6 +23,7 @@ class TableMaintainStats(BaseModel):
     conflicts_retried: int = 0
     skipped: str | None = None
     operation: str | None = None
+    indexes_healthy: bool = True
 
 
 class MaintainReport(BaseModel):
