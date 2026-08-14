@@ -54,6 +54,12 @@ contract check rejects drift:
 uv run python scripts/check_release_contract.py --tag v0.2.0
 ```
 
+That release pull request also refreshes the PostgreSQL foundation pins in
+`Dockerfile.postgres`: use the current patched PostgreSQL 18 base digest, pin the intended
+`postgresql-18-partman` package version, and pin the pg_textsearch release plus both amd64 and
+arm64 archive checksums. Build the Dockerfile for both architectures before tagging. This is the
+manual, reviewable patch cadence; mutable database-image tags are not used.
+
 After that pull request is merged and `main` is green, tag its exact merge commit:
 
 ```bash

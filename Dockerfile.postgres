@@ -5,7 +5,8 @@ ARG PG_TEXTSEARCH_VERSION=1.3.1
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl postgresql-18-partman unzip; \
+    apt-get install -y --no-install-recommends ca-certificates curl \
+      postgresql-18-partman=5.5.0-1.pgdg13+1 unzip; \
     case "${TARGETARCH}" in \
       amd64) pg_textsearch_sha256="9f256dc7f082235d8fead7df361427e0a0344a9ee64662f3b50449eeb90bbc7c" ;; \
       arm64) pg_textsearch_sha256="62b6351a320c82dcf802d15704b6c282f2eb03df29ed9906d5c56fafc6c21b83" ;; \

@@ -5,6 +5,7 @@ image_name="rememberstack-postgres:ci"
 container_name="rememberstack-postgres-ci"
 
 docker build --file Dockerfile.postgres --tag "${image_name}" .
+docker rm --force "${container_name}" >/dev/null 2>&1 || true
 docker run --detach --name "${container_name}" \
   --env POSTGRES_USER=rememberstack \
   --env POSTGRES_PASSWORD=rememberstack_test \
@@ -18,7 +19,8 @@ docker run --detach --name "${container_name}" \
 
 for attempt in $(seq 1 60); do
   if docker exec "${container_name}" \
-    pg_isready --username rememberstack --dbname rememberstack_test >/dev/null 2>&1; then
+    psql --username rememberstack --dbname rememberstack_test \
+      --tuples-only --command 'SELECT 1' >/dev/null 2>&1; then
     exit 0
   fi
   sleep 1
