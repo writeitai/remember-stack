@@ -164,7 +164,8 @@ connector manager.
 ## `remember mcp`
 
 Stdio MCP server over the remote client: static write tools (`ingest`,
-`pipeline_readiness`), four assured operations from `GET /operations`, and open-query tools
+`pipeline_readiness`), assured operations from `GET /operations` when that
+route exists (a 404 is not a `tools/list` failure), and open-query tools
 when the deployment composes them. See [MCP reference](/docs/reference/mcp).
 
 Runs the base wheel's MCP stdio server. It discovers operations from the remote
