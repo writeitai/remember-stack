@@ -706,6 +706,7 @@ class SelfHostProfile:
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
         from rememberstack.spine import SupersessionSettings
+        from rememberstack.spine.p1_maintain_ticker import record_p1_vector_rewrites
         from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
@@ -730,7 +731,22 @@ class SelfHostProfile:
         chunks = ChunkCatalog(engine=self._engine)
         claims = ClaimCatalog(engine=self._engine)
         facts = FactCatalog(engine=self._engine)
-        index = LanceChunkIndex(root=self._settings.lance_root)
+
+        def _record_vector_rewrite(
+            table: str, changed_rows: int, change_mass: float
+        ) -> None:
+            """Bump D93 change-mass after a worker vector upsert."""
+            record_p1_vector_rewrites(
+                engine=self._engine,
+                lance_root=self._settings.lance_root,
+                table=table,
+                changed_rows=changed_rows,
+                change_mass=change_mass,
+            )
+
+        index = LanceChunkIndex(
+            root=self._settings.lance_root, on_vector_rewrite=_record_vector_rewrite
+        )
         params = ChunkerParams()
         chunk_generation = chunker_version(params=params)
         p1_settings = P1Settings.model_validate({})

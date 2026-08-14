@@ -1,4 +1,4 @@
-"""D91 locked ticker: choose ensure / compact / retrain per Lance table."""
+"""D93 locked ticker: choose ensure / compact / retrain per Lance table."""
 
 from datetime import datetime
 from datetime import timedelta
@@ -23,9 +23,29 @@ from rememberstack.spine.p1_maintain_lock import P1MaintainLockTimeout
 
 P1Operation = Literal["ensure", "compact", "retrain", "skip"]
 
+HEAVY_CHANGED_ROW_FRAC: dict[str, float] = {
+    "chunks": 0.05,
+    "claims": 0.15,
+    "facts": 0.25,
+    "entities": 0.25,
+}
+HEAVY_CHANGE_MASS: dict[str, float] = {
+    "chunks": 2_000_000.0,
+    "claims": 5_000_000.0,
+    "facts": 8_000_000.0,
+    "entities": 2_000_000.0,
+}
+HEAVY_ROW_GROWTH_PCT: dict[str, float] = {
+    "chunks": 5.0,
+    "claims": 15.0,
+    "facts": 25.0,
+    "entities": 25.0,
+}
+HEAVY_UNINDEXED_RATIO = 0.15
+
 
 class P1MaintainSettings(BaseSettings):
-    """Gates and dirt thresholds for the P1 maintain ticker (D91)."""
+    """Gates and dirt thresholds for the P1 maintain ticker (D93)."""
 
     model_config = SettingsConfigDict(
         env_prefix="REMEMBERSTACK_P1_MAINTAIN_", extra="ignore"
@@ -99,20 +119,13 @@ class P1MaintainTicker:
         self, *, table: str, changed_rows: int, change_mass: float
     ) -> None:
         """Bump durable change-mass after a writer actually rewrote vectors."""
-        if changed_rows < 0 or change_mass < 0:
-            raise ValueError("vector rewrite counters must be non-negative")
-        if table not in P1_MAINTAIN_TABLES:
-            raise ValueError(f"unknown P1 table {table}")
-        with self._engine.begin() as connection:
-            connection.execute(
-                _UPSERT_CHANGE,
-                {
-                    "lance_root_key": self._root_key,
-                    "table_name": table,
-                    "changed_rows": changed_rows,
-                    "change_mass": change_mass,
-                },
-            )
+        record_p1_vector_rewrites(
+            engine=self._engine,
+            lance_root=self._lance_root,
+            table=table,
+            changed_rows=changed_rows,
+            change_mass=change_mass,
+        )
 
     def _tick_table(self, *, table: str) -> TickOutcome:
         """Try-lock one table and run at most one Lance op."""
@@ -187,7 +200,7 @@ class P1MaintainTicker:
         )
 
     def _needs_retrain(self, *, stats: TableMaintainStats) -> bool:
-        """Retrain when change-mass or leftover unindexed ratio trips."""
+        """Retrain when per-table change-mass, growth, or leftover unindexed trips."""
         stored = self._read_stats_row(table=stats.table)
         if stored is not None and stored["operator_state"] == "awaiting_operator":
             return False
@@ -200,11 +213,30 @@ class P1MaintainTicker:
             stored.get("changed_rows_since_heavy") if stored is not None else 0
         )
         changed_rows = raw_changed if isinstance(raw_changed, int) else 0
-        if changed_rows > 0:
+        raw_mass = stored.get("change_mass_since_heavy") if stored is not None else 0.0
+        change_mass = raw_mass if isinstance(raw_mass, (int, float)) else 0.0
+        raw_baseline = (
+            stored.get("last_heavy_row_count") if stored is not None else None
+        )
+        baseline = (
+            raw_baseline
+            if isinstance(raw_baseline, int) and raw_baseline > 0
+            else stats.row_count
+        )
+        if changed_rows / max(baseline, 1) >= HEAVY_CHANGED_ROW_FRAC[stats.table]:
+            return True
+        if change_mass >= HEAVY_CHANGE_MASS[stats.table]:
+            return True
+        if (
+            isinstance(raw_baseline, int)
+            and raw_baseline > 0
+            and (stats.row_count - raw_baseline) * 100 / raw_baseline
+            >= HEAVY_ROW_GROWTH_PCT[stats.table]
+        ):
             return True
         if stats.row_count <= 0:
             return False
-        return stats.unindexed_rows / stats.row_count >= 0.15
+        return stats.unindexed_rows / stats.row_count >= HEAVY_UNINDEXED_RATIO
 
     def _forget_is_open(self) -> bool:
         """Skip the whole estate while hard-forget is honoring a manifest."""
@@ -261,9 +293,35 @@ class P1MaintainTicker:
             )
 
 
+def record_p1_vector_rewrites(
+    *,
+    engine: Engine,
+    lance_root: Path,
+    table: str,
+    changed_rows: int,
+    change_mass: float,
+) -> None:
+    """Writer hook: increment table stats after a Lance vector rewrite."""
+    if changed_rows < 0 or change_mass < 0:
+        raise ValueError("vector rewrite counters must be non-negative")
+    if table not in P1_MAINTAIN_TABLES:
+        raise ValueError(f"unknown P1 table {table}")
+    with engine.begin() as connection:
+        connection.execute(
+            _UPSERT_CHANGE,
+            {
+                "lance_root_key": str(Path(lance_root).resolve()),
+                "table_name": table,
+                "changed_rows": changed_rows,
+                "change_mass": change_mass,
+            },
+        )
+
+
 _SELECT_STATS = text(
     """
-    SELECT last_heavy_at, last_error, operator_state, changed_rows_since_heavy
+    SELECT last_heavy_at, last_error, operator_state, changed_rows_since_heavy,
+           change_mass_since_heavy, last_heavy_row_count
     FROM p1_lance_table_stats
     WHERE lance_root_key = :lance_root_key AND table_name = :table_name
     """

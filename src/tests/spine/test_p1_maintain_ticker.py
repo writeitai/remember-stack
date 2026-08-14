@@ -1,4 +1,4 @@
-"""Postgres proofs for the D91 locked maintain ticker."""
+"""Postgres proofs for the D93 locked maintain ticker."""
 
 from collections.abc import Iterator
 from datetime import timedelta
@@ -33,7 +33,7 @@ def database_engine() -> Iterator[Engine]:
     try:
         database_url = load_database_settings().sqlalchemy_url()
     except ValidationError:
-        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D91 ticker proofs")
+        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D93 ticker proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
     command.downgrade(config=config, revision="base")
@@ -54,7 +54,7 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,
             slug="d91-ticker",
-            name="D91 ticker proofs",
+            name="D93 ticker proofs",
             default_language="en",
             raw_bucket="mem://raw",
             artifacts_bucket="mem://artifacts",
@@ -167,6 +167,19 @@ def test_vector_rewrite_plus_heavy_gate_retrains(database_engine: Engine) -> Non
     facts = next(item for item in outcomes if item.table == "facts")
     assert facts.operation == "retrain"
     assert fake.rebuilds >= 1
+
+
+def test_small_fact_rewrite_does_not_retrain(database_engine: Engine) -> None:
+    """Facts need a 25% changed-row fraction; one rewrite of ten is not enough."""
+    fake = _FakeMaintenance()
+    ticker = _ticker(engine=database_engine, maintenance=fake, heavy=True)
+    ticker.tick()
+    ticker.record_vector_rewrites(table="facts", changed_rows=1, change_mass=10.0)
+    fake.rebuilds = 0
+    outcomes = ticker.tick()
+    facts = next(item for item in outcomes if item.table == "facts")
+    assert facts.operation == "skip"
+    assert fake.rebuilds == 0
 
 
 def test_busy_table_lock_skips_without_waiting(database_engine: Engine) -> None:

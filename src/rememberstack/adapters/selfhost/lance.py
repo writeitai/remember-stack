@@ -1,5 +1,6 @@
 """The embedded-LanceDB P1 chunk index: one table of text + vectors (D8)."""
 
+from collections.abc import Callable
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
@@ -40,7 +41,18 @@ _CLAIM_TABLE = "claims"
 _FACT_TABLE = "facts"
 _ENTITY_TABLE = "entities"
 P1_TABLE_NAMES: Final = (_CHUNK_TABLE, _CLAIM_TABLE, _FACT_TABLE, _ENTITY_TABLE)
-"""Physical Lance tables under one lance_root (D91)."""
+"""Physical Lance tables under one lance_root (D93)."""
+
+CHANGE_MASS_CHAR_CAP: Final = {
+    _CHUNK_TABLE: 4096,
+    _CLAIM_TABLE: 512,
+    _FACT_TABLE: 256,
+    _ENTITY_TABLE: 1024,
+}
+"""Per-table cap for D93 change-mass: min(len(embedded_text), cap)."""
+
+VectorRewriteHook = Callable[[str, int, float], None]
+"""Optional callback: table, changed_rows, change_mass after a vector upsert."""
 
 # table, column, kind — btree | bitmap | fts | vector
 P1_INDEX_MATRIX: Final[tuple[tuple[str, str, str], ...]] = (
@@ -164,9 +176,12 @@ def fact_metadata_scalars_differ(
 class LanceChunkIndex:
     """The self-host P1 chunk table in an embedded Lance dataset directory."""
 
-    def __init__(self, *, root: Path) -> None:
+    def __init__(
+        self, *, root: Path, on_vector_rewrite: VectorRewriteHook | None = None
+    ) -> None:
         """Bind the index to its dataset directory, creating it if absent."""
         self._connection = lancedb.connect(str(root))
+        self._on_vector_rewrite = on_vector_rewrite
         self._text_indexes_ready: set[str] = set()
         self._scalar_indexes_ready: set[tuple[str, str]] = set()
         self._mutations_since_optimize: dict[str, int] = {}
@@ -198,6 +213,9 @@ class LanceChunkIndex:
             table=_CHUNK_TABLE,
             key=["chunk_id", "policy_generation", "embedder_generation"],
             payload=payload,
+        )
+        self._note_vector_rewrites(
+            table=_CHUNK_TABLE, texts=tuple(row.text for row in rows)
         )
         self._ensure_text_index(table_name=_CHUNK_TABLE)
         self._ensure_scalar_index(table_name=_CHUNK_TABLE, column="deployment_id")
@@ -304,6 +322,9 @@ class LanceChunkIndex:
                 for row in rows
             ],
         )
+        self._note_vector_rewrites(
+            table=_CLAIM_TABLE, texts=tuple(row.text for row in rows)
+        )
         self._ensure_text_index(table_name=_CLAIM_TABLE)
         self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="deployment_id")
         self._ensure_scalar_index(table_name=_CLAIM_TABLE, column="claim_id")
@@ -357,6 +378,9 @@ class LanceChunkIndex:
                 }
                 for row in rows
             ],
+        )
+        self._note_vector_rewrites(
+            table=_FACT_TABLE, texts=tuple(row.label for row in rows)
         )
         self._ensure_scalar_index(table_name=_FACT_TABLE, column="deployment_id")
         self._ensure_bitmap_index(table_name=_FACT_TABLE, column="kind")
@@ -1333,6 +1357,9 @@ class LanceChunkIndex:
                 for row in rows
             ],
         )
+        self._note_vector_rewrites(
+            table=_ENTITY_TABLE, texts=tuple(row.canonical_name for row in rows)
+        )
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
@@ -1408,6 +1435,14 @@ class LanceChunkIndex:
         if not self._has_table(table_name=table):
             return 0
         return self._connection.open_table(table).count_rows()
+
+    def _note_vector_rewrites(self, *, table: str, texts: tuple[str, ...]) -> None:
+        """Bump durable change-mass after a successful vector upsert."""
+        if self._on_vector_rewrite is None or not texts:
+            return
+        cap = CHANGE_MASS_CHAR_CAP[table]
+        change_mass = float(sum(min(len(text), cap) for text in texts))
+        self._on_vector_rewrite(table, len(texts), change_mass)
 
     def _upsert(
         self, *, table: str, key: str | list[str], payload: list[dict[str, object]]
