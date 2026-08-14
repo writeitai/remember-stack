@@ -26,13 +26,13 @@ from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.nomination import _filter_predicates
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import (
     CHUNK_TEXT_BYTES_PER_INVOCATION,
 )
-from rememberstack.surfaces.query_sandbox.nomination import PROJECTION_ONLY_FILTERS
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 
 _ROOT = Path(__file__).parents[3]
@@ -348,12 +348,18 @@ def test_filters_outside_the_allowlist_are_rejected(target: str, filters: dict) 
     assert caught.value.code == QueryErrorCode.INVALID_PARAMETER
 
 
-def test_source_shape_is_a_projection_filter_only() -> None:
-    """It is a D80 location fact with no PostgreSQL column to repeat it."""
-    assert "source_shape" in PROJECTION_ONLY_FILTERS
+def test_source_shape_is_a_pre_rank_authority_filter() -> None:
+    """The D80 location fact is ranked and confirmed in PostgreSQL."""
     assert validate_filters(target="chunks", filters={"source_shape": "table"}) == {
         "source_shape": "table"
     }
+    predicates, parameters = _filter_predicates(
+        target="chunks", filters={"source_shape": "table"}
+    )
+    assert predicates == [
+        "c.location_facts->'facts'->>'source_shape' = %(f_source_shape)s"
+    ]
+    assert parameters == {"f_source_shape": "table"}
 
 
 def test_k_is_bounded_and_the_budget_is_spent() -> None:

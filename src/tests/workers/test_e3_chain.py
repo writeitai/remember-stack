@@ -223,7 +223,6 @@ class _E3Rig:
             registry=EntityRegistry(engine=engine),
             resolver=CascadeResolver(
                 engine=engine,
-                entity_index=self.lance,
                 model_provider=self.provider,
                 config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                 embedding_model="qwen/qwen3-embedding-8b",
@@ -379,7 +378,7 @@ class _E3Rig:
 @pytest.fixture()
 def rig(database_engine: Engine, tmp_path: Path) -> _E3Rig:
     """A fresh composed chain per proof."""
-    return _E3Rig(engine=database_engine, root=tmp_path)
+    return _E3Rig(engine=database_engine)
 
 
 def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(

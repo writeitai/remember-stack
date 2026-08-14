@@ -22,7 +22,7 @@ from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.client import MemoryClient
@@ -207,7 +207,10 @@ class _ApiRig:
         self.engine = engine
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.lance = LanceChunkIndex(root=root / "lance")
+        self.p1 = PostgresP1Index(
+            engine=engine, embedding_model=P1Settings().embedding_model
+        )
+        self.p1.configure_channels(deployment_id=_DEPLOYMENT_ID)
         self.provider = FakeModelProvider(generate_payloads=_PAYLOADS)
         document_catalog = DocumentCatalog(engine=engine)
         chunk_catalog = ChunkCatalog(engine=engine)
@@ -254,7 +257,7 @@ class _ApiRig:
                 catalog=chunk_catalog,
                 artifact_store=artifact_store,
                 model_provider=self.provider,
-                chunk_index=self.lance,
+                chunk_index=self.p1,
                 settings=E1Settings(),
                 params=_PARAMS,
             ),
@@ -282,7 +285,6 @@ class _ApiRig:
                 registry=EntityRegistry(engine=engine),
                 resolver=CascadeResolver(
                     engine=engine,
-                    entity_index=self.lance,
                     model_provider=self.provider,
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                     embedding_model="qwen/qwen3-embedding-8b",
@@ -322,7 +324,7 @@ class _ApiRig:
                 claim_catalog=claim_catalog,
                 chunk_catalog=chunk_catalog,
                 model_provider=self.provider,
-                claim_index=self.lance,
+                claim_index=self.p1,
                 settings=P1Settings(),
                 chunker_version=generation,
             ),
@@ -340,7 +342,7 @@ class _ApiRig:
             handler=LabelFactsHandler(
                 facts=FactCatalog(engine=engine),
                 model_provider=self.provider,
-                fact_index=self.lance,
+                fact_index=self.p1,
                 settings=P1Settings(),
             ),
         )
@@ -349,7 +351,7 @@ class _ApiRig:
             build_api(
                 engine=QueryEngine(
                     engine=engine,
-                    search_index=self.lance,
+                    search_index=self.p1,
                     model_provider=self.provider,
                     embedding_model=P1Settings().embedding_model,
                 ),
@@ -772,10 +774,7 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
 def test_search_claims_is_evidence_grain_with_drop_count_honesty(
     rig: _ApiRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The D48 nominate-then-drop proof: a Lance-nominated claim whose spine row
-    lost currency is dropped and counted — never served. Claims answers are
-    EVIDENCE grain, never current-fact. The first read also crosses an
-    artificially small batch boundary through the real confirmation path."""
+    """D94 filters currency in ranked SQL before bounded evidence hydration."""
     with rig.engine.begin() as connection:
         connection.execute(
             text(
@@ -812,7 +811,7 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
         ).json()
     finally:
         event.remove(rig.engine, "before_cursor_execute", count_confirmation_calls)
-    assert confirmation_calls == 2
+    assert confirmation_calls == 3
     assert first["grain"] == "evidence"
     assert len(first["evidence"]) == 2
     assert first["dropped_by_hydration"] == 0
@@ -831,7 +830,7 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
     assert unstamped["claim_valid_from"] is None
     assert unstamped["claim_valid_until"] is None
 
-    # currency flips on one claim in the spine; Lance still nominates it:
+    # Currency flips before the next statement; ranked SQL excludes it itself.
     with rig.engine.begin() as connection:
         connection.execute(
             text(
@@ -843,7 +842,7 @@ def test_search_claims_is_evidence_grain_with_drop_count_honesty(
         "/search/claims", params={"query": "Alice Novak employer", "k": 10}
     ).json()
     assert len(second["evidence"]) == 1
-    assert second["dropped_by_hydration"] == 1  # the honest denominator
+    assert second["dropped_by_hydration"] == 0
 
     with rig.engine.begin() as connection:
         connection.execute(text("UPDATE claims SET is_current_testimony = false"))
@@ -885,43 +884,7 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
     assert chunk["version_id"]
     assert chunk["representation_id"]
 
-    # D48 hydration fails closed on section_role disagreement with the P1
-    # projection (not free-form prefix mismatch — headers are PG-only under D80).
-    with rig.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE document_sections SET role = 'appendix'"
-                " WHERE deployment_id = :deployment_id"
-                " AND section_id = ("
-                "   SELECT section_id FROM chunks"
-                "   WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
-                " )"
-            ),
-            {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
-        )
-    try:
-        skewed = rig.client.get(
-            "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
-        ).json()
-        assert skewed["chunks"] == []
-        assert skewed["dropped_by_hydration"] == 1
-    finally:
-        with rig.engine.begin() as connection:
-            connection.execute(
-                text(
-                    "UPDATE document_sections SET role = 'body'"
-                    " WHERE deployment_id = :deployment_id"
-                    " AND section_id = ("
-                    "   SELECT section_id FROM chunks"
-                    "   WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id"
-                    " )"
-                ),
-                {"deployment_id": _DEPLOYMENT_ID, "chunk_id": chunk["chunk_id"]},
-            )
-
-    # Missing P1 projection text is a failed hydration (delete is simulated by
-    # renaming the section role again is already covered; here drop via NULL
-    # representation link is out of scope — assert re-hydrate still works).
+    # Location headers remain authority metadata; body-only hydration is valid.
     with rig.engine.begin() as connection:
         connection.execute(
             text(
@@ -953,8 +916,8 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
                 },
             )
 
-    # P1 still nominates the immutable row, but the live-spine pointer no
-    # longer confirms it. D48 drops it instead of serving stale source text.
+    # The ranked statement joins live authority, so a retired source version is
+    # never nominated and does not become a hydration drop.
     with rig.engine.connect() as connection:
         original_pointers = tuple(
             connection.execute(
@@ -980,7 +943,7 @@ def test_lexical_claim_and_live_chunk_search_are_public_and_typed(rig: _ApiRig) 
             "/search/chunks", params={"query": "engineer", "k": 10, "channel": "bm25"}
         ).json()
         assert stale["chunks"] == []
-        assert stale["dropped_by_hydration"] == 1
+        assert stale["dropped_by_hydration"] == 0
     finally:
         with rig.engine.begin() as connection:
             for pointer in original_pointers:
@@ -1087,7 +1050,7 @@ def test_wp17_skeleton_eval_suite_runs_green_and_blocks_on_breakage(
     )
     query_engine = QueryEngine(
         engine=rig.engine,
-        search_index=rig.lance,
+        search_index=rig.p1,
         model_provider=rig.provider,
         embedding_model=_P1Settings().embedding_model,
     )

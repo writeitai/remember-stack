@@ -26,6 +26,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimIndexPort
 from rememberstack.ports.p1_index import FactIndexPort
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.fact_catalog import FactCatalog
@@ -141,6 +142,7 @@ class EmbedClaimsHandler:
                 request=EmbeddingRequest(
                     model=self._settings.embedding_model,
                     texts=tuple(claim.claim_text for claim in batch),
+                    dimensions=P1_VECTOR_DIMENSIONS,
                 )
             )
             meter.record(
@@ -264,6 +266,7 @@ class LabelFactsHandler:
                     request=EmbeddingRequest(
                         model=self._settings.embedding_model,
                         texts=tuple(row.label for row in batch),
+                        dimensions=P1_VECTOR_DIMENSIONS,
                     )
                 )
                 meter.record(

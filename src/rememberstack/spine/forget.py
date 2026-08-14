@@ -1338,6 +1338,10 @@ _POSTGRES_SCRUB = (
             type_confidence = NULL,
             profile_summary = NULL,
             profile_embedding_ref = NULL,
+            embedding = NULL,
+            embedding_model = NULL,
+            embedding_input_policy_version = NULL,
+            embedding_text_hash = NULL,
             mention_count = 0,
             graph_degree = 0,
             updated_at = now()
@@ -1381,6 +1385,12 @@ _POSTGRES_SCRUB = (
         """
         DELETE FROM claims
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
+        DELETE FROM chunk_search
+        WHERE deployment_id = :deployment_id AND chunk_id = ANY(:chunk_ids)
         """
     ),
     text(
@@ -1548,6 +1558,9 @@ _VERIFY_POSTGRES_SCRUB = text(
         SELECT 1 FROM chunks
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
+        SELECT 1 FROM chunk_search
+        WHERE deployment_id = :deployment_id AND chunk_id = ANY(:chunk_ids)
+        UNION ALL
         SELECT 1 FROM chunk_claims
         WHERE deployment_id = :deployment_id
           AND (chunk_id = ANY(:chunk_ids) OR claim_id = ANY(:claim_ids))
@@ -1619,7 +1632,10 @@ _VERIFY_POSTGRES_SCRUB = text(
         SELECT 1 FROM entities
         WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
           AND (status <> 'retired' OR canonical_name <> '' OR normalized_name <> ''
-               OR profile_summary IS NOT NULL OR profile_embedding_ref IS NOT NULL)
+               OR profile_summary IS NOT NULL OR profile_embedding_ref IS NOT NULL
+               OR embedding IS NOT NULL OR embedding_model IS NOT NULL
+               OR embedding_input_policy_version IS NOT NULL
+               OR embedding_text_hash IS NOT NULL)
         UNION ALL
         SELECT 1 FROM knowledge_artifact_evidence
         WHERE deployment_id = :deployment_id

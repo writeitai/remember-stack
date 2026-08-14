@@ -13,7 +13,6 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.eval import run_resolution_suite
 from rememberstack.eval import seed_synthetic_golden_pairs
@@ -98,7 +97,6 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
 def _resolver(
     *,
     engine: Engine,
-    root: Path,
     provider: FakeModelProvider,
     thresholds: TypeThresholds | None = None,
 ) -> CascadeResolver:
@@ -109,7 +107,6 @@ def _resolver(
     )
     return CascadeResolver(
         engine=engine,
-        entity_index=LanceChunkIndex(root=root / "lance"),
         model_provider=provider,
         config=config,
         embedding_model="qwen/qwen3-embedding-8b",
@@ -132,12 +129,12 @@ def _claim() -> ClaimForNormalization:
 
 
 def test_cascade_mints_then_t0_then_t4_with_verdicts(
-    database_engine: Engine, tmp_path: Path
+    database_engine: Engine
 ) -> None:
     """Mint on empty registry; T0 short-circuit; T1/T2 block into a T4 match —
     every step leaving an append-only verdict with its tier and features."""
     provider = FakeModelProvider(generate_router=_first_token_router)
-    resolver = _resolver(engine=database_engine, root=tmp_path, provider=provider)
+    resolver = _resolver(engine=database_engine, provider=provider)
 
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
@@ -183,12 +180,12 @@ def test_cascade_mints_then_t0_then_t4_with_verdicts(
 
 
 def test_t4_no_match_mints_a_distinct_entity(
-    database_engine: Engine, tmp_path: Path
+    database_engine: Engine
 ) -> None:
     """A blocked near-miss the adjudicator rejects becomes a NEW entity —
     over-rejection is minting, never silent identity collapse."""
     provider = FakeModelProvider(generate_router=_first_token_router)
-    resolver = _resolver(engine=database_engine, root=tmp_path, provider=provider)
+    resolver = _resolver(engine=database_engine, provider=provider)
 
     jan = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
@@ -221,7 +218,7 @@ def test_t4_no_match_mints_a_distinct_entity(
 
 
 def test_low_confidence_small_verdict_escalates_to_frontier(
-    database_engine: Engine, tmp_path: Path
+    database_engine: Engine
 ) -> None:
     """The T4 ladder: a small-model verdict below the floor re-asks frontier."""
 
@@ -229,7 +226,7 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
         return {"match": True, "confidence": 0.5}  # below the 0.75 floor
 
     provider = FakeModelProvider(generate_router=low_confidence_router)
-    resolver = _resolver(engine=database_engine, root=tmp_path, provider=provider)
+    resolver = _resolver(engine=database_engine, provider=provider)
     resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Acme Corporation", type="Organization"),
@@ -253,12 +250,12 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
 
 
 def test_resolution_suite_records_curves_and_blocks_on_regression(
-    database_engine: Engine, tmp_path: Path
+    database_engine: Engine
 ) -> None:
     """The exit-criterion machinery: per-type P/R over the golden set, curves
     recorded on resolver_versions, run in eval_runs; a broken judge fails."""
     provider = FakeModelProvider(generate_router=_first_token_router)
-    resolver = _resolver(engine=database_engine, root=tmp_path, provider=provider)
+    resolver = _resolver(engine=database_engine, provider=provider)
     # the judge's own config registers itself (immutable per version):
     seed_resolver_version(
         engine=database_engine,
@@ -303,7 +300,6 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
 
     broken = _resolver(
         engine=database_engine,
-        root=tmp_path,
         provider=FakeModelProvider(generate_router=broken_router),
     )
     regression = run_resolution_suite(
@@ -316,7 +312,7 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
 
 
 def test_resolver_version_definitions_are_immutable(
-    database_engine: Engine, tmp_path: Path
+    database_engine: Engine
 ) -> None:
     """Codex review / D22: the same version string cannot be re-registered
     with different thresholds — a decision's version always names the
@@ -345,21 +341,27 @@ def test_resolver_version_definitions_are_immutable(
 
 
 def test_missing_profile_vector_escalates_to_t4(
-    database_engine: Engine, tmp_path: Path
+    database_engine: Engine
 ) -> None:
     """Codex review: a blocked candidate with no stored profile vector is
     AMBIGUITY — it reaches T4 and matches, never a confident non-match."""
     provider = FakeModelProvider(generate_router=_first_token_router)
-    resolver = _resolver(engine=database_engine, root=tmp_path, provider=provider)
+    resolver = _resolver(engine=database_engine, provider=provider)
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Beta Systems", type="Organization"),
         claim=_claim(),
     )
-    # a resolver over an EMPTY Lance root: profile vectors are absent
-    blind = _resolver(
-        engine=database_engine, root=tmp_path / "blind", provider=provider
-    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET embedding = NULL, embedding_model = NULL,"
+                " embedding_input_policy_version = NULL, embedding_text_hash = NULL"
+                " WHERE entity_id = :entity_id"
+            ),
+            {"entity_id": minted.entity_id},
+        )
+    blind = _resolver(engine=database_engine, provider=provider)
     drifted = blind.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Beta Sistems", type="Organization"),

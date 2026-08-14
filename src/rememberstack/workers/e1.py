@@ -47,6 +47,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.p1_index import ChunkIndexPort
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSION
@@ -374,6 +375,7 @@ class EmbedChunksHandler:
                 request=EmbeddingRequest(
                     model=embedder_generation,
                     texts=tuple(rendered.embedding_text for _, rendered in batch),
+                    dimensions=P1_VECTOR_DIMENSIONS,
                 )
             )
         except Exception as exc:

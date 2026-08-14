@@ -294,7 +294,6 @@ class _LifecycleRig:
                 registry=EntityRegistry(engine=engine),
                 resolver=CascadeResolver(
                     engine=engine,
-                    entity_index=self.lance,
                     model_provider=self.provider,
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                     embedding_model="qwen/qwen3-embedding-8b",
@@ -423,7 +422,7 @@ class _LifecycleRig:
 @pytest.fixture()
 def rig(database_engine: Engine, tmp_path: Path) -> _LifecycleRig:
     """A fresh composed lifecycle chain per proof."""
-    return _LifecycleRig(engine=database_engine, root=tmp_path)
+    return _LifecycleRig(engine=database_engine)
 
 
 def test_worked_example_edit_retracts_solely_supported_fact(rig: _LifecycleRig) -> None:

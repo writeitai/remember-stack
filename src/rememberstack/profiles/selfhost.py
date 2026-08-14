@@ -35,6 +35,7 @@ from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
@@ -272,7 +273,9 @@ def selfhost_embed_query(
 
     try:
         response = model_provider.embed(
-            request=EmbeddingRequest(model=embedding_model, texts=(query,))
+            request=EmbeddingRequest(
+                model=embedding_model, texts=(query,), dimensions=P1_VECTOR_DIMENSIONS
+            )
         )
     except ProviderCallError as error:
         if (
@@ -406,6 +409,13 @@ class SelfHostProfile:
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
             )
         )
+        from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
+        from rememberstack.workers import P1Settings  # noqa: PLC0415
+
+        PostgresP1Index(
+            engine=self._engine,
+            embedding_model=P1Settings.model_validate({}).embedding_model,
+        ).configure_channels(deployment_id=self._settings.deployment_id)
         seed_canonical_operations(
             registry=AssuredOperationRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
@@ -439,7 +449,7 @@ class SelfHostProfile:
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
-        from rememberstack.adapters.selfhost.lance import LanceChunkIndex
+        from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
@@ -457,14 +467,12 @@ class SelfHostProfile:
         )
         from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
         from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
-        from rememberstack.workers import E1Settings
         from rememberstack.workers import GraphSnapshotReader
+        from rememberstack.workers import P1Settings
         from rememberstack.workers.e0 import UploadIngestor
 
-        # D80: query-side embedder_generation must match E1 write stamps.
-        # E1 owns passage vectors; do not let REMEMBERSTACK_P1_EMBEDDING_MODEL
-        # silently desync search from the embed stage.
-        e1_settings = E1Settings.model_validate({})
+        # D94 has one active vector space across every P1 target.
+        p1_settings = P1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
         graph_reader = GraphSnapshotReader(
             catalog=projection_catalog,
@@ -472,8 +480,10 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             cache_dir=self._settings.graph_cache_root,
         )
-        search_index = LanceChunkIndex(root=self._settings.lance_root)
-        embedding_model = e1_settings.embedding_model
+        embedding_model = p1_settings.embedding_model
+        search_index = PostgresP1Index(
+            engine=self._engine, embedding_model=embedding_model
+        )
         # One admission + audit authority for SQL and Cypher so concurrency and
         # rolling spend are combined and §7 events actually emit.
         kill_switches = KillSwitches()
@@ -696,7 +706,7 @@ class SelfHostProfile:
 
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
         """Compose exactly one implemented stage handler for one worker process."""
-        from rememberstack.adapters.selfhost.lance import LanceChunkIndex
+        from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
         from rememberstack.core import ConversionRouter
@@ -715,7 +725,6 @@ class SelfHostProfile:
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
         from rememberstack.spine import SupersessionSettings
-        from rememberstack.spine.p1_maintain_ticker import record_p1_vector_rewrites
         from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
@@ -741,24 +750,12 @@ class SelfHostProfile:
         claims = ClaimCatalog(engine=self._engine)
         facts = FactCatalog(engine=self._engine)
 
-        def _record_vector_rewrite(
-            table: str, changed_rows: int, change_mass: float
-        ) -> None:
-            """Bump D93 change-mass after a worker vector upsert."""
-            record_p1_vector_rewrites(
-                engine=self._engine,
-                lance_root=self._settings.lance_root,
-                table=table,
-                changed_rows=changed_rows,
-                change_mass=change_mass,
-            )
-
-        index = LanceChunkIndex(
-            root=self._settings.lance_root, on_vector_rewrite=_record_vector_rewrite
+        p1_settings = P1Settings.model_validate({})
+        index = PostgresP1Index(
+            engine=self._engine, embedding_model=p1_settings.embedding_model
         )
         params = ChunkerParams()
         chunk_generation = chunker_version(params=params)
-        p1_settings = P1Settings.model_validate({})
         if stage is PipelineStage.CONVERT:
             return ConvertHandler(
                 catalog=documents,
@@ -783,12 +780,15 @@ class SelfHostProfile:
                 catalog=chunks, artifact_store=self._artifact_store, params=params
             )
         if stage is PipelineStage.EMBED_CHUNK:
+            e1_settings = E1Settings.model_validate({}).model_copy(
+                update={"embedding_model": p1_settings.embedding_model}
+            )
             return EmbedChunksHandler(
                 catalog=chunks,
                 artifact_store=self._artifact_store,
                 model_provider=self._model_provider,
                 chunk_index=index,
-                settings=E1Settings.model_validate({}),
+                settings=e1_settings,
                 params=params,
             )
         if stage is PipelineStage.EXTRACT_CLAIMS:
@@ -808,10 +808,9 @@ class SelfHostProfile:
                 registry=EntityRegistry(engine=self._engine),
                 resolver=CascadeResolver(
                     engine=self._engine,
-                    entity_index=index,
                     model_provider=self._model_provider,
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
-                    embedding_model=observation_settings.embedding_model,
+                    embedding_model=p1_settings.embedding_model,
                     small_model=observation_settings.small_model,
                     frontier_model=observation_settings.frontier_model,
                 ),

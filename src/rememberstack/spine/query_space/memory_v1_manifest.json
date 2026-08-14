@@ -7796,7 +7796,7 @@
           "max_rows_hard_cap": 1000,
           "name": "facts_as_of",
           "parallel": "safe",
-          "projection_filters": [],
+          "pre_rank_filters": [],
           "security": "invoker",
           "target": "facts",
           "volatility": "stable"
@@ -7848,7 +7848,7 @@
           "filters": [],
           "name": "fetch_chunk_bodies",
           "parallel": "unsafe",
-          "projection_filters": [],
+          "pre_rank_filters": [],
           "security": "invoker",
           "target": "chunks",
           "volatility": "volatile"
@@ -8126,8 +8126,9 @@
           ],
           "name": "lexical_chunks",
           "parallel": "unsafe",
-          "projection_filters": [
+          "pre_rank_filters": [
             "doc_id",
+            "language",
             "section_role",
             "source_kind",
             "source_shape"
@@ -8193,8 +8194,12 @@
           ],
           "name": "lexical_claims",
           "parallel": "unsafe",
-          "projection_filters": [
-            "doc_id"
+          "pre_rank_filters": [
+            "asserted_from",
+            "asserted_to",
+            "doc_id",
+            "entity_id",
+            "source_kind"
           ],
           "security": "invoker",
           "target": "claims",
@@ -8321,8 +8326,9 @@
           ],
           "name": "semantic_chunks",
           "parallel": "unsafe",
-          "projection_filters": [
+          "pre_rank_filters": [
             "doc_id",
+            "language",
             "section_role",
             "source_kind",
             "source_shape"
@@ -8400,8 +8406,12 @@
           ],
           "name": "semantic_claims",
           "parallel": "unsafe",
-          "projection_filters": [
-            "doc_id"
+          "pre_rank_filters": [
+            "asserted_from",
+            "asserted_to",
+            "doc_id",
+            "entity_id",
+            "source_kind"
           ],
           "security": "invoker",
           "target": "claims",
@@ -8456,7 +8466,9 @@
           ],
           "name": "semantic_entities",
           "parallel": "unsafe",
-          "projection_filters": [],
+          "pre_rank_filters": [
+            "entity_type"
+          ],
           "security": "invoker",
           "target": "entities",
           "volatility": "volatile"
@@ -8534,7 +8546,13 @@
           ],
           "name": "semantic_facts",
           "parallel": "unsafe",
-          "projection_filters": [],
+          "pre_rank_filters": [
+            "fact_kind",
+            "object_entity_id",
+            "predicate",
+            "subject_entity_id",
+            "support_state"
+          ],
           "security": "invoker",
           "target": "facts",
           "volatility": "volatile"
@@ -37643,5 +37661,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "b6e7a6079beb43df728d03aa909791e69c2dcd7c7ec13b130e1fff557c194c96"
+  "surface_manifest_hash": "361034267b7ef5357193f38170ab324d0402ac57781068cfdd56a56b0720ef95"
 }

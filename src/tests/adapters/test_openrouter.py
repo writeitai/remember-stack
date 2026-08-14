@@ -795,13 +795,47 @@ def test_embedding_pins_configured_provider_without_fallback(
     monkeypatch.setattr(provider, "_post", post)
     try:
         response = provider.embed(
-            request=EmbeddingRequest(model="qwen/qwen3-embedding-8b", texts=("memory",))
+            request=EmbeddingRequest(
+                model="qwen/qwen3-embedding-8b", texts=("memory",), dimensions=2
+            )
         )
     finally:
         provider._client.close()
 
     assert observed["provider"] == {"only": ["nebius"], "allow_fallbacks": False}
+    assert observed["dimensions"] == 2
     assert response.vectors == ((0.1, 0.2),)
+
+
+def test_embedding_rejects_a_provider_dimension_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider cannot silently violate the fixed caller dimension."""
+    from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/embeddings"
+        assert payload["dimensions"] == 3
+        return {
+            "model": "qwen/qwen3-embedding-8b",
+            "usage": {"prompt_tokens": 2, "cost": "0.000001"},
+            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterInvalidResponseError, match="dimension"):
+            provider.embed(
+                request=EmbeddingRequest(
+                    model="qwen/qwen3-embedding-8b",
+                    texts=("memory",),
+                    dimensions=3,
+                )
+            )
+    finally:
+        provider._client.close()
 
 
 def test_embedding_provider_order_prefers_shortlist_with_fallbacks(

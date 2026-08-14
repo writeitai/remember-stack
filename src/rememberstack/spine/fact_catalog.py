@@ -865,11 +865,11 @@ _STAMP_FACT_EMBEDDING = text(
 
 _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
     """
-    SELECT observation_id, obs_label, status::text AS status,
+    SELECT observation_id, coalesce(obs_label, statement) AS obs_label,
+           status::text AS status,
            valid_from, valid_until, ingested_at, invalidated_at
     FROM observations
     WHERE observations.deployment_id = :deployment_id
-      AND obs_label IS NOT NULL
       AND (
             obs_label_version IS NULL
             OR obs_label_version <> :label_version

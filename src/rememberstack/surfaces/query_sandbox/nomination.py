@@ -1,10 +1,9 @@
 """The semantic and lexical bridge behind the public functions (design §3.4).
 
-An agent writes `FROM semantic_claims($1, 20)` and gets confirmed rows. What
-happens between those two facts is here: the P1 index nominates candidates by
-similarity or BM25, PostgreSQL confirms every nominated id against the same
-invariant views the rest of the surface reads, and only confirmed rows are
-exposed. Nomination proposes; PostgreSQL disposes (D48).
+An agent writes `FROM semantic_claims($1, 20)` and gets confirmed rows. The P1
+statement ranks through the same PostgreSQL authority joins used by the rest
+of the surface, then bounded hydration re-confirms exact identities before any
+row is exposed. Nomination proposes; PostgreSQL disposes (D48).
 
 **Where this runs, and why.** The binding design places the bridge in the
 executor because PostgreSQL cannot reach the Lance projection without an
@@ -53,11 +52,6 @@ FILTER_ALLOWLISTS: Final[dict[str, frozenset[str]]] = {
     ),
     "entities": frozenset({"entity_type"}),
 }
-
-# `source_shape` is a D80 location fact held in the projection only: Lance can
-# filter on it, PostgreSQL has no column to repeat it with, and it carries no
-# authorization meaning (§3.4).
-PROJECTION_ONLY_FILTERS: Final = frozenset({"source_shape"})
 
 #: The column contract each target answers with, used when a search returns
 #: nothing and there is no cursor to read a shape from. Kept beside the
@@ -300,30 +294,6 @@ def _typed_filter_value(*, key: str, value: object) -> Any:
     return value
 
 
-#: The filters the projection itself can apply, and the column each one lives
-#: in there. Applying these before top-k is what makes a filtered search return
-#: k matching rows instead of k rows that mostly get thrown away afterwards.
-LANCE_FILTER_COLUMNS: Final[dict[str, dict[str, str]]] = {
-    "claims": {"doc_id": "doc_id"},
-    "chunks": {
-        "doc_id": "doc_id",
-        "source_kind": "source_kind",
-        "source_shape": "source_shape",
-        "section_role": "section_role",
-    },
-    "facts": {},
-    "entities": {},
-}
-
-
-def projection_filters(*, target: str, filters: dict[str, Any]) -> dict[str, str]:
-    """The subset of `filters` the projection can apply, keyed by its column."""
-    columns = LANCE_FILTER_COLUMNS[target]
-    return {
-        columns[key]: str(value) for key, value in filters.items() if key in columns
-    }
-
-
 def bounded_k(*, requested: object, settings: BridgeSettings) -> int:
     """The effective k, clamped to the tier's cap and the request's budget."""
     if requested is None:
@@ -441,14 +411,7 @@ def confirm(
     # a real row carrying a score that was computed for a different fact.
     qualified = target == "facts"
     statement = _CONFIRM_SQL[target]
-    authorization_filters = {
-        key: value
-        for key, value in filters.items()
-        if key not in PROJECTION_ONLY_FILTERS
-    }
-    predicates, parameters = _filter_predicates(
-        target=target, filters=authorization_filters
-    )
+    predicates, parameters = _filter_predicates(target=target, filters=filters)
     statement = _CONFIRM_SQL[target]
     # The filters are asked as a question, not used to hide rows: a row that
     # fails one is a filter drop, while a row the view no longer publishes at
@@ -553,6 +516,7 @@ _FILTER_COLUMNS: Final[dict[str, dict[str, str]]] = {
     "chunks": {
         "doc_id": "c.doc_id",
         "source_kind": "d.source_kind",
+        "source_shape": "c.location_facts->'facts'->>'source_shape'",
         "section_role": "s.role",
         "language": "d.language",
     },

@@ -17,6 +17,13 @@ from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.p1_maintain import MaintainReport
 from rememberstack.model.p1_maintain import TableMaintainStats
 
+P1_VECTOR_DIMENSIONS = 1_536
+"""Fixed D94 semantic dimension for every current P1 target."""
+
+CLAIM_INPUT_POLICY = "claim-text-v1"
+FACT_INPUT_POLICY = "fact-label-v1"
+ENTITY_INPUT_POLICY = "entity-canonical-name-v1"
+
 
 @runtime_checkable
 class ChunkIndexPort(Protocol):
@@ -192,6 +199,7 @@ class P1ScoredSearchPort(Protocol):
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         ...
@@ -205,6 +213,7 @@ class P1ScoredSearchPort(Protocol):
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         ...
@@ -219,6 +228,7 @@ class P1ScoredSearchPort(Protocol):
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel.
 
@@ -238,6 +248,7 @@ class P1ScoredSearchPort(Protocol):
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         ...
@@ -252,6 +263,8 @@ class P1ScoredSearchPort(Protocol):
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        equality_filters: Mapping[str, str] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored facts, with optional D87 time eligibility before top-k."""
         ...

@@ -60,7 +60,12 @@ class FakeModelProvider:
         """Return one deterministic content-derived vector per input text."""
         self.embedded_texts.extend(request.texts)
         return EmbeddingResponse(
-            vectors=tuple(_vector_for(text=text) for text in request.texts),
+            vectors=tuple(
+                _vector_for(
+                    text=text, dimensions=request.dimensions or _EMBEDDING_DIMENSION
+                )
+                for text in request.texts
+            ),
             usage=_fake_usage(
                 model_name=request.model,
                 tokens_in=sum(len(text.split()) for text in request.texts),
@@ -79,7 +84,7 @@ def _fake_usage(*, model_name: str, tokens_in: int) -> ProviderCallUsage:
     )
 
 
-def _vector_for(*, text: str) -> tuple[float, ...]:
+def _vector_for(*, text: str, dimensions: int) -> tuple[float, ...]:
     """Derive a stable pseudo-vector from the text content."""
     digest = hashlib.sha256(text.encode("utf-8")).digest()
-    return tuple(byte / 255.0 for byte in digest[:_EMBEDDING_DIMENSION])
+    return tuple(digest[index % len(digest)] / 255.0 for index in range(dimensions))

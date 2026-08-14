@@ -9,6 +9,7 @@ from rememberstack.adapters.codex_writer import CodexWriterAdapterSettings
 from rememberstack.adapters.openrouter import OpenRouterModelProvider
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.openrouter import OpenRouterSettings
+from rememberstack.adapters.postgres_p1 import PostgresP1Index
 
 if TYPE_CHECKING:
     from rememberstack.adapters.markitdown_converter import MARKITDOWN_CONVERTER_VERSION
@@ -24,6 +25,7 @@ __all__ = (
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
     "OpenRouterSettings",
+    "PostgresP1Index",
 )
 
 
