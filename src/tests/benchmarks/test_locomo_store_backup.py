@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import UTC
 import hashlib
+import inspect
 import io
 import json
 from pathlib import Path
@@ -187,7 +188,7 @@ def test_failed_stop_preserves_store_without_a_receipt(
         )
 
     assert volume_root.is_dir()
-    assert not (run_dir / store_backup.RECEIPT_DIRECTORY / "conv-1.json").exists()
+    assert not store_backup._receipt_path(run_dir=run_dir, sample_id="conv-1").exists()
 
 
 def test_backup_writes_receipt_only_after_remote_readback(
@@ -252,7 +253,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
         staging_root=staging_root,
     )
 
-    receipt_path = run_dir / store_backup.RECEIPT_DIRECTORY / "conv-1.json"
+    receipt_path = store_backup._receipt_path(run_dir=run_dir, sample_id="conv-1")
     assert receipt_path.is_file()
     assert (
         store_backup.BackupReceipt.model_validate_json(receipt_path.read_bytes())
@@ -357,6 +358,127 @@ def test_manifest_checkpoint_hashes_must_match_local_run(tmp_path: Path) -> None
         store_backup._require_manifest_checkpoint_files(
             manifest=manifest, run_dir=run_dir
         )
+
+
+def test_scoring_base_binds_ingests_but_allows_answer_progress(tmp_path: Path) -> None:
+    """Answer checkpoints may advance while the protected ingestion stays fixed."""
+
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    manifest = store_backup.BackupManifest.model_construct(
+        checkpoint="scoring-base",
+        sample_id="conv-1",
+        sample_ingests_sha256=store_backup._sample_ingests_sha256(
+            run_dir=run_dir, sample_id="conv-1"
+        ),
+        run_files_sha256=store_backup._run_file_hashes(run_dir),
+    )
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    state["answers"] = {"conv-1/question-1": {}}
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    store_backup._require_manifest_scoring_base(manifest=manifest, run_dir=run_dir)
+
+    state["ingests"]["doc-1"]["deployment_id"] = "changed"
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(store_backup.StoreBackupError, match="ingests differ"):
+        store_backup._require_manifest_scoring_base(manifest=manifest, run_dir=run_dir)
+
+
+def test_scoring_and_final_receipts_use_separate_stable_paths(tmp_path: Path) -> None:
+    """A pre-scoring receipt can never masquerade as the final checkpoint."""
+
+    scoring = store_backup._receipt_path(
+        run_dir=tmp_path, sample_id="conv-1", checkpoint="scoring-base"
+    )
+    final = store_backup._receipt_path(run_dir=tmp_path, sample_id="conv-1")
+
+    assert scoring.name == "conv-1.json"
+    assert scoring.parent.name == "scoring-base"
+    assert final.name == "conv-1.json"
+    assert final.parent.name == "final"
+    assert scoring != final
+    colliding_sample = store_backup._receipt_path(
+        run_dir=tmp_path, sample_id="conv-1.scoring-base", checkpoint="final"
+    )
+    assert colliding_sample != scoring
+
+
+def test_restore_preserves_the_checkpoint_receipt_namespace() -> None:
+    """A restored scoring base remains usable as scoring authority."""
+
+    source = inspect.getsource(store_backup.restore_store)
+
+    assert "checkpoint=manifest.checkpoint" in source
+
+
+def test_scoring_authorization_binds_live_store_and_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A remote-valid but misplaced receipt cannot authorize answer calls."""
+
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    _write_marker(run_dir=run_dir)
+    manifest = store_backup.BackupManifest.model_construct(
+        checkpoint="scoring-base",
+        sample_id="conv-1",
+        deployment_id="57000000-0000-0000-0000-000000000001",
+        compose_project="rememberstack",
+        sample_ingests_sha256=store_backup._sample_ingests_sha256(
+            run_dir=run_dir, sample_id="conv-1"
+        ),
+        run_files_sha256=store_backup._run_file_hashes(run_dir),
+    )
+    receipt = store_backup.BackupReceipt(
+        sample_id="conv-1",
+        gcp_project="remember-stack",
+        remote_prefix="gs://other-bucket/runs/unit",
+        manifest_sha256="a" * 64,
+        verified_at="2026-08-14T00:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        store_backup,
+        "_volume_names",
+        lambda **_kwargs: {
+            name: f"rememberstack_{name}" for name in store_backup.EXPECTED_VOLUMES
+        },
+    )
+    monkeypatch.setattr(
+        store_backup, "verify_receipt", lambda _path: (receipt, manifest)
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="different destination"):
+        store_backup.authorize_scoring(
+            run_dir=run_dir,
+            sample_id="conv-1",
+            compose_project="rememberstack",
+            remote_destination="gs://expected-bucket/runs",
+        )
+
+
+def test_scoring_completion_requires_every_answer_and_judge(tmp_path: Path) -> None:
+    """A post-ingest receipt cannot make an unfinished store wipe-eligible."""
+
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"item_ids": ["conv-1/question-1"]}), encoding="utf-8"
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"answers": {}, "judges": {}}), encoding="utf-8"
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="answer-and-judge"):
+        store_backup._require_sample_scoring_complete(
+            run_dir=tmp_path, sample_id="conv-1"
+        )
+
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {"answers": {"conv-1/question-1": {}}, "judges": {"conv-1/question-1": {}}}
+        ),
+        encoding="utf-8",
+    )
+    store_backup._require_sample_scoring_complete(run_dir=tmp_path, sample_id="conv-1")
 
 
 def test_archive_identity_is_required() -> None:
@@ -491,7 +613,7 @@ def test_failed_remote_manifest_readback_preserves_store_without_receipt(
             staging_root=staging_root,
         )
 
-    assert not (run_dir / store_backup.RECEIPT_DIRECTORY / "conv-1.json").exists()
+    assert not store_backup._receipt_path(run_dir=run_dir, sample_id="conv-1").exists()
     assert (volume_root).is_dir()
     assert any(staging_root.iterdir())
 
@@ -850,17 +972,52 @@ def test_runtime_validation_uses_the_image_revision_stamp(
     )
 
 
-def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
-    """The destructive command remains textually enclosed by the backup protocol."""
+def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
+    """The runner verifies ingestion off-host before any scoring can begin."""
 
     script = Path("benchmarks/locomo/sharding/run_shard.sh").read_text(encoding="utf-8")
     loop = script[script.index('for sample_id in "${pending_samples[@]}"; do') :]
 
     assert loop.index("authorize-wipe") < loop.index("down --volumes --remove-orphans")
-    assert loop.index("-m benchmarks.locomo judge") < loop.index(
-        "stage=backup status=starting"
+    post_ingest_backup = loop.index("stage=post-ingest-backup status=starting")
+    answer = loop.index("-m benchmarks.locomo answer", post_ingest_backup)
+    judge = loop.index("-m benchmarks.locomo judge", answer)
+    final_backup = loop.index("stage=final-backup status=starting", judge)
+    assert post_ingest_backup < answer < judge < final_backup
+    between_backup_and_answer = loop[post_ingest_backup:answer]
+    assert (
+        between_backup_and_answer.count('require_verified_scoring_backup "$sample_id"')
+        == 2
     )
+    start_existing = script[
+        script.index("start_existing_store()") : script.index(
+            "backup_completed_live_store()"
+        )
+    ]
+    assert "--no-recreate" in start_existing
+    assert "status=resumable-ingested-checkpoint" in script
+    assert "stage=stack status=resuming-existing-store" in script
+    assert "stage=answer status=resuming-from-checkpoint" in script
+    resume_start = loop.index("stage=stack status=resuming-existing-store")
+    resume_answer = loop.index("stage=answer status=resuming-from-checkpoint")
+    assert (
+        loop.rfind('require_verified_scoring_backup "$sample_id"', 0, resume_start) >= 0
+    )
+    assert (
+        loop[resume_start:resume_answer].count(
+            'require_verified_scoring_backup "$sample_id"'
+        )
+        == 1
+    )
+    assert 'backup_sample "$sample_id" scoring-base' in loop
+    assert 'backup_sample "$sample_id" final' in loop
+    assert 'require_verified_final_backup "$sample_id"' in loop
+    assert "stop_store_after_failed_scoring_authorization" in script
+    assert 'if ! "$python_bin" "$backup_tool" authorize-scoring' in script
+    assert "^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$" in script
+    assert '[[ "$sample_id" == "$marked_sample" ]] && marked_pending=true' in script
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
+    assert "LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
     assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
@@ -881,13 +1038,13 @@ def test_shard_runner_guards_wipe_and_backs_up_after_judging() -> None:
         "REMEMBERSTACK_BUILD_REVISION"
         in script[script.index("attest_worker_environment") :]
     )
-    assert script.count("attest_worker_environment") == 3
+    assert script.count("attest_worker_environment") == 4
     assert script.index("attest_worker_environment") < script.index(
         'log "sample=$sample_id stage=ingest status=starting"'
     )
     drain = script[script.index("wait_for_drain()") :]
     assert drain.index("attest_worker_environment") < drain.index("SELECT count(*)")
-    assert script.count("--lock-fd 9") == 4
+    assert script.count("--lock-fd 9") == 7
     assert script.index("flock --nonblock") < script.index(
         'for sample_id in "${pending_samples[@]}"; do'
     )
