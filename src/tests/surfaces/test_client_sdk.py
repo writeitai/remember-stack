@@ -540,6 +540,59 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
     assert responses[2]["result"]["isError"] is False
 
 
+def test_remote_mcp_lists_write_tools_when_operations_is_404() -> None:
+    """Managed origins without GET /operations still advertise ingest tools."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    transport = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
+    names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
+    assert names == ["ingest", "pipeline_readiness"]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "detail"),
+    ((401, "Unauthorized"), (403, "Forbidden"), (503, "unavailable")),
+)
+def test_remote_mcp_tools_list_still_fails_on_operations_http_error(
+    status_code: int, detail: str
+) -> None:
+    """Non-404 GET /operations errors must not look like an empty registry."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/operations":
+            return httpx.Response(status_code, json={"detail": detail})
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    transport = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
+    with pytest.raises(MemoryApiError, match=f"API {status_code}"):
+        server.list_tools()
+
+
+def test_remote_mcp_tools_list_still_fails_on_operations_transport_error() -> None:
+    """A dead origin on GET /operations must not look like an empty registry."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/operations":
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    transport = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
+    with pytest.raises(MemoryApiError, match="API 0"):
+        server.list_tools()
+
+
 def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
     """Remote tools/list advertises the nine open-query tools only when composed."""
     from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES

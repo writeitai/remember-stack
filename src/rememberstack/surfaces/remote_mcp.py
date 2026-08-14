@@ -12,6 +12,7 @@ from uuid import UUID
 
 from rememberstack import __version__
 from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
 from rememberstack.surfaces.mcp_memory_tools import memory_write_tool_descriptors
@@ -104,7 +105,7 @@ class RemoteOperationMcpServer:
                 "description": descriptor.description,
                 "inputSchema": descriptor.input_schema,
             }
-            for descriptor in self._client.list_operations()
+            for descriptor in self._assured_operation_descriptors()
         )
         if self._remote_open_query_is_composed():
             tools.extend(open_query_tool_descriptors())
@@ -144,6 +145,22 @@ class RemoteOperationMcpServer:
             "content": [{"type": "text", "text": result.model_dump_json()}],
             "isError": False,
         }
+
+    def _assured_operation_descriptors(self) -> tuple[ToolDescriptor, ...]:
+        """Return remote assured-operation tools, or none if the origin has no registry.
+
+        ``GET /operations`` 404 means the deployment does not mount the
+        registry (managed UMC ``/dp/v1`` today). That is not a tools/list
+        failure: static write tools still exist. Auth and transport errors
+        still raise so a bad token or dead origin cannot look like an empty
+        registry.
+        """
+        try:
+            return self._client.list_operations()
+        except MemoryApiError as error:
+            if error.status_code == 404:
+                return ()
+            raise
 
     def _remote_open_query_is_composed(self) -> bool:
         """Return whether the remote deployment exposes the open-query surface.

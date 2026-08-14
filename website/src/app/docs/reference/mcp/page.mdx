@@ -56,7 +56,11 @@ compositions omit them rather than advertising tools that cannot run.
 Stable order:
 
 1. **Static write tools** (when composed): `ingest`, `pipeline_readiness`
-2. **Four assured operations** from the registry (`GET /operations` / in-process registry)
+2. **Assured operations** from the registry (`GET /operations` / in-process registry).
+   Remote MCP treats HTTP **404** on `GET /operations` as “registry not
+   mounted” and still returns the write tools. Auth and transport failures
+   **on `GET /operations`** still fail `tools/list`. A missing or
+   untrustworthy `GET /query/space` only omits open-query tools.
 3. **Open-query tools** when the open facade is composed
 
 The operation registry contains exactly:
@@ -237,8 +241,9 @@ and snapshot provenance are part of the contract.
 
 Run `remember mcp` to start the dependency-light stdio JSON-RPC server. It reaches
 the deployment at `REMEMBERSTACK_API_URL`, uses `REMEMBERSTACK_API_AUTHORIZATION` when set, renders
-`tools/list` as write tools + `GET /operations` + the nine open-query tools when
-composed, and proxies `tools/call` to `POST /ingest`, `POST /readiness`,
+`tools/list` as write tools + `GET /operations` (omitted when that route is
+404) + the nine open-query tools when composed, and proxies `tools/call` to
+`POST /ingest`, `POST /readiness`,
 `POST /operations/{name}`, or the matching `/query/…` route. The server supports
 the MCP `initialize`, `tools/list`, and `tools/call` lifecycle; notifications
 produce no response.
