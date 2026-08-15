@@ -358,6 +358,9 @@ class RunState(BaseModel):
     readiness: dict[str, PipelineReadinessReport] = Field(default_factory=dict)
     answers: dict[str, AnswerRecord] = Field(default_factory=dict)
     judges: dict[str, JudgeRecord] = Field(default_factory=dict)
+    interrupted_usages: list[ProviderCallUsage] = Field(default_factory=list)
+    interrupted_answer_calls: int = Field(default=0, ge=0)
+    interrupted_judge_calls: int = Field(default=0, ge=0)
     evaluator_cost_usd: Decimal = Field(default=Decimal(0), ge=Decimal(0))
 
 
