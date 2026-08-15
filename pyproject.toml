@@ -54,6 +54,7 @@ server = [
     # is the major the query-space manifest declares.
     "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
+    "pyarrow>=25.0.0",
     "sqlalchemy>=2.0",
     "uvicorn>=0.37",
 ]
@@ -98,6 +99,7 @@ dev = [
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
+    "pyarrow>=25.0.0",
     "pyright>=1.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
