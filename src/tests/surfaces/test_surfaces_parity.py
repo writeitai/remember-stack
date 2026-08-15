@@ -37,6 +37,7 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import P1ChunkText
 from rememberstack.model import PerimeterCredential
+from rememberstack.model import ProviderCallError
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
@@ -426,6 +427,26 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         response = deployment.client.post("/operations/fact_context", json=arguments)
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "invalid_parameter"
+
+
+def test_operation_provider_failure_is_a_generic_503(
+    deployment: _Deployment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Provider details stay private while callers receive a retryable status."""
+
+    def fail_operation(*, name: str, arguments: dict[str, object]) -> None:
+        del name, arguments
+        raise ProviderCallError("private synthetic provider response")
+
+    monkeypatch.setattr(deployment.surface, "run", fail_operation)
+
+    response = deployment.client.post(
+        "/operations/fact_context", json={"query": "Alice"}
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "model provider unavailable"}
+    assert "private synthetic" not in response.text
 
 
 def test_cli_operation_arguments_parse_json_before_strict_dispatch() -> None:

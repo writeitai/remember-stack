@@ -43,6 +43,7 @@ from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
+from rememberstack.model import ProviderCallError
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
@@ -613,6 +614,10 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
             raise HTTPException(
                 status_code=422,
                 detail={"code": "invalid_parameter", "message": str(error)},
+            ) from error
+        except ProviderCallError as error:
+            raise HTTPException(
+                status_code=503, detail="model provider unavailable"
             ) from error
 
 

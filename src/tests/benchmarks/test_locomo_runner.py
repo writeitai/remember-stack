@@ -51,6 +51,7 @@ from benchmarks.locomo.runner import ExecutionGuardError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
+from benchmarks.locomo.runner import ProviderInfrastructureError
 from benchmarks.locomo.runner import ProviderPreflightError
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
@@ -544,6 +545,149 @@ def test_first_step_provider_outage_is_not_retried() -> None:
     assert answer.first_step_retries == 0
     assert answer.agent_call_count == 1
     assert provider.answer_calls == 1
+
+
+def test_credit_exhaustion_stops_without_an_answer_checkpoint() -> None:
+    client, raw_client = _memory_client()
+    state = _run_state()
+    provider = _UnavailableProvider(
+        message="OpenRouter /chat/completions returned 402: synthetic credits"
+    )
+    try:
+        with pytest.raises(ProviderInfrastructureError, match="credits unavailable"):
+            _answer_one(
+                question=_question(),
+                client=client,
+                provider=provider,
+                tools=(_tool(),),
+                doc_sessions={},
+                state=state,
+                max_agent_calls=9,
+                max_evaluator_cost_usd=Decimal("1"),
+            )
+    finally:
+        raw_client.close()
+
+    assert state.answers == {}
+    assert state.interrupted_answer_calls == 1
+    assert state.interrupted_usages == []
+    assert state.evaluator_cost_usd == 0
+
+
+def test_credit_exhaustion_stops_without_a_judge_checkpoint() -> None:
+    state = _run_state()
+    with pytest.raises(ProviderInfrastructureError, match="credits unavailable"):
+        _judge_one(
+            question=_question(),
+            answer=AnswerRecord(
+                item_id="conv-test/qa/0000",
+                sample_id="conv-test",
+                category=4,
+                question="Where?",
+                gold_answer="Prague",
+                gold_evidence=("D1:1",),
+                retrieval_succeeded=True,
+                retrieval_latency_ms=1,
+                generated_answer="Prague",
+                reader_called=True,
+                agent_call_count=1,
+                reader_attempts=1,
+            ),
+            provider=_UnavailableProvider(
+                message="OpenRouter /chat/completions returned 402: synthetic credits"
+            ),
+            state=state,
+            max_judge_calls=1,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+
+    assert state.judges == {}
+    assert state.interrupted_judge_calls == 1
+    assert state.interrupted_usages == []
+    assert state.evaluator_cost_usd == 0
+
+
+def test_retrieval_provider_outage_checkpoints_usage_then_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retrieval 503 pauses the question without losing paid agent usage."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+
+    def outage_transport(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.startswith("/operations/"):
+            return httpx.Response(503, json={"detail": "model provider unavailable"})
+        return _run_transport(request)
+
+    outage_raw = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(outage_transport)
+    )
+    outage_client = MemoryClient(client=outage_raw)
+    try:
+        ingest_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=outage_client,
+            provider=_PreflightProvider(),
+        )
+        with pytest.raises(
+            ProviderInfrastructureError, match="retrieval infrastructure unavailable"
+        ):
+            answer_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_questions=1,
+                max_agent_calls=10,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                p3_root=_published_p3(root=tmp_path),
+                client=outage_client,
+                provider=_CostProvider(cost=Decimal("0.01")),
+            )
+    finally:
+        outage_raw.close()
+
+    interrupted = RunState.model_validate_json(
+        (run_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert interrupted.answers == {}
+    assert interrupted.interrupted_answer_calls == 1
+    assert len(interrupted.interrupted_usages) == 1
+    assert interrupted.evaluator_cost_usd == Decimal("0.01")
+
+    healthy_raw = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(_run_transport)
+    )
+    healthy_client = MemoryClient(client=healthy_raw)
+    try:
+        answers = answer_sample(
+            run_dir=run_dir,
+            sample_id="conv-test",
+            max_questions=1,
+            max_agent_calls=10,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            p3_root=_published_p3(root=tmp_path),
+            client=healthy_client,
+            provider=_CostProvider(cost=Decimal("0.01")),
+        )
+    finally:
+        healthy_raw.close()
+
+    assert answers[0].generated_answer == "Prague"
+    resumed = RunState.model_validate_json(
+        (run_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert resumed.interrupted_answer_calls == 1
+    assert resumed.evaluator_cost_usd == Decimal("0.03")
+    summary = summarize_run(run_dir=run_dir)
+    assert summary.answer_agent_calls == 3
+    assert summary.tokens_in == 32
 
 
 def test_answer_without_consulting_memory_is_rejected() -> None:
@@ -1692,6 +1836,40 @@ def test_merge_recomputes_reference_single_run_from_combined_records(
     assert merged.missing_sample_ids == []
 
 
+def test_merge_preserves_interrupted_call_accounting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for run_dir, question in zip((first, second), questions, strict=True):
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+        _write_terminal_records(run_dir=run_dir, questions=(question,))
+
+    state = RunState.model_validate_json(
+        (first / "state.json").read_text(encoding="utf-8")
+    )
+    interrupted = ProviderCallUsage(
+        model_name=ANSWER_AGENT_MODEL,
+        tokens_in=7,
+        tokens_out=1,
+        cost_usd=Decimal("0.005"),
+        latency_ms=1,
+    )
+    state.interrupted_usages.append(interrupted)
+    state.interrupted_answer_calls += 1
+    state.evaluator_cost_usd += interrupted.cost_usd
+    runner._save_state(run_dir=first, state=state)  # noqa: SLF001
+
+    merged = summarize_runs(run_dirs=(first, second))
+
+    assert merged.answer_agent_calls == 3
+    assert merged.tokens_in == 38
+    assert merged.evaluator_cost_usd == Decimal("0.065")
+
+
 def test_merge_preserves_ingests_for_chunk_session_diagnostics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2100,6 +2278,22 @@ class _CostProvider:
                 latency_ms=1,
             ),
         )
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        raise AssertionError(f"unexpected embed call: {request.model}")
+
+
+class _UnavailableProvider:
+    """Provider that fails before returning any reported usage."""
+
+    def __init__(self, *, message: str) -> None:
+        self.message = message
+
+    def generate(
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        del request, response_type
+        raise OpenRouterProviderError(self.message)
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         raise AssertionError(f"unexpected embed call: {request.model}")

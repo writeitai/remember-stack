@@ -130,6 +130,10 @@ class ExecutionGuardError(BenchmarkRunError):
     """A remote stage lacks an exact execution/cost/isolation acknowledgement."""
 
 
+class ProviderInfrastructureError(BenchmarkRunError):
+    """Provider credit or availability failed before a terminal item checkpoint."""
+
+
 class _LangfuseActivationSettings(BaseSettings):
     """Standard Langfuse bindings used only to decide whether to load the shim."""
 
@@ -585,7 +589,9 @@ def answer_sample(
         for question in questions
         if question.item_id not in context.state.answers
     )
-    called = sum(record.agent_call_count for record in context.state.answers.values())
+    called = context.state.interrupted_answer_calls + sum(
+        record.agent_call_count for record in context.state.answers.values()
+    )
     worst_case = (
         called + len(remaining) * context.configuration.max_agent_calls_per_question
     )
@@ -687,6 +693,9 @@ def answer_sample(
                         )
             context.state.answers[question.item_id] = record
             _save_state(run_dir=run_dir, state=context.state)
+    except ProviderInfrastructureError:
+        _save_state(run_dir=run_dir, state=context.state)
+        raise
     finally:
         if p3 is not None:
             p3.close()
@@ -728,7 +737,9 @@ def judge_sample(
         and question.item_id not in context.state.judges
         for question in questions
     )
-    called = sum(record.model_called for record in context.state.judges.values())
+    called = context.state.interrupted_judge_calls + sum(
+        record.model_called for record in context.state.judges.values()
+    )
     if called + remaining_calls > max_judge_calls:
         raise ExecutionGuardError(
             f"max-judge-calls {max_judge_calls} cannot cover "
@@ -785,6 +796,9 @@ def judge_sample(
                         )
             context.state.judges[question.item_id] = judge
             _save_state(run_dir=run_dir, state=context.state)
+    except ProviderInfrastructureError:
+        _save_state(run_dir=run_dir, state=context.state)
+        raise
     finally:
         if tracer is not None:
             tracer.flush()
@@ -882,8 +896,9 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
             ),
         ),
         failures=dict(sorted(failures.items())),
-        answer_agent_calls=sum(
-            record.agent_call_count for record in context.state.answers.values()
+        answer_agent_calls=(
+            context.state.interrupted_answer_calls
+            + sum(record.agent_call_count for record in context.state.answers.values())
         ),
         total_reader_retries=sum(
             max(record.reader_attempts - 1, 0)
@@ -892,8 +907,9 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
         total_first_step_retries=sum(
             record.first_step_retries for record in context.state.answers.values()
         ),
-        judge_calls=sum(
-            record.model_called for record in context.state.judges.values()
+        judge_calls=(
+            context.state.interrupted_judge_calls
+            + sum(record.model_called for record in context.state.judges.values())
         ),
         tokens_in=sum(usage.tokens_in for usage in usages),
         tokens_out=sum(usage.tokens_out for usage in usages),
@@ -927,6 +943,15 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
         preflight_usages=[
             usage for context in contexts for usage in context.state.preflight_usages
         ],
+        interrupted_usages=[
+            usage for context in contexts for usage in context.state.interrupted_usages
+        ],
+        interrupted_answer_calls=sum(
+            context.state.interrupted_answer_calls for context in contexts
+        ),
+        interrupted_judge_calls=sum(
+            context.state.interrupted_judge_calls for context in contexts
+        ),
         answers={
             item_id: answer
             for context in contexts
@@ -1623,7 +1648,9 @@ def _answer_one(
     reader_attempts = 0
     first_step_retries = 0
     invalid_completion_attempts = 0
-    prior_calls = sum(record.agent_call_count for record in state.answers.values())
+    prior_calls = state.interrupted_answer_calls + sum(
+        record.agent_call_count for record in state.answers.values()
+    )
     for _ in range(max_agent_calls_per_question):
         if prior_calls + agent_call_count >= max_agent_calls:
             raise ExecutionGuardError(
@@ -1767,6 +1794,13 @@ def _answer_one(
                         "accounting_error" if model_mismatch else "provider_error"
                     ),
                 )
+            if _is_openrouter_credit_exhaustion(error=error):
+                _record_interrupted_answer(
+                    state=state, usages=tuple(usages), call_count=agent_call_count
+                )
+                raise ProviderInfrastructureError(
+                    "OpenRouter credits unavailable; stopping before answer checkpoint"
+                ) from error
             return _failed_answer(
                 question=question,
                 kind="accounting" if model_mismatch else "reader",
@@ -1995,6 +2029,18 @@ def _answer_one(
             }
             if error.code is not None:
                 public_error["code"] = error.code
+            if error.status_code == 503:
+                if tool_observation is not None:
+                    tool_observation.finish(
+                        latency_ms=failed_latency, outcome="api_error"
+                    )
+                _record_interrupted_answer(
+                    state=state, usages=tuple(usages), call_count=agent_call_count
+                )
+                raise ProviderInfrastructureError(
+                    "retrieval infrastructure unavailable; stopping before answer "
+                    "checkpoint"
+                ) from error
             correctable = is_correctable_query_error(code=error.code)
             if correctable:
                 if tool_observation is not None:
@@ -2213,7 +2259,9 @@ def _judge_one(
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
     """Invoke the judge once; every call failure becomes a visible wrong."""
-    called = sum(record.model_called for record in state.judges.values())
+    called = state.interrupted_judge_calls + sum(
+        record.model_called for record in state.judges.values()
+    )
     if called >= max_judge_calls:
         raise ExecutionGuardError("judge call ceiling reached before next call")
     _require_cost_before_call(
@@ -2259,13 +2307,27 @@ def _judge_one(
         model_mismatch = (
             error.usage is not None and error.usage.model_name != judge_model
         )
+        credit_exhausted = _is_openrouter_credit_exhaustion(error=error)
         if judge_observation is not None:
             judge_observation.finish(
                 usage=error.usage,
                 latency_ms=latency_ms,
-                outcome=("accounting_error" if model_mismatch else "provider_error"),
-                verdict="WRONG",
+                outcome=(
+                    "provider_unavailable"
+                    if credit_exhausted
+                    else "accounting_error"
+                    if model_mismatch
+                    else "provider_error"
+                ),
+                verdict=None if credit_exhausted else "WRONG",
             )
+        if credit_exhausted:
+            if error.usage is not None:
+                state.interrupted_usages.append(error.usage)
+            state.interrupted_judge_calls += 1
+            raise ProviderInfrastructureError(
+                "OpenRouter credits unavailable; stopping before judge checkpoint"
+            ) from error
         return JudgeRecord(
             item_id=question.item_id,
             label="WRONG",
@@ -2526,16 +2588,30 @@ def _require_cost_before_call(*, spent: Decimal, ceiling: Decimal) -> None:
 
 
 def _all_usages(*, state: RunState) -> tuple[ProviderCallUsage, ...]:
-    """Collect successful preflight, reader, and judge usage records exactly once."""
+    """Collect every persisted provider usage record exactly once."""
     return tuple(
         usage
         for usage in (
             *state.preflight_usages,
+            *state.interrupted_usages,
             *(record.reader_usage for record in state.answers.values()),
             *(record.usage for record in state.judges.values()),
         )
         if usage is not None
     )
+
+
+def _is_openrouter_credit_exhaustion(*, error: OpenRouterProviderError) -> bool:
+    """Recognize OpenRouter's stable HTTP status prefix without parsing its body."""
+    return " returned 402:" in str(error)
+
+
+def _record_interrupted_answer(
+    *, state: RunState, usages: tuple[ProviderCallUsage, ...], call_count: int
+) -> None:
+    """Keep answer calls exact when infrastructure aborts before a checkpoint."""
+    state.interrupted_usages.extend(usages)
+    state.interrupted_answer_calls += call_count
 
 
 def _retained_category(*, question: LoCoMoQuestion) -> RetainedCategory:
