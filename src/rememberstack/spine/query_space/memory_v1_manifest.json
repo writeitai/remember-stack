@@ -645,8 +645,15 @@
                     "type": "string"
                   },
                   "section_role": {
-                    "title": "Section Role",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Section Role"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -2566,8 +2573,15 @@
                     "type": "string"
                   },
                   "section_role": {
-                    "title": "Section Role",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Section Role"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -4362,8 +4376,15 @@
                     "type": "string"
                   },
                   "section_role": {
-                    "title": "Section Role",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Section Role"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -6190,8 +6211,15 @@
                     "type": "string"
                   },
                   "section_role": {
-                    "title": "Section Role",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Section Role"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -37661,5 +37689,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "361034267b7ef5357193f38170ab324d0402ac57781068cfdd56a56b0720ef95"
+  "surface_manifest_hash": "a5b305d9f832a8d739563e8d25b57e1387aac37500f1c70e0980e29e7692b0f6"
 }
