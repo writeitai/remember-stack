@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from typing import Literal
 from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
@@ -179,6 +180,46 @@ def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> No
     assert "memory_v1.facts_visible_history" not in ranked_sql
     assert "AS coverage" in ranked_sql
     assert "ORDER BY coverage DESC," in ranked_sql
+
+
+@pytest.mark.parametrize(
+    ("grain", "channel"), (("claim", "semantic"), ("chunk", "bm25"))
+)
+def test_scoped_testimony_nomination_defers_visibility_to_hydration(
+    grain: Literal["claim", "chunk"], channel: Literal["semantic", "bm25"]
+) -> None:
+    """Scoped testimony candidates use only base rows and survivor mapping."""
+    engine = MagicMock(spec=Engine)
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.scalar_one.return_value = True
+    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+
+    if channel == "semantic":
+        nominations = index.nominate_testimony_scored(
+            deployment_id=str(_DEPLOYMENT_ID),
+            grain=grain,
+            channel=channel,
+            k=5,
+            entity_ids=(str(uuid4()),),
+            vector=_vector(axis=0),
+        )
+    else:
+        nominations = index.nominate_testimony_scored(
+            deployment_id=str(_DEPLOYMENT_ID),
+            grain=grain,
+            channel=channel,
+            k=5,
+            entity_ids=(str(uuid4()),),
+            query="launch",
+        )
+    assert nominations == ()
+
+    ranked_sql = str(connection.execute.call_args_list[-1].args[0])
+    assert "v_memory_entity_survivor" in ranked_sql
+    assert "resolution_decisions" in ranked_sql
+    assert "JOIN mentions" in ranked_sql
+    assert "memory_v1" not in ranked_sql
+    assert "coverage.coverage DESC" in ranked_sql
 
 
 @pytest.fixture(scope="module")
@@ -472,12 +513,34 @@ def test_multi_anchor_coverage_precedes_similarity_and_candidate_cut(
         evaluated_at=_NOW,
         entity_ids=entity_ids,
     )
+    nominated_claims = index.nominate_testimony_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        grain="claim",
+        channel="semantic",
+        vector=query,
+        k=1,
+        entity_ids=entity_ids,
+    )
+    nominated_chunks = index.nominate_testimony_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        grain="chunk",
+        channel="semantic",
+        vector=query,
+        k=1,
+        entity_ids=entity_ids,
+    )
 
     assert tuple(item.item_id for item in claims) == (str(seeded["both_claim"]),)
     assert tuple(item.item_id for item in chunks) == (str(seeded["both_chunk"]),)
     assert tuple(item.item_id for item in facts) == (str(seeded["two_anchor_fact"]),)
     assert tuple(item.item_id for item in nominated_facts) == (
         str(seeded["two_anchor_fact"]),
+    )
+    assert tuple(item.item_id for item in nominated_claims) == (
+        str(seeded["both_claim"]),
+    )
+    assert tuple(item.item_id for item in nominated_chunks) == (
+        str(seeded["both_chunk"]),
     )
 
 

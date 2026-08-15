@@ -727,6 +727,128 @@ class PostgresP1Index:
         )
         return _nominations(self._engine_rows(statement, parameters), channel="bm25")
 
+    def nominate_testimony_scored(
+        self,
+        *,
+        deployment_id: str,
+        grain: Literal["claim", "chunk"],
+        channel: Literal["semantic", "bm25"],
+        k: int,
+        entity_ids: tuple[str, ...],
+        vector: tuple[float, ...] | None = None,
+        query: str | None = None,
+        policy_generation: str | None = None,
+        embedder_generation: str | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Rank cheap entity-scoped testimony candidates for later confirmation."""
+        if not entity_ids:
+            raise ValueError("scoped testimony nomination requires entity_ids")
+        if grain == "claim":
+            table = "claims"
+            id_column = "claim_id"
+            mention_column = "claim_id"
+            search_column = "claim_text"
+            target = "claims"
+            policy = CLAIM_INPUT_POLICY
+            model = self._embedding_model
+            current_predicate = "AND indexed.is_current_testimony"
+        elif grain == "chunk":
+            table = "chunk_search"
+            id_column = "chunk_id"
+            mention_column = "chunk_id"
+            search_column = "search_text"
+            target = "chunks"
+            policy = policy_generation or self._chunk_input_policy
+            model = embedder_generation or self._embedding_model
+            current_predicate = ""
+        else:
+            raise ValueError(f"unknown testimony grain {grain!r}")
+
+        parameters: dict[str, object] = {
+            "deployment_id": UUID(deployment_id),
+            "entity_ids": _uuid_strings(entity_ids),
+            "limit": k,
+        }
+        if channel == "semantic":
+            if vector is None:
+                raise ValueError("semantic testimony nomination requires a vector")
+            _require_vector(vector)
+            self._require_channel(
+                deployment_id=deployment_id,
+                target=target,
+                channel="semantic",
+                policy=policy,
+                model=model if grain == "chunk" else None,
+            )
+            score_sql = "1.0 - (indexed.embedding <=> CAST(:query_vector AS vector))"
+            order_sql = "indexed.embedding <=> CAST(:query_vector AS vector)"
+            search_predicate = """
+              AND indexed.embedding IS NOT NULL
+              AND indexed.embedding_model = :embedding_model
+              AND indexed.embedding_input_policy_version = :input_policy
+            """
+            parameters.update(
+                {
+                    "embedding_model": model,
+                    "input_policy": policy,
+                    "query_vector": _vector_literal(vector),
+                }
+            )
+        elif channel == "bm25":
+            if query is None:
+                raise ValueError("BM25 testimony nomination requires a query")
+            self._require_channel(
+                deployment_id=deployment_id, target=target, channel="bm25", policy=None
+            )
+            index_name = (
+                "ix_claims_current_bm25" if grain == "claim" else "ix_chunk_search_bm25"
+            )
+            distance_sql = (
+                f"indexed.{search_column} <@> to_bm25query(:query, '{index_name}')"
+            )
+            score_sql = f"-({distance_sql})::double precision"
+            order_sql = distance_sql
+            search_predicate = ""
+            parameters["query"] = query
+        else:
+            raise ValueError(f"unknown testimony channel {channel!r}")
+
+        statement = f"""
+            WITH scoped_entities AS MATERIALIZED (
+                SELECT entity_id, survivor_entity_id
+                FROM v_memory_entity_survivor
+                WHERE deployment_id = :deployment_id
+                  AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))
+            ), scoped_items AS MATERIALIZED (
+                SELECT mention.{mention_column} AS item_id,
+                       scoped.survivor_entity_id
+                FROM scoped_entities AS scoped
+                JOIN resolution_decisions AS decision
+                  ON decision.deployment_id = :deployment_id
+                 AND decision.entity_id = scoped.entity_id
+                 AND decision.superseded_by IS NULL
+                JOIN mentions AS mention
+                  ON mention.deployment_id = decision.deployment_id
+                 AND mention.mention_id = decision.mention_id
+                WHERE mention.{mention_column} IS NOT NULL
+            ), coverage AS (
+                SELECT item_id,
+                       count(DISTINCT survivor_entity_id)::integer AS coverage
+                FROM scoped_items
+                GROUP BY item_id
+            )
+            SELECT indexed.{id_column}::text AS item_id,
+                   {score_sql} AS score
+            FROM {table} AS indexed
+            JOIN coverage ON coverage.item_id = indexed.{id_column}
+            WHERE indexed.deployment_id = :deployment_id
+              {current_predicate}
+              {search_predicate}
+            ORDER BY coverage.coverage DESC, {order_sql}, indexed.{id_column}
+            LIMIT :limit
+        """
+        return _nominations(self._engine_rows(statement, parameters), channel=channel)
+
     def chunk_texts(
         self,
         *,
