@@ -419,7 +419,7 @@ class QuerySandboxExecutor:
             or (needs_embedder and self._embed is None)
         ):
             return self._failure(
-                QueryErrorCode.LANCE_UNAVAILABLE,
+                QueryErrorCode.P1_UNAVAILABLE,
                 "the projection is not configured for this deployment",
                 request_id,
                 started,

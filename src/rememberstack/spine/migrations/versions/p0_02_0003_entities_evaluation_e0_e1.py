@@ -16,7 +16,7 @@ _DDL = r"""-- ──────────────────────
 -- composite-FK target that keeps every entity reference inside one deployment (§0).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE entities (
-  entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to Lance/Ladybug
+  entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to P1/P2
   deployment_id   uuid NOT NULL REFERENCES deployments,
   type            text NOT NULL,               -- canonical type = majority/highest-confidence vote across mentions (registries §4)
   canonical_name  text NOT NULL,               -- preferred display/blocking name; mirrored as an alias row (invariant below)
@@ -25,7 +25,6 @@ CREATE TABLE entities (
   merged_into     uuid,                        -- redirect target when status=merged; follow the chain to the survivor (D21)
   type_confidence real,                        -- confidence of the type vote; low + cross-mention disagreement ⇒ over-merge signal (registries §4)
   profile_summary text,                        -- short registry-maintained blurb; improves future LLM adjudication (Graphiti lesson)
-  profile_embedding_ref text,                  -- opaque Lance key for the profile embedding used in T3 (no vectors in PG/graph — D6/D8)
   mention_count   integer NOT NULL DEFAULT 0,  -- cached |mentions|; half of blast_radius (registries §6) and a health metric
   graph_degree    integer NOT NULL DEFAULT 0,  -- cached relation degree from the LATEST PUBLISHED P2 snapshot (§9); other half of blast_radius
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -533,7 +532,7 @@ CREATE INDEX ix_crossrefs_from ON document_crossrefs (from_doc_id);
 CREATE INDEX ix_crossrefs_to   ON document_crossrefs (to_doc_id) WHERE to_doc_id IS NOT NULL;
 -- ─────────────────────────────────────────────────────────────────────────
 -- chunks — semchunk units, section-aware (never split mid-section, D39). Body = markdown_uri sliced
--- by [char_start,char_end] (NOT stored in PG, D37). Embedding in Lance keyed by chunk_id. Large
+-- by [char_start,char_end]; current searchable text/vector live in chunk_search (D94). Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -554,13 +553,13 @@ CREATE TABLE chunks (
   context_prefix  text,                        -- generated "where this sits" sentence (E1); replayed on rebuild — derived metadata, not body
   prefixer_version text,                       -- LOGICAL FK → pipeline_component_versions (context_prefixer)
   chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
-  embedding_ref   text,                        -- opaque Lance row key for this chunk's vector (vectors live in P1, not PG — D8)
+  embedding_ref   text,                        -- embed-stage completion/typed-skip marker; not a vector-store locator
   embedding_version text,                       -- LOGICAL FK → pipeline_component_versions (embedder); scopes re-embedding batches
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Text+embedding live in Lance (P1); PG stores offsets, section link, the replayable context prefix, version stamps, and the D56 reuse keys: an unchanged extraction_input_hash within a lineage REUSES the prior claims (re-attached to this version''s chunk row) instead of re-calling E2; per-version chunk rows double as the occurrence record (which versions carried a claim). Monthly-partitioned, logical FKs (D23).';
+  'E1 retrieval units (semchunk, section-aware), one row per (version, position). PostgreSQL chunk_search stores current searchable text and derived vectors; chunks stores offsets, section link, replayable location metadata, version stamps, and D56 reuse keys. Per-version chunk rows double as the occurrence record. Monthly-partitioned, logical FKs (D23/D94).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

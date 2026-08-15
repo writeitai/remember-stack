@@ -229,7 +229,6 @@ class P1ClaimRow(BaseModel):
     is_attributed: bool
     vector: Annotated[tuple[float, ...], Field(min_length=1)]
 
-
 class P1FactRow(BaseModel):
     """One fact label plus rebuildable D87 pre-ranking eligibility metadata."""
 
@@ -245,18 +244,3 @@ class P1FactRow(BaseModel):
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
     vector: Annotated[tuple[float, ...], Field(min_length=1)]
-
-
-class P1FactMetadataRow(BaseModel):
-    """Mutable fact scope fields refreshed without recomputing its vector."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    fact_id: UUID
-    deployment_id: UUID
-    kind: Annotated[str, Field(min_length=1)]
-    status: Annotated[str, Field(min_length=1)]
-    valid_from: UTCDateTime | None
-    valid_until: UTCDateTime | None
-    ingested_at: UTCDateTime
-    invalidated_at: UTCDateTime | None

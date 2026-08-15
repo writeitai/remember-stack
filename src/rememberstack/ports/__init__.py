@@ -8,7 +8,6 @@ from rememberstack.ports.mounts import MountPublisherPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
-from rememberstack.ports.purge import P1PurgePort
 from rememberstack.ports.purge import ProjectionPurgePort
 from rememberstack.ports.queue import TaskQueuePort
 from rememberstack.ports.telemetry import TelemetryPort
@@ -22,7 +21,6 @@ __all__ = (
     "MountPublisherPort",
     "ObjectStorePort",
     "ObjectPurgePort",
-    "P1PurgePort",
     "ProjectionPurgePort",
     "TaskQueuePort",
     "TelemetryPort",

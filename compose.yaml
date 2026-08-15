@@ -48,8 +48,6 @@ x-app: &app
     REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL: ${REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL:-openai/gpt-5.6-sol}
     REMEMBERSTACK_P1_EMBEDDING_MODEL: ${REMEMBERSTACK_P1_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
     REMEMBERSTACK_P1_LABEL_MODEL: ${REMEMBERSTACK_P1_LABEL_MODEL:-openai/gpt-5.6-luna}
-    REMEMBERSTACK_P1_MAINTAIN_MAINTENANCE_ENABLED: ${REMEMBERSTACK_P1_MAINTAIN_MAINTENANCE_ENABLED:-false}
-    REMEMBERSTACK_P1_MAINTAIN_HEAVY_ENABLED: ${REMEMBERSTACK_P1_MAINTAIN_HEAVY_ENABLED:-false}
   volumes:
     - app-state:/var/lib/rememberstack
     - forget-manifests:/var/lib/rememberstack/forget-manifests
@@ -201,13 +199,6 @@ services:
   worker-label-relation:
     <<: *app
     command: ["worker", "--stage", "label_relation"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-maintain-p1:
-    <<: *app
-    command: ["maintain-p1"]
     depends_on:
       setup:
         condition: service_completed_successfully

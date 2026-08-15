@@ -3,7 +3,6 @@
 from rememberstack.spine.assured_operations import AssuredOperationRegistry
 from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
 from rememberstack.spine.assured_operations import seed_canonical_operations
-from rememberstack.spine.backfill import BackfillFinalizer
 from rememberstack.spine.backfill import BackfillSeeder
 from rememberstack.spine.backfill import BackfillSeederSettings
 from rememberstack.spine.chunk_catalog import ChunkCatalog
@@ -33,8 +32,6 @@ from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.operations import error_class_from_traceback
 from rememberstack.spine.operations import OperationalCatalog
 from rememberstack.spine.operations import OperationalSettings
-from rememberstack.spine.p1_maintain_ticker import P1MaintainSettings
-from rememberstack.spine.p1_maintain_ticker import P1MaintainTicker
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.resolver import CascadeResolver
@@ -50,7 +47,6 @@ from rememberstack.spine.work_ledger import WorkLedger
 from rememberstack.spine.work_ledger import WorkLedgerSettings
 
 __all__ = (
-    "BackfillFinalizer",
     "BackfillSeeder",
     "BackfillSeederSettings",
     "ChunkCatalog",
@@ -96,6 +92,4 @@ __all__ = (
     "DeploymentBootstrapper",
     "WorkLedger",
     "WorkLedgerSettings",
-    "P1MaintainSettings",
-    "P1MaintainTicker",
 )

@@ -54,7 +54,7 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
 
 #: Public functions PostgreSQL runs itself. They need no projection, so the
 #: executor leaves their invocation in place and the planner sees straight
-#: through it; only the Lance-backed ones are resolved and substituted.
+#: through it; model-assisted P1 functions are resolved and substituted.
 SQL_NATIVE_FUNCTIONS: Final = frozenset(
     {"facts_as_of", "graph_neighborhood", "graph_path"}
 )
@@ -339,7 +339,7 @@ def _resolve_one(
         ) from error
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
-            code=QueryErrorCode.LANCE_UNAVAILABLE,
+            code=QueryErrorCode.P1_UNAVAILABLE,
             message="the projection could not be searched",
         ) from error
     # A projection that returns more than it was asked for does not get to
@@ -483,7 +483,7 @@ def _chunk_texts(
         )
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
-            code=QueryErrorCode.LANCE_UNAVAILABLE,
+            code=QueryErrorCode.P1_UNAVAILABLE,
             message="chunk bodies could not be read",
         ) from error
     return {str(key): value for key, value in texts.items()}
@@ -620,7 +620,7 @@ def _nominator(
         # fails as a stated refusal rather than as an attribute error.
         if embed is None:
             raise SandboxRejection(
-                code=QueryErrorCode.LANCE_UNAVAILABLE,
+                code=QueryErrorCode.P1_UNAVAILABLE,
                 message="no embedder is configured for this deployment",
             )
         if embedder_generation is None:

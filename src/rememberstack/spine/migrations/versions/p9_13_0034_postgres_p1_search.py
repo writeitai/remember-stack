@@ -11,7 +11,7 @@ from rememberstack.spine.migrations._helpers import apply_ddl
 from rememberstack.spine.migrations._helpers import drop_tables
 
 revision: str = "p9_13_0034"
-down_revision: str | None = "p9_12_0033"
+down_revision: str | None = "p9_11_0032"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

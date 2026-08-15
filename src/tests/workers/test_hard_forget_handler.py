@@ -15,7 +15,6 @@ from rememberstack.model import ObjectKey
 from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
-from rememberstack.ports import P1PurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers import CorpusFsBuilder
@@ -72,9 +71,10 @@ class _Deletion:
 
 
 class _Objects:
-    def __init__(self, *, events: list[str], name: str) -> None:
+    def __init__(self, *, events: list[str], name: str, fail: bool = False) -> None:
         self.events = events
         self.name = name
+        self.fail = fail
 
     def purge_objects(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
@@ -82,41 +82,13 @@ class _Objects:
         assert keys == (ObjectKey("raw/forgotten"),)
         assert prefixes == ()
         self.events.append(f"objects-{self.name}")
+        if self.fail:
+            raise RuntimeError("object store unavailable")
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
     ) -> None:
         self.events.append(f"verify-objects-{self.name}")
-
-
-class _P1:
-    def __init__(self, *, events: list[str], fail: bool = False) -> None:
-        self.events = events
-        self.fail = fail
-
-    def purge_rows(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        self.events.append("p1")
-        if self.fail:
-            raise RuntimeError("P1 unavailable")
-
-    def verify_rows_purged(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        self.events.append("verify-p1")
 
 
 class _ProjectionRebuilder:
@@ -174,15 +146,17 @@ class _KGit:
         self.events.append("verify-k")
 
 
-def _handler(*, events: list[str], fail_p1: bool = False) -> HardForgetHandler:
+def _handler(*, events: list[str], fail_objects: bool = False) -> HardForgetHandler:
     return HardForgetHandler(
         catalog=cast(ForgetCatalog, _Catalog(events=events)),
         deletion=cast(DeletionService, _Deletion(events=events)),
         object_purgers=(
-            cast(ObjectPurgePort, _Objects(events=events, name="raw")),
+            cast(
+                ObjectPurgePort,
+                _Objects(events=events, name="raw", fail=fail_objects),
+            ),
             cast(ObjectPurgePort, _Objects(events=events, name="transcripts")),
         ),
-        p1=cast(P1PurgePort, _P1(events=events, fail=fail_p1)),
         projection_rebuilder=cast(
             ForgetProjectionRebuilder, _ProjectionRebuilder(events=events)
         ),
@@ -204,14 +178,12 @@ def test_handler_runs_the_single_all_store_sequence_before_reopening() -> None:
         "scrub-postgres",
         "objects-raw",
         "objects-transcripts",
-        "p1",
         "projection-rebuild",
         "projection-purge",
         "knowledge-rebuild",
         "k-purge",
         "verify-objects-raw",
         "verify-objects-transcripts",
-        "verify-p1",
         "verify-projections",
         "verify-k",
         "verify-postgres",
@@ -222,15 +194,13 @@ def test_handler_runs_the_single_all_store_sequence_before_reopening() -> None:
 def test_handler_failure_leaves_admission_closed_and_preserves_exception() -> None:
     events: list[str] = []
 
-    with pytest.raises(RuntimeError, match="P1 unavailable"):
-        _handler(events=events, fail_p1=True).honor(manifest=_manifest())
+    with pytest.raises(RuntimeError, match="object store unavailable"):
+        _handler(events=events, fail_objects=True).honor(manifest=_manifest())
 
     assert events == [
         "delete-lineage",
         "scrub-postgres",
         "objects-raw",
-        "objects-transcripts",
-        "p1",
     ]
 
 

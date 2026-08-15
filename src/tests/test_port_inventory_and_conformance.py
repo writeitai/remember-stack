@@ -66,7 +66,6 @@ _PORT_EXPORTS = {
     "MountPublisherPort",
     "ObjectStorePort",
     "ObjectPurgePort",
-    "P1PurgePort",
     "ProjectionPurgePort",
     "TaskQueuePort",
     "TelemetryPort",
@@ -226,11 +225,11 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_twelve_defined_protocols() -> None:
-    """Keep seven D61 seams plus five D74 capabilities explicit and complete."""
+def test_inventory_exports_exactly_eleven_defined_protocols() -> None:
+    """Keep seven D61 seams plus four external D74 capabilities explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 12
+    assert len(_defined_protocols()) == 11
 
 
 def test_representative_fakes_conform_structurally() -> None:

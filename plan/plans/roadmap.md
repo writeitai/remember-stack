@@ -48,8 +48,8 @@ needs to restate it:
   (grain CI, envelope invariants, canaries) run in the same CI as unit tests.
 - **Migrations:** Alembic, generated against `postgres_schema_design.md` (the schema doc is
   the source of truth; migrations implement it, never fork it).
-- **The engine — fixed everywhere, never abstracted (D61 anti-goal):** Postgres (the spine),
-  LanceDB (P1), LadybugDB (P2), the E/K/P data model, PageIndex (structure), semchunk
+- **The engine — fixed everywhere, never abstracted (D61 anti-goal):** PostgreSQL 18
+  (the spine and P1 search), LadybugDB (P2), the E/K/P data model, PageIndex (structure), semchunk
   (packing), Codex/OpenCode (K producers) with cross-family checkers (D53).
 - **The substrate — reached only through the D61 ports**, each with a self-host and a GCP
   reference adapter: object store (MinIO/local ↔ GCS), task queue (**delivery-only** over

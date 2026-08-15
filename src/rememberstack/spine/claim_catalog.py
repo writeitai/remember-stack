@@ -17,6 +17,7 @@ from rememberstack.model import ClaimForEmbedding
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import ClaimRecord
 from rememberstack.model import DecisionRecord
+from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
 
 
 class ClaimCatalog:
@@ -183,7 +184,7 @@ class ClaimCatalog:
         return tuple(row[0] for row in rows)
 
     def claims_for_embedding(
-        self, *, chunk_ids: tuple[UUID, ...], embedding_version: str
+        self, *, chunk_ids: tuple[UUID, ...], embedding_model: str
     ) -> tuple[ClaimForEmbedding, ...]:
         """Claims of a chunk set still lacking this embedding generation."""
         if not chunk_ids:
@@ -194,25 +195,14 @@ class ClaimCatalog:
                     _SELECT_CLAIMS_FOR_EMBEDDING,
                     {
                         "chunk_ids": list(chunk_ids),
-                        "embedding_version": embedding_version,
+                        "embedding_model": embedding_model,
+                        "input_policy": CLAIM_INPUT_POLICY,
                     },
                 )
                 .mappings()
                 .all()
             )
         return tuple(ClaimForEmbedding.model_validate(dict(row)) for row in rows)
-
-    def record_claim_embeddings(
-        self, *, claim_ids: tuple[UUID, ...], embedding_version: str
-    ) -> None:
-        """Stamp embedded claims with their ref (= claim_id) and generation."""
-        if not claim_ids:
-            return
-        with self._engine.begin() as connection:
-            connection.execute(
-                _STAMP_CLAIM_EMBEDDINGS,
-                {"claim_ids": list(claim_ids), "embedding_version": embedding_version},
-            )
 
     def record_extraction(
         self, *, claims: tuple[ClaimRecord, ...], decisions: tuple[DecisionRecord, ...]
@@ -401,15 +391,11 @@ _SELECT_CLAIMS_FOR_EMBEDDING = text(
            is_current_testimony, is_attributed
     FROM claims
     WHERE chunk_id = ANY(:chunk_ids)
-      AND (embedding_version IS NULL OR embedding_version <> :embedding_version)
+      AND (
+            embedding IS NULL
+            OR embedding_model <> :embedding_model
+            OR embedding_input_policy_version <> :input_policy
+          )
     ORDER BY ingested_at, claim_id
-    """
-)
-
-_STAMP_CLAIM_EMBEDDINGS = text(
-    """
-    UPDATE claims
-    SET embedding_ref = claim_id::text, embedding_version = :embedding_version
-    WHERE claim_id = ANY(:claim_ids)
     """
 )

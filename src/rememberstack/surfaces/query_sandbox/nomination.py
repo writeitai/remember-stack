@@ -6,7 +6,7 @@ of the surface, then bounded hydration re-confirms exact identities before any
 row is exposed. Nomination proposes; PostgreSQL disposes (D48).
 
 **Where this runs, and why.** The binding design places the bridge in the
-executor because PostgreSQL cannot reach the Lance projection without an
+executor because semantic invocations need a model-produced query vector before
 untrusted procedural language, which this product does not install. The grammar
 has already rewritten each accepted invocation into its own `MATERIALIZED` CTE,
 and the executor

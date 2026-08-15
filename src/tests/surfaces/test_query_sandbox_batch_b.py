@@ -378,7 +378,7 @@ def test_a_public_function_needs_a_projection(migrated: str) -> None:
         sql="SELECT * FROM semantic_claims($1)", parameters=["q"]
     )
     assert outcome.termination_reason == "failed"
-    assert outcome.error_code == QueryErrorCode.LANCE_UNAVAILABLE
+    assert outcome.error_code == QueryErrorCode.P1_UNAVAILABLE
     assert outcome.empty_result is True
 
 

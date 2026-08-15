@@ -14,7 +14,6 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
-from rememberstack.ports import P1PurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine import ForgetCatalog
@@ -168,7 +167,6 @@ class HardForgetHandler:
         catalog: ForgetCatalog,
         deletion: DeletionService,
         object_purgers: tuple[ObjectPurgePort, ...],
-        p1: P1PurgePort,
         projection_rebuilder: ForgetProjectionRebuilder,
         projection_purger: ProjectionPurgePort,
         knowledge_rebuilder: ForgetKnowledgeRebuilder,
@@ -180,7 +178,6 @@ class HardForgetHandler:
         self._catalog = catalog
         self._deletion = deletion
         self._object_purgers = object_purgers
-        self._p1 = p1
         self._projection_rebuilder = projection_rebuilder
         self._projection_purger = projection_purger
         self._knowledge_rebuilder = knowledge_rebuilder
@@ -204,13 +201,6 @@ class HardForgetHandler:
         self._catalog.scrub_postgres(manifest=manifest)
         for purger in self._object_purgers:
             purger.purge_objects(keys=manifest.object_keys, prefixes=())
-        self._p1.purge_rows(
-            deployment_id=manifest.deployment_id,
-            chunk_ids=manifest.chunk_ids,
-            claim_ids=manifest.claim_ids,
-            fact_ids=manifest.fact_ids,
-            entity_ids=manifest.entity_ids,
-        )
         self._projection_rebuilder.rebuild_without_lineage(
             deployment_id=manifest.deployment_id, forget_id=manifest.forget_id
         )
@@ -227,13 +217,6 @@ class HardForgetHandler:
         )
         for purger in self._object_purgers:
             purger.verify_objects_purged(keys=manifest.object_keys, prefixes=())
-        self._p1.verify_rows_purged(
-            deployment_id=manifest.deployment_id,
-            chunk_ids=manifest.chunk_ids,
-            claim_ids=manifest.claim_ids,
-            fact_ids=manifest.fact_ids,
-            entity_ids=manifest.entity_ids,
-        )
         self._projection_purger.verify_projections_purged(
             deployment_id=manifest.deployment_id, prefixes=manifest.projection_prefixes
         )

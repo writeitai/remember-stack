@@ -134,10 +134,10 @@ team_harness_system_prompt_extension: |
     behavior updates its page under website/src/app/docs/**/page.mdx and keeps
     /docs/project-status truthful IN THE SAME PR. The repo has no docs/ tree;
     website/ is the product documentation.
-  - Before touching P1 (LanceDB) or P2 (LadybugDB) code, read the engine
-    rulebooks: plan/analysis/lance_indexing_maintenance.md and
-    plan/analysis/ladybug_query_semantics.md. They are binding query/indexing
-    rules, not background.
+  - Before touching P1 or P2 code, read the binding engine designs:
+    plan/designs/postgres_p1_search_projection_design.md and
+    plan/analysis/ladybug_query_semantics.md. They are query/indexing rules,
+    not background.
   - Any edit to plan/ documents follows CLAUDE.md Rule 1 (self-contained,
     explain-don't-name) and Rule 2 (full scope, no phasing language in
     designs).

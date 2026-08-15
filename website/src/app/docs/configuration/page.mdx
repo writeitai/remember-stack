@@ -25,7 +25,7 @@ One deployment id = one trust domain. Changing `REMEMBERSTACK_SELFHOST_DEPLOYMEN
 | Extra / artifact | Role |
 | --- | --- |
 | `rememberstack` (base) | Typed SDK, remote CLI/MCP, lineage-aware remote ingest |
-| `rememberstack[server]` | API, workers, Postgres/Lance/Ladybug adapters, local ops CLI |
+| `rememberstack[server]` | API, workers, PostgreSQL/Ladybug adapters, local ops CLI |
 | `rememberstack[connectors-watched-directory]` | Names the watched-dir connector surface (stdlib) |
 | `rememberstack[k]` | Names the Plane K install surface |
 | `rememberstack[benchmark]` | LoCoMo / scorer deps |
@@ -90,20 +90,12 @@ Pin explicit IDs for reproducible runs. Unset values fall back to deployment pro
 
 Smoke conversion route is **Markdown** unless you register more converters on the deployment.
 
-### Lance index maintenance (D93)
+### P1 search indexes (D94)
 
-Compose runs `rememberstack self-host maintain-p1` as `worker-maintain-p1`. The
-loop is off until you flip a gate. Writers keep inserting while it runs; the
-ticker try-locks only against purge and another maintain pass.
-
-| Variable | Purpose |
-| --- | --- |
-| `REMEMBERSTACK_P1_MAINTAIN_MAINTENANCE_ENABLED` | Run ensure/compact. Default `false` |
-| `REMEMBERSTACK_P1_MAINTAIN_HEAVY_ENABLED` | Also evaluate IVF retrain. Default `false`. Do not enable until compact/ensure have been soaked |
-| `REMEMBERSTACK_P1_MAINTAIN_POLL_S` | Sleep between ticks (default 60) |
-
-Physical Lance files live on the Compose `app-state` volume at
-`/var/lib/rememberstack/lance`.
+P1 lives in PostgreSQL. Migrations own the `pgvector` HNSW and
+`pg_textsearch` BM25 indexes, while ordinary ingestion transactions update the
+search rows and embedding attestations. There is no separate search-store path,
+maintenance worker, or search-index environment namespace to configure.
 
 ### Spend ceilings (optional)
 

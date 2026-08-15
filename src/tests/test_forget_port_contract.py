@@ -7,7 +7,6 @@ from rememberstack.model import ObjectKey
 from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
-from rememberstack.ports import P1PurgePort
 from rememberstack.ports import ProjectionPurgePort
 
 
@@ -52,28 +51,6 @@ class RecordingPurgeAdapter:
     ) -> None:
         pass
 
-    def purge_rows(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        pass
-
-    def verify_rows_purged(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        pass
-
     def purge_projections(
         self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
     ) -> None:
@@ -102,7 +79,6 @@ class RecordingPurgeAdapter:
 
 _manifest_assignment: ForgetManifestPort = RecordingForgetStore()
 _object_assignment: ObjectPurgePort = RecordingPurgeAdapter()
-_p1_assignment: P1PurgePort = RecordingPurgeAdapter()
 _projection_assignment: ProjectionPurgePort = RecordingPurgeAdapter()
 _k_assignment: KGitPurgePort = RecordingPurgeAdapter()
 
@@ -111,7 +87,6 @@ def test_d74_protocols_are_runtime_checkable_and_capability_sized() -> None:
     """Keep one two-operation intent port and four single-operation purge hooks."""
     assert isinstance(_manifest_assignment, ForgetManifestPort)
     assert isinstance(_object_assignment, ObjectPurgePort)
-    assert isinstance(_p1_assignment, P1PurgePort)
     assert isinstance(_projection_assignment, ProjectionPurgePort)
     assert isinstance(_k_assignment, KGitPurgePort)
 
@@ -120,7 +95,6 @@ def test_d74_protocols_are_runtime_checkable_and_capability_sized() -> None:
         "purge_objects",
         "verify_objects_purged",
     }
-    assert _public_operations(P1PurgePort) == {"purge_rows", "verify_rows_purged"}
     assert _public_operations(ProjectionPurgePort) == {
         "purge_projections",
         "verify_projections_purged",

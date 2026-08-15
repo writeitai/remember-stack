@@ -1337,7 +1337,6 @@ _POSTGRES_SCRUB = (
             merged_into = NULL,
             type_confidence = NULL,
             profile_summary = NULL,
-            profile_embedding_ref = NULL,
             embedding = NULL,
             embedding_model = NULL,
             embedding_input_policy_version = NULL,
@@ -1632,7 +1631,7 @@ _VERIFY_POSTGRES_SCRUB = text(
         SELECT 1 FROM entities
         WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
           AND (status <> 'retired' OR canonical_name <> '' OR normalized_name <> ''
-               OR profile_summary IS NOT NULL OR profile_embedding_ref IS NOT NULL
+               OR profile_summary IS NOT NULL
                OR embedding IS NOT NULL OR embedding_model IS NOT NULL
                OR embedding_input_policy_version IS NOT NULL
                OR embedding_text_hash IS NOT NULL)

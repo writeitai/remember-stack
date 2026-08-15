@@ -7,12 +7,10 @@ from uuid import UUID
 
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
-from rememberstack.adapters.selfhost.p1_locked_purge import LockingP1Purge
 from rememberstack.model import ForgetManifest
 from rememberstack.model import PipelineStage
 from rememberstack.spine import ForgetCatalog
@@ -55,7 +53,6 @@ class SelfHostHardForget:
         manifest_root: Path,
         object_roots: tuple[Path, ...],
         snapshot_root: Path,
-        lance_root: Path,
         p2_cache_root: Path,
         mount_root: Path,
         knowledge_repository: Path,
@@ -85,11 +82,6 @@ class SelfHostHardForget:
             catalog=catalog,
             deletion=DeletionService(catalog=LifecycleCatalog(engine=engine)),
             object_purgers=object_purgers,
-            p1=LockingP1Purge(
-                index=LanceChunkIndex(root=lance_root),
-                engine=engine,
-                lance_root=lance_root,
-            ),
             projection_rebuilder=ProjectionPairForgetRebuilder(
                 graph=GraphRebuildWorker(
                     catalog=projection_catalog, snapshot_store=snapshot_store

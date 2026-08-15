@@ -131,7 +131,7 @@ class EmbedClaimsHandler:
         )
         claims = self._claim_catalog.claims_for_embedding(
             chunk_ids=tuple(chunk.chunk_id for chunk in chunks),
-            embedding_version=self._settings.embedding_model,
+            embedding_model=self._settings.embedding_model,
         )
         if not claims:
             return HandlerOutcome()  # replay: refs already stamped (D7)
@@ -165,10 +165,6 @@ class EmbedClaimsHandler:
                     for claim, vector in zip(batch, response.vectors, strict=True)
                 )
             )
-            self._claim_catalog.record_claim_embeddings(
-                claim_ids=tuple(claim.claim_id for claim in batch),
-                embedding_version=self._settings.embedding_model,
-            )
         return HandlerOutcome()
 
 
@@ -176,8 +172,8 @@ class LabelFactsHandler:
     """The fact-label stage: deterministic relation labels + fact embeds (D8).
 
     Phase L stamps each relation label immediately (CPU, resumable). Phase E
-    embeds labeled relations and observations in batches and stamps only after
-    Lance upsert (Lance-before-ref).
+    embeds labeled relations and observations in batches. PostgreSQL vector
+    attestation is the durable checkpoint written by the index adapter.
     """
 
     def __init__(
@@ -198,9 +194,6 @@ class LabelFactsHandler:
         """Label (checkpointed) then embed facts still lacking this generation."""
         doc_id = _payload_uuid(work=work, field="doc_id")
         label_generation = FACT_LABEL_VERSION
-        embed_generation = label_relation_component_version(
-            embedding_model=self._settings.embedding_model
-        )
         with self._facts.label_lock(deployment_id=work.deployment_id):
             # Phase L — deterministic labels, durable per relation.
             for relation in self._facts.relations_for_labeling(
@@ -237,7 +230,7 @@ class LabelFactsHandler:
                     deployment_id=work.deployment_id,
                     doc_id=doc_id,
                     label_version=label_generation,
-                    embed_generation=embed_generation,
+                    embedding_model=self._settings.embedding_model,
                 )
             ]
             rows.extend(
@@ -256,7 +249,7 @@ class LabelFactsHandler:
                 for observation in self._facts.observations_for_embedding(
                     deployment_id=work.deployment_id,
                     doc_id=doc_id,
-                    label_version=embed_generation,
+                    embedding_model=self._settings.embedding_model,
                 )
             )
             batch_size = self._settings.embed_batch_size
@@ -279,22 +272,6 @@ class LabelFactsHandler:
                     for row, vector in zip(batch, response.vectors, strict=True)
                 )
                 self._fact_index.upsert_facts(rows=embedded)
-                for row in embedded:
-                    if row.kind == "relation":
-                        self._facts.record_fact_embedding(
-                            relation_id=row.fact_id,
-                            label_version=label_generation,
-                            embed_generation=embed_generation,
-                        )
-                    else:
-                        self._facts.record_observation_embedding(
-                            observation_id=row.fact_id, label_version=embed_generation
-                        )
-            self._fact_index.update_fact_metadata(
-                rows=self._facts.fact_metadata_for_document(
-                    deployment_id=work.deployment_id, doc_id=doc_id
-                )
-            )
         return HandlerOutcome()
 
 

@@ -2641,18 +2641,8 @@ class QueryEngine:
             projected = texts.get(str(chunk_id))
             if row is None or projected is None:
                 continue
-            # D80: P1 text is body-only when policy_generation is present.
-            # Legacy rows may store prefix + "\n\n" + body in P1 text; strip
-            # the stored prefix when hydrating so agents never see mangled body.
             location_header = row.get("location_header") or row.get("context_prefix")
-            policy_generation = row.get("policy_generation") or row.get(
-                "embedding_input_policy_version"
-            )
             chunk_text = projected.indexed_text
-            if not policy_generation and location_header:
-                chunk_text = _strip_legacy_prefix(
-                    indexed_text=chunk_text, location_header=str(location_header)
-                )
             if projected.section_role != row["section_role"]:
                 continue
             results.append(
@@ -2740,22 +2730,6 @@ class QueryEngine:
                 deployment_id=deployment_id,
             )
         return response.vectors[0]
-
-
-def _strip_legacy_prefix(*, indexed_text: str, location_header: str) -> str:
-    """Remove a legacy prefix embedded in P1 text when policy stamps are absent.
-
-    Pre-D80 rows stored ``prefix + "\\n\\n" + body`` in the Lance text column.
-    D80 stores body-only; this branch keeps evidence hydration correct for
-    unrebuilt legacy rows without inventing new body bytes.
-    """
-    if not location_header:
-        return indexed_text
-    for separator in ("\n\n", "\n"):
-        marker = f"{location_header}{separator}"
-        if indexed_text.startswith(marker):
-            return indexed_text[len(marker) :]
-    return indexed_text
 
 
 def _validate_nomination_request(*, k: int, channel: str) -> None:

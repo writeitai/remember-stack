@@ -15,7 +15,6 @@ from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
-from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
@@ -305,9 +304,6 @@ class PostgresP1Index:
                     },
                 )
                 _require_updated(result.rowcount, target=row.kind, item_id=row.fact_id)
-
-    def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
-        """Do nothing: PostgreSQL search joins the natural mutable fact columns."""
 
     def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
         """Write entity profile vectors directly onto natural entity rows."""

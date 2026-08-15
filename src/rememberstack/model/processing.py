@@ -197,10 +197,6 @@ class WorkLedgerError(Exception):
     """Base error for work-ledger operations."""
 
 
-class BackfillNotDrainedError(WorkLedgerError):
-    """Search-index maintenance was requested while backfill work was unresolved."""
-
-
 class LaneRouteError(WorkLedgerError):
     """A lane value that is illegal for the stage's route (D67 pairing rule)."""
 

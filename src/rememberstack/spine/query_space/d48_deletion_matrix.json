@@ -1305,217 +1305,217 @@
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.changes_visible",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.chunks_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.claim_occurrences_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.claims_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.claims_visible_history",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.contradiction_members_current",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.document_crossrefs_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.document_versions_visible",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.documents_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.entities_current",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.entity_aliases_current",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.entity_document_mentions",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.evidence_lineage",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.fact_claim_evidence_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.facts_current",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.facts_visible_history",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.graph_edges_current",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.graph_edges_visible_history",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.identity_events_visible",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.mentions_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.page_evidence_visible",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.pages_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.sections_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.testimony_currency_events_visible",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_graph_survivor",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_entity_survivor",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_evidence_lineage_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_fact_claim_live",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_fact_visible",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_mention_current_content",
       "target_id": "p1_candidate"
     },
     {
       "basis": null,
-      "expectation": "Deferred to Batch C: the Lance nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "public.v_memory_page_citation_visible",
       "target_id": "p1_candidate"
@@ -2302,7 +2302,7 @@
         "entity",
         "content_hash"
       ],
-      "mutation": "Delete the nominated chunk, claim, or entity behind a frozen Lance candidate set, then run the semantic and lexical functions.",
+      "mutation": "Delete the nominated chunk, claim, or entity behind a frozen P1 candidate set, then run the semantic and lexical functions.",
       "summary": "A stale P1 nomination candidate is deleted from PostgreSQL.",
       "target_id": "p1_candidate"
     },

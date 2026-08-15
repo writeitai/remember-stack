@@ -150,7 +150,6 @@ EXPECTED_TABLES: Final = (
     "merge_events",
     "obs_flush_entity_units",
     "obs_flush_version_state",
-    "p1_lance_table_stats",
     "p1_search_channels",
     "observation_adjudications",
     "observation_evidence",
@@ -354,10 +353,10 @@ EMPTY_AT_HEAD: Final = (
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 71,
+    "c": 68,
     "f": 132,
-    "n": 562,
-    "p": 74,
+    "n": 553,
+    "p": 73,
     "u": 36,
     "x": 1,
 }
@@ -389,7 +388,6 @@ DECISION_OBJECTS: Final = {
         "ix_surface_cost_export",
         "ix_cost_export",
     ),
-    "D93": ("p1_lance_table_stats",),
     "D94": (
         "chunk_search",
         "p1_search_channels",

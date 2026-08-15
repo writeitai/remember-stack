@@ -16,13 +16,14 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
@@ -55,7 +56,7 @@ def database_engine() -> Iterator[Engine]:
 class _Corpus:
     """One live document plus a 55-document hub and resolution edge cases."""
 
-    def __init__(self, *, engine: Engine, lance_root: Path) -> None:
+    def __init__(self, *, engine: Engine) -> None:
         self.engine = engine
         self.entity_ids: dict[str, UUID] = {}
         self.doc_id = uuid4()
@@ -69,8 +70,9 @@ class _Corpus:
             self._seed_live_document(connection=connection)
             self._seed_hub_documents(connection=connection)
         self.provider = FakeModelProvider(generate_payloads={})
-        self.index = LanceChunkIndex(root=lance_root)
+        self.index = PostgresP1Index(engine=engine, embedding_model="batch-b")
         self._seed_p1()
+        self.index.configure_channels(deployment_id=_DEPLOYMENT_ID)
         self.provider.embedded_texts.clear()
 
     def _seed_entities(self, *, connection: Connection) -> None:
@@ -435,7 +437,7 @@ class _Corpus:
                     version_id=self.version_id,
                     section_role="body",
                     text=f"Context {ordinal}.\n\nChunk body {ordinal}.",
-                    vector=(float(ordinal + 1), 0.0),
+                    vector=(float(ordinal + 1),) + (0.0,) * (P1_VECTOR_DIMENSIONS - 1),
                     # Match QueryEngine active D80 generation pointer.
                     policy_generation=EMBEDDING_INPUT_POLICY_VERSION,
                     embedder_generation="batch-b",
@@ -444,7 +446,9 @@ class _Corpus:
             )
         )
         query_vector = self.provider.embed(
-            request=EmbeddingRequest(model="batch-b", texts=("June plan",))
+            request=EmbeddingRequest(
+                model="batch-b", texts=("June plan",), dimensions=P1_VECTOR_DIMENSIONS
+            )
         ).vectors[0]
         other_vector = tuple(reversed(query_vector))
         bodies = (
@@ -481,9 +485,7 @@ class _Corpus:
 
 
 @pytest.fixture(scope="module")
-def corpus(
-    database_engine: Engine, tmp_path_factory: pytest.TempPathFactory
-) -> _Corpus:
+def corpus(database_engine: Engine) -> _Corpus:
     """Seed one deployment once; the behavior tests are read-only."""
     with database_engine.begin() as connection:
         connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
@@ -498,9 +500,7 @@ def corpus(
             corpusfs_bucket="mem://corpusfs",
         )
     )
-    return _Corpus(
-        engine=database_engine, lance_root=tmp_path_factory.mktemp("batch-b-lance")
-    )
+    return _Corpus(engine=database_engine)
 
 
 def test_documents_about_orders_mentions_and_bounds_a_hub(corpus: _Corpus) -> None:

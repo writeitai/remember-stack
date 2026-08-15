@@ -47,7 +47,7 @@ _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "concurrency_exceeded": 409,
     "schema_version_mismatch": 409,
     "pg_unavailable": 503,
-    "lance_unavailable": 503,
+    "p1_unavailable": 503,
     "corpus_body_unavailable": 503,
     "generation_unavailable": 503,
     "statement_timeout": 500,

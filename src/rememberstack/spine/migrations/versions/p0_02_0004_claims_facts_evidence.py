@@ -52,8 +52,6 @@ CREATE TABLE claims (
   claim_valid_precision claim_valid_precision NOT NULL DEFAULT 'unknown', -- unknown|instant|day|month|quarter|year|open — "FY2023" stores a normalized [start,end] without lying about granularity
   claim_valid_kind claim_valid_kind,           -- which world-interval this is: proposition_validity|event_time|measurement_period|effective_period (so a measurement period is never conflated with an event date or with asserted_at)
   extractor_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions (extractor); replay-on-rebuild key (D33)
-  embedding_ref   text,                        -- opaque Lance key (claims are searchable in P1)
-  embedding_version text,                       -- LOGICAL FK → pipeline_component_versions (embedder)
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time; immutable
   PRIMARY KEY (claim_id),
   UNIQUE (deployment_id, claim_id),
@@ -155,8 +153,8 @@ CREATE INDEX ix_currency_doc   ON testimony_currency_events (deployment_id, doc_
 -- ─────────────────────────────────────────────────────────────────────────
 -- relations — distinct bi-temporal facts (D2/D3). The (entity_id,predicate) blocking key for
 -- supersession is the composite index below; it is small (distinct facts, not assertions) —
--- what makes supersession affordable at scale (concepts §6). The canonical fact LABEL + its
--- embedding live in Lance (D8); PG keeps the label text + version + a Lance ref. Not partitioned.
+-- what makes supersession affordable at scale (concepts §6). The canonical fact label and its
+-- disposable search embedding are co-located on this row (D94). Not partitioned.
 --
 -- "Live belief" = invalidated_at IS NULL (transaction-time), regardless of valid_until: a
 -- believed-historical fact ("Alice worked at Acme 2020-2022", valid_until set, invalidated_at NULL)
@@ -171,7 +169,7 @@ CREATE INDEX ix_currency_doc   ON testimony_currency_events (deployment_id, doc_
 -- new claim's time.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE relations (
-  relation_id     uuid PRIMARY KEY,            -- the fact's identity; provenance handle in the graph/Lance projections
+  relation_id     uuid PRIMARY KEY,            -- the fact's identity; provenance handle in projections
   deployment_id   uuid NOT NULL REFERENCES deployments,
   subject_entity_id uuid NOT NULL,             -- canonical subject (composite FK below; only canonical entities enter relations/graph — p2 §2)
   predicate       text NOT NULL,               -- governed predicate; composite FK below
@@ -187,10 +185,9 @@ CREATE TABLE relations (
   contradiction_group uuid,                    -- shared id when two live relations contradict and can't be adjudicated — retrieval shows both sides (concepts §4)
   status          relation_status GENERATED ALWAYS AS  -- DERIVED mirror of invalidated_at (single validity home, D6): active iff invalidated_at IS NULL, else invalidated
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
-  -- fact label (D8): the human-readable sentence embedded in Lance; regenerated only on material adjudication change.
+  -- fact label: the human-readable search sentence; regenerated only on material adjudication change.
   fact_label      text,                        -- "Alice Novak works at Acme as VP of Engineering"
   fact_label_version text,                     -- LOGICAL FK → pipeline_component_versions (fact_labeler)
-  fact_label_embedding_ref text,               -- opaque Lance key for the fact-label vector (P1; no vectors in PG/graph — D8)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions (normalizer); replay-on-rebuild
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -207,7 +204,7 @@ CREATE TABLE relations (
   ) WHERE (invalidated_at IS NULL AND contradiction_group IS NULL)
 );
 COMMENT ON TABLE relations IS
-  'E3 distinct bi-temporal facts (D2/D3). Identity = (subject,predicate,object) + validity interval; the unit of supersession/contradiction. evidence_count caches corpus redundancy as a confidence signal (D2). status is a generated mirror of invalidated_at (validity has one home, D6). The GiST EXCLUDE forbids overlapping duplicate beliefs while allowing re-occurring facts and carved-out contradictions. fact_label+embedding live in Lance (D8).';
+  'E3 distinct bi-temporal facts (D2/D3). Identity = (subject,predicate,object) + validity interval; the unit of supersession/contradiction. evidence_count caches corpus redundancy as a confidence signal (D2). status is a generated mirror of invalidated_at (validity has one home, D6). The GiST EXCLUDE forbids overlapping duplicate beliefs while allowing re-occurring facts and carved-out contradictions. D94 adds the disposable fact-label embedding on this row.';
 -- The supersession blocking key (D4) — small, distinct facts; THE index that makes supersession
 -- detection affordable (concepts §6):
 CREATE INDEX ix_relations_block_subj ON relations (deployment_id, subject_entity_id, predicate, object_entity_id);
@@ -285,16 +282,16 @@ CREATE INDEX ix_adjud_live     ON relation_adjudications (relation_id) WHERE sup
 -- attribute vocabulary, no value_domain/cardinality, NO structured value/period columns, no typed
 -- EXCLUDE — the value AND any reporting period live in `statement` and are matched SEMANTICALLY, exactly
 -- like the property (consistent with the untyped design). status is a GENERATED mirror of invalidated_at
--- (one validity home, D6). The observation LABEL + its embedding live in Lance (D8).
+-- (one validity home, D6). D94 co-locates its disposable search embedding.
 -- THE NO-CAP RULE (D43): only a CHANGING EFFECTIVE STATE (headcount/balance/status) is capped on
 -- valid-time when superseded; a MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped —
 -- it doesn't stop being true at period-end, stays open, and conflicting same-period figures coexist.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE observations (
-  observation_id  uuid PRIMARY KEY,            -- the observation's identity; provenance handle in Lance
+  observation_id  uuid PRIMARY KEY,            -- the observation's identity; provenance handle in projections
   deployment_id   uuid NOT NULL REFERENCES deployments,
   subject_entity_id uuid NOT NULL,            -- the ANCHOR + supersession blocking key (a resolved canonical entity); composite FK below
-  statement       text NOT NULL,              -- canonical NL form of the observed fact ("Acme's headcount is 600", "Acme's FY2023 revenue was $5M"); embedded in Lance (D8). The VALUE and any reporting period live HERE — there is no structured value/period column (D43 lean); the adjudicator reads them semantically, like the property.
+  statement       text NOT NULL,              -- canonical NL form of the observed fact. The VALUE and any reporting period live HERE — there is no structured value/period column (D43 lean); the adjudicator reads them semantically, like the property.
   -- bi-temporality (concepts §5): two clocks, WORLD-VALIDITY OF THE BELIEF.
   valid_from      timestamptz,                 -- VALID-time start: when the belief began holding in the world (NULL = unknown/always); seeded from the claim's asserted validity (D41)
   valid_until     timestamptz,                 -- VALID-time end. NO-CAP RULE (D43): capped ONLY when a CHANGING EFFECTIVE STATE (headcount/balance/status) is superseded by a later value. A MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped here — it doesn't stop being true at period-end; it stays open and conflicting same-period figures coexist. The adjudicator decides state-vs-measurement from `statement` (semantic), not a typed column. (observations_design.md §3)
@@ -306,9 +303,7 @@ CREATE TABLE observations (
   contradiction_group uuid,                    -- shared id when two live observations conflict and both must stand (concepts §4)
   status          relation_status GENERATED ALWAYS AS  -- DERIVED mirror of invalidated_at (single validity home, D6)
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
-  obs_label       text,                        -- the human-readable sentence embedded in Lance (often = statement); semantic blocking + retrieval
-  obs_label_version text,                      -- LOGICAL FK → pipeline_component_versions (labeler)
-  obs_label_embedding_ref text,                -- opaque Lance key for the label vector (P1; no vectors in PG — D8)
+  obs_label       text,                        -- optional distinct human-readable search sentence; defaults to statement
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; replay-on-rebuild
   adjudicator_version text,                    -- LOGICAL FK → pipeline_component_versions (supersession/contradiction adjudicator, D4)
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -322,7 +317,7 @@ CREATE TABLE observations (
   -- "both-stand" is the safe default.
 );
 COMMENT ON TABLE observations IS
-  'D43 non-graph fact layer: a believed value/statement about ONE entity (entity-anchored, bi-temporal, UNTYPED). Sibling of relations; never projects to the graph (D18). The value AND any reporting period live in `statement` (no structured value/period columns); the adjudicator matches same-entity + same-property + same-period + value-compatibility SEMANTICALLY. Supersession is adjudicated by entity-blocking + the D4 cascade (no typed slot, no EXCLUDE); "never silently resolve" is a binding adjudicator contract (supersede only on a positively-matched prior above margin, with a persisted reason; else coexist) + an eval gate, NOT a schema invariant. NO-CAP RULE: only a changing effective state is capped on valid-time; a measurement/fixed-period figure is never capped and conflicting same-period figures coexist. status is a generated mirror of invalidated_at (one validity home, D6); label+embedding live in Lance (D8).';
+  'D43 non-graph fact layer: a believed value/statement about ONE entity (entity-anchored, bi-temporal, UNTYPED). Sibling of relations; never projects to the graph (D18). The value AND any reporting period live in `statement` (no structured value/period columns); the adjudicator matches same-entity + same-property + same-period + value-compatibility SEMANTICALLY. Supersession is adjudicated by entity-blocking + the D4 cascade (no typed slot, no EXCLUDE); "never silently resolve" is a binding adjudicator contract. NO-CAP RULE: only a changing effective state is capped on valid-time; a measurement/fixed-period figure is never capped. D94 adds the disposable search embedding on this row.';
 -- The supersession blocking key (D4): all live observations for an entity (exact + exhaustive per entity):
 CREATE INDEX ix_observations_block ON observations (deployment_id, subject_entity_id) WHERE invalidated_at IS NULL;
 CREATE INDEX ix_observations_entity ON observations (deployment_id, subject_entity_id);  -- full history incl. capped/invalidated

@@ -22,8 +22,8 @@ from rememberstack.model import FactForEmbedding
 from rememberstack.model import FactForLabeling
 from rememberstack.model import ObservationForEmbedding
 from rememberstack.model import OtherPredicateGrammarError
-from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import RelationUpsert
+from rememberstack.ports.p1_index import FACT_INPUT_POLICY
 
 OTHER_PREDICATE_GRAMMAR: Final = re.compile(r"other:[a-z][a-z0-9_]{1,40}")
 """The D5 escape-value grammar: short snake_case behind the other: prefix."""
@@ -220,7 +220,7 @@ class FactCatalog:
         """Stamp one relation's readable label (Phase L; clears embed readiness).
 
         CAS: only updates when the label generation is not already current.
-        Clears ``fact_label_embedding_ref`` so Phase E must re-index after a
+        Clears derived vector attestation so Phase E must re-index after a
         re-label (split label vs embed generations).
         """
         with self._engine.begin() as connection:
@@ -239,7 +239,7 @@ class FactCatalog:
         deployment_id: UUID,
         doc_id: UUID,
         label_version: str,
-        embed_generation: str,
+        embedding_model: str,
     ) -> tuple[FactForEmbedding, ...]:
         """Labeled relations still missing this embed generation (Phase E)."""
         with self._engine.connect() as connection:
@@ -250,7 +250,8 @@ class FactCatalog:
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
                         "label_version": label_version,
-                        "embed_generation": embed_generation,
+                        "embedding_model": embedding_model,
+                        "input_policy": FACT_INPUT_POLICY,
                     },
                 )
                 .mappings()
@@ -258,26 +259,8 @@ class FactCatalog:
             )
         return tuple(FactForEmbedding.model_validate(dict(row)) for row in rows)
 
-    def record_fact_embedding(
-        self, *, relation_id: UUID, label_version: str, embed_generation: str
-    ) -> None:
-        """Stamp Lance readiness after a successful facts-channel upsert.
-
-        CAS: only when the label generation still matches what was selected
-        for this Phase E batch.
-        """
-        with self._engine.begin() as connection:
-            connection.execute(
-                _STAMP_FACT_EMBEDDING,
-                {
-                    "relation_id": relation_id,
-                    "label_version": label_version,
-                    "embedding_ref": f"{relation_id}|{embed_generation}",
-                },
-            )
-
     def observations_for_embedding(
-        self, *, deployment_id: UUID, doc_id: UUID, label_version: str
+        self, *, deployment_id: UUID, doc_id: UUID, embedding_model: str
     ) -> tuple[ObservationForEmbedding, ...]:
         """The document's observations still lacking this embed generation."""
         with self._engine.connect() as connection:
@@ -287,42 +270,14 @@ class FactCatalog:
                     {
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
-                        "label_version": label_version,
+                        "embedding_model": embedding_model,
+                        "input_policy": FACT_INPUT_POLICY,
                     },
                 )
                 .mappings()
                 .all()
             )
         return tuple(ObservationForEmbedding.model_validate(dict(row)) for row in rows)
-
-    def record_observation_embedding(
-        self, *, observation_id: UUID, label_version: str
-    ) -> None:
-        """Stamp one observation's embed generation after Lance upsert (D8)."""
-        with self._engine.begin() as connection:
-            connection.execute(
-                _STAMP_OBSERVATION_EMBEDDING,
-                {
-                    "observation_id": observation_id,
-                    "label_version": label_version,
-                    "embedding_ref": f"{observation_id}|{label_version}",
-                },
-            )
-
-    def fact_metadata_for_document(
-        self, *, deployment_id: UUID, doc_id: UUID
-    ) -> tuple[P1FactMetadataRow, ...]:
-        """Return fact scalars changed by one document's adjudication/lifecycle."""
-        with self._engine.connect() as connection:
-            rows = (
-                connection.execute(
-                    _SELECT_FACT_METADATA_FOR_DOCUMENT,
-                    {"deployment_id": deployment_id, "doc_id": doc_id},
-                )
-                .mappings()
-                .all()
-            )
-        return tuple(P1FactMetadataRow.model_validate(dict(row)) for row in rows)
 
     def ensure_other_predicate(self, *, deployment_id: UUID, predicate: str) -> None:
         """Register one `other:<freetext>` escape value (tier=other, D5/D18).
@@ -821,7 +776,10 @@ _STAMP_FACT_LABEL = text(
     UPDATE relations
     SET fact_label = :label,
         fact_label_version = :label_version,
-        fact_label_embedding_ref = NULL,
+        embedding = NULL,
+        embedding_model = NULL,
+        embedding_input_policy_version = NULL,
+        embedding_text_hash = NULL,
         updated_at = now()
     WHERE relation_id = :relation_id
       AND (fact_label_version IS NULL OR fact_label_version <> :label_version)
@@ -837,29 +795,15 @@ _SELECT_RELATIONS_FOR_EMBEDDING = text(
       AND r.fact_label IS NOT NULL
       AND r.fact_label_version = :label_version
       AND (
-            r.fact_label_embedding_ref IS NULL
-            OR r.fact_label_embedding_ref
-               <> (r.relation_id::text || '|' || :embed_generation)
+            r.embedding IS NULL
+            OR r.embedding_model <> :embedding_model
+            OR r.embedding_input_policy_version <> :input_policy
           )
       AND EXISTS (
           SELECT 1 FROM relation_evidence e
           WHERE e.relation_id = r.relation_id AND e.doc_id = :doc_id
       )
     ORDER BY r.created_at, r.relation_id
-    """
-)
-
-_STAMP_FACT_EMBEDDING = text(
-    """
-    UPDATE relations
-    SET fact_label_embedding_ref = :embedding_ref,
-        updated_at = now()
-    WHERE relation_id = :relation_id
-      AND fact_label_version = :label_version
-      AND (
-            fact_label_embedding_ref IS NULL
-            OR fact_label_embedding_ref <> :embedding_ref
-          )
     """
 )
 
@@ -871,11 +815,9 @@ _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
     FROM observations
     WHERE observations.deployment_id = :deployment_id
       AND (
-            obs_label_version IS NULL
-            OR obs_label_version <> :label_version
-            OR obs_label_embedding_ref IS NULL
-            OR obs_label_embedding_ref
-               <> (observation_id::text || '|' || :label_version)
+            embedding IS NULL
+            OR embedding_model <> :embedding_model
+            OR embedding_input_policy_version <> :input_policy
           )
       AND EXISTS (
           SELECT 1 FROM observation_evidence e
@@ -883,90 +825,6 @@ _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
             AND e.doc_id = :doc_id
       )
     ORDER BY created_at, observation_id
-    """
-)
-
-_STAMP_OBSERVATION_EMBEDDING = text(
-    """
-    UPDATE observations
-    SET obs_label_version = :label_version,
-        obs_label_embedding_ref = :embedding_ref,
-        updated_at = now()
-    WHERE observation_id = :observation_id
-      AND (
-            obs_label_version IS NULL
-            OR obs_label_version <> :label_version
-            OR obs_label_embedding_ref IS NULL
-            OR obs_label_embedding_ref <> :embedding_ref
-          )
-    """
-)
-
-_SELECT_FACT_METADATA_FOR_DOCUMENT = text(
-    """
-    WITH doc_relations AS (
-        SELECT DISTINCT evidence.relation_id
-        FROM relation_evidence AS evidence
-        WHERE evidence.deployment_id = :deployment_id
-          AND evidence.doc_id = :doc_id
-    ), affected_relations AS (
-        SELECT relation_id FROM doc_relations
-        UNION
-        SELECT adjudication.relation_id
-        FROM relation_adjudications AS adjudication
-        JOIN doc_relations AS linked
-          ON linked.relation_id = adjudication.relation_id
-          OR linked.relation_id = adjudication.related_relation_id
-        WHERE adjudication.deployment_id = :deployment_id
-        UNION
-        SELECT adjudication.related_relation_id
-        FROM relation_adjudications AS adjudication
-        JOIN doc_relations AS linked
-          ON linked.relation_id = adjudication.relation_id
-          OR linked.relation_id = adjudication.related_relation_id
-        WHERE adjudication.deployment_id = :deployment_id
-          AND adjudication.related_relation_id IS NOT NULL
-    ), doc_claims AS (
-        SELECT claim_id
-        FROM claims
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    ), affected_observations AS (
-        SELECT DISTINCT evidence.observation_id
-        FROM observation_evidence AS evidence
-        WHERE evidence.deployment_id = :deployment_id
-          AND evidence.doc_id = :doc_id
-        UNION
-        SELECT adjudication.observation_id
-        FROM observation_adjudications AS adjudication
-        JOIN doc_claims AS linked
-          ON linked.claim_id = adjudication.triggering_claim_id
-        WHERE adjudication.deployment_id = :deployment_id
-        UNION
-        SELECT adjudication.related_observation_id
-        FROM observation_adjudications AS adjudication
-        JOIN doc_claims AS linked
-          ON linked.claim_id = adjudication.triggering_claim_id
-        WHERE adjudication.deployment_id = :deployment_id
-          AND adjudication.related_observation_id IS NOT NULL
-    )
-    SELECT relation.relation_id AS fact_id, relation.deployment_id,
-           'relation'::text AS kind, relation.status::text AS status,
-           relation.valid_from, relation.valid_until, relation.ingested_at,
-           relation.invalidated_at
-    FROM relations AS relation
-    JOIN affected_relations AS affected
-      ON affected.relation_id = relation.relation_id
-    WHERE relation.deployment_id = :deployment_id
-    UNION ALL
-    SELECT observation.observation_id AS fact_id, observation.deployment_id,
-           'observation'::text AS kind, observation.status::text AS status,
-           observation.valid_from, observation.valid_until,
-           observation.ingested_at, observation.invalidated_at
-    FROM observations AS observation
-    JOIN affected_observations AS affected
-      ON affected.observation_id = observation.observation_id
-    WHERE observation.deployment_id = :deployment_id
-    ORDER BY kind, fact_id
     """
 )
 

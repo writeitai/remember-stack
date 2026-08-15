@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 from rememberstack.model import RetrievalSpikeReport
 
 RETRIEVAL_SPIKE_VERSION: Final = "retrieval-spikes-2026.07b"
-"""Version stamped on every complete six-spike measurement record."""
+"""Version stamped on every complete retrieval-spike measurement record."""
 
 
 def record_retrieval_spike_report(

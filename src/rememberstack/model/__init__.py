@@ -29,7 +29,6 @@ from rememberstack.model.chunks import EmbeddingUpdate
 from rememberstack.model.chunks import P1ChunkRow
 from rememberstack.model.chunks import P1ChunkText
 from rememberstack.model.chunks import P1ClaimRow
-from rememberstack.model.chunks import P1FactMetadataRow
 from rememberstack.model.chunks import P1FactRow
 from rememberstack.model.chunks import PackedChunk
 from rememberstack.model.chunks import SectionSpan
@@ -270,9 +269,6 @@ from rememberstack.model.operations import PipelineRouteStatus
 from rememberstack.model.operations import PoisonTargetRecord
 from rememberstack.model.operations import PoisonTargetReport
 from rememberstack.model.operations import ProjectionSnapshotState
-from rememberstack.model.p1_maintain import MaintainReport
-from rememberstack.model.p1_maintain import TableMaintainStats
-from rememberstack.model.processing import BackfillNotDrainedError
 from rememberstack.model.processing import BackfillSeedRequest
 from rememberstack.model.processing import BackfillSeedResult
 from rememberstack.model.processing import BudgetParked
@@ -335,7 +331,6 @@ from rememberstack.model.telemetry import TelemetryAttribute
 from rememberstack.model.telemetry import TelemetryEvent
 
 __all__ = (
-    "BackfillNotDrainedError",
     "BackfillSeedRequest",
     "BackfillSeedResult",
     "BudgetParked",
@@ -479,9 +474,6 @@ __all__ = (
     "P1ClaimRow",
     "P1EntityRow",
     "P1FactRow",
-    "P1FactMetadataRow",
-    "MaintainReport",
-    "TableMaintainStats",
     "PackedChunk",
     "PerimeterCredential",
     "PipelineComponent",

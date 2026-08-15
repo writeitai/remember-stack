@@ -10,7 +10,6 @@ from pydantic import Field
 from pydantic import model_validator
 
 RetrievalSpikeName = Literal[
-    "lance_filtered_search",
     "hub_pagination",
     "rerank_weights",
     "envelope_overhead",
@@ -19,7 +18,7 @@ RetrievalSpikeName = Literal[
 ]
 
 RETRIEVAL_SPIKE_NAMES = frozenset(get_args(RetrievalSpikeName))
-"""The six WP-5.6 measurements; S58 and as-of graph cost closed earlier."""
+"""The five retained WP-5.6 measurements; obsolete store benchmarking is removed."""
 
 
 class RetrievalSpikeMeasurement(BaseModel):
@@ -36,12 +35,12 @@ class RetrievalSpikeMeasurement(BaseModel):
 
 
 class RetrievalSpikeReport(BaseModel):
-    """The complete six-spike WP-5.6 result written to ``eval_runs``."""
+    """The complete five-spike WP-5.6 result written to ``eval_runs``."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     measurements: Annotated[
-        tuple[RetrievalSpikeMeasurement, ...], Field(min_length=6, max_length=6)
+        tuple[RetrievalSpikeMeasurement, ...], Field(min_length=5, max_length=5)
     ]
 
     @model_validator(mode="after")

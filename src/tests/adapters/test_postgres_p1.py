@@ -523,7 +523,7 @@ def test_observation_statement_is_the_embedding_fallback(
     observations = FactCatalog(engine=database_engine).observations_for_embedding(
         deployment_id=_DEPLOYMENT_ID,
         doc_id=doc_id,
-        label_version="d94-observation-test",
+        embedding_model=_MODEL,
     )
 
     assert tuple(item.observation_id for item in observations) == (observation_id,)

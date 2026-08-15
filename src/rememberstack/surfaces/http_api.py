@@ -555,7 +555,7 @@ def _sandbox_status(code: QueryErrorCode) -> int:
         return 409
     if code in (
         QueryErrorCode.PG_UNAVAILABLE,
-        QueryErrorCode.LANCE_UNAVAILABLE,
+        QueryErrorCode.P1_UNAVAILABLE,
         QueryErrorCode.CORPUS_BODY_UNAVAILABLE,
         QueryErrorCode.GENERATION_UNAVAILABLE,
     ):

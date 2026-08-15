@@ -61,8 +61,8 @@ table, scheduler, or second pipeline exists.
 Initial corpus loads use that same pipeline by selecting `backfill` at the upload boundary or via
 the typed `REMEMBERSTACK_SYNC_LANE` setting. Steady work keeps its distinct claim route and still promotes
 a pending/failed duplicate under the D67 rule. After seeding has completed and all deployment
-backfill rows are terminal, `BackfillFinalizer` invokes the portable P1 maintenance port; it
-refuses the explicit Lance index build while any backfill row remains unresolved.
+backfill rows are terminal, PostgreSQL already contains the committed P1 search
+state. There is no separate finalizer or search-store index build.
 
 ## WP-7.2 implementation
 
@@ -195,7 +195,8 @@ proves the local barrier row is absent, then exercises the readiness coordinator
 rematerialization against real SQL while preserving independent control evidence.
 `test_s55_hard_forget.py` restores the whole logical serving state and each channel independently;
 `test_s55_selfhost_restore.py` performs the external-store proof over real LocalFS
-object/manifest stores, Lance, projection caches, and Git history. WP-7.4/WP-7.5 separately prove
+object/manifest stores, projection caches, and Git history. PostgreSQL hard-forget
+tests cover the co-located P1 state. WP-7.4/WP-7.5 separately prove
 that the forget rebuilder delegates to the production P2/P3 builders; that is an existing
 dependency, not claimed as one composed restore test. Together the drills fail if portable intent
 is omitted, readiness trusts a local completion bit, restored PostgreSQL or an external store

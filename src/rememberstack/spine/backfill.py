@@ -1,24 +1,17 @@
 """Bounded version-bump enumeration over the authoritative work ledger."""
 
-from pathlib import Path
-from uuid import UUID
-
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.model import BackfillNotDrainedError
 from rememberstack.model import BackfillSeedRequest
 from rememberstack.model import BackfillSeedResult
 from rememberstack.model import EnqueueWork
 from rememberstack.model import LaneRouteError
 from rememberstack.model import ProcessingLane
-from rememberstack.ports.p1_index import P1IndexMaintenancePort
 from rememberstack.spine.catalog_contract import lane_is_valid
-from rememberstack.spine.p1_maintain_lock import hold_p1_table_maintain_locks
-from rememberstack.spine.p1_maintain_lock import P1_MAINTAIN_TABLES
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -99,52 +92,6 @@ class BackfillSeeder:
         )
 
 
-class BackfillFinalizer:
-    """Run explicit P1 index maintenance only after backfill work has drained."""
-
-    def __init__(
-        self,
-        *,
-        engine: Engine,
-        search_index_maintenance: P1IndexMaintenancePort,
-        lance_root: Path,
-    ) -> None:
-        """Bind the completion barrier to the ledger and configured P1 adapter."""
-        self._engine = engine
-        self._search_index_maintenance = search_index_maintenance
-        self._lance_root = lance_root
-
-    def build_search_indexes(self, *, deployment_id: UUID) -> None:
-        """Build P1 indexes after the caller has finished seeding and work is terminal.
-
-        The seeder needs no campaign table: its final empty/short batch tells the
-        caller enumeration is complete. This method supplies the second barrier,
-        refusing maintenance while any row on the deployment's backfill routes is
-        pending, running, failed, or dead-lettered.
-        """
-        with self._engine.connect() as connection:
-            unresolved = connection.execute(
-                _COUNT_UNRESOLVED, {"deployment_id": deployment_id}
-            ).scalar_one()
-        if unresolved:
-            raise BackfillNotDrainedError(
-                f"deployment {deployment_id} has {unresolved} unresolved backfill rows"
-            )
-        for table_name in P1_MAINTAIN_TABLES:
-            with hold_p1_table_maintain_locks(
-                engine=self._engine, lance_root=self._lance_root, tables=(table_name,)
-            ):
-                self._search_index_maintenance.ensure_search_indexes(
-                    tables=(table_name,)
-                )
-                self._search_index_maintenance.rebuild_vector_indexes(
-                    tables=(table_name,)
-                )
-                self._search_index_maintenance.rebuild_text_indexes(
-                    tables=(table_name,)
-                )
-
-
 _SELECT_CANDIDATES = text(
     """
     SELECT target_kind::text AS target_kind, target_id, content_hash, payload
@@ -174,15 +121,5 @@ _SELECT_CANDIDATES = text(
     ) AS candidates
     ORDER BY target_kind, target_id
     LIMIT :batch_size
-    """
-)
-
-_COUNT_UNRESOLVED = text(
-    """
-    SELECT count(*)
-    FROM processing_state
-    WHERE deployment_id = :deployment_id
-      AND lane = 'backfill'
-      AND status NOT IN ('succeeded', 'skipped')
     """
 )

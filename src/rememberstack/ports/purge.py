@@ -25,35 +25,6 @@ class ObjectPurgePort(Protocol):
 
 
 @runtime_checkable
-class P1PurgePort(Protocol):
-    """Idempotently erase manifest-nominated P1 rows by identity."""
-
-    def purge_rows(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        """Delete exact rows and compact affected P1 tables; absence succeeds."""
-        ...
-
-    def verify_rows_purged(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        """Raise unless every nominated row is absent from active P1 tables."""
-        ...
-
-
-@runtime_checkable
 class ProjectionPurgePort(Protocol):
     """Erase old P2/P3 durable prefixes and local serving copies."""
 
