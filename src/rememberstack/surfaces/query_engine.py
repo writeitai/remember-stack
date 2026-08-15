@@ -2234,7 +2234,24 @@ class QueryEngine:
         time: FactTime,
         evaluated_at: datetime,
     ) -> tuple[P1Nomination, ...]:
-        """Rank fact labels with time/entity authority in the ranked statement."""
+        """Rank candidates, deferring deep unscoped hydration to the confirm gate."""
+        nomination_method = getattr(self._search_index, "nominate_facts_scored", None)
+        if not entity_ids and callable(nomination_method):
+            return cast(
+                "tuple[P1Nomination, ...]",
+                nomination_method(
+                    deployment_id=str(deployment_id),
+                    vector=self._embed(
+                        query=query,
+                        call_site=SurfaceCallSite.FACT_CONTEXT,
+                        deployment_id=deployment_id,
+                    ),
+                    k=FACT_CONTEXT_CANDIDATE_K + 1,
+                    kind=None,
+                    time=time,
+                    evaluated_at=evaluated_at,
+                ),
+            )
         method = getattr(self._search_index, "search_facts_scored", None)
         if callable(method):
             return cast(

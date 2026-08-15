@@ -881,6 +881,84 @@ class PostgresP1Index:
             self._engine_rows(statement, parameters), channel="semantic", qualified=True
         )
 
+    def nominate_facts_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        kind: str | None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Rank unscoped facts through membership without expanding deep counts."""
+        _require_vector(vector)
+        if kind not in {None, "relation", "observation"}:
+            raise ValueError(f"unknown fact kind {kind!r}")
+        required = (
+            ("relations",)
+            if kind == "relation"
+            else ("observations",)
+            if kind == "observation"
+            else ("relations", "observations")
+        )
+        for target in required:
+            self._require_channel(
+                deployment_id=deployment_id,
+                target=target,
+                channel="semantic",
+                policy=FACT_INPUT_POLICY,
+            )
+        selected_time = time or CurrentFactTime()
+        evaluation = evaluated_at or datetime.now(UTC)
+        time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
+        parameters.update(
+            {
+                "deployment_id": UUID(deployment_id),
+                "embedding_model": self._embedding_model,
+                "input_policy": FACT_INPUT_POLICY,
+                "query_vector": _vector_literal(vector),
+                "branch_limit": k,
+                "limit": k,
+            }
+        )
+        branches: list[str] = []
+        for table, fact_kind, id_column in (
+            ("relations", "relation", "relation_id"),
+            ("observations", "observation", "observation_id"),
+        ):
+            if table not in required:
+                continue
+            branches.append(
+                f"""
+                (SELECT indexed.{id_column}::text AS item_id,
+                        '{fact_kind}'::text AS qualifier,
+                        indexed.embedding <=> CAST(:query_vector AS vector) AS distance
+                 FROM {table} AS indexed
+                 JOIN v_memory_fact_visible AS fact
+                   ON fact.deployment_id = indexed.deployment_id
+                  AND fact.fact_kind = '{fact_kind}'
+                  AND fact.fact_id = indexed.{id_column}
+                 WHERE indexed.deployment_id = :deployment_id
+                   AND indexed.embedding IS NOT NULL
+                   AND indexed.embedding_model = :embedding_model
+                   AND indexed.embedding_input_policy_version = :input_policy
+                   {time_sql}
+                 ORDER BY indexed.embedding <=> CAST(:query_vector AS vector),
+                          indexed.{id_column}
+                 LIMIT :branch_limit)
+                """
+            )
+        statement = f"""
+            WITH candidates AS ({" UNION ALL ".join(branches)})
+            SELECT item_id, qualifier, 1.0 - distance AS score
+            FROM candidates
+            ORDER BY distance, qualifier, item_id LIMIT :limit
+        """
+        return _nominations(
+            self._engine_rows(statement, parameters), channel="semantic", qualified=True
+        )
+
     def search_entities_scored(
         self,
         *,

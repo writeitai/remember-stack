@@ -128,6 +128,32 @@ def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
     assert "ORDER BY coverage DESC," in ranked_sql
 
 
+def test_unscoped_fact_nomination_uses_lightweight_membership_authority() -> None:
+    """The fact-context candidate path avoids deep evidence-count expansion."""
+    engine = MagicMock(spec=Engine)
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.scalar_one.return_value = True
+    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+
+    assert (
+        index.nominate_facts_scored(
+            deployment_id=str(_DEPLOYMENT_ID),
+            vector=_vector(axis=0),
+            k=5,
+            kind="observation",
+            time=CurrentFactTime(),
+            evaluated_at=_NOW,
+        )
+        == ()
+    )
+
+    ranked_sql = str(connection.execute.call_args_list[-1].args[0])
+    assert "JOIN v_memory_fact_visible AS fact" in ranked_sql
+    assert "facts_visible_history" not in ranked_sql
+    assert "fact.invalidated_at IS NULL" in ranked_sql
+    assert "ORDER BY indexed.embedding <=> CAST(:query_vector AS vector)" in ranked_sql
+
+
 @pytest.fixture(scope="module")
 def database_engine() -> Iterator[Engine]:
     """Apply structural head and expose one isolated PostgreSQL test spine."""
