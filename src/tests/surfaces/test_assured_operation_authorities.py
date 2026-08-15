@@ -1,18 +1,24 @@
 """Pure guards that retained operations consume the accepted query authorities."""
 
+from datetime import datetime
+from datetime import UTC
 import inspect
+from time import monotonic
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
 from rememberstack.adapters import PostgresP1Index
+from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.surfaces.query_engine import _configure_fact_context_connection
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
-from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT
+from rememberstack.surfaces.query_engine import _confirm_fact_context
+from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT_BY_KIND
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_EVIDENCE
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
@@ -46,18 +52,21 @@ def test_entity_resolution_uses_memory_v1_identity_and_adjacency() -> None:
 
 def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     """Current membership, D54 state, and co-members come from memory_v1."""
-    confirmation_sql = str(_CONFIRM_FACT_CONTEXT)
+    confirmation_sql = "\n".join(
+        str(statement) for statement in _CONFIRM_FACT_CONTEXT_BY_KIND.values()
+    )
     evidence_sql = str(_CURRENT_FACT_EVIDENCE)
     ranked_sql = inspect.getsource(PostgresP1Index.search_facts_scored)
     assert "memory_v1.facts_visible_history" in confirmation_sql
     assert "requested AS MATERIALIZED" in confirmation_sql
     assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
-    assert "fact.fact_kind = ANY(CAST(:fact_kinds AS text[]))" in confirmation_sql
+    assert "fact.fact_kind = 'relation'" in confirmation_sql
+    assert "fact.fact_kind = 'observation'" in confirmation_sql
     assert "memory_v1.facts_visible_history" in ranked_sql
     assert "coverage DESC" in ranked_sql
     assert "entity_ids" in ranked_sql
     assert "fact.valid_until > :evaluated_at" in confirmation_sql
-    assert "fact.fact_kind = requested.kind" in confirmation_sql
+    assert "CAST(:fact_kinds AS text[])" not in confirmation_sql
     assert "JOIN relations" not in confirmation_sql
     assert "JOIN observations" not in confirmation_sql
     assert "review_queue" not in confirmation_sql
@@ -104,6 +113,67 @@ def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() 
     assert "memory_v1.facts_visible_history" in contradiction_sql
     assert "fact.ingested_at <= :evaluated_at" in contradiction_sql
     assert "fact.fact_kind AS kind" in contradiction_sql
+
+
+def test_fact_confirmation_splits_kinds_and_restores_global_order() -> None:
+    """A generic prepared plan cannot mix kind branches or reorder nominations."""
+    observation_first = uuid4()
+    relation_second = uuid4()
+    observation_high_coverage = uuid4()
+    connection = MagicMock()
+    observed: list[tuple[str, list[object]]] = []
+
+    def execute(statement: object, parameters: dict[str, object]) -> MagicMock:
+        """Return kind-specific rows while recording the fixed SQL branch."""
+        statement_sql = str(statement)
+        fact_kind = (
+            "relation"
+            if "fact.fact_kind = 'relation'" in statement_sql
+            else "observation"
+        )
+        raw_fact_ids = parameters["fact_ids"]
+        assert isinstance(raw_fact_ids, list)
+        fact_ids = list(raw_fact_ids)
+        observed.append((fact_kind, fact_ids))
+        result = MagicMock()
+        result.mappings.return_value = (
+            [{"coverage": 1, "kind": "relation", "fact_id": relation_second}]
+            if fact_kind == "relation"
+            else [
+                {"coverage": 1, "kind": "observation", "fact_id": observation_first},
+                {
+                    "coverage": 2,
+                    "kind": "observation",
+                    "fact_id": observation_high_coverage,
+                },
+            ]
+        )
+        return result
+
+    connection.execute.side_effect = execute
+    rows = _confirm_fact_context(
+        connection=connection,
+        deployment_id=uuid4(),
+        candidate_keys=(
+            ("observation", observation_first),
+            ("relation", relation_second),
+            ("observation", observation_high_coverage),
+        ),
+        time=CurrentFactTime(),
+        evaluated_at=datetime.now(UTC),
+        entity_ids=(),
+        deadline=monotonic() + 30,
+    )
+
+    assert observed == [
+        ("relation", [relation_second]),
+        ("observation", [observation_first, observation_high_coverage]),
+    ]
+    assert [row["fact_id"] for row in rows] == [
+        observation_high_coverage,
+        observation_first,
+        relation_second,
+    ]
 
 
 def test_fact_context_confirmation_batch_tracks_requested_output() -> None:

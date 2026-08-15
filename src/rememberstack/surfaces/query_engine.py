@@ -2928,21 +2928,37 @@ def _confirm_fact_context(
     entity_ids: tuple[UUID, ...],
     deadline: float,
 ) -> tuple[RowMapping, ...]:
-    """Re-confirm exact nominated identities, time, and anchors in PostgreSQL."""
+    """Re-confirm exact nominated identities, time, and anchors by fact kind."""
     if not candidate_keys:
         return ()
-    _configure_fact_context_connection(connection=connection, deadline=deadline)
-    rows = connection.execute(
-        _CONFIRM_FACT_CONTEXT,
-        {
-            "deployment_id": deployment_id,
-            "fact_ids": [fact_id for _, fact_id in candidate_keys],
-            "fact_kinds": [kind for kind, _ in candidate_keys],
-            "entity_ids": list(entity_ids),
-            **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
-        },
-    ).mappings()
-    return tuple(rows)
+    nomination_rank = {key: rank for rank, key in enumerate(candidate_keys, start=1)}
+    confirmed: list[RowMapping] = []
+    for fact_kind in ("relation", "observation"):
+        fact_ids = [fact_id for kind, fact_id in candidate_keys if kind == fact_kind]
+        if not fact_ids:
+            continue
+        _configure_fact_context_connection(connection=connection, deadline=deadline)
+        rows = connection.execute(
+            _CONFIRM_FACT_CONTEXT_BY_KIND[fact_kind],
+            {
+                "deployment_id": deployment_id,
+                "fact_ids": fact_ids,
+                "entity_ids": list(entity_ids),
+                **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
+            },
+        ).mappings()
+        confirmed.extend(rows)
+    return tuple(
+        sorted(
+            confirmed,
+            key=lambda row: (
+                -int(row["coverage"]),
+                nomination_rank[(str(row["kind"]), row["fact_id"])],
+                str(row["kind"]),
+                str(row["fact_id"]),
+            ),
+        )
+    )
 
 
 def _fact_context_evidence(
@@ -3594,14 +3610,19 @@ _FACT_CONTEXT_COVERAGE = """
           OR requested.anchor = fact.object_entity_id)
 """
 
-_CONFIRM_FACT_CONTEXT = text(
-    f"""
+
+def _confirm_fact_context_statement(
+    *, fact_kind: Literal["relation", "observation"]
+) -> TextClause:
+    """Build one fixed-kind public-authority confirmation statement."""
+    return text(
+        f"""
     WITH requested AS MATERIALIZED (
-        SELECT fact_id, kind, nomination_rank
-        FROM unnest(CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[]))
-             WITH ORDINALITY AS nominated(fact_id, kind, nomination_rank)
+        SELECT fact_id, nomination_rank
+        FROM unnest(CAST(:fact_ids AS uuid[]))
+             WITH ORDINALITY AS nominated(fact_id, nomination_rank)
     )
-    SELECT requested.nomination_rank, fact.fact_kind AS kind, fact.fact_id,
+    SELECT requested.nomination_rank, '{fact_kind}'::text AS kind, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
            fact.valid_from, fact.valid_until, fact.ingested_at,
@@ -3611,14 +3632,19 @@ _CONFIRM_FACT_CONTEXT = text(
     FROM requested
     JOIN memory_v1.facts_visible_history AS fact
       ON fact.deployment_id = :deployment_id
-     AND fact.fact_kind = requested.kind
+     AND fact.fact_kind = '{fact_kind}'
      AND fact.fact_id = requested.fact_id
     WHERE fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
-      AND fact.fact_kind = ANY(CAST(:fact_kinds AS text[]))
       {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
     ORDER BY coverage DESC, requested.nomination_rank, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants
-)
+    )
+
+
+_CONFIRM_FACT_CONTEXT_BY_KIND: dict[Literal["relation", "observation"], TextClause] = {
+    fact_kind: _confirm_fact_context_statement(fact_kind=fact_kind)
+    for fact_kind in ("relation", "observation")
+}
 
 _FACT_CONTEXT_CONTRADICTION_MEMBERS = text(
     f"""
