@@ -128,8 +128,8 @@ def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
     assert "ORDER BY coverage DESC," in ranked_sql
 
 
-def test_unscoped_fact_nomination_uses_lightweight_membership_authority() -> None:
-    """The fact-context candidate path avoids deep evidence-count expansion."""
+def test_unscoped_fact_nomination_defers_authority_to_its_caller() -> None:
+    """The fact-context candidate path is vector-first and authority-join free."""
     engine = MagicMock(spec=Engine)
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.scalar_one.return_value = True
@@ -148,9 +148,9 @@ def test_unscoped_fact_nomination_uses_lightweight_membership_authority() -> Non
     )
 
     ranked_sql = str(connection.execute.call_args_list[-1].args[0])
-    assert "JOIN v_memory_fact_visible AS fact" in ranked_sql
-    assert "facts_visible_history" not in ranked_sql
-    assert "fact.invalidated_at IS NULL" in ranked_sql
+    assert "memory_v1" not in ranked_sql
+    assert "v_memory_fact_visible" not in ranked_sql
+    assert "indexed.invalidated_at IS NULL" in ranked_sql
     assert "ORDER BY indexed.embedding <=> CAST(:query_vector AS vector)" in ranked_sql
 
 

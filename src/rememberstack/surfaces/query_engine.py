@@ -2234,7 +2234,7 @@ class QueryEngine:
         time: FactTime,
         evaluated_at: datetime,
     ) -> tuple[P1Nomination, ...]:
-        """Rank candidates, deferring deep unscoped hydration to the confirm gate."""
+        """Rank candidates, deferring unscoped authority to the confirm gate."""
         nomination_method = getattr(self._search_index, "nominate_facts_scored", None)
         if not entity_ids and callable(nomination_method):
             return cast(

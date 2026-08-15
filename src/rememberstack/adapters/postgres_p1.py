@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
 from typing import Any
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -891,7 +892,7 @@ class PostgresP1Index:
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank unscoped facts through membership without expanding deep counts."""
+        """Rank derived unscoped candidates for a caller that confirms every row."""
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -911,7 +912,9 @@ class PostgresP1Index:
             )
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
-        time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
+        time_sql, parameters = _fact_time(
+            selected_time, evaluated_at=evaluation, alias="indexed"
+        )
         parameters.update(
             {
                 "deployment_id": UUID(deployment_id),
@@ -935,10 +938,6 @@ class PostgresP1Index:
                         '{fact_kind}'::text AS qualifier,
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
-                 JOIN v_memory_fact_visible AS fact
-                   ON fact.deployment_id = indexed.deployment_id
-                  AND fact.fact_kind = '{fact_kind}'
-                  AND fact.fact_id = indexed.{id_column}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND indexed.embedding_model = :embedding_model
@@ -1180,37 +1179,49 @@ def _fact_filters(filters: Mapping[str, str] | None) -> tuple[str, dict[str, Any
     return " ".join(f"AND {clause}" for clause in clauses), parameters
 
 
-def _fact_time(time: FactTime, *, evaluated_at: datetime) -> tuple[str, dict[str, Any]]:
-    """Render the closed D87 time modes against visible fact authority."""
+def _fact_time(
+    time: FactTime,
+    *,
+    evaluated_at: datetime,
+    alias: Literal["fact", "indexed"] = "fact",
+) -> tuple[str, dict[str, Any]]:
+    """Render the closed D87 time modes against one fixed fact-row alias."""
     parameters: dict[str, Any] = {"evaluated_at": evaluated_at}
-    common = "AND fact.ingested_at <= :evaluated_at AND fact.invalidated_at IS NULL"
+    prefix = f"{alias}."
+    common = (
+        f"AND {prefix}ingested_at <= :evaluated_at"
+        f" AND {prefix}invalidated_at IS NULL"
+    )
     if isinstance(time, CurrentFactTime):
         return (
             common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :evaluated_at)"
-            + " AND (fact.valid_until IS NULL OR fact.valid_until > :evaluated_at)",
+            + f" AND ({prefix}valid_from IS NULL"
+            f" OR {prefix}valid_from <= :evaluated_at)"
+            + f" AND ({prefix}valid_until IS NULL"
+            f" OR {prefix}valid_until > :evaluated_at)",
             parameters,
         )
     if isinstance(time, AtFactTime):
         parameters["at"] = time.at
         return (
             common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :at)"
-            + " AND (fact.valid_until IS NULL OR fact.valid_until > :at)",
+            + f" AND ({prefix}valid_from IS NULL OR {prefix}valid_from <= :at)"
+            + f" AND ({prefix}valid_until IS NULL OR {prefix}valid_until > :at)",
             parameters,
         )
     if isinstance(time, OverlapFactTime):
         parameters.update({"from_time": time.from_, "to_time": time.to})
         return (
             common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :to_time)"
-            + " AND (fact.valid_until IS NULL OR fact.valid_until > :from_time)",
+            + f" AND ({prefix}valid_from IS NULL OR {prefix}valid_from <= :to_time)"
+            + f" AND ({prefix}valid_until IS NULL"
+            f" OR {prefix}valid_until > :from_time)",
             parameters,
         )
     if isinstance(time, HistoryFactTime):
         return (
-            common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :evaluated_at)",
+            common + f" AND ({prefix}valid_from IS NULL"
+            f" OR {prefix}valid_from <= :evaluated_at)",
             parameters,
         )
     raise TypeError(f"unknown fact time {type(time).__name__}")
