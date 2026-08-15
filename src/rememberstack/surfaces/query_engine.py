@@ -3795,7 +3795,7 @@ _CONFIRM_CHUNKS = text(
     FROM memory_v1.chunks_live ch
     JOIN memory_v1.documents_live d
       ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    JOIN memory_v1.sections_live s
+    LEFT JOIN memory_v1.sections_live s
       ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
@@ -3814,7 +3814,7 @@ _CONFIRM_CHUNKS_SCOPED = text(
     FROM memory_v1.chunks_live ch
     JOIN memory_v1.documents_live d
       ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    JOIN memory_v1.sections_live s
+    LEFT JOIN memory_v1.sections_live s
       ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
     JOIN LATERAL (
         SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage

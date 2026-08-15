@@ -669,6 +669,40 @@ def test_chunk_neighbors_unknown_chunk_names_chunk_id(corpus: _Corpus) -> None:
     assert f"chunk_id {unknown_chunk_id}" in answer.negative.explanation
 
 
+def test_chunk_hydration_keeps_live_chunk_without_current_section(
+    corpus: _Corpus,
+) -> None:
+    """Section-generation drift must not hide an otherwise live source chunk."""
+    chunk_id = corpus.chunk_ids[0]
+    with corpus.engine.begin() as connection:
+        section_id = connection.execute(
+            text("SELECT section_id FROM chunks WHERE chunk_id = :chunk"),
+            {"chunk": chunk_id},
+        ).scalar_one()
+        connection.execute(
+            text("UPDATE chunks SET section_id = NULL WHERE chunk_id = :chunk"),
+            {"chunk": chunk_id},
+        )
+    try:
+        answer = corpus.query_engine().hydrate_chunks(
+            deployment_id=_DEPLOYMENT_ID,
+            chunk_ids=(chunk_id,),
+        )
+
+        assert tuple(chunk.chunk_id for chunk in answer.chunks) == (chunk_id,)
+        assert answer.chunks[0].section_role is None
+        assert answer.dropped_by_hydration == 0
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE chunks SET section_id = :section"
+                    " WHERE chunk_id = :chunk"
+                ),
+                {"section": section_id, "chunk": chunk_id},
+            )
+
+
 @pytest.mark.parametrize("recipe", ("documents", "claims"))
 def test_entity_ambiguity_returns_candidates_and_boundary(
     corpus: _Corpus, recipe: str

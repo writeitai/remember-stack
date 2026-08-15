@@ -741,7 +741,7 @@ class PostgresP1Index:
             JOIN memory_v1.chunks_live AS published
               ON published.deployment_id = indexed.deployment_id
              AND published.chunk_id = indexed.chunk_id
-            JOIN memory_v1.sections_live AS section
+            LEFT JOIN memory_v1.sections_live AS section
               ON section.deployment_id = published.deployment_id
              AND section.section_id = published.section_id
             WHERE indexed.deployment_id = :deployment_id

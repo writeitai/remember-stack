@@ -202,7 +202,7 @@ class P1ChunkText(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chunk_id: UUID
-    section_role: str
+    section_role: str | None
     indexed_text: _NonEmpty
 
 

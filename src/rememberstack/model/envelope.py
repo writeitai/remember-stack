@@ -349,7 +349,7 @@ class ChunkEvidenceResult(BaseModel):
     context_prefix: str | None = None
     char_start: int
     char_end: int
-    section_role: str
+    section_role: str | None
     document_title: str | None = None
     source_kind: str
     source_modified_at: UTCDateTime | None = None
