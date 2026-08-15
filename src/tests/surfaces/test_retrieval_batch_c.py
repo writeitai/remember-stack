@@ -953,15 +953,9 @@ def test_fact_context_refill_crosses_the_default_confirmation_batch(
         confirmed_batch_sizes.append(len(candidate_keys))
         return original_confirm(**kwargs)
 
-    monkeypatch.setattr(
-        query_engine_module, "_confirm_fact_context", observed_confirm
-    )
+    monkeypatch.setattr(query_engine_module, "_confirm_fact_context", observed_confirm)
     engine, _index = corpus.query_engine(
-        fact_ids=(
-            corpus.unbacked_id,
-            corpus.ended_id,
-            *corpus.budget_fact_ids[:16],
-        )
+        fact_ids=(corpus.unbacked_id, corpus.ended_id, *corpus.budget_fact_ids[:16])
     )
     answer = engine.fact_context(
         deployment_id=_DEPLOYMENT_ID,
