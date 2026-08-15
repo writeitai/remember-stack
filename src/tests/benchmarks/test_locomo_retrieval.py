@@ -490,6 +490,43 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
     assert observed[3][:2] == ("GET", "/lookup/relations")
 
 
+def test_assured_dispatch_omits_an_empty_optional_entity_scope() -> None:
+    """An empty model-produced scope is the same unscoped assured operation."""
+    observed: list[object] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        observed.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "grain": "fact",
+                "temporal_scope": {
+                    "mode": "current",
+                    "evaluated_at": "2026-08-07T00:00:00Z",
+                    "believed_at": "2026-08-07T00:00:00Z",
+                    "identity_regime": "current",
+                },
+                "freshness": {"pg_live_ts": "2026-08-07T00:00:00Z"},
+            },
+        )
+
+    raw = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    try:
+        result = dispatch_answer_tool(
+            client=MemoryClient(client=raw),
+            p3=None,
+            name="fact_context",
+            arguments={"query": "launch timing", "entity_ids": []},
+        )
+    finally:
+        raw.close()
+
+    assert isinstance(result, Envelope)
+    assert observed == [{"query": "launch timing"}]
+
+
 def test_query_execution_rejects_partial_query_result_contract() -> None:
     """Two plausible header fields are not a complete QueryResult/v1 response."""
     raw = httpx.Client(
