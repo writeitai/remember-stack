@@ -154,6 +154,33 @@ def test_unscoped_fact_nomination_defers_authority_to_its_caller() -> None:
     assert "ORDER BY indexed.embedding <=> CAST(:query_vector AS vector)" in ranked_sql
 
 
+def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> None:
+    """Scoped nomination avoids the deep fact view and retains merge semantics."""
+    engine = MagicMock(spec=Engine)
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.scalar_one.return_value = True
+    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+
+    assert (
+        index.nominate_facts_scored(
+            deployment_id=str(_DEPLOYMENT_ID),
+            vector=_vector(axis=0),
+            k=5,
+            kind="relation",
+            time=CurrentFactTime(),
+            evaluated_at=_NOW,
+            entity_ids=(str(uuid4()), str(uuid4())),
+        )
+        == ()
+    )
+
+    ranked_sql = str(connection.execute.call_args_list[-1].args[0])
+    assert "v_memory_entity_survivor" in ranked_sql
+    assert "memory_v1.facts_visible_history" not in ranked_sql
+    assert "AS coverage" in ranked_sql
+    assert "ORDER BY coverage DESC," in ranked_sql
+
+
 @pytest.fixture(scope="module")
 def database_engine() -> Iterator[Engine]:
     """Apply structural head and expose one isolated PostgreSQL test spine."""
@@ -436,10 +463,22 @@ def test_multi_anchor_coverage_precedes_similarity_and_candidate_cut(
         evaluated_at=_NOW,
         entity_ids=entity_ids,
     )
+    nominated_facts = index.nominate_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=query,
+        k=1,
+        kind="relation",
+        time=CurrentFactTime(),
+        evaluated_at=_NOW,
+        entity_ids=entity_ids,
+    )
 
     assert tuple(item.item_id for item in claims) == (str(seeded["both_claim"]),)
     assert tuple(item.item_id for item in chunks) == (str(seeded["both_chunk"]),)
     assert tuple(item.item_id for item in facts) == (str(seeded["two_anchor_fact"]),)
+    assert tuple(item.item_id for item in nominated_facts) == (
+        str(seeded["two_anchor_fact"]),
+    )
 
 
 def test_chunk_source_shape_and_fact_time_filter_before_limit(
