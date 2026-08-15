@@ -16,6 +16,7 @@ from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_EVIDENCE
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
+from rememberstack.surfaces.query_engine import _fact_context_confirmation_batch_size
 from rememberstack.surfaces.query_engine import _FACT_CONTEXT_CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _MULTI_HOP_EDGE_EVIDENCE
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
@@ -49,6 +50,9 @@ def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     evidence_sql = str(_CURRENT_FACT_EVIDENCE)
     ranked_sql = inspect.getsource(PostgresP1Index.search_facts_scored)
     assert "memory_v1.facts_visible_history" in confirmation_sql
+    assert "requested AS MATERIALIZED" in confirmation_sql
+    assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
+    assert "fact.fact_kind = ANY(CAST(:fact_kinds AS text[]))" in confirmation_sql
     assert "memory_v1.facts_visible_history" in ranked_sql
     assert "coverage DESC" in ranked_sql
     assert "entity_ids" in ranked_sql
@@ -100,6 +104,14 @@ def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() 
     assert "memory_v1.facts_visible_history" in contradiction_sql
     assert "fact.ingested_at <= :evaluated_at" in contradiction_sql
     assert "fact.fact_kind AS kind" in contradiction_sql
+
+
+def test_fact_context_confirmation_batch_tracks_requested_output() -> None:
+    """Default fact context does not expand the maximum 30-row deep batch."""
+    assert _fact_context_confirmation_batch_size(k=1) == 16
+    assert _fact_context_confirmation_batch_size(k=15) == 16
+    assert _fact_context_confirmation_batch_size(k=20) == 21
+    assert _fact_context_confirmation_batch_size(k=30) == 30
 
 
 def test_fact_context_refuses_another_statement_after_its_shared_deadline() -> None:

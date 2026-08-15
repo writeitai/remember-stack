@@ -137,6 +137,9 @@ FACT_CONTEXT_CANDIDATE_K: Final = 200
 FACT_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
 """Maximum fact nominations confirmed by PostgreSQL in one interactive query."""
 
+FACT_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE: Final = 16
+"""Default-k plus one truncation sentinel, without forcing 30-row expansion."""
+
 FACT_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
 """Operation wall-clock budget; each PostgreSQL statement gets the remainder."""
 
@@ -606,7 +609,8 @@ class QueryEngine:
         ) as connection:
             confirmed_rows: list[RowMapping] = []
             visited_candidates = 0
-            for batch in batched(candidate_keys, FACT_CONTEXT_CONFIRMATION_BATCH_SIZE):
+            confirmation_batch_size = _fact_context_confirmation_batch_size(k=k)
+            for batch in batched(candidate_keys, confirmation_batch_size):
                 batch_rows = _confirm_fact_context(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -2834,6 +2838,14 @@ def _validate_fact_context_bounds(*, k: int, evidence_per_fact: int) -> None:
         raise ValueError("evidence_per_fact must be between 1 and 5")
 
 
+def _fact_context_confirmation_batch_size(*, k: int) -> int:
+    """Confirm enough rows for k plus truncation without expanding all 30."""
+    return min(
+        FACT_CONTEXT_CONFIRMATION_BATCH_SIZE,
+        max(FACT_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE, k + 1),
+    )
+
+
 def _validate_testimony_context_bounds(*, k: int, candidate_k: int) -> None:
     """Enforce testimony final-list and per-channel nomination bounds."""
     if not 1 <= k <= 100:
@@ -3584,7 +3596,7 @@ _FACT_CONTEXT_COVERAGE = """
 
 _CONFIRM_FACT_CONTEXT = text(
     f"""
-    WITH requested AS (
+    WITH requested AS MATERIALIZED (
         SELECT fact_id, kind, nomination_rank
         FROM unnest(CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[]))
              WITH ORDINALITY AS nominated(fact_id, kind, nomination_rank)
@@ -3601,7 +3613,9 @@ _CONFIRM_FACT_CONTEXT = text(
       ON fact.deployment_id = :deployment_id
      AND fact.fact_kind = requested.kind
      AND fact.fact_id = requested.fact_id
-    WHERE true {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
+    WHERE fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
+      AND fact.fact_kind = ANY(CAST(:fact_kinds AS text[]))
+      {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
     ORDER BY coverage DESC, requested.nomination_rank, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants
 )
