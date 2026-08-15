@@ -1,6 +1,7 @@
 """PostgreSQL-native P1 writes and ranked search (D94)."""
 
 from collections.abc import Mapping
+from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
 from typing import Any
@@ -1004,9 +1005,7 @@ class PostgresP1Index:
                     "SET LOCAL hnsw.iterative_scan = 'strict_order'"
                 )
                 connection.execute(
-                    text(
-                        "SELECT set_config('hnsw.max_scan_tuples', :value, true)"
-                    ),
+                    text("SELECT set_config('hnsw.max_scan_tuples', :value, true)"),
                     {"value": str(P1_HNSW_MAX_SCAN_TUPLES)},
                 )
             return [
@@ -1130,7 +1129,7 @@ def _fact_time(time: FactTime, *, evaluated_at: datetime) -> tuple[str, dict[str
 
 
 def _nominations(
-    rows: list[Mapping[str, Any]], *, channel: str, qualified: bool = False
+    rows: Sequence[Mapping[str, Any]], *, channel: str, qualified: bool = False
 ) -> tuple[P1Nomination, ...]:
     """Attach stable one-based ranks to database-ranked rows."""
     return tuple(

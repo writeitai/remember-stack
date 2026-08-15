@@ -637,10 +637,7 @@ def _seed_postgres_p1_residuals(*, connection: Connection) -> None:
             " embedding_text_hash = 'entity-hash'"
             " WHERE deployment_id = :d AND entity_id = ANY(:entity_ids)"
         ),
-        {
-            "d": _DEPLOYMENT_ID,
-            "entity_ids": [_EXCLUSIVE_ENTITY_ID, _CONTROL_ENTITY_ID],
-        },
+        {"d": _DEPLOYMENT_ID, "entity_ids": [_EXCLUSIVE_ENTITY_ID, _CONTROL_ENTITY_ID]},
     )
 
 

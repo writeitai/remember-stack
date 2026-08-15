@@ -185,9 +185,7 @@ def rig(database_engine: Engine, tmp_path: Path) -> _E1Rig:
     return _E1Rig(engine=database_engine, root=tmp_path)
 
 
-def test_document_reaches_postgres_search_with_prefixed_embeddings(
-    rig: _E1Rig,
-) -> None:
+def test_document_reaches_postgres_search_with_prefixed_embeddings(rig: _E1Rig) -> None:
     """The WP-1.2 acceptance: deterministic repack keys and search rows in PG."""
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
@@ -229,10 +227,9 @@ def test_document_reaches_postgres_search_with_prefixed_embeddings(
     assert covered == list(range(covered[-1] + 1))  # gap-free partition
 
     with rig.engine.connect() as connection:
-        assert (
-            connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
-            == len(rows)
-        )
+        assert connection.execute(
+            text("SELECT count(*) FROM chunk_search")
+        ).scalar_one() == len(rows)
     # D80: no per-chunk location LLM; embed texts are non-empty deterministic strings.
     assert len(rig.provider.generated_prompts) == 0
     assert len(rig.provider.embedded_texts) == len(rows)
@@ -317,7 +314,10 @@ def test_empty_document_chains_through_with_nothing_to_index(rig: _E1Rig) -> Non
         ).scalar_one()
     assert count == 0
     with rig.engine.connect() as connection:
-        assert connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one() == 0
+        assert (
+            connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
+            == 0
+        )
 
 
 def test_embed_retry_replays_stored_prefixes(rig: _E1Rig, tmp_path: Path) -> None:

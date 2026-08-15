@@ -483,8 +483,7 @@ def _chunk_texts(
         )
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
-            code=QueryErrorCode.P1_UNAVAILABLE,
-            message="chunk bodies could not be read",
+            code=QueryErrorCode.P1_UNAVAILABLE, message="chunk bodies could not be read"
         ) from error
     return {str(key): value for key, value in texts.items()}
 

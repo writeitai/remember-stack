@@ -1226,12 +1226,7 @@ def test_the_real_adapter_carries_the_fact_kind() -> None:
     ]
     # A channel whose id IS its identity carries no qualifier.
     plain = _nominations(
-        [
-            {
-                "item_id": "00000000-0000-0000-0000-000000000003",
-                "score": 0.7,
-            }
-        ],
+        [{"item_id": "00000000-0000-0000-0000-000000000003", "score": 0.7}],
         channel="semantic",
     )
     assert plain[0].qualifier is None

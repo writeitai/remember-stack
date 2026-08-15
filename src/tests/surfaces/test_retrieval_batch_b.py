@@ -685,8 +685,7 @@ def test_chunk_hydration_keeps_live_chunk_without_current_section(
         )
     try:
         answer = corpus.query_engine().hydrate_chunks(
-            deployment_id=_DEPLOYMENT_ID,
-            chunk_ids=(chunk_id,),
+            deployment_id=_DEPLOYMENT_ID, chunk_ids=(chunk_id,)
         )
 
         assert tuple(chunk.chunk_id for chunk in answer.chunks) == (chunk_id,)
@@ -695,10 +694,7 @@ def test_chunk_hydration_keeps_live_chunk_without_current_section(
     finally:
         with corpus.engine.begin() as connection:
             connection.execute(
-                text(
-                    "UPDATE chunks SET section_id = :section"
-                    " WHERE chunk_id = :chunk"
-                ),
+                text("UPDATE chunks SET section_id = :section WHERE chunk_id = :chunk"),
                 {"section": section_id, "chunk": chunk_id},
             )
 

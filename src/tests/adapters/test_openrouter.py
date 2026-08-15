@@ -829,9 +829,7 @@ def test_embedding_rejects_a_provider_dimension_mismatch(
         with pytest.raises(OpenRouterInvalidResponseError, match="dimension"):
             provider.embed(
                 request=EmbeddingRequest(
-                    model="qwen/qwen3-embedding-8b",
-                    texts=("memory",),
-                    dimensions=3,
+                    model="qwen/qwen3-embedding-8b", texts=("memory",), dimensions=3
                 )
             )
     finally:

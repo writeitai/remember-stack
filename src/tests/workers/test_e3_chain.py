@@ -775,15 +775,21 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
     rig.run_chain()
 
     with rig.engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT count(*) FROM claims WHERE embedding IS NOT NULL")
-        ).scalar_one() == 2
-        assert connection.execute(
-            text(
-                "SELECT (SELECT count(*) FROM relations WHERE embedding IS NOT NULL)"
-                " + (SELECT count(*) FROM observations WHERE embedding IS NOT NULL)"
-            )
-        ).scalar_one() == 2
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM claims WHERE embedding IS NOT NULL")
+            ).scalar_one()
+            == 2
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM relations WHERE embedding IS NOT NULL)"
+                    " + (SELECT count(*) FROM observations WHERE embedding IS NOT NULL)"
+                )
+            ).scalar_one()
+            == 2
+        )
 
     with rig.engine.connect() as connection:
         stamped = connection.execute(
@@ -803,12 +809,16 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
             .mappings()
             .one()
         )
-        observation = connection.execute(
-            text(
-                "SELECT embedding IS NOT NULL AS embedded, embedding_model"
-                " FROM observations"
+        observation = (
+            connection.execute(
+                text(
+                    "SELECT embedding IS NOT NULL AS embedded, embedding_model"
+                    " FROM observations"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert stamped == 2
     assert relation["fact_label"] == "Alice Novak works for Acme"
     assert relation["fact_label_version"] is not None

@@ -229,6 +229,7 @@ class P1ClaimRow(BaseModel):
     is_attributed: bool
     vector: Annotated[tuple[float, ...], Field(min_length=1)]
 
+
 class P1FactRow(BaseModel):
     """One fact label plus rebuildable D87 pre-ranking eligibility metadata."""
 

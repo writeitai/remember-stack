@@ -77,6 +77,7 @@ class FactIndexPort(Protocol):
         """Insert or replace rows by (deployment_id, kind, fact_id); idempotent."""
         ...
 
+
 @runtime_checkable
 class ClaimVectorLookupPort(Protocol):
     """Read vectors for a bounded, authoritative claim-id candidate set."""

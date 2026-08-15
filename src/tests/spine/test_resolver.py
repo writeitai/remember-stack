@@ -128,9 +128,7 @@ def _claim() -> ClaimForNormalization:
     )
 
 
-def test_cascade_mints_then_t0_then_t4_with_verdicts(
-    database_engine: Engine
-) -> None:
+def test_cascade_mints_then_t0_then_t4_with_verdicts(database_engine: Engine) -> None:
     """Mint on empty registry; T0 short-circuit; T1/T2 block into a T4 match —
     every step leaving an append-only verdict with its tier and features."""
     provider = FakeModelProvider(generate_router=_first_token_router)
@@ -179,9 +177,7 @@ def test_cascade_mints_then_t0_then_t4_with_verdicts(
     assert all(d["resolver_version"] == RESOLVER_VERSION for d in decisions)
 
 
-def test_t4_no_match_mints_a_distinct_entity(
-    database_engine: Engine
-) -> None:
+def test_t4_no_match_mints_a_distinct_entity(database_engine: Engine) -> None:
     """A blocked near-miss the adjudicator rejects becomes a NEW entity —
     over-rejection is minting, never silent identity collapse."""
     provider = FakeModelProvider(generate_router=_first_token_router)
@@ -218,7 +214,7 @@ def test_t4_no_match_mints_a_distinct_entity(
 
 
 def test_low_confidence_small_verdict_escalates_to_frontier(
-    database_engine: Engine
+    database_engine: Engine,
 ) -> None:
     """The T4 ladder: a small-model verdict below the floor re-asks frontier."""
 
@@ -250,7 +246,7 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
 
 
 def test_resolution_suite_records_curves_and_blocks_on_regression(
-    database_engine: Engine
+    database_engine: Engine,
 ) -> None:
     """The exit-criterion machinery: per-type P/R over the golden set, curves
     recorded on resolver_versions, run in eval_runs; a broken judge fails."""
@@ -311,9 +307,7 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
     assert not regression["passed"]
 
 
-def test_resolver_version_definitions_are_immutable(
-    database_engine: Engine
-) -> None:
+def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> None:
     """Codex review / D22: the same version string cannot be re-registered
     with different thresholds — a decision's version always names the
     definition that was actually in force."""
@@ -340,9 +334,7 @@ def test_resolver_version_definitions_are_immutable(
         )
 
 
-def test_missing_profile_vector_escalates_to_t4(
-    database_engine: Engine
-) -> None:
+def test_missing_profile_vector_escalates_to_t4(database_engine: Engine) -> None:
     """Codex review: a blocked candidate with no stored profile vector is
     AMBIGUITY — it reaches T4 and matches, never a confident non-match."""
     provider = FakeModelProvider(generate_router=_first_token_router)

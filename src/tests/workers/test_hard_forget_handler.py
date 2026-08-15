@@ -152,8 +152,7 @@ def _handler(*, events: list[str], fail_objects: bool = False) -> HardForgetHand
         deletion=cast(DeletionService, _Deletion(events=events)),
         object_purgers=(
             cast(
-                ObjectPurgePort,
-                _Objects(events=events, name="raw", fail=fail_objects),
+                ObjectPurgePort, _Objects(events=events, name="raw", fail=fail_objects)
             ),
             cast(ObjectPurgePort, _Objects(events=events, name="transcripts")),
         ),
@@ -197,11 +196,7 @@ def test_handler_failure_leaves_admission_closed_and_preserves_exception() -> No
     with pytest.raises(RuntimeError, match="object store unavailable"):
         _handler(events=events, fail_objects=True).honor(manifest=_manifest())
 
-    assert events == [
-        "delete-lineage",
-        "scrub-postgres",
-        "objects-raw",
-    ]
+    assert events == ["delete-lineage", "scrub-postgres", "objects-raw"]
 
 
 class _Graph:

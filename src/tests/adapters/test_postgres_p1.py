@@ -473,9 +473,7 @@ def test_ranked_search_never_crosses_deployments(
     )
 
     results = index.search_entities_scored(
-        deployment_id=str(_DEPLOYMENT_ID),
-        vector=_vector(axis=0),
-        k=1,
+        deployment_id=str(_DEPLOYMENT_ID), vector=_vector(axis=0), k=1
     )
 
     assert tuple(item.item_id for item in results) == (str(first_entity),)
@@ -521,9 +519,7 @@ def test_observation_statement_is_the_embedding_fallback(
             {"claim": seeded["both_claim"]},
         ).scalar_one()
     observations = FactCatalog(engine=database_engine).observations_for_embedding(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=doc_id,
-        embedding_model=_MODEL,
+        deployment_id=_DEPLOYMENT_ID, doc_id=doc_id, embedding_model=_MODEL
     )
 
     assert tuple(item.observation_id for item in observations) == (observation_id,)
