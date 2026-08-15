@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -30,6 +31,7 @@ from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_engine import FACT_CONTEXT_CANDIDATE_K
 
@@ -936,6 +938,45 @@ def test_fact_context_refills_a_dropped_head_candidate(corpus: _Corpus) -> None:
 
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
     assert answer.dropped_by_hydration == 1
+
+
+def test_fact_context_refill_crosses_the_default_confirmation_batch(
+    corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One stale row cannot prevent a full page at the 16-row boundary."""
+    original_confirm = query_engine_module._confirm_fact_context
+    confirmed_batch_sizes: list[int] = []
+
+    def observed_confirm(**kwargs: Any) -> tuple[Any, ...]:
+        """Record confirmation batch sizes while preserving the real authority."""
+        candidate_keys = kwargs["candidate_keys"]
+        confirmed_batch_sizes.append(len(candidate_keys))
+        return original_confirm(**kwargs)
+
+    monkeypatch.setattr(
+        query_engine_module, "_confirm_fact_context", observed_confirm
+    )
+    engine, _index = corpus.query_engine(
+        fact_ids=(
+            corpus.unbacked_id,
+            corpus.ended_id,
+            *corpus.budget_fact_ids[:16],
+        )
+    )
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="budget facts after one stale nomination",
+        k=15,
+        evidence_per_fact=1,
+    )
+
+    assert len(answer.facts) == 15
+    assert answer.dropped_by_hydration == 2
+    assert confirmed_batch_sizes == [16, 2]
+    assert answer.truncation is not None
+    assert answer.truncation.truncated
+    assert answer.truncation.estimated_total == 16
+    assert answer.truncation.total_is_exact
 
 
 def test_no_results_uses_the_query_driven_known_empty_convention(
