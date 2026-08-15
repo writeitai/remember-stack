@@ -1189,13 +1189,11 @@ def _fact_time(
     parameters: dict[str, Any] = {"evaluated_at": evaluated_at}
     prefix = f"{alias}."
     common = (
-        f"AND {prefix}ingested_at <= :evaluated_at"
-        f" AND {prefix}invalidated_at IS NULL"
+        f"AND {prefix}ingested_at <= :evaluated_at AND {prefix}invalidated_at IS NULL"
     )
     if isinstance(time, CurrentFactTime):
         return (
-            common
-            + f" AND ({prefix}valid_from IS NULL"
+            common + f" AND ({prefix}valid_from IS NULL"
             f" OR {prefix}valid_from <= :evaluated_at)"
             + f" AND ({prefix}valid_until IS NULL"
             f" OR {prefix}valid_until > :evaluated_at)",
