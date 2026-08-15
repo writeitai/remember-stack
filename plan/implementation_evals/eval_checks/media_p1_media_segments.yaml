@@ -11,11 +11,12 @@ instructions: |
   FINAL system: if the subsystem is absent or partial, score 0.
 
   Verify ALL of the following:
-  1. A media_segments target exists in the P1 Lance estate as a LOGICAL target over
-     per-modality subindexes: one row per standalone image, per adaptive video keyframe/shot,
+  1. A media_segments target exists on accepted natural media segment/representation rows,
+     with per-modality indexes: one row per standalone image, per adaptive video keyframe/shot,
      and per bounded audio segment, each carrying its modality, embedding family + version +
      dimension, representation_id, and immutable source locator. Rows from different
      embedding families are never compared by raw vector distance — only combined by rank.
+     No generalized P1 media mirror table is introduced.
   2. Media embedding models are provider-port configuration exactly like the text embedder
      (D63): versioned, per-deployment choices (one slot per modality pair) resolving through
      pipeline component versions — never a hard-coded model, and changing one is a

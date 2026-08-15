@@ -143,8 +143,9 @@ outside the ordinary restore set before acceptance; PostgreSQL materializes that
 existing work ledger tracks execution. A durable `preparing` row blocks public/ordinary work while
 leaving the authorized forget coordinator's internal calls available; pre-append failures are
 resumed or safely reopen admission before any append attempt. The worker reuses the normal currency
-cascade, scrubs PostgreSQL, purges objects/P1, publishes clean P2/P3 snapshots and deletes old ones,
-then erases affected K paths from history. Every serving readiness pass re-honors every portable
+cascade, scrubs PostgreSQL including its co-located P1 state, purges objects,
+publishes clean P2/P3 snapshots and deletes old ones, then erases affected K paths
+from history. Every serving readiness pass re-honors every portable
 manifest—including locally complete ones—so independently restoring an old external store cannot
 resurrect forgotten content.
 

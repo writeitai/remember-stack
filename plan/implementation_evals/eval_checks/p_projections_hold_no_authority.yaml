@@ -11,8 +11,8 @@ instructions: |
   checks for the FINAL system: if the subsystem is absent or partial, score 0.
 
   Verify ALL of the following:
-  1. No code path mutates validity/invalidation/contradiction state in a projection store —
-     Lance/Ladybug/P3 receive filtered copies from Postgres and are never the site of a
+  1. No code path mutates validity/invalidation/contradiction state in derived search or
+     projection state. PostgreSQL P1 indexes, LadybugDB, and P3 are never the site of a
      decision. Judge the OUTCOME (no adjudication, no supersession logic, no LLM calls inside
      projection builders), whatever the internal module split; the D62 package-level import
      contracts (CI-enforced) are supporting evidence, not a prescribed submodule graph.

@@ -1,7 +1,7 @@
 schema_version: 1
 id: registry_scale_partitioning_d23
 type: harness_judge
-description: The physical scale design holds — the partitioned table estate matches the binding DDL, hot tables stay btree-only, blocking indexes exist, no HNSW in OLTP Postgres, and the ungated-volume load test is provided for.
+description: The physical scale design holds — the partitioned estate matches the binding DDL, claims use D94's non-partitioned search layout, blocking indexes exist, and ANN stays confined to admitted P1 rows.
 tags: [registries, D23, D17, D25]
 instructions: |
   You are judging whether this repository's IMPLEMENTATION honors a binding design invariant.
@@ -13,15 +13,17 @@ instructions: |
 
   Verify ALL of the following:
   1. The partitioned estate matches the binding schema — including (not limited to) mentions,
-     resolution_decisions, relation_evidence, claims, claim_extraction_decisions, chunks,
+     resolution_decisions, relation_evidence, claim_extraction_decisions, chunks,
      chunk_claims, testimony_currency_events, and observation_evidence, each partitioned as
-     the DDL specifies (RANGE by time or HASH by id) — and the hot append-only tables avoid
-     write-amplifying index types (btree-only there).
+     the DDL specifies (RANGE by time or HASH by id). Claims are deliberately non-partitioned
+     under D94 so their current-testimony HNSW and BM25 indexes use one global corpus. Hot
+     append-only ledgers avoid write-amplifying index types.
   2. entities and aliases (the blocking targets) are NOT partitioned.
   3. Alias blocking indexes exist: GIN gin_trgm_ops and a Daitch-Mokotoff expression index on
      the normalized name (D17); relations carry the btree composite on
      (subject_entity_id, predicate[, object]).
-  4. Embedding similarity (T3) runs in Lance — no pgvector/HNSW index in OLTP Postgres.
+  4. Embedding similarity (T3) runs on the admitted PostgreSQL P1 entity vector. HNSW indexes
+     exist only on D94's natural search rows and `chunk_search`, never on evidence ledgers or P2.
   5. A representative load-test hook exists targeting UNGATED full-extraction volume (D25
      re-stamp; registries_design §9/§11) so partition/index choices are validated before
      being locked.
