@@ -824,17 +824,26 @@ class PostgresP1Index:
                 "CAST(:candidate_kinds AS text[]), CAST(:candidate_ids AS uuid[]))"
                 " AS requested(key_kind, key_id))"
             )
-        entity_sql = (
-            " AND (cardinality(CAST(:entity_ids AS uuid[])) = 0"
-            " OR fact.subject_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-            " OR fact.object_entity_id = ANY(CAST(:entity_ids AS uuid[])))"
-        )
-        coverage_sql = (
-            "(SELECT count(DISTINCT anchor)::integer"
-            " FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)"
-            " WHERE requested.anchor = fact.subject_entity_id"
-            "    OR requested.anchor = fact.object_entity_id)"
-        )
+        if entity_ids:
+            entity_sql = (
+                " AND (fact.subject_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
+                " OR fact.object_entity_id = ANY(CAST(:entity_ids AS uuid[])))"
+            )
+            coverage_select = (
+                "(SELECT count(DISTINCT anchor)::integer"
+                " FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)"
+                " WHERE requested.anchor = fact.subject_entity_id"
+                "    OR requested.anchor = fact.object_entity_id) AS coverage,"
+            )
+            branch_order = (
+                "coverage DESC, indexed.embedding <=> CAST(:query_vector AS vector)"
+            )
+            result_order = "coverage DESC, distance, qualifier, item_id"
+        else:
+            entity_sql = ""
+            coverage_select = ""
+            branch_order = "indexed.embedding <=> CAST(:query_vector AS vector)"
+            result_order = "distance, qualifier, item_id"
         branches: list[str] = []
         for table, fact_kind, id_column in (
             ("relations", "relation", "relation_id"),
@@ -846,7 +855,7 @@ class PostgresP1Index:
                 f"""
                 (SELECT indexed.{id_column}::text AS item_id,
                         '{fact_kind}'::text AS qualifier,
-                        {coverage_sql} AS coverage,
+                        {coverage_select}
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
                  JOIN memory_v1.facts_visible_history AS fact
@@ -858,9 +867,7 @@ class PostgresP1Index:
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {entity_sql} {key_sql} {filter_sql}
-                 ORDER BY coverage DESC,
-                          indexed.embedding <=> CAST(:query_vector AS vector),
-                          indexed.{id_column}
+                 ORDER BY {branch_order}, indexed.{id_column}
                  LIMIT :branch_limit)
                 """
             )
@@ -868,7 +875,7 @@ class PostgresP1Index:
             WITH candidates AS ({" UNION ALL ".join(branches)})
             SELECT item_id, qualifier, 1.0 - distance AS score
             FROM candidates
-            ORDER BY coverage DESC, distance, qualifier, item_id LIMIT :limit
+            ORDER BY {result_order} LIMIT :limit
         """
         return _nominations(
             self._engine_rows(statement, parameters), channel="semantic", qualified=True
