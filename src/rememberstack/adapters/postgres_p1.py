@@ -287,11 +287,14 @@ class PostgresP1Index:
                 """
             ),
         }
-        with self._engine.begin() as connection:
-            for row in rows:
-                statement = statements.get(row.kind)
-                if statement is None:
-                    raise ValueError(f"unknown fact kind {row.kind!r}")
+        for row in rows:
+            statement = statements.get(row.kind)
+            if statement is None:
+                raise ValueError(f"unknown fact kind {row.kind!r}")
+            # Observation adjudication can update the same authority row while
+            # P1 stamps its embedding. Commit each durable row independently so
+            # this writer never holds one fact lock while waiting for another.
+            with self._engine.begin() as connection:
                 result = connection.execute(
                     statement,
                     {

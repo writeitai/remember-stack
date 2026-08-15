@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -46,6 +47,35 @@ def _vector(*, axis: int) -> tuple[float, ...]:
     values = [0.0] * P1_VECTOR_DIMENSIONS
     values[axis] = 1.0
     return tuple(values)
+
+
+def test_fact_upserts_commit_each_authority_row_independently() -> None:
+    """A P1 batch never holds one fact lock while waiting on a peer row."""
+    engine = MagicMock(spec=Engine)
+    connection = engine.begin.return_value.__enter__.return_value
+    connection.execute.return_value.rowcount = 1
+    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+
+    index.upsert_facts(
+        rows=tuple(
+            P1FactRow(
+                fact_id=uuid4(),
+                deployment_id=_DEPLOYMENT_ID,
+                kind="observation",
+                label=f"independent fact {axis}",
+                status="active",
+                valid_from=None,
+                valid_until=None,
+                ingested_at=_NOW,
+                invalidated_at=None,
+                vector=_vector(axis=axis),
+            )
+            for axis in (0, 1)
+        )
+    )
+
+    assert engine.begin.call_count == 2
+    assert connection.execute.call_count == 2
 
 
 @pytest.fixture(scope="module")
