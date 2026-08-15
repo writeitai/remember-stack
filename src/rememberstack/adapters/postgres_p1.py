@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
 from typing import Any
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -824,16 +825,105 @@ class PostgresP1Index:
                 "CAST(:candidate_kinds AS text[]), CAST(:candidate_ids AS uuid[]))"
                 " AS requested(key_kind, key_id))"
             )
-        entity_sql = (
-            " AND (cardinality(CAST(:entity_ids AS uuid[])) = 0"
-            " OR fact.subject_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-            " OR fact.object_entity_id = ANY(CAST(:entity_ids AS uuid[])))"
+        if entity_ids:
+            entity_sql = (
+                " AND (fact.subject_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
+                " OR fact.object_entity_id = ANY(CAST(:entity_ids AS uuid[])))"
+            )
+            coverage_select = (
+                "(SELECT count(DISTINCT anchor)::integer"
+                " FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)"
+                " WHERE requested.anchor = fact.subject_entity_id"
+                "    OR requested.anchor = fact.object_entity_id) AS coverage,"
+            )
+            branch_order = (
+                "coverage DESC, indexed.embedding <=> CAST(:query_vector AS vector)"
+            )
+            result_order = "coverage DESC, distance, qualifier, item_id"
+        else:
+            entity_sql = ""
+            coverage_select = ""
+            branch_order = "indexed.embedding <=> CAST(:query_vector AS vector)"
+            result_order = "distance, qualifier, item_id"
+        branches: list[str] = []
+        for table, fact_kind, id_column in (
+            ("relations", "relation", "relation_id"),
+            ("observations", "observation", "observation_id"),
+        ):
+            if table not in required:
+                continue
+            branches.append(
+                f"""
+                (SELECT indexed.{id_column}::text AS item_id,
+                        '{fact_kind}'::text AS qualifier,
+                        {coverage_select}
+                        indexed.embedding <=> CAST(:query_vector AS vector) AS distance
+                 FROM {table} AS indexed
+                 JOIN memory_v1.facts_visible_history AS fact
+                   ON fact.deployment_id = indexed.deployment_id
+                  AND fact.fact_kind = '{fact_kind}'
+                  AND fact.fact_id = indexed.{id_column}
+                 WHERE indexed.deployment_id = :deployment_id
+                   AND indexed.embedding IS NOT NULL
+                   AND indexed.embedding_model = :embedding_model
+                   AND indexed.embedding_input_policy_version = :input_policy
+                   {time_sql} {entity_sql} {key_sql} {filter_sql}
+                 ORDER BY {branch_order}, indexed.{id_column}
+                 LIMIT :branch_limit)
+                """
+            )
+        statement = f"""
+            WITH candidates AS ({" UNION ALL ".join(branches)})
+            SELECT item_id, qualifier, 1.0 - distance AS score
+            FROM candidates
+            ORDER BY {result_order} LIMIT :limit
+        """
+        return _nominations(
+            self._engine_rows(statement, parameters), channel="semantic", qualified=True
         )
-        coverage_sql = (
-            "(SELECT count(DISTINCT anchor)::integer"
-            " FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)"
-            " WHERE requested.anchor = fact.subject_entity_id"
-            "    OR requested.anchor = fact.object_entity_id)"
+
+    def nominate_facts_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        kind: str | None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Rank derived unscoped candidates for a caller that confirms every row."""
+        _require_vector(vector)
+        if kind not in {None, "relation", "observation"}:
+            raise ValueError(f"unknown fact kind {kind!r}")
+        required = (
+            ("relations",)
+            if kind == "relation"
+            else ("observations",)
+            if kind == "observation"
+            else ("relations", "observations")
+        )
+        for target in required:
+            self._require_channel(
+                deployment_id=deployment_id,
+                target=target,
+                channel="semantic",
+                policy=FACT_INPUT_POLICY,
+            )
+        selected_time = time or CurrentFactTime()
+        evaluation = evaluated_at or datetime.now(UTC)
+        time_sql, parameters = _fact_time(
+            selected_time, evaluated_at=evaluation, alias="indexed"
+        )
+        parameters.update(
+            {
+                "deployment_id": UUID(deployment_id),
+                "embedding_model": self._embedding_model,
+                "input_policy": FACT_INPUT_POLICY,
+                "query_vector": _vector_literal(vector),
+                "branch_limit": k,
+                "limit": k,
+            }
         )
         branches: list[str] = []
         for table, fact_kind, id_column in (
@@ -846,20 +936,14 @@ class PostgresP1Index:
                 f"""
                 (SELECT indexed.{id_column}::text AS item_id,
                         '{fact_kind}'::text AS qualifier,
-                        {coverage_sql} AS coverage,
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
-                 JOIN memory_v1.facts_visible_history AS fact
-                   ON fact.deployment_id = indexed.deployment_id
-                  AND fact.fact_kind = '{fact_kind}'
-                  AND fact.fact_id = indexed.{id_column}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
-                   {time_sql} {entity_sql} {key_sql} {filter_sql}
-                 ORDER BY coverage DESC,
-                          indexed.embedding <=> CAST(:query_vector AS vector),
+                   {time_sql}
+                 ORDER BY indexed.embedding <=> CAST(:query_vector AS vector),
                           indexed.{id_column}
                  LIMIT :branch_limit)
                 """
@@ -868,7 +952,7 @@ class PostgresP1Index:
             WITH candidates AS ({" UNION ALL ".join(branches)})
             SELECT item_id, qualifier, 1.0 - distance AS score
             FROM candidates
-            ORDER BY coverage DESC, distance, qualifier, item_id LIMIT :limit
+            ORDER BY distance, qualifier, item_id LIMIT :limit
         """
         return _nominations(
             self._engine_rows(statement, parameters), channel="semantic", qualified=True
@@ -1095,37 +1179,47 @@ def _fact_filters(filters: Mapping[str, str] | None) -> tuple[str, dict[str, Any
     return " ".join(f"AND {clause}" for clause in clauses), parameters
 
 
-def _fact_time(time: FactTime, *, evaluated_at: datetime) -> tuple[str, dict[str, Any]]:
-    """Render the closed D87 time modes against visible fact authority."""
+def _fact_time(
+    time: FactTime,
+    *,
+    evaluated_at: datetime,
+    alias: Literal["fact", "indexed"] = "fact",
+) -> tuple[str, dict[str, Any]]:
+    """Render the closed D87 time modes against one fixed fact-row alias."""
     parameters: dict[str, Any] = {"evaluated_at": evaluated_at}
-    common = "AND fact.ingested_at <= :evaluated_at AND fact.invalidated_at IS NULL"
+    prefix = f"{alias}."
+    common = (
+        f"AND {prefix}ingested_at <= :evaluated_at AND {prefix}invalidated_at IS NULL"
+    )
     if isinstance(time, CurrentFactTime):
         return (
-            common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :evaluated_at)"
-            + " AND (fact.valid_until IS NULL OR fact.valid_until > :evaluated_at)",
+            common + f" AND ({prefix}valid_from IS NULL"
+            f" OR {prefix}valid_from <= :evaluated_at)"
+            + f" AND ({prefix}valid_until IS NULL"
+            f" OR {prefix}valid_until > :evaluated_at)",
             parameters,
         )
     if isinstance(time, AtFactTime):
         parameters["at"] = time.at
         return (
             common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :at)"
-            + " AND (fact.valid_until IS NULL OR fact.valid_until > :at)",
+            + f" AND ({prefix}valid_from IS NULL OR {prefix}valid_from <= :at)"
+            + f" AND ({prefix}valid_until IS NULL OR {prefix}valid_until > :at)",
             parameters,
         )
     if isinstance(time, OverlapFactTime):
         parameters.update({"from_time": time.from_, "to_time": time.to})
         return (
             common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :to_time)"
-            + " AND (fact.valid_until IS NULL OR fact.valid_until > :from_time)",
+            + f" AND ({prefix}valid_from IS NULL OR {prefix}valid_from <= :to_time)"
+            + f" AND ({prefix}valid_until IS NULL"
+            f" OR {prefix}valid_until > :from_time)",
             parameters,
         )
     if isinstance(time, HistoryFactTime):
         return (
-            common
-            + " AND (fact.valid_from IS NULL OR fact.valid_from <= :evaluated_at)",
+            common + f" AND ({prefix}valid_from IS NULL"
+            f" OR {prefix}valid_from <= :evaluated_at)",
             parameters,
         )
     raise TypeError(f"unknown fact time {type(time).__name__}")
