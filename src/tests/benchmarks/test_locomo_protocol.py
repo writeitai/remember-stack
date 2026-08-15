@@ -15,6 +15,7 @@ from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import PROTOCOL_NAME
@@ -37,6 +38,7 @@ from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
 from rememberstack.spine.query_space.manifest import load_manifest
+from rememberstack.workers import OBS_FLUSH_VERSION
 
 
 def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> None:
@@ -172,6 +174,14 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert '"dropped_by_hydration":0' in prompt
     assert isinstance(call.response, Envelope)
     assert call.response.ranking  # durable raw record is unchanged
+
+
+def test_protocol_pins_the_shipping_observation_flush_generation() -> None:
+    """The score guard cannot reject the entity-fanout generation it ingested."""
+    assert (
+        EXPECTED_INGEST_COMPONENT_VERSIONS["adjudicate_observations"]
+        == OBS_FLUSH_VERSION
+    )
 
 
 def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:

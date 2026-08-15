@@ -72,7 +72,9 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "normalize_relations": (
             "e3-normalize-2026.08a:temp0-1:unknown-type-gate-1:claim-fanout-1"
         ),
-        "adjudicate_observations": "e3-obs-flush-2026.08a:claim-fanout-1",
+        "adjudicate_observations": (
+            "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"
+        ),
         "adjudicate_supersession": "adjudicator-2026.07b:temp0-1",
         "embed_claim": "p1-embed-claims-2026.07",
         "reconcile": "reconcile-2026.07",
