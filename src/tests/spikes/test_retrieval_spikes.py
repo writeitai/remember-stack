@@ -1,8 +1,7 @@
 """WP-5.6: executable retrieval measurements from retrieval design §13.
 
-CI runs capability-sized data. ``REMEMBERSTACK_RETRIEVAL_SPIKE_LANCE_ROWS`` and
-``REMEMBERSTACK_RETRIEVAL_SPIKE_HUB_EDGES`` scale the same battery for the recorded
-10^7-row / 10^5-edge local run. Timings are observations, never CI gates;
+CI runs capability-sized data. ``REMEMBERSTACK_RETRIEVAL_SPIKE_HUB_EDGES``
+scales the same battery for the recorded 10^5-edge local run. Timings are observations, never CI gates;
 correct filtering, lossless continuation, selected constants, and the single
 complete ``eval_runs`` record are the gates.
 """
@@ -15,7 +14,6 @@ from datetime import UTC
 from functools import partial
 import math
 from pathlib import Path
-from random import Random
 import time
 from typing import cast
 from uuid import UUID
@@ -24,7 +22,6 @@ from uuid import uuid4
 from alembic import command
 from alembic.config import Config
 import ladybug
-import lancedb
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import Field
@@ -36,9 +33,6 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost.lance import LANCE_NPROBES
-from rememberstack.adapters.selfhost.lance import LANCE_TARGET_PARTITION_ROWS
-from rememberstack.adapters.selfhost.lance import LanceChunkIndex
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core import DEFAULT_EVIDENCE_COUNT_WEIGHT
 from rememberstack.core import DEFAULT_GRAPH_DISTANCE_WEIGHT
@@ -71,7 +65,6 @@ from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("56000000-0000-0000-0000-000000000001")
-_VECTOR_DIMENSION = 8
 _HUB_PAGE_BUDGET_BYTES = 64 * 1024
 _ENVELOPE_INLINE_BUDGET_BYTES = 16 * 1024
 _MODELED_REMOTE_RTT_MS = 25.0
@@ -84,7 +77,6 @@ class _SpikeSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_RETRIEVAL_SPIKE_")
 
-    lance_rows: int = Field(default=20_000, ge=1_000)
     hub_edges: int = Field(default=2_000, ge=1_001)
     repeats: int = Field(default=5, ge=3, le=20)
 
@@ -171,13 +163,12 @@ def seeded_deployment(database_engine: Engine) -> Engine:
     return database_engine
 
 
-def test_retrieval_spike_battery_records_all_six_measurements(
+def test_retrieval_spike_battery_records_all_five_measurements(
     seeded_deployment: Engine, tmp_path: Path
 ) -> None:
     """Run the complete battery and persist exactly one attributable result."""
     report = RetrievalSpikeReport(
         measurements=(
-            _lance_filtered_search(root=tmp_path / "lance"),
             _hub_pagination(root=tmp_path / "hub"),
             _rerank_weights(),
             _envelope_overhead(),
@@ -205,161 +196,16 @@ def test_retrieval_spike_battery_records_all_six_measurements(
         )
     assert row["component_version"] == RETRIEVAL_SPIKE_VERSION
     assert row["passed"] is True
-    assert len(row["metrics"]["measurements"]) == 6
+    assert len(row["metrics"]["measurements"]) == 5
 
 
 def test_retrieval_spike_report_rejects_an_incomplete_named_battery() -> None:
-    """Six rows are insufficient when a named spike is duplicated or missing."""
+    """Five rows are insufficient when a named spike is duplicated or missing."""
     duplicate = RetrievalSpikeMeasurement(
-        name="lance_filtered_search", scale=1, metrics={}, selected={}, passed=True
+        name="hub_pagination", scale=1, metrics={}, selected={}, passed=True
     )
     with pytest.raises(ValidationError, match="retrieval spike names mismatch"):
-        RetrievalSpikeReport(measurements=(duplicate,) * 6)
-
-
-def _lance_filtered_search(*, root: Path) -> RetrievalSpikeMeasurement:
-    """Measure scalar-prefiltered ANN on claim- and fact-shaped tables."""
-    rows_per_table = _SETTINGS.lance_rows // 2
-    database = lancedb.connect(str(root))
-    database.create_table(
-        "claims", data=_lance_batches(rows=rows_per_table, table="claims")
-    )
-    database.create_table(
-        "facts", data=_lance_batches(rows=rows_per_table, table="facts")
-    )
-    query_vector = _vector(pattern=3)
-    before = {
-        "claims": _timed_ms(
-            operation=lambda: _claim_query(
-                table=database.open_table("claims"), vector=query_vector
-            )
-        ),
-        "facts": _timed_ms(
-            operation=lambda: _fact_query(
-                table=database.open_table("facts"), vector=query_vector
-            )
-        ),
-    }
-    LanceChunkIndex(root=root).build_search_indexes()
-    claim_table = database.open_table("claims")
-    fact_table = database.open_table("facts")
-    after = {
-        "claims": _timed_ms(
-            operation=lambda: _claim_query(table=claim_table, vector=query_vector)
-        ),
-        "facts": _timed_ms(
-            operation=lambda: _fact_query(table=fact_table, vector=query_vector)
-        ),
-    }
-    claims = _claim_query(table=claim_table, vector=query_vector)
-    facts = _fact_query(table=fact_table, vector=query_vector)
-    nearest = {
-        "claims": min(cast("float", row["_distance"]) for row in claims),
-        "facts": min(cast("float", row["_distance"]) for row in facts),
-    }
-    filters_hold = (
-        len(claims) == 10
-        and len(facts) == 10
-        and nearest["claims"] < 1e-6
-        and nearest["facts"] < 1e-6
-        and all(
-            row["deployment_id"] == "d3" and row["is_current_testimony"]
-            for row in claims
-        )
-        and all(
-            row["deployment_id"] == "d3" and row["kind"] == "relation" for row in facts
-        )
-    )
-    partitions = max(1, math.ceil(rows_per_table / LANCE_TARGET_PARTITION_ROWS))
-    return RetrievalSpikeMeasurement(
-        name="lance_filtered_search",
-        scale=_SETTINGS.lance_rows,
-        metrics={
-            "rows_per_table": rows_per_table,
-            "unindexed_p95_ms": before,
-            "indexed_p95_ms": after,
-            "returned_by_table": {"claims": len(claims), "facts": len(facts)},
-            "nearest_distance_by_table": nearest,
-            "filters_hold": filters_hold,
-        },
-        selected={
-            "scalar_indexes": "deployment_id=BTREE, flags=BITMAP",
-            "vector_index": "IVF_FLAT",
-            "target_partition_rows": LANCE_TARGET_PARTITION_ROWS,
-            "partitions_at_measured_scale": partitions,
-            "nprobes": LANCE_NPROBES,
-        },
-        limitations=(
-            "CI scale is a capability canary; the report records the 10^7-row run.",
-            "Synthetic 8-dimensional vectors measure engine shape, not model recall.",
-            "The spike exercises the production filter/index parameters directly but not the P1 port wrapper or production-width rows.",
-        ),
-        passed=(
-            filters_hold
-            and len(tuple(claim_table.list_indices())) >= 3
-            and len(tuple(fact_table.list_indices())) >= 3
-        ),
-    )
-
-
-def _lance_batches(*, rows: int, table: str) -> Iterator[pa.RecordBatch]:
-    """Stream deterministic Arrow batches without holding the scale run in RAM."""
-    for start in range(0, rows, 50_000):
-        stop = min(start + 50_000, rows)
-        indexes = range(start, stop)
-        payload: dict[str, pa.Array] = {
-            f"{table[:-1]}_id": pa.array(indexes, type=pa.int64()),
-            "deployment_id": pa.array(
-                [f"d{index % 10}" for index in indexes], type=pa.string()
-            ),
-            "vector": pa.array(
-                [_vector(pattern=index) for index in indexes],
-                type=pa.list_(pa.float32(), _VECTOR_DIMENSION),
-            ),
-        }
-        if table == "claims":
-            payload["text"] = pa.array(
-                [f"synthetic claim {index}" for index in indexes], type=pa.string()
-            )
-            payload["is_current_testimony"] = pa.array(
-                [index % 7 != 0 for index in indexes], type=pa.bool_()
-            )
-        else:
-            payload["kind"] = pa.array(
-                ["relation" if index % 2 else "observation" for index in indexes],
-                type=pa.string(),
-            )
-        yield pa.record_batch(payload)
-
-
-def _vector(*, pattern: int) -> list[float]:
-    """One independently seeded, deterministic pseudo-random vector."""
-    randomizer = Random(pattern)
-    return [randomizer.random() for _ in range(_VECTOR_DIMENSION)]
-
-
-def _claim_query(*, table: object, vector: list[float]) -> list[dict[str, object]]:
-    """The production claims filter shape, including scalar prefiltering."""
-    return cast(
-        "list[dict[str, object]]",
-        table.search(vector)  # type: ignore[attr-defined]
-        .where("deployment_id = 'd3' AND is_current_testimony", prefilter=True)
-        .nprobes(LANCE_NPROBES)
-        .limit(10)
-        .to_list(),
-    )
-
-
-def _fact_query(*, table: object, vector: list[float]) -> list[dict[str, object]]:
-    """The production facts filter shape, including scalar prefiltering."""
-    return cast(
-        "list[dict[str, object]]",
-        table.search(vector)  # type: ignore[attr-defined]
-        .where("deployment_id = 'd3' AND kind = 'relation'", prefilter=True)
-        .nprobes(LANCE_NPROBES)
-        .limit(10)
-        .to_list(),
-    )
+        RetrievalSpikeReport(measurements=(duplicate,) * 5)
 
 
 def _hub_pagination(*, root: Path) -> RetrievalSpikeMeasurement:

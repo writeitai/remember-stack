@@ -19,8 +19,8 @@ instructions: |
   2. Each port has both adapters: self-host (S3-compatible store, Postgres-backed queue, local
      directory mounts, generic git remote, BYO keys) and the reference set (GCS, Cloud Tasks,
      gcsfuse, hosted git).
-  3. The engine is NOT abstracted: Postgres, LanceDB, LadybugDB, and the E/K/P data model are
-     used directly — no "database-agnostic" indirection layers wrap them.
+  3. The engine is NOT abstracted: PostgreSQL 18 (spine and P1), LadybugDB (P2), and the E/K/P
+     data model are used directly — no "database-agnostic" indirection layers wrap them.
   4. A runnable self-host profile exists (docker-compose or equivalent) that brings up one
      complete deployment on the self-host adapters, with every correctness capability
      included.

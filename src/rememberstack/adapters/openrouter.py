@@ -459,6 +459,8 @@ class OpenRouterModelProvider:
             "model": request.model,
             "input": list(request.texts),
         }
+        if request.dimensions is not None:
+            payload["dimensions"] = request.dimensions
         provider = self._embedding_provider_payload()
         if provider is not None:
             payload["provider"] = provider
@@ -483,6 +485,13 @@ class OpenRouterModelProvider:
         if any(len(vector) == 0 for vector in vectors):
             raise OpenRouterInvalidResponseError(
                 "provider returned an empty embedding vector", usage=usage
+            )
+        if request.dimensions is not None and any(
+            len(vector) != request.dimensions for vector in vectors
+        ):
+            raise OpenRouterInvalidResponseError(
+                "provider returned an embedding dimension that differs from the request",
+                usage=usage,
             )
         return EmbeddingResponse(vectors=vectors, usage=usage)
 

@@ -374,7 +374,7 @@ DELETION_TARGETS: Final = (
         target_id="p1_candidate",
         summary="A stale P1 nomination candidate is deleted from PostgreSQL.",
         mutation=(
-            "Delete the nominated chunk, claim, or entity behind a frozen Lance "
+            "Delete the nominated chunk, claim, or entity behind a frozen P1 "
             "candidate set, then run the semantic and lexical functions."
         ),
         identifier_classes=("chunk", "claim", "entity", "content_hash"),
@@ -384,7 +384,7 @@ DELETION_TARGETS: Final = (
         ),
         executed_in="C",
         deferred_reason=(
-            "the Lance nomination path and the in-function PostgreSQL confirmation "
+            "the P1 nomination path and the in-function PostgreSQL confirmation "
             "that drops a stale candidate are Batch C"
         ),
     ),

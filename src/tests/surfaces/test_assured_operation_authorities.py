@@ -1,9 +1,11 @@
 """Pure guards that retained operations consume the accepted query authorities."""
 
+import inspect
 from unittest.mock import MagicMock
 
 import pytest
 
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.surfaces.query_engine import _configure_fact_context_connection
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
@@ -11,12 +13,10 @@ from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT
-from rememberstack.surfaces.query_engine import _CONFIRM_FACT_ELIGIBILITY
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_EVIDENCE
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
 from rememberstack.surfaces.query_engine import _FACT_CONTEXT_CONTRADICTION_MEMBERS
-from rememberstack.surfaces.query_engine import _FACT_CONTEXT_ELIGIBILITY
 from rememberstack.surfaces.query_engine import _MULTI_HOP_EDGE_EVIDENCE
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
@@ -47,15 +47,11 @@ def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     """Current membership, D54 state, and co-members come from memory_v1."""
     confirmation_sql = str(_CONFIRM_FACT_CONTEXT)
     evidence_sql = str(_CURRENT_FACT_EVIDENCE)
-    eligibility_sql = str(_FACT_CONTEXT_ELIGIBILITY)
-    eligibility_confirmation_sql = str(_CONFIRM_FACT_ELIGIBILITY)
+    ranked_sql = inspect.getsource(PostgresP1Index.search_facts_scored)
     assert "memory_v1.facts_visible_history" in confirmation_sql
-    assert "memory_v1.facts_visible_history" in eligibility_confirmation_sql
-    # Indexed base coordinates nominate the entity-scoped set. A second exact
-    # PostgreSQL authority read supplies the only IDs P1 may actually rank.
-    assert "v_memory_entity_survivor" in eligibility_sql
-    assert "FROM relations AS relation" in eligibility_sql
-    assert "FROM observations AS observation" in eligibility_sql
+    assert "memory_v1.facts_visible_history" in ranked_sql
+    assert "coverage DESC" in ranked_sql
+    assert "entity_ids" in ranked_sql
     assert "fact.valid_until > :evaluated_at" in confirmation_sql
     assert "fact.fact_kind = requested.kind" in confirmation_sql
     assert "JOIN relations" not in confirmation_sql

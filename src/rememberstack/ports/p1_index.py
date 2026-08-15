@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from datetime import timedelta
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -11,11 +10,15 @@ from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1EntityRow
-from rememberstack.model import P1FactMetadataRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import FactTime
-from rememberstack.model.p1_maintain import MaintainReport
-from rememberstack.model.p1_maintain import TableMaintainStats
+
+P1_VECTOR_DIMENSIONS = 1_536
+"""Fixed D94 semantic dimension for every current P1 target."""
+
+CLAIM_INPUT_POLICY = "claim-text-v1"
+FACT_INPUT_POLICY = "fact-label-v1"
+ENTITY_INPUT_POLICY = "entity-canonical-name-v1"
 
 
 @runtime_checkable
@@ -72,10 +75,6 @@ class FactIndexPort(Protocol):
 
     def upsert_facts(self, *, rows: tuple[P1FactRow, ...]) -> None:
         """Insert or replace rows by (deployment_id, kind, fact_id); idempotent."""
-        ...
-
-    def update_fact_metadata(self, *, rows: tuple[P1FactMetadataRow, ...]) -> None:
-        """Refresh mutable time/status scalars without re-embedding labels."""
         ...
 
 
@@ -192,6 +191,7 @@ class P1ScoredSearchPort(Protocol):
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         ...
@@ -205,6 +205,7 @@ class P1ScoredSearchPort(Protocol):
         current_only: bool,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         ...
@@ -219,6 +220,7 @@ class P1ScoredSearchPort(Protocol):
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel.
 
@@ -238,6 +240,7 @@ class P1ScoredSearchPort(Protocol):
         embedder_generation: str | None = None,
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         ...
@@ -252,6 +255,8 @@ class P1ScoredSearchPort(Protocol):
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        equality_filters: Mapping[str, str] | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
         """Scored facts, with optional D87 time eligibility before top-k."""
         ...
@@ -285,44 +290,4 @@ class EntityIndexPort(Protocol):
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
     ) -> dict[str, tuple[float, ...]]:
         """Profile vectors for the requested ids (absent ids are omitted)."""
-        ...
-
-
-@runtime_checkable
-class P1IndexMaintenancePort(Protocol):
-    """Explicit P1 Lance index maintenance (D91); deployment-free."""
-
-    def build_search_indexes(self) -> None:
-        """Ensure contracted indexes then heavy-retrain all present tables."""
-        ...
-
-    def ensure_search_indexes(
-        self, *, tables: tuple[str, ...] | None = None
-    ) -> MaintainReport:
-        """Create missing matrix indexes; do not replace a healthy index."""
-        ...
-
-    def optimize_tables(
-        self,
-        *,
-        tables: tuple[str, ...] | None = None,
-        cleanup_older_than: timedelta | None = None,
-    ) -> MaintainReport:
-        """Light compact / prune / incremental index fold for the named tables."""
-        ...
-
-    def rebuild_vector_indexes(
-        self, *, tables: tuple[str, ...] | None = None
-    ) -> MaintainReport:
-        """Retrain IVF_FLAT with replace=True; skip below the min-row gate."""
-        ...
-
-    def rebuild_text_indexes(
-        self, *, tables: tuple[str, ...] | None = None
-    ) -> MaintainReport:
-        """Rebuild FTS indexes with replace=True where a text column exists."""
-        ...
-
-    def maintenance_stats(self, *, table: str) -> TableMaintainStats:
-        """Snapshot row, unindexed-tail, and fragment counts for one table."""
         ...

@@ -12,7 +12,6 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.model import BackfillNotDrainedError
 from rememberstack.model import BackfillSeedRequest
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DeploymentBootstrapInput
@@ -21,15 +20,11 @@ from rememberstack.model import LaneRouteError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
-from rememberstack.model.p1_maintain import MaintainReport
-from rememberstack.model.p1_maintain import TableMaintainStats
-from rememberstack.spine import BackfillFinalizer
 from rememberstack.spine import BackfillSeeder
 from rememberstack.spine import BackfillSeederSettings
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
-from rememberstack.spine.p1_maintain_lock import p1_table_maintain_lock_key
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -109,41 +104,6 @@ def _complete_prior_work(*, ledger: WorkLedger, target_ids: tuple[UUID, ...]) ->
         )
         assert isinstance(claimed, ClaimedWork)
         ledger.complete(processing_id=claimed.processing_id)
-
-
-class _RecordingIndexMaintenance:
-    """A structural P1 maintenance fake recording explicit index builds."""
-
-    def __init__(self) -> None:
-        self.builds = 0
-        self.ensures = 0
-
-    def build_search_indexes(self) -> None:
-        """Record one post-backfill build."""
-        self.builds += 1
-
-    def ensure_search_indexes(self, *, tables=None) -> MaintainReport:
-        """Count per-table ensure calls from the finalizer."""
-        self.ensures += 1
-        return MaintainReport()
-
-    def optimize_tables(
-        self, *, tables=None, cleanup_older_than=None
-    ) -> MaintainReport:
-        """Unused D91 port surface for the structural fake."""
-        return MaintainReport()
-
-    def rebuild_vector_indexes(self, *, tables=None) -> MaintainReport:
-        """Unused D91 port surface for the structural fake."""
-        return MaintainReport()
-
-    def rebuild_text_indexes(self, *, tables=None) -> MaintainReport:
-        """Unused D91 port surface for the structural fake."""
-        return MaintainReport()
-
-    def maintenance_stats(self, *, table: str) -> TableMaintainStats:
-        """Unused D91 port surface for the structural fake."""
-        return TableMaintainStats(table=table)
 
 
 def test_version_bump_is_bounded_resumable_and_cannot_starve_steady_work(
@@ -226,61 +186,6 @@ def test_version_bump_is_bounded_resumable_and_cannot_starve_steady_work(
     )
     assert isinstance(claimed_backfill, ClaimedWork)
     assert claimed_backfill.target_id in target_ids[:3]
-
-
-def test_search_indexes_build_only_after_backfill_has_drained(
-    database_engine: Engine, ledger: WorkLedger
-) -> None:
-    """The explicit post-bulk-load index build has a ledger-backed barrier."""
-    target_id = UUID(int=10)
-    _complete_prior_work(ledger=ledger, target_ids=(target_id,))
-    seeded = BackfillSeeder(
-        engine=database_engine, settings=BackfillSeederSettings(batch_size=10)
-    ).seed_batch(
-        request=BackfillSeedRequest(
-            deployment_id=_DEPLOYMENT_ID,
-            stage=PipelineStage.EXTRACT_CLAIMS,
-            component_version=_NEW_VERSION,
-        )
-    )
-    assert seeded.complete and seeded.created == 1
-
-    maintenance = _RecordingIndexMaintenance()
-    finalizer = BackfillFinalizer(
-        engine=database_engine,
-        search_index_maintenance=maintenance,
-        lance_root=Path("/tmp/rememberstack-test-lance"),
-    )
-    with pytest.raises(BackfillNotDrainedError):
-        finalizer.build_search_indexes(deployment_id=_DEPLOYMENT_ID)
-    assert maintenance.ensures == 0
-
-    claimed = ledger.claim_one(
-        deployment_id=_DEPLOYMENT_ID,
-        stage=PipelineStage.EXTRACT_CLAIMS,
-        lane=ProcessingLane.BACKFILL,
-    )
-    assert isinstance(claimed, ClaimedWork)
-    ledger.complete(processing_id=claimed.processing_id)
-
-    finalizer.build_search_indexes(deployment_id=_DEPLOYMENT_ID)
-    assert maintenance.ensures == 4
-
-
-def test_p1_maintain_lock_key_is_root_and_table() -> None:
-    """Custom and default roots must not collide; Path and str resolve alike."""
-    left = p1_table_maintain_lock_key(
-        lance_root="/tmp/rememberstack-a/lance", table_name="facts"
-    )
-    right = p1_table_maintain_lock_key(
-        lance_root=Path("/tmp/rememberstack-a/lance"), table_name="facts"
-    )
-    other = p1_table_maintain_lock_key(
-        lance_root="/tmp/rememberstack-b/lance", table_name="facts"
-    )
-    assert left == right
-    assert left != other
-    assert left.endswith(":facts")
 
 
 def test_unlaned_stage_cannot_be_seeded_as_backfill(database_engine: Engine) -> None:

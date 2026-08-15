@@ -169,6 +169,7 @@ def _restore_pre_forget_postgres(*, engine: Engine) -> None:
         _seed_documents(connection=connection)
         _seed_structure_provenance(connection=connection)
         _seed_evidence(connection=connection)
+        _seed_postgres_p1_residuals(connection=connection)
         _seed_knowledge_and_residuals(connection=connection)
 
 
@@ -606,6 +607,40 @@ def _seed_evidence(*, connection: Connection) -> None:
     _seed_resolution_residuals(connection=connection)
 
 
+def _seed_postgres_p1_residuals(*, connection: Connection) -> None:
+    """Seed source-bearing D94 state that hard-forget must erase selectively."""
+    connection.execute(
+        text(
+            "INSERT INTO chunk_search (deployment_id, chunk_id, search_text,"
+            " embedding, embedding_model, embedding_input_policy_version,"
+            " embedding_text_hash) VALUES"
+            " (:d, :target_chunk, :target_text,"
+            " array_fill(0.125::real, ARRAY[1536])::vector, 'd94-test',"
+            " 'e1-embed-input-v1:char', 'target-hash'),"
+            " (:d, :control_chunk, 'control search text',"
+            " array_fill(0.25::real, ARRAY[1536])::vector, 'd94-test',"
+            " 'e1-embed-input-v1:char', 'control-hash')"
+        ),
+        {
+            "d": _DEPLOYMENT_ID,
+            "target_chunk": _TARGET_CHUNK_ID,
+            "target_text": f"search residual {_TOKEN}",
+            "control_chunk": _CONTROL_CHUNK_ID,
+        },
+    )
+    connection.execute(
+        text(
+            "UPDATE entities SET"
+            " embedding = array_fill(0.5::real, ARRAY[1536])::vector,"
+            " embedding_model = 'd94-test',"
+            " embedding_input_policy_version = 'entity-canonical-name-v1',"
+            " embedding_text_hash = 'entity-hash'"
+            " WHERE deployment_id = :d AND entity_id = ANY(:entity_ids)"
+        ),
+        {"d": _DEPLOYMENT_ID, "entity_ids": [_EXCLUSIVE_ENTITY_ID, _CONTROL_ENTITY_ID]},
+    )
+
+
 def _seed_mention(
     *,
     connection: Connection,
@@ -1008,6 +1043,8 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert target[:4] == (None, None, None, None)
         assert target.deleted_at is not None
         assert _count(connection, "chunks", "doc_id", _TARGET_DOC_ID) == 0
+        assert _count(connection, "chunk_search", "chunk_id", _TARGET_CHUNK_ID) == 0
+        assert _count(connection, "chunk_search", "chunk_id", _CONTROL_CHUNK_ID) == 1
         assert _count(connection, "claims", "doc_id", _TARGET_DOC_ID) == 0
         assert _count(connection, "mentions", "doc_id", _TARGET_DOC_ID) == 0
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
@@ -1043,6 +1080,22 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             {"d": _DEPLOYMENT_ID, "entity": _EXCLUSIVE_ENTITY_ID},
         ).one()
         assert exclusive_entity == ("", "", "retired", None)
+        exclusive_embedding = connection.execute(
+            text(
+                "SELECT embedding, embedding_model,"
+                " embedding_input_policy_version, embedding_text_hash"
+                " FROM entities WHERE deployment_id = :d AND entity_id = :entity"
+            ),
+            {"d": _DEPLOYMENT_ID, "entity": _EXCLUSIVE_ENTITY_ID},
+        ).one()
+        assert exclusive_embedding == (None, None, None, None)
+        assert connection.execute(
+            text(
+                "SELECT embedding IS NOT NULL FROM entities"
+                " WHERE deployment_id = :d AND entity_id = :entity"
+            ),
+            {"d": _DEPLOYMENT_ID, "entity": _CONTROL_ENTITY_ID},
+        ).scalar_one()
         assert _count(connection, "aliases", "entity_id", _EXCLUSIVE_ENTITY_ID) == 0
         assert (
             _deployment_rows(connection=connection, table="generic_identifier_guard")
@@ -1138,6 +1191,8 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
                 " UNION ALL SELECT error FROM document_versions WHERE deployment_id = :d"
                 " UNION ALL SELECT claim_text FROM claims WHERE deployment_id = :d"
                 " UNION ALL SELECT source_span FROM claims WHERE deployment_id = :d"
+                " UNION ALL SELECT search_text FROM chunk_search"
+                "   WHERE deployment_id = :d"
                 " UNION ALL SELECT surface_form FROM mentions WHERE deployment_id = :d"
                 " UNION ALL SELECT fact_label FROM relations WHERE deployment_id = :d"
                 " UNION ALL SELECT statement FROM observations WHERE deployment_id = :d"

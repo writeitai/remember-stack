@@ -19,18 +19,19 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import AdjudicationVerdict
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EntityRef
 from rememberstack.model import ModelRequest
-from rememberstack.model import P1EntityRow
 from rememberstack.model import ResolutionCandidate
 from rememberstack.model import ResolvedEntity
 from rememberstack.model import ResolverConfig
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
-from rememberstack.ports.p1_index import EntityIndexPort
+from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.entity_registry import normalized_lemma
 
 
@@ -64,20 +65,18 @@ class CascadeResolver:
         self,
         *,
         engine: Engine,
-        entity_index: EntityIndexPort,
         model_provider: ModelProviderPort,
         config: ResolverConfig,
         embedding_model: str,
         small_model: str,
         frontier_model: str,
     ) -> None:
-        """Bind the cascade to the registry, the T3 index, and the T4 models.
+        """Bind the cascade to the registry and its T3/T4 model seats.
 
         Model seats follow the port-default principle (D70's pattern): the
         adjudicator ladder is deployment configuration, measured per phase.
         """
         self._engine = engine
-        self._entity_index = entity_index
         self._model_provider = model_provider
         self._config = config
         self._embedding_model = embedding_model
@@ -133,6 +132,7 @@ class CascadeResolver:
                 connection=connection, deployment_id=deployment_id, lemma=lemma
             )
             decision = self._decide(
+                connection=connection,
                 deployment_id=deployment_id,
                 reference=reference,
                 claim=claim,
@@ -211,7 +211,9 @@ class CascadeResolver:
         thresholds = self._config.thresholds_for(entity_type=entity_type)
         vectors = self._model_provider.embed(
             request=EmbeddingRequest(
-                model=self._embedding_model, texts=(surface_a, surface_b)
+                model=self._embedding_model,
+                texts=(surface_a, surface_b),
+                dimensions=P1_VECTOR_DIMENSIONS,
             )
         ).vectors
         score = _cosine(vectors[0], vectors[1])
@@ -275,6 +277,7 @@ class CascadeResolver:
     def _decide(
         self,
         *,
+        connection: Connection,
         deployment_id: UUID,
         reference: EntityRef,
         claim: ClaimForNormalization,
@@ -287,6 +290,7 @@ class CascadeResolver:
             return None
         thresholds = self._config.thresholds_for(entity_type=reference.type)
         scored = self._t3_scores(
+            connection=connection,
             deployment_id=deployment_id,
             reference=reference,
             candidates=candidates,
@@ -347,6 +351,7 @@ class CascadeResolver:
     def _t3_scores(
         self,
         *,
+        connection: Connection,
         deployment_id: UUID,
         reference: EntityRef,
         candidates: tuple[ResolutionCandidate, ...],
@@ -361,18 +366,21 @@ class CascadeResolver:
         query_vector = self._embed(
             surface=reference.name, meter=meter, call_key=call_key
         )
-        by_id = self._entity_index.entity_vectors(
-            deployment_id=str(deployment_id),
-            entity_ids=tuple(str(candidate.entity_id) for candidate in candidates),
-        )
+        by_id = {
+            row["entity_id"]: float(row["score"])
+            for row in connection.execute(
+                _ENTITY_VECTOR_SCORES,
+                {
+                    "deployment_id": deployment_id,
+                    "entity_ids": [candidate.entity_id for candidate in candidates],
+                    "embedding_model": self._embedding_model,
+                    "input_policy": ENTITY_INPUT_POLICY,
+                    "query_vector": _vector_literal(query_vector),
+                },
+            ).mappings()
+        }
         return tuple(
-            (
-                candidate,
-                None
-                if by_id.get(str(candidate.entity_id)) is None
-                else _cosine(query_vector, by_id[str(candidate.entity_id)]),
-            )
-            for candidate in candidates
+            (candidate, by_id.get(candidate.entity_id)) for candidate in candidates
         )
 
     def _t4(
@@ -472,21 +480,19 @@ class CascadeResolver:
                 "lemma": lemma,
             },
         )
-        self._entity_index.upsert_entities(
-            rows=(
-                P1EntityRow(
-                    entity_id=entity_id,
-                    deployment_id=deployment_id,
-                    type=reference.type,
-                    canonical_name=reference.name,
-                    vector=self._embed(
-                        surface=reference.name, meter=meter, call_key=f"{call_key}:mint"
-                    ),
-                ),
-            )
+        vector = self._embed(
+            surface=reference.name, meter=meter, call_key=f"{call_key}:mint"
         )
         connection.execute(
-            _STAMP_PROFILE_REF, {"entity_id": entity_id, "ref": str(entity_id)}
+            _UPDATE_ENTITY_EMBEDDING,
+            {
+                "entity_id": entity_id,
+                "deployment_id": deployment_id,
+                "embedding": _vector_literal(vector),
+                "embedding_model": self._embedding_model,
+                "input_policy": ENTITY_INPUT_POLICY,
+                "text_hash": embedding_text_hash(reference.name),
+            },
         )
         return self._record(
             connection=connection,
@@ -565,7 +571,11 @@ class CascadeResolver:
     ) -> tuple[float, ...]:
         """One profile/query embedding through the configured port (D63)."""
         response = self._model_provider.embed(
-            request=EmbeddingRequest(model=self._embedding_model, texts=(surface,))
+            request=EmbeddingRequest(
+                model=self._embedding_model,
+                texts=(surface,),
+                dimensions=P1_VECTOR_DIMENSIONS,
+            )
         )
         if meter is not None:
             meter.record(call_key=call_key, tier="T3", usage=response.usage)
@@ -657,6 +667,15 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...] | None) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _vector_literal(vector: tuple[float, ...]) -> str:
+    """Serialize the fixed D94 vector for PostgreSQL's vector input type."""
+    if len(vector) != P1_VECTOR_DIMENSIONS:
+        raise ValueError(
+            f"P1 vector has {len(vector)} dimensions; expected {P1_VECTOR_DIMENSIONS}"
+        )
+    return "[" + ",".join(repr(value) for value in vector) + "]"
+
+
 _LOCK_LEMMA = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
 _PAIR_REACHABLE = text(
@@ -720,6 +739,19 @@ _SELECT_ENTITY_TYPE_EXISTS = text(
     """
 )
 
+_ENTITY_VECTOR_SCORES = text(
+    """
+    SELECT entity_id,
+           1.0 - (embedding <=> CAST(:query_vector AS vector)) AS score
+    FROM entities
+    WHERE deployment_id = :deployment_id
+      AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
+      AND embedding IS NOT NULL
+      AND embedding_model = :embedding_model
+      AND embedding_input_policy_version = :input_policy
+    """
+)
+
 _INSERT_ENTITY = text(
     """
     INSERT INTO entities (
@@ -740,8 +772,16 @@ _INSERT_ALIAS = text(
     """
 )
 
-_STAMP_PROFILE_REF = text(
-    "UPDATE entities SET profile_embedding_ref = :ref WHERE entity_id = :entity_id"
+_UPDATE_ENTITY_EMBEDDING = text(
+    """
+    UPDATE entities SET
+      embedding = CAST(:embedding AS vector),
+      embedding_model = :embedding_model,
+      embedding_input_policy_version = :input_policy,
+      embedding_text_hash = :text_hash,
+      updated_at = now()
+    WHERE deployment_id = :deployment_id AND entity_id = :entity_id
+    """
 )
 
 _INSERT_MENTION = text(

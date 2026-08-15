@@ -1,4 +1,4 @@
-"""S55/WP-7.7 restore drill over LocalFS, Lance, projections, and Git."""
+"""S55/WP-7.7 restore drill over LocalFS, projections, and Git."""
 
 from datetime import datetime
 from datetime import timezone
@@ -9,7 +9,6 @@ from uuid import UUID
 
 import pytest
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.selfhost import LocalGitRepository
@@ -23,10 +22,6 @@ from rememberstack.model import Grain
 from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import ObjectKey
-from rememberstack.model import P1ChunkRow
-from rememberstack.model import P1ClaimRow
-from rememberstack.model import P1EntityRow
-from rememberstack.model import P1FactRow
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import ProjectionCatalog
 from rememberstack.workers import DeletionService
@@ -43,9 +38,6 @@ _FORGET_ID = UUID("55500000-0000-0000-0000-000000000004")
 _ARTIFACT_ID = UUID("55500000-0000-0000-0000-000000000005")
 _FORGOTTEN_IDS = tuple(
     UUID(f"55500000-0000-0000-0000-{suffix:012d}") for suffix in range(10, 14)
-)
-_CONTROL_IDS = tuple(
-    UUID(f"55500000-0000-0000-0000-{suffix:012d}") for suffix in range(20, 24)
 )
 _NOW = datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)
 _TOKEN = "S55_REAL_UNIQUE_FORGOTTEN_TOKEN"
@@ -141,67 +133,6 @@ def _manifest() -> ForgetManifest:
     )
 
 
-def _seed_p1(
-    *, index: LanceChunkIndex, ids: tuple[UUID, UUID, UUID, UUID], text: str
-) -> None:
-    chunk_id, claim_id, fact_id, entity_id = ids
-    vector = (0.0, 1.0)
-    index.upsert_chunks(
-        rows=(
-            P1ChunkRow(
-                chunk_id=chunk_id,
-                deployment_id=_DEPLOYMENT_ID,
-                doc_id=_DOC_ID,
-                version_id=_VERSION_ID,
-                section_role="body",
-                text=text,
-                vector=vector,
-            ),
-        )
-    )
-    index.upsert_claims(
-        rows=(
-            P1ClaimRow(
-                claim_id=claim_id,
-                deployment_id=_DEPLOYMENT_ID,
-                doc_id=_DOC_ID,
-                chunk_id=chunk_id,
-                text=text,
-                is_current_testimony=True,
-                is_attributed=True,
-                vector=vector,
-            ),
-        )
-    )
-    index.upsert_facts(
-        rows=(
-            P1FactRow(
-                fact_id=fact_id,
-                deployment_id=_DEPLOYMENT_ID,
-                kind="relation",
-                label=text,
-                status="active",
-                valid_from=None,
-                valid_until=None,
-                ingested_at=_NOW,
-                invalidated_at=None,
-                vector=vector,
-            ),
-        )
-    )
-    index.upsert_entities(
-        rows=(
-            P1EntityRow(
-                entity_id=entity_id,
-                deployment_id=_DEPLOYMENT_ID,
-                type="Concept",
-                canonical_name=text,
-                vector=vector,
-            ),
-        )
-    )
-
-
 def _seed_git(*, repository: Path) -> Path:
     _git("init", "--quiet", "-b", "main", str(repository))
     _git("-C", str(repository), "config", "user.name", "Fixture")
@@ -266,23 +197,12 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
     """Restore whole and independent stores; readiness must purge them again."""
     objects = LocalFSObjectStore(root=tmp_path / "objects")
     snapshots = LocalFSObjectStore(root=tmp_path / "snapshots")
-    lance = LanceChunkIndex(root=tmp_path / "lance")
     p2_root = tmp_path / "p2"
     mount_root = tmp_path / "mount"
     repository = tmp_path / "knowledge"
     backup = _seed_git(repository=repository)
     objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode())
     objects.write_bytes(key=_CONTROL_KEY, content=_CONTROL.encode())
-    _seed_p1(
-        index=lance,
-        ids=cast(tuple[UUID, UUID, UUID, UUID], _FORGOTTEN_IDS),
-        text=_TOKEN,
-    )
-    _seed_p1(
-        index=lance,
-        ids=cast(tuple[UUID, UUID, UUID, UUID], _CONTROL_IDS),
-        text=_CONTROL,
-    )
     _seed_projections(snapshot_store=snapshots, p2_root=p2_root, mount_root=mount_root)
     projection_catalog = _ProjectionCatalog()
     git = LocalGitRepository(
@@ -296,7 +216,6 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         catalog=cast(ForgetCatalog, catalog),
         deletion=cast(DeletionService, _Deletion()),
         object_purgers=(objects,),
-        p1=lance,
         projection_rebuilder=cast(ForgetProjectionRebuilder, _ProjectionRebuilder()),
         projection_purger=SelfHostProjectionPurger(
             object_purger=snapshots,
@@ -322,15 +241,6 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         with pytest.raises(FileNotFoundError):
             objects.read_bytes(key=_OBJECT_KEY)
         assert objects.read_bytes(key=_CONTROL_KEY) == _CONTROL.encode()
-        assert (
-            lance.chunk_vectors(
-                deployment_id=str(_DEPLOYMENT_ID), chunk_ids=(str(_FORGOTTEN_IDS[0]),)
-            )
-            == {}
-        )
-        assert lance.chunk_vectors(
-            deployment_id=str(_DEPLOYMENT_ID), chunk_ids=(str(_CONTROL_IDS[0]),)
-        )
         assert not _contains(root=p2_root, token=_TOKEN)
         assert not _contains(root=mount_root, token=_TOKEN)
         assert _contains(root=p2_root, token=_CONTROL)
@@ -348,13 +258,6 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
 
     def restore_objects() -> None:
         objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode())
-
-    def restore_p1() -> None:
-        _seed_p1(
-            index=lance,
-            ids=cast(tuple[UUID, UUID, UUID, UUID], _FORGOTTEN_IDS),
-            text=_TOKEN,
-        )
 
     def restore_projections() -> None:
         projection_catalog.prefixes.add(_PROJECTION_PREFIX.root)
@@ -375,7 +278,7 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         _git("-C", str(repository), "reset", "--hard", "refs/rememberstack/restore")
         _git("-C", str(repository), "update-ref", "-d", "refs/rememberstack/restore")
 
-    restorers = (restore_objects, restore_p1, restore_projections, restore_git)
+    restorers = (restore_objects, restore_projections, restore_git)
     for restore in restorers:
         restore()
     readiness.ensure_ready(deployment_id=_DEPLOYMENT_ID)

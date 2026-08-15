@@ -55,8 +55,9 @@ mentions (immutable — the transcript)        entities (the registry)
   mention_id, surface_form, normalized_lemma,  entity_id        ← NEVER reused
   context, claim_id|chunk_id, doc_id,          type (→ type registry), canonical_name,
   language, char_span                          status, merged_into (redirect chain),
-        │                                       profile_summary, profile_embedding,
-        │                                       profile_embed_version, profile_embedding_text_hash
+        │                                       profile_summary, embedding,
+        │                                       embedding_model, embedding_input_policy_version,
+        │                                       embedding_text_hash
         ▼
 resolution_decisions (append-only — the verdict)   aliases
   decision_id, mention_id → entity_id,               alias_id, entity_id, alias_text,
@@ -87,7 +88,7 @@ Invariants: `entity_id` is **never reused**; a merge is a **redirect** (`merged_
 rewrite (Wikidata model) — everything downstream that stored the old ID still resolves; P2
 rebuild (D7) re-points graph edges on merge/un-merge for free.
 
-### Entity profiles — maintenance of `profile_summary` / `profile_embedding`
+### Entity profiles — maintenance of `profile_summary` / `embedding`
 
 The registry caches two derived fields per entity, and they are **inputs to the cascade
 below**, so their maintenance is owned here. `profile_summary` — a short blurb ("Czech ML

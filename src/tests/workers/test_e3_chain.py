@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
@@ -216,14 +216,15 @@ class _E3Rig:
             raw_store=raw_store,
             admission=ForgetCatalog(engine=engine),
         )
-        self.lance = LanceChunkIndex(root=root / "lance")
+        self.p1 = PostgresP1Index(
+            engine=engine, embedding_model=P1Settings().embedding_model
+        )
         self.normalize_handler = NormalizeRelationsHandler(
             claim_catalog=claim_catalog,
             chunk_catalog=chunk_catalog,
             registry=EntityRegistry(engine=engine),
             resolver=CascadeResolver(
                 engine=engine,
-                entity_index=self.lance,
                 model_provider=self.provider,
                 config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                 embedding_model="qwen/qwen3-embedding-8b",
@@ -270,7 +271,7 @@ class _E3Rig:
                 catalog=chunk_catalog,
                 artifact_store=artifact_store,
                 model_provider=self.provider,
-                chunk_index=LanceChunkIndex(root=root / "lance"),
+                chunk_index=self.p1,
                 settings=E1Settings(),
                 params=_PARAMS,
             ),
@@ -319,7 +320,7 @@ class _E3Rig:
                 claim_catalog=claim_catalog,
                 chunk_catalog=chunk_catalog,
                 model_provider=self.provider,
-                claim_index=self.lance,
+                claim_index=self.p1,
                 settings=P1Settings(),
                 chunker_version=chunker_version(params=_PARAMS),
             ),
@@ -327,7 +328,7 @@ class _E3Rig:
         self.label_handler = LabelFactsHandler(
             facts=FactCatalog(engine=engine),
             model_provider=self.provider,
-            fact_index=self.lance,
+            fact_index=self.p1,
             settings=P1Settings(),
         )
         registry.register(
@@ -761,8 +762,8 @@ def test_t0_never_resolves_to_a_merged_entity(rig: _E3Rig) -> None:
 
 def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
     """WP-1.5 acceptance: the claims channel (with the current-testimony
-    default-filter scalar) and the labeled facts channel land in Lance, and
-    the PG rows carry their refs and generations (D8)."""
+    default-filter scalar) and the labeled facts channel land in PostgreSQL,
+    with complete vector attestation on their natural rows (D94)."""
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
@@ -773,34 +774,58 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
     )
     rig.run_chain()
 
-    assert rig.lance.table_count(table="claims") == 2
-    assert rig.lance.table_count(table="facts") == 2  # relation + observation
+    with rig.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM claims WHERE embedding IS NOT NULL")
+            ).scalar_one()
+            == 2
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM relations WHERE embedding IS NOT NULL)"
+                    " + (SELECT count(*) FROM observations WHERE embedding IS NOT NULL)"
+                )
+            ).scalar_one()
+            == 2
+        )
 
     with rig.engine.connect() as connection:
         stamped = connection.execute(
             text(
-                "SELECT count(*) FROM claims WHERE embedding_ref IS NOT NULL"
-                " AND embedding_version = 'qwen/qwen3-embedding-8b'"
+                "SELECT count(*) FROM claims WHERE embedding IS NOT NULL"
+                " AND embedding_model = 'qwen/qwen3-embedding-8b'"
+                " AND embedding_input_policy_version = 'claim-text-v1'"
             )
         ).scalar_one()
         relation = (
             connection.execute(
                 text(
-                    "SELECT fact_label, fact_label_version,"
-                    " fact_label_embedding_ref FROM relations"
+                    "SELECT fact_label, fact_label_version, embedding IS NOT NULL"
+                    " AS embedded, embedding_model FROM relations"
                 )
             )
             .mappings()
             .one()
         )
-        observation_version = connection.execute(
-            text("SELECT obs_label_version FROM observations")
-        ).scalar_one()
+        observation = (
+            connection.execute(
+                text(
+                    "SELECT embedding IS NOT NULL AS embedded, embedding_model"
+                    " FROM observations"
+                )
+            )
+            .mappings()
+            .one()
+        )
     assert stamped == 2
     assert relation["fact_label"] == "Alice Novak works for Acme"
     assert relation["fact_label_version"] is not None
-    assert relation["fact_label_embedding_ref"] is not None
-    assert observation_version is not None
+    assert relation["embedded"] is True
+    assert relation["embedding_model"] == "qwen/qwen3-embedding-8b"
+    assert observation["embedded"] is True
+    assert observation["embedding_model"] == "qwen/qwen3-embedding-8b"
 
     # replay: a second label pass finds nothing unlabeled — zero new calls:
     calls = len(rig.provider.generated_prompts)

@@ -1,22 +1,21 @@
 schema_version: 1
 id: p2_no_vectors_in_graph
 type: harness_judge
-description: The graph holds no embeddings and no FTS — vectors live in Lance; relation fact-labels are embedded in a Lance table with scalar columns.
-tags: [p2, p1, D8]
+description: The graph holds no embeddings or FTS; PostgreSQL-native P1 stores derived relation-label vectors on the natural relation rows.
+tags: [p2, p1, D8, D94]
 instructions: |
   You are judging whether this repository's IMPLEMENTATION honors a binding design invariant.
   Read plan/designs/p2_graph_design.md — the binding source — and decisions.md D8 for rationale and
-  refinement history, then inspect the P2 snapshot contents and the Lance table definitions
+  refinement history, then inspect the P2 snapshot contents and PostgreSQL P1 definitions
   under src/. These are acceptance checks for the FINAL system: if the subsystem is absent or
   partial, score 0.
 
   Verify ALL of the following:
   1. No vector index, no embedding column, and no FTS index exists in the LadybugDB snapshot.
-  2. Each relation has a canonical fact label embedded in a Lance relations table keyed by
-     relation_id, with scalar columns (subject_id, predicate, object_id, validity window,
-     evidence_count) for filtered hybrid search.
-  3. The retrieval flow is Lance-entry -> ID-keyed expansion in the graph (top-k relation_ids
-     then BFS/paths), not in-graph semantic search.
+  2. Each relation's canonical fact label and disposable P1 embedding are co-located on the
+     natural PostgreSQL relation row; no relation-search mirror table exists.
+  3. The retrieval flow ranks relation ids through PostgreSQL P1 and may then expand those ids
+     in the graph; semantic search does not run inside LadybugDB.
 
   Source precedence: the design docs under plan/designs/ are the binding statement of the
   current system; the decision log is its indexed record — read cited decisions together

@@ -236,7 +236,7 @@ def _rows(url: str, statement: str, parameters: tuple[object, ...]) -> list[tupl
 def test_graph_helpers_run_through_the_sql_sandbox_without_projection(
     graph: tuple[str, list[tuple[str, str, str]]],
 ) -> None:
-    """Both PostgreSQL-native graph helpers bypass the Lance bridge."""
+    """Both PostgreSQL-native graph helpers bypass model-assisted search."""
     url, edges = graph
     executor = QuerySandboxExecutor(
         deployment_id=_DEPLOYMENT,

@@ -40,7 +40,7 @@ class QueryErrorCode(StrEnum):
     EXECUTION_ERROR = "execution_error"
     # Store / confirmation
     PG_UNAVAILABLE = "pg_unavailable"
-    LANCE_UNAVAILABLE = "lance_unavailable"
+    P1_UNAVAILABLE = "p1_unavailable"
     P2_UNAVAILABLE = "p2_unavailable"
     CORPUS_BODY_UNAVAILABLE = "corpus_body_unavailable"
     GENERATION_UNAVAILABLE = "generation_unavailable"

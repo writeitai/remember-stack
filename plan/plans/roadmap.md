@@ -48,8 +48,8 @@ needs to restate it:
   (grain CI, envelope invariants, canaries) run in the same CI as unit tests.
 - **Migrations:** Alembic, generated against `postgres_schema_design.md` (the schema doc is
   the source of truth; migrations implement it, never fork it).
-- **The engine — fixed everywhere, never abstracted (D61 anti-goal):** Postgres (the spine),
-  LanceDB (P1), LadybugDB (P2), the E/K/P data model, PageIndex (structure), semchunk
+- **The engine — fixed everywhere, never abstracted (D61 anti-goal):** PostgreSQL 18
+  (the spine and P1 search), LadybugDB (P2), the E/K/P data model, PageIndex (structure), semchunk
   (packing), Codex/OpenCode (K producers) with cross-family checkers (D53).
 - **The substrate — reached only through the D61 ports**, each with a self-host and a GCP
   reference adapter: object store (MinIO/local ↔ GCS), task queue (**delivery-only** over
@@ -137,7 +137,7 @@ this maps them to the phase that must run them, at entry or inside):
 | 2 | ER threshold curves per type, Czech/D-M recall, un-merge ripple, scale load-test (registries §11); observation adjudicator eval + hub cost (observations §7) |
 | 3 | reuse hit-rate under A1–A3, conversion cost floor, connector identity rules, versioning-mode defaults, cross-cycle move gap, zero-support false-withdrawal (lifecycle §11; e1 §10.4) |
 | 4 | the D44 P2 spikes (UUID PK, ATTACH throughput, merge-recursion gate, as-of path perf, retention, NULL timestamps — questions #20a); placement quality + P3 cadence (e0 §8); storage-class routing (e0 §8.6) |
-| 5 | Lance filtered search at scale, hub pagination, rerank weights, envelope overhead, hydration batching, `resolve` context ranking, the S58 protocol (retrieval §13) |
+| 5 | PostgreSQL-native P1 functional contracts, hub pagination, rerank weights, envelope overhead, hydration batching, `resolve` context ranking, the S58 protocol (retrieval §13) |
 | 6 | rule-kind coverage, planner blast-radius bands, writer completeness eval, compile economics, git-history erasure (k_layers §11) |
 | 7 | D23 partition/index profiles at ungated volume; provider-neutral batching under injected latency; dispatch semantics (k_layers §11.7) |
 | 8 | benchmark landscape survey (the field moves; select at execution time — phase file WP-8.1) |

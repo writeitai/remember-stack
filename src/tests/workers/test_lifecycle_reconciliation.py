@@ -25,7 +25,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
@@ -235,7 +235,9 @@ class _LifecycleRig:
             raw_store=raw_store,
             admission=ForgetCatalog(engine=engine),
         )
-        self.lance = LanceChunkIndex(root=root / "lance")
+        self.p1 = PostgresP1Index(
+            engine=engine, embedding_model=P1Settings().embedding_model
+        )
         registry = HandlerRegistry()
         registry.register(
             stage=PipelineStage.CONVERT,
@@ -266,7 +268,7 @@ class _LifecycleRig:
                 catalog=chunk_catalog,
                 artifact_store=artifact_store,
                 model_provider=self.provider,
-                chunk_index=self.lance,
+                chunk_index=self.p1,
                 settings=E1Settings(),
                 params=_PARAMS,
             ),
@@ -294,7 +296,6 @@ class _LifecycleRig:
                 registry=EntityRegistry(engine=engine),
                 resolver=CascadeResolver(
                     engine=engine,
-                    entity_index=self.lance,
                     model_provider=self.provider,
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                     embedding_model="qwen/qwen3-embedding-8b",
@@ -334,7 +335,7 @@ class _LifecycleRig:
                 claim_catalog=claim_catalog,
                 chunk_catalog=chunk_catalog,
                 model_provider=self.provider,
-                claim_index=self.lance,
+                claim_index=self.p1,
                 settings=P1Settings(),
                 chunker_version=chunker_version(params=_PARAMS),
             ),
@@ -344,7 +345,7 @@ class _LifecycleRig:
             handler=LabelFactsHandler(
                 facts=FactCatalog(engine=engine),
                 model_provider=self.provider,
-                fact_index=self.lance,
+                fact_index=self.p1,
                 settings=P1Settings(),
             ),
         )

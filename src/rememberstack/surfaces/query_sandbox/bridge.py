@@ -36,7 +36,6 @@ from rememberstack.surfaces.query_sandbox.nomination import confirm
 from rememberstack.surfaces.query_sandbox.nomination import confirm_chunk_coordinates
 from rememberstack.surfaces.query_sandbox.nomination import Confirmation
 from rememberstack.surfaces.query_sandbox.nomination import current_chunk_generations
-from rememberstack.surfaces.query_sandbox.nomination import projection_filters
 from rememberstack.surfaces.query_sandbox.nomination import published_contract
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 from rememberstack.surfaces.query_sandbox.nomination import verify_bodies
@@ -55,7 +54,7 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
 
 #: Public functions PostgreSQL runs itself. They need no projection, so the
 #: executor leaves their invocation in place and the planner sees straight
-#: through it; only the Lance-backed ones are resolved and substituted.
+#: through it; model-assisted P1 functions are resolved and substituted.
 SQL_NATIVE_FUNCTIONS: Final = frozenset(
     {"facts_as_of", "graph_neighborhood", "graph_path"}
 )
@@ -340,7 +339,7 @@ def _resolve_one(
         ) from error
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
-            code=QueryErrorCode.LANCE_UNAVAILABLE,
+            code=QueryErrorCode.P1_UNAVAILABLE,
             message="the projection could not be searched",
         ) from error
     # A projection that returns more than it was asked for does not get to
@@ -484,8 +483,7 @@ def _chunk_texts(
         )
     except Exception as error:  # the projection is a separate process
         raise SandboxRejection(
-            code=QueryErrorCode.LANCE_UNAVAILABLE,
-            message="chunk bodies could not be read",
+            code=QueryErrorCode.P1_UNAVAILABLE, message="chunk bodies could not be read"
         ) from error
     return {str(key): value for key, value in texts.items()}
 
@@ -621,7 +619,7 @@ def _nominator(
         # fails as a stated refusal rather than as an attribute error.
         if embed is None:
             raise SandboxRejection(
-                code=QueryErrorCode.LANCE_UNAVAILABLE,
+                code=QueryErrorCode.P1_UNAVAILABLE,
                 message="no embedder is configured for this deployment",
             )
         if embedder_generation is None:
@@ -642,9 +640,8 @@ def _nominator(
             ) from error
 
     def narrow(filters: dict[str, Any]) -> dict[str, str]:
-        # Filters the projection understands are applied there, before top-k,
-        # so a narrow search still fills its k with rows that match.
-        return projection_filters(target=target, filters=filters)
+        """Pass the validated fixed vocabulary into the ranked SQL statement."""
+        return {key: str(value) for key, value in filters.items()}
 
     def semantic_claims(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_claims_scored(  # type: ignore[attr-defined]
@@ -693,6 +690,7 @@ def _nominator(
             kind=filters.get("fact_kind"),
             time=CurrentFactTime(),
             evaluated_at=evaluated_at,
+            equality_filters=narrow(filters),
         )
 
     def semantic_entities(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202

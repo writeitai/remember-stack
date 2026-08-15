@@ -17,7 +17,6 @@ from rememberstack.model import ObjectKey
 from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
-from rememberstack.ports import P1PurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers import DeletionService
@@ -101,9 +100,10 @@ class _Catalog:
         self.materializations += 1
 
     def scrub_postgres(self, *, manifest: ForgetManifest) -> None:
-        self.state.remove("verbatim")
+        self.state.remove("semantic", "verbatim")
 
     def verify_postgres_scrubbed(self, *, manifest: ForgetManifest) -> None:
+        assert _FORGOTTEN not in self.state.channels["semantic"]
         assert _FORGOTTEN not in self.state.channels["verbatim"]
 
     def mark_complete(self, *, manifest: ForgetManifest) -> None:
@@ -136,33 +136,6 @@ class _Objects:
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
     ) -> None:
         assert _FORGOTTEN not in self.state.channels["verbatim"]
-
-
-class _P1:
-    def __init__(self, *, state: _ServingState) -> None:
-        self.state = state
-
-    def purge_rows(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        self.state.remove("semantic")
-
-    def verify_rows_purged(
-        self,
-        *,
-        deployment_id: UUID,
-        chunk_ids: tuple[UUID, ...],
-        claim_ids: tuple[UUID, ...],
-        fact_ids: tuple[UUID, ...],
-        entity_ids: tuple[UUID, ...],
-    ) -> None:
-        assert _FORGOTTEN not in self.state.channels["semantic"]
 
 
 class _ProjectionRebuilder:
@@ -223,7 +196,6 @@ def _readiness(*, state: _ServingState) -> tuple[HardForgetReadiness, _Catalog]:
         catalog=cast(ForgetCatalog, catalog),
         deletion=cast(DeletionService, _Deletion()),
         object_purgers=(cast(ObjectPurgePort, _Objects(state=state)),),
-        p1=cast(P1PurgePort, _P1(state=state)),
         projection_rebuilder=cast(
             ForgetProjectionRebuilder, _ProjectionRebuilder(state=state)
         ),

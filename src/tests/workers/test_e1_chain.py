@@ -1,8 +1,8 @@
-"""WP-1.2 acceptance: structure → chunk → embed, chunks in Postgres and in Lance.
+"""WP-1.2 acceptance: structure → chunk → embed in PostgreSQL.
 
 The full walking-skeleton chain runs against real PostgreSQL, a local-FS
-artifact store, an embedded Lance dataset, and the deterministic fake model
-provider (the ports are the seam — no network).
+artifact store, and the deterministic fake model provider (the ports are the
+seam — no network).
 """
 
 from collections.abc import Iterator
@@ -17,7 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
@@ -104,7 +104,9 @@ class _E1Rig:
         self.engine = engine
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.chunk_index = LanceChunkIndex(root=root / "lance")
+        self.chunk_index = PostgresP1Index(
+            engine=engine, embedding_model=E1Settings().embedding_model
+        )
         self.provider = FakeModelProvider(
             generate_payload={"prefix": "Sits early in the test document."}
         )
@@ -183,8 +185,8 @@ def rig(database_engine: Engine, tmp_path: Path) -> _E1Rig:
     return _E1Rig(engine=database_engine, root=tmp_path)
 
 
-def test_document_reaches_lance_with_prefixed_embeddings(rig: _E1Rig) -> None:
-    """The WP-1.2 acceptance: deterministic repack keys in PG, chunks in Lance."""
+def test_document_reaches_postgres_search_with_prefixed_embeddings(rig: _E1Rig) -> None:
+    """The WP-1.2 acceptance: deterministic repack keys and search rows in PG."""
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
@@ -224,7 +226,10 @@ def test_document_reaches_lance_with_prefixed_embeddings(rig: _E1Rig) -> None:
         assert _SOURCE[row["char_start"] : row["char_end"]].strip()
     assert covered == list(range(covered[-1] + 1))  # gap-free partition
 
-    assert rig.chunk_index.row_count() == len(rows)
+    with rig.engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT count(*) FROM chunk_search")
+        ).scalar_one() == len(rows)
     # D80: no per-chunk location LLM; embed texts are non-empty deterministic strings.
     assert len(rig.provider.generated_prompts) == 0
     assert len(rig.provider.embedded_texts) == len(rows)
@@ -308,7 +313,11 @@ def test_empty_document_chains_through_with_nothing_to_index(rig: _E1Rig) -> Non
             {"version_id": ingested.version_id},
         ).scalar_one()
     assert count == 0
-    assert rig.chunk_index.row_count() == 0
+    with rig.engine.connect() as connection:
+        assert (
+            connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
+            == 0
+        )
 
 
 def test_embed_retry_replays_stored_prefixes(rig: _E1Rig, tmp_path: Path) -> None:

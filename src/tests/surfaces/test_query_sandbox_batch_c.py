@@ -26,13 +26,13 @@ from rememberstack.surfaces.query_sandbox.bridge import SIGNATURES
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.nomination import _filter_predicates
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import (
     CHUNK_TEXT_BYTES_PER_INVOCATION,
 )
-from rememberstack.surfaces.query_sandbox.nomination import PROJECTION_ONLY_FILTERS
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
 
 _ROOT = Path(__file__).parents[3]
@@ -296,7 +296,7 @@ def test_a_projection_failure_fails_the_whole_statement(
         sql="SELECT rank FROM semantic_claims($1, 10)", parameters=["memory"]
     )
     assert outcome.termination_reason == "failed"
-    assert outcome.error_code == QueryErrorCode.LANCE_UNAVAILABLE
+    assert outcome.error_code == QueryErrorCode.P1_UNAVAILABLE
     assert outcome.rows == ()
 
 
@@ -308,7 +308,7 @@ def test_an_unconfigured_projection_says_so(seeded: tuple[str, UUID]) -> None:
     outcome = executor.query_sql(
         sql="SELECT rank FROM semantic_claims($1, 10)", parameters=["memory"]
     )
-    assert outcome.error_code == QueryErrorCode.LANCE_UNAVAILABLE
+    assert outcome.error_code == QueryErrorCode.P1_UNAVAILABLE
 
 
 def test_every_public_function_confirms_against_a_view(
@@ -348,12 +348,18 @@ def test_filters_outside_the_allowlist_are_rejected(target: str, filters: dict) 
     assert caught.value.code == QueryErrorCode.INVALID_PARAMETER
 
 
-def test_source_shape_is_a_projection_filter_only() -> None:
-    """It is a D80 location fact with no PostgreSQL column to repeat it."""
-    assert "source_shape" in PROJECTION_ONLY_FILTERS
+def test_source_shape_is_a_pre_rank_authority_filter() -> None:
+    """The D80 location fact is ranked and confirmed in PostgreSQL."""
     assert validate_filters(target="chunks", filters={"source_shape": "table"}) == {
         "source_shape": "table"
     }
+    predicates, parameters = _filter_predicates(
+        target="chunks", filters={"source_shape": "table"}
+    )
+    assert predicates == [
+        "c.location_facts->'facts'->>'source_shape' = %(f_source_shape)s"
+    ]
+    assert parameters == {"f_source_shape": "table"}
 
 
 def test_k_is_bounded_and_the_budget_is_spent() -> None:
@@ -788,23 +794,6 @@ def test_asking_the_bitemporal_srf_for_no_rows_returns_none(
     assert row[0] == 0
 
 
-def test_tied_scores_rank_by_stable_id() -> None:
-    """Two rows the channel scored identically rank the same way every run."""
-    from rememberstack.adapters.selfhost.lance import LanceChunkIndex
-
-    rows = [
-        {"chunk_id": "ffffffff-0000-0000-0000-000000000001", "_distance": 0.5},
-        {"chunk_id": "00000000-0000-0000-0000-000000000002", "_distance": 0.5},
-    ]
-    nominations = LanceChunkIndex._nominations(  # noqa: SLF001
-        rows, id_column="chunk_id", channel="semantic"
-    )
-    assert [nomination.item_id for nomination in nominations] == [
-        "00000000-0000-0000-0000-000000000002",
-        "ffffffff-0000-0000-0000-000000000001",
-    ]
-
-
 def test_the_chunk_contract_does_not_depend_on_what_survived(
     seeded: tuple[str, UUID],
 ) -> None:
@@ -1208,31 +1197,36 @@ def test_a_boolean_cast_is_applied(seeded: tuple[str, UUID]) -> None:
     assert apply_cast(0, ["integer", "boolean"]) == 0
 
 
-def test_the_real_adapter_carries_the_fact_kind(seeded: tuple[str, UUID]) -> None:
-    """Through `LanceChunkIndex` itself, not a stand-in.
+def test_the_real_adapter_carries_the_fact_kind() -> None:
+    """The PostgreSQL adapter preserves a fact's qualified identity.
 
     The fake search port returns whatever nomination a test hands it, so a
     qualifier that the adapter never sets still arrives at confirmation. This
     exercises the adapter's own builder, which is where the kind is either
     carried or quietly dropped.
     """
-    from rememberstack.adapters.selfhost.lance import LanceChunkIndex
+    from rememberstack.adapters.postgres_p1 import _nominations
 
     rows = [
-        {"fact_id": "00000000-0000-0000-0000-000000000001", "kind": "relation"},
-        {"fact_id": "00000000-0000-0000-0000-000000000002", "kind": "observation"},
+        {
+            "item_id": "00000000-0000-0000-0000-000000000001",
+            "qualifier": "relation",
+            "score": 0.9,
+        },
+        {
+            "item_id": "00000000-0000-0000-0000-000000000002",
+            "qualifier": "observation",
+            "score": 0.8,
+        },
     ]
-    nominations = LanceChunkIndex._nominations(  # noqa: SLF001
-        rows, id_column="fact_id", channel="semantic", qualifier_column="kind"
-    )
+    nominations = _nominations(rows, channel="semantic", qualified=True)
     assert [nomination.qualifier for nomination in nominations] == [
         "relation",
         "observation",
     ]
     # A channel whose id IS its identity carries no qualifier.
-    plain = LanceChunkIndex._nominations(  # noqa: SLF001
-        [{"claim_id": "00000000-0000-0000-0000-000000000003"}],
-        id_column="claim_id",
+    plain = _nominations(
+        [{"item_id": "00000000-0000-0000-0000-000000000003", "score": 0.7}],
         channel="semantic",
     )
     assert plain[0].qualifier is None

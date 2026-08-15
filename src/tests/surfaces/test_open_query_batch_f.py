@@ -965,7 +965,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
     assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "b6e7a6079beb43df728d03aa909791e69c2dcd7c7ec13b130e1fff557c194c96"
+        == "a5b305d9f832a8d739563e8d25b57e1387aac37500f1c70e0980e29e7692b0f6"
     )
 
 
@@ -1330,13 +1330,11 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     # api() reports model bindings through OpenRouter settings; no network call.
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
 
-    lance_root = tmp_path / "lance"
     projection_work_root = tmp_path / "projection-work"
     graph_cache_root = tmp_path / "graph-cache"
     forget_manifest_root = tmp_path / "forget-manifests"
     objects_root = tmp_path / "objects"
     for path in (
-        lance_root,
         projection_work_root,
         graph_cache_root,
         forget_manifest_root,
@@ -1349,7 +1347,6 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     profile = SelfHostProfile(
         settings=SelfHostSettings(
             deployment_id=_DEPLOYMENT,
-            lance_root=lance_root,
             projection_work_root=projection_work_root,
             graph_cache_root=graph_cache_root,
             forget_manifest_root=forget_manifest_root,

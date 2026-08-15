@@ -222,14 +222,11 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "arguments": nomination_arguments[:most],
                 "security": "invoker",
                 "filters": list(sorted(nomination.FILTER_ALLOWLISTS[target])),
-                "projection_filters": list(
-                    sorted(nomination.LANCE_FILTER_COLUMNS[target])
-                ),
+                "pre_rank_filters": list(sorted(nomination.FILTER_ALLOWLISTS[target])),
                 "columns": list(columns),
                 "column_types": [_TYPE_NAMES.get(oid, "unknown") for oid in oids],
-                # These call an external projection, so repeated evaluation in
-                # one statement need not agree: they are volatile, whatever the
-                # PostgreSQL-side helpers are.
+                # Semantic calls include an external query embedding and all
+                # channels observe current PostgreSQL state, so they are volatile.
                 "volatility": "volatile",
                 "parallel": "unsafe",
             }
@@ -256,7 +253,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "volatility": "stable",
             "security": "invoker",
             "filters": [],
-            "projection_filters": [],
+            "pre_rank_filters": [],
             "columns": list(FACTS_AS_OF_COLUMNS),
             "column_types": list(FACTS_AS_OF_COLUMN_TYPES),
             "max_rows_hard_cap": FACTS_AS_OF_ROWS_MAX,
@@ -273,7 +270,7 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "arguments": [{"name": "chunk_ids", "type": "uuid[]", "required": True}],
             "security": "invoker",
             "filters": [],
-            "projection_filters": [],
+            "pre_rank_filters": [],
             "columns": list(nomination.BODY_COLUMNS),
             "column_types": [
                 _TYPE_NAMES.get(oid, "unknown") for oid in nomination.BODY_TYPE_OIDS

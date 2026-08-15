@@ -85,16 +85,16 @@ class _QuestionIndex:
         return (self.claim_id,)
 
     def search_claims_scored(
-        self, *, candidate_ids: tuple[str, ...], **_: object
+        self, *, entity_ids: tuple[str, ...] = (), **_: object
     ) -> tuple[P1Nomination, ...]:
-        """Return the claim only when PostgreSQL declared it eligible."""
-        return self._scored(item_id=self.claim_id, candidate_ids=candidate_ids)
+        """Return the claim only when the ranked entity scope admits it."""
+        return self._scored(item_id=self.claim_id, entity_ids=entity_ids)
 
     def search_claims_lexical_scored(
-        self, *, candidate_ids: tuple[str, ...], **_: object
+        self, *, entity_ids: tuple[str, ...] = (), **_: object
     ) -> tuple[P1Nomination, ...]:
         """Return the same eligible claim for the lexical channel."""
-        return self._scored(item_id=self.claim_id, candidate_ids=candidate_ids)
+        return self._scored(item_id=self.claim_id, entity_ids=entity_ids)
 
     def search_chunks(self, **_: object) -> tuple[str, ...]:
         return (self.chunk_id,)
@@ -103,16 +103,16 @@ class _QuestionIndex:
         return (self.chunk_id,)
 
     def search_chunks_scored(
-        self, *, candidate_ids: tuple[str, ...], **_: object
+        self, *, entity_ids: tuple[str, ...] = (), **_: object
     ) -> tuple[P1Nomination, ...]:
-        """Return the chunk only when PostgreSQL declared it eligible."""
-        return self._scored(item_id=self.chunk_id, candidate_ids=candidate_ids)
+        """Return the chunk only when the ranked entity scope admits it."""
+        return self._scored(item_id=self.chunk_id, entity_ids=entity_ids)
 
     def search_chunks_lexical_scored(
-        self, *, candidate_ids: tuple[str, ...], **_: object
+        self, *, entity_ids: tuple[str, ...] = (), **_: object
     ) -> tuple[P1Nomination, ...]:
         """Return the same eligible chunk for the lexical channel."""
-        return self._scored(item_id=self.chunk_id, candidate_ids=candidate_ids)
+        return self._scored(item_id=self.chunk_id, entity_ids=entity_ids)
 
     def chunk_texts(
         self,
@@ -135,13 +135,11 @@ class _QuestionIndex:
             for rank, entity_id in enumerate(self.entity_ids, start=1)
         )
 
-    @staticmethod
     def _scored(
-        *, item_id: str, candidate_ids: tuple[str, ...]
+        self, *, item_id: str, entity_ids: tuple[str, ...]
     ) -> tuple[P1Nomination, ...]:
-        """Build one deterministic exact-membership nomination."""
-        if item_id not in candidate_ids:
-            return ()
+        """Build one deterministic nomination; hydration proves final scope."""
+        del entity_ids
         return (P1Nomination(item_id=item_id, rank=1, score=1.0, channel="test"),)
 
 

@@ -32,7 +32,9 @@ RememberStack is a **DAG across three planes**, not a single ladder. The plane a
 | **K** | Debounced evidence change | Git | Compiled rewrite / authored edit | Recompile (semantic) |
 | **P** | Inline or scheduled cycle | None | Immutable snapshots | From Postgres every cycle |
 
-**Hard rule:** validity and invalidation live **only** in Postgres. Lance and the graph carry filtered copies; they never become independent truth.
+**Hard rule:** validity and invalidation live **only** in PostgreSQL. P1 search
+indexes are derived state beside the authority rows; the graph carries a
+filtered snapshot. Neither can become independent truth.
 
 ## Plane E — evidence spine
 
@@ -64,7 +66,7 @@ Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
 
 | Projection | Store | Serves |
 | --- | --- | --- |
-| **P1** | LanceDB | Vector + FTS/BM25 over chunks, claims, fact labels, media segments |
+| **P1** | PostgreSQL 18 (`pgvector` + `pg_textsearch`) | Vector + BM25 over chunks and claims; semantic search over fact labels and entities |
 | **P2** | LadybugDB snapshot | Neighborhood / path / as-of graph over entities + relations |
 | **P3** | Object tree / mount | Browsable corpus filesystem (`ls` / `cat` / `grep`) |
 
@@ -74,10 +76,9 @@ All three can be dropped and rebuilt from the spine. That is what makes aggressi
 
 | Store | Role | Authority |
 | --- | --- | --- |
-| PostgreSQL | Spine: documents, chunks, claims, entities, facts, ledgers | **E source of truth** |
+| PostgreSQL | Spine plus derived P1 vectors and BM25 indexes | **E source of truth** for natural rows; P1 state is rebuildable |
 | Object storage — raw | Original bytes | Byte authority |
 | Object storage — artifacts | Converted Markdown, structure, media sidecars | Representation authority (replay, not regenerate-in-place) |
-| LanceDB | P1 indexes | Derived |
 | LadybugDB | P2 graph snapshot | Derived |
 | Git | Plane K | **K source of truth** (authored + compile history) |
 

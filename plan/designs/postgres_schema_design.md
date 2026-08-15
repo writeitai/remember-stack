@@ -741,9 +741,10 @@ CREATE TABLE entities (
   merged_into     uuid,                        -- redirect target when status=merged; follow the chain to the survivor (D21)
   type_confidence real,                        -- confidence of the type vote; low + cross-mention disagreement ⇒ over-merge signal (registries §4)
   profile_summary text,                        -- short registry-maintained blurb; improves future LLM adjudication (Graphiti lesson)
-  profile_embedding vector(1536),              -- D94 derived current semantic vector; reference profile dimension
-  profile_embed_version text,                  -- configured model/generation that produced profile_embedding
-  profile_embedding_text_hash text,            -- hash of the exact profile input; readiness attestation
+  embedding vector(1536),                      -- D94 disposable vector for the canonical profile input
+  embedding_model text,                        -- configured model that produced embedding
+  embedding_input_policy_version text,         -- exact profile-input rendering policy
+  embedding_text_hash text,                    -- hash of the exact profile input
   mention_count   integer NOT NULL DEFAULT 0,  -- cached |mentions|; half of blast_radius (registries §6) and a health metric
   graph_degree    integer NOT NULL DEFAULT 0,  -- cached relation degree from the LATEST PUBLISHED P2 snapshot (§9); other half of blast_radius
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -751,7 +752,8 @@ CREATE TABLE entities (
   UNIQUE (deployment_id, entity_id),           -- composite-FK target (tenancy isolation, §0)
   FOREIGN KEY (deployment_id, type) REFERENCES entity_types (deployment_id, type),
   FOREIGN KEY (deployment_id, merged_into) REFERENCES entities (deployment_id, entity_id), -- same-deployment redirect only
-  CHECK ((status = 'merged') = (merged_into IS NOT NULL))  -- merged iff it redirects; an active/retired entity must NOT redirect
+  CHECK ((status = 'merged') = (merged_into IS NOT NULL)), -- merged iff it redirects; an active/retired entity must NOT redirect
+  CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4))
 );
 COMMENT ON TABLE entities IS
   'Canonical entity registry (D17/D21). entity_id never reused; merges are redirects via merged_into (un-mergeable), not rewrites. type is the cross-mention vote; mention_count+graph_degree cache the blast-radius inputs for review gating (registries §6/§8).';
@@ -760,9 +762,8 @@ CREATE INDEX ix_entities_redirect ON entities (merged_into) WHERE merged_into IS
 -- entities is searchable by name but the PRIMARY blocking index lives on aliases (below). D68
 -- gives each deployment its own instance/schema, so the blocking GIN contains only the match key:
 CREATE INDEX ix_entities_name_trgm ON entities USING gin (normalized_name gin_trgm_ops);
-CREATE INDEX ix_entities_profile_hnsw ON entities
-  USING hnsw (profile_embedding vector_cosine_ops)
-  WHERE status = 'active' AND profile_embedding IS NOT NULL;
+CREATE INDEX ix_entities_embedding_hnsw ON entities
+  USING hnsw (embedding vector_cosine_ops);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- aliases — surface forms per entity, the BLOCKING TARGET (D23). Includes the LLM-emitted
@@ -1485,9 +1486,10 @@ CREATE TABLE claims (
   claim_valid_precision claim_valid_precision NOT NULL DEFAULT 'unknown', -- unknown|instant|day|month|quarter|year|open — "FY2023" stores a normalized [start,end] without lying about granularity
   claim_valid_kind claim_valid_kind,           -- which world-interval this is: proposition_validity|event_time|measurement_period|effective_period (so a measurement period is never conflated with an event date or with asserted_at)
   extractor_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions (extractor); replay-on-rebuild key (D33)
-  search_embedding vector(1536),               -- D94 derived current claim vector
-  embedding_version text,                      -- model/generation that produced search_embedding
-  embedding_text_hash text,                    -- hash of claim_text embedding input; readiness attestation
+  embedding vector(1536),                      -- D94 disposable vector for claim_text
+  embedding_model text,                        -- configured model that produced embedding
+  embedding_input_policy_version text,         -- exact claim-input rendering policy
+  embedding_text_hash text,                    -- hash of claim_text embedding input
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- transaction-time; immutable
   PRIMARY KEY (claim_id),
   UNIQUE (deployment_id, claim_id),             -- composite identity target; provenance FKs remain logical as documented in §0
@@ -1499,7 +1501,8 @@ CREATE TABLE claims (
   CHECK (claim_valid_precision <> 'open'    OR (claim_valid_from IS NOT NULL AND claim_valid_until IS NULL)),
   CHECK (claim_valid_precision <> 'instant' OR (claim_valid_from IS NOT NULL AND claim_valid_until = claim_valid_from)),
   -- a bounded precision must actually carry both bounds (else it silently degrades to unknown/open):
-  CHECK (claim_valid_precision NOT IN ('day','month','quarter','year') OR (claim_valid_from IS NOT NULL AND claim_valid_until IS NOT NULL))
+  CHECK (claim_valid_precision NOT IN ('day','month','quarter','year') OR (claim_valid_from IS NOT NULL AND claim_valid_until IS NOT NULL)),
+  CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4))
 );
 COMMENT ON TABLE claims IS
   'E2 immutable verifiable propositions (D31/D32). Stores standalone claim_text + verbatim source_span + offsets + added_context for provenance-and-entailment grounding. Three immutable time axes (D41): asserted_at (assertion event), claim_valid_from/until (+precision/kind = source-asserted world-interval — evidence, not belief), ingested_at (system); never superseded (supersession is on relations, D3). A row here passed the deterministic grounding gate. Non-partitioned under D94 so current-testimony HNSW/BM25 indexes have one global corpus.';
@@ -1518,13 +1521,13 @@ CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = '
 CREATE INDEX ix_claims_valid_window ON claims
   (deployment_id, claim_valid_from, claim_valid_until)
   WHERE claim_valid_precision <> 'unknown';
-CREATE INDEX ix_claims_search_embedding_hnsw ON claims
-  USING hnsw (search_embedding vector_cosine_ops)
-  WHERE is_current_testimony AND search_embedding IS NOT NULL;
-CREATE INDEX ix_claims_search_bm25 ON claims
+CREATE INDEX ix_claims_current_embedding_hnsw ON claims
+  USING hnsw (embedding vector_cosine_ops)
+  WHERE is_current_testimony;
+CREATE INDEX ix_claims_current_bm25 ON claims
   USING bm25 (claim_text) WITH (text_config='simple')
   WHERE is_current_testimony;
--- Partial BM25 queries name ix_claims_search_bm25 explicitly through
+-- Partial BM25 queries name ix_claims_current_bm25 explicitly through
 -- to_bm25query(); implicit index discovery does not select partial indexes.
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1665,9 +1668,10 @@ CREATE TABLE relations (
   -- fact label (D94): the human-readable semantic input; regenerated only on material adjudication change.
   fact_label      text,                        -- "Alice Novak works at Acme as VP of Engineering"
   fact_label_version text,                     -- LOGICAL FK → pipeline_component_versions (fact_labeler)
-  fact_label_embedding vector(1536),           -- D94 derived current vector
-  fact_label_embed_version text,               -- configured model/generation that produced the vector
-  fact_label_embedding_text_hash text,         -- hash of exact embedded fact_label
+  embedding vector(1536),                      -- D94 disposable vector for fact_label
+  embedding_model text,                        -- configured model that produced embedding
+  embedding_input_policy_version text,         -- exact fact-label rendering policy
+  embedding_text_hash text,                    -- hash of exact embedded fact_label
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions (normalizer); replay-on-rebuild
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -1677,6 +1681,7 @@ CREATE TABLE relations (
   FOREIGN KEY (deployment_id, object_entity_id)  REFERENCES entities (deployment_id, entity_id),
   CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from),
   CHECK (invalidated_at IS NULL OR invalidated_at >= ingested_at),  -- can't un-learn before learning
+  CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4) AND (embedding IS NULL OR fact_label IS NOT NULL)),
   -- At most one BELIEVED, non-contradictory relation per (s,p,o) with overlapping world-time:
   EXCLUDE USING gist (
     deployment_id WITH =, subject_entity_id WITH =, predicate WITH =, object_entity_id WITH =,
@@ -1692,9 +1697,8 @@ CREATE INDEX ix_relations_block_obj  ON relations (deployment_id, object_entity_
 CREATE INDEX ix_relations_predicate  ON relations (deployment_id, predicate);
 CREATE INDEX ix_relations_contradiction ON relations (contradiction_group) WHERE contradiction_group IS NOT NULL;
 CREATE INDEX ix_relations_live       ON relations (deployment_id, subject_entity_id) WHERE invalidated_at IS NULL;
-CREATE INDEX ix_relations_fact_hnsw  ON relations
-  USING hnsw (fact_label_embedding vector_cosine_ops)
-  WHERE fact_label_embedding IS NOT NULL;
+CREATE INDEX ix_relations_embedding_hnsw ON relations
+  USING hnsw (embedding vector_cosine_ops);
 ```
 
 > **Contradiction insert protocol (concepts §4; resolves the §17 spike on the EXCLUDE WHERE
@@ -1836,9 +1840,10 @@ CREATE TABLE observations (
                     (CASE WHEN invalidated_at IS NOT NULL THEN 'invalidated'::relation_status ELSE 'active'::relation_status END) STORED,
   obs_label       text,                        -- human-readable semantic input (often = statement); semantic blocking + retrieval
   obs_label_version text,                      -- LOGICAL FK → pipeline_component_versions (labeler)
-  obs_label_embedding vector(1536),            -- D94 derived current vector
-  obs_label_embed_version text,                -- configured model/generation that produced the vector
-  obs_label_embedding_text_hash text,          -- hash of exact embedded obs_label/statement
+  embedding vector(1536),                      -- D94 disposable vector for current observation search text
+  embedding_model text,                        -- configured model that produced embedding
+  embedding_input_policy_version text,         -- exact observation-input rendering policy
+  embedding_text_hash text,                    -- hash of exact embedded obs_label/statement
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; replay-on-rebuild
   adjudicator_version text,                    -- LOGICAL FK → pipeline_component_versions (supersession/contradiction adjudicator, D4)
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -1846,7 +1851,8 @@ CREATE TABLE observations (
   UNIQUE (deployment_id, observation_id),       -- composite-FK target (tenancy isolation, §0)
   FOREIGN KEY (deployment_id, subject_entity_id) REFERENCES entities (deployment_id, entity_id),
   CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from),
-  CHECK (invalidated_at IS NULL OR invalidated_at >= ingested_at)  -- can't un-learn before learning
+  CHECK (invalidated_at IS NULL OR invalidated_at >= ingested_at), -- can't un-learn before learning
+  CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4))
   -- NOTE: intentionally NO EXCLUDE / uniqueness constraint — there is no typed slot to key one on;
   -- supersession + evidence-collapse are adjudicated (entity-block + semantic + cascade), and
   -- "both-stand" is the safe default.
@@ -1857,9 +1863,8 @@ COMMENT ON TABLE observations IS
 CREATE INDEX ix_observations_block ON observations (deployment_id, subject_entity_id) WHERE invalidated_at IS NULL;
 CREATE INDEX ix_observations_entity ON observations (deployment_id, subject_entity_id);  -- full history incl. capped/invalidated
 CREATE INDEX ix_observations_contradiction ON observations (contradiction_group) WHERE contradiction_group IS NOT NULL;
-CREATE INDEX ix_observations_fact_hnsw ON observations
-  USING hnsw (obs_label_embedding vector_cosine_ops)
-  WHERE obs_label_embedding IS NOT NULL;
+CREATE INDEX ix_observations_embedding_hnsw ON observations
+  USING hnsw (embedding vector_cosine_ops);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- observation_evidence — many-to-many join claims ⇄ observations (D2), mirroring relation_evidence.

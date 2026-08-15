@@ -8,10 +8,9 @@ accepted).
 **Analysis:** `plan/analysis/pipeline_checkpointing.md`  
 **Primary target:** `label_relation` (`LabelFactsHandler`).  
 **D94 amendment (2026-08-14):** P1 is now PostgreSQL-native.
-The pre-D94 code still sets `fact_label_embedding_ref = relation_id::text` in
-the same update as the label; implementation of D94 removes that opaque
-external-store reference and stores the current derived vector and attestation
-on the natural relation/observation row.
+The current derived vector and its complete attestation live on the natural
+relation/observation row. There is no opaque external-store reference or
+separate embed-completion stamp.
 
 ---
 
@@ -34,8 +33,7 @@ For fact labeling/embedding:
 3. These **may differ**: e.g. embedding model rotates without re-labeling, or
    labels change without re-embedding until Phase E runs.  
 4. Resume selectors and public search readiness use these markers explicitly —
-   **not** “`fact_label_embedding_ref IS NULL`” against the current schema
-   (that column is set at first label stamp and never cleared).
+   never a detached reference or standalone completion bit.
 
 ## 3. State machine (per relation / observation)
 
@@ -44,16 +42,15 @@ Define markers on Postgres (names illustrative; migration required):
 | Marker | Meaning |
 | --- | --- |
 | `fact_label` + `fact_label_version` | Label text for `label_generation` |
-| `fact_label_embed_version` | Embed generation last successfully indexed |
-| non-null embedding + attestation columns | Current derived vector for this row matches `fact_label`, input hash and embed generation |
+| `embedding`, `embedding_model`, `embedding_input_policy_version`, `embedding_text_hash` | Atomic current vector attestation for `fact_label` |
 
 Logical states:
 
 | State | Condition |
 | --- | --- |
 | **U** Unlabeled | `fact_label_version` ≠ current `label_generation` |
-| **L** Labeled, not embedded for current embed gen | label current, `fact_label_embed_version` ≠ current `embed_generation` |
-| **E** Embedded current | both generations current and the row's embedding attestation matches its current label/input hash |
+| **L** Labeled, not embedded for current embed gen | label current, but vector attestation is absent or does not match the active embed generation/input hash |
+| **E** Embedded current | label current and all four embedding attestation fields match its current label/input hash |
 
 Transitions:
 
@@ -69,8 +66,9 @@ satisfy current attestation under a new label generation without Phase E.
 
 ### Observations
 
-Same split: `obs_label_version` vs `obs_label_embed_version` (or equivalent).
-Observations typically skip LLM label (statement is the text).
+Observations normally use `statement` as their search text (or `obs_label` when
+present), so their embed checkpoint is the same four-field attestation without
+a separate observation-label generation column.
 
 ## 4. `label_relation` handler
 
@@ -85,10 +83,15 @@ UPDATE relations SET ... WHERE relation_id = $1
 ```
 
 ```sql
-UPDATE relations SET fact_label_embed_version = $embed_gen, ...
+UPDATE relations SET embedding = $vector,
+  embedding_model = $model,
+  embedding_input_policy_version = $input_policy,
+  embedding_text_hash = $input_hash
  WHERE relation_id = $1
   AND fact_label_version = $label_gen
-  AND (fact_label_embed_version IS DISTINCT FROM $embed_gen)
+  AND (embedding_model IS DISTINCT FROM $model
+       OR embedding_input_policy_version IS DISTINCT FROM $input_policy
+       OR embedding_text_hash IS DISTINCT FROM $input_hash)
 ```
 
 If `rowcount = 0`, another worker won; skip without re-billing when safe.
@@ -155,7 +158,7 @@ work**, not necessarily duplicate HTTP.
 | Alternative | Why insufficient alone |
 | --- | --- |
 | End-only stamp | Demonstrated data loss |
-| “embedding_ref IS NULL” as needs-embed | **Broken on real schema** after first stamp |
+| Detached embedding reference as needs-embed | Cannot prove vector/input attestation |
 | Child processing_state per fact | Heavy; defer |
 | Stamp embed separately from the vector update | False readiness |
 
@@ -174,13 +177,12 @@ work**, not necessarily duplicate HTTP.
 ## 9. Implementation touchpoints
 
 - `workers/p1.py` — split Phase L / E  
-- `fact_catalog.py` — selectors, CAS stamps, **stop setting embed ref in label
-  stamp**  
+- `fact_catalog.py` — selectors and conditional label/vector writes
 - relation/observation embedding columns and HNSW indexes — current vector plus attestation
 - Migrations + hard-forget inventory  
 
 ## 10. Review disposition
 
-Dual review: **Accept with changes** (both agents). Blocking defect (needs-embed
-via null ref) fixed in this revision via **split generations**. Concurrency and
-readiness authority made normative.
+Dual review: **Accept with changes** (both agents). The D94 amendment binds
+same-row vector attestation; concurrency and readiness authority remain
+normative.

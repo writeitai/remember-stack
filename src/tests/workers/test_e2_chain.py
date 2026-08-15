@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LanceChunkIndex
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
@@ -236,7 +236,9 @@ class _E2Rig:
                 catalog=chunk_catalog,
                 artifact_store=artifact_store,
                 model_provider=self.provider,
-                chunk_index=LanceChunkIndex(root=root / "lance"),
+                chunk_index=PostgresP1Index(
+                    engine=engine, embedding_model=E1Settings().embedding_model
+                ),
                 settings=E1Settings(),
                 params=_PARAMS,
             ),

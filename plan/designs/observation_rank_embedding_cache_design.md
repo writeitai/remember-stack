@@ -128,10 +128,11 @@ RankEmbedKey =
 
 ### 5.6 Durable reuse without another cache table
 
-For an open prior, reuse `observations.obs_label_embedding` only when its model,
-dimension, and text-hash attestation exactly match the rank input. A missing or
-stale row vector is a cache miss and is embedded in the bounded provider batch;
-it never removes the prior from the exhaustive candidate set.
+For an open prior, reuse `observations.embedding` only when
+`embedding_model`, `embedding_input_policy_version`, vector dimension, and
+`embedding_text_hash` exactly match the rank input. A missing or stale row
+vector is a cache miss and is embedded in the bounded provider batch; it never
+removes the prior from the exhaustive candidate set.
 
 For a NEW assertion there is no row yet, so only the process-local digest key is
 used. If insertion succeeds, the adjudication transaction may write the vector

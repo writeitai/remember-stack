@@ -78,6 +78,7 @@ class EmbeddingRequest(BaseModel):
 
     model: _NonEmptyText
     texts: Annotated[tuple[_NonEmptyText, ...], Field(min_length=1)]
+    dimensions: int | None = Field(default=None, ge=1)
 
 
 class EmbeddingResponse(BaseModel):

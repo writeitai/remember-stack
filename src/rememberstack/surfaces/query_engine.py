@@ -1,11 +1,11 @@
 """The zero-LLM query engine (retrieval §2-§3): resolve, lookup, search, hydrate.
 
-The one correctness rule is D48: projections (P1 Lance) may NOMINATE
-candidates, but every returned record has passed by-ID hydration against the
-live Postgres spine — a superseded fact can never be served as current, and
-nominations hydration rejects are counted in `dropped_by_hydration` so ranked
-results are honest about their denominator. No primitive calls an LLM; reads
-never trigger anything.
+The one correctness rule is D48: ranked PostgreSQL P1 statements nominate only
+through the invariant-bearing authority joins, and every returned record then
+passes by-ID hydration against the live spine. A superseded fact can never be
+served as current, and hydration rejects are counted in
+`dropped_by_hydration` so results are honest about their denominator. No
+primitive calls an LLM; reads never trigger anything.
 """
 
 import base64
@@ -78,6 +78,7 @@ from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.entity_registry import normalized_lemma
@@ -586,23 +587,10 @@ class QueryEngine:
                             time=selected_time, evaluated_at=evaluation
                         ),
                     )
-            eligibility = (
-                _fact_eligibility(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    entity_ids=entity_ids,
-                    time=selected_time,
-                    evaluated_at=evaluation,
-                    deadline=database_deadline,
-                )
-                if entity_ids
-                else {}
-            )
         nominated = self._nominate_fact_context(
             deployment_id=deployment_id,
             query=query,
-            eligibility=eligibility,
-            restrict_to_eligibility=bool(entity_ids),
+            entity_ids=entity_ids,
             time=selected_time,
             evaluated_at=evaluation,
         )
@@ -763,8 +751,6 @@ class QueryEngine:
         _validate_testimony_context_bounds(k=k, candidate_k=candidate_k)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         evaluation = evaluated_at or datetime.now(UTC)
-        claim_coverage: dict[UUID, int] | None = None
-        chunk_coverage: dict[UUID, int] | None = None
         if entity_ids:
             with self._engine.connect() as connection:
                 if not _context_entities_are_current(
@@ -775,18 +761,11 @@ class QueryEngine:
                     return _unknown_context_entity(
                         grain=Grain.EVIDENCE, evaluated_at=evaluation
                     )
-                claim_coverage, chunk_coverage = _testimony_eligibility(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    entity_ids=entity_ids,
-                )
         answer = self._testimony_context_retrieval(
             deployment_id=deployment_id,
             query=query,
             k=k,
             candidate_k=candidate_k,
-            claim_coverage=claim_coverage,
-            chunk_coverage=chunk_coverage,
             entity_ids=entity_ids,
         )
         return answer.model_copy(
@@ -2063,8 +2042,6 @@ class QueryEngine:
         query: str,
         k: int = MULTI_HOP_TESTIMONY_CONTEXT_K,
         candidate_k: int = MULTI_HOP_TESTIMONY_CONTEXT_CANDIDATE_K,
-        claim_coverage: dict[UUID, int] | None = None,
-        chunk_coverage: dict[UUID, int] | None = None,
         entity_ids: tuple[UUID, ...] = (),
     ) -> Envelope:
         """Run the testimony hybrid, optionally ranking inside an entity scope.
@@ -2082,14 +2059,14 @@ class QueryEngine:
                 query=query,
                 k=candidate_k,
                 channel="semantic",
-                coverage=claim_coverage,
+                entity_ids=entity_ids,
             )
             lexical = self._nominate_testimony_claims(
                 deployment_id=deployment_id,
                 query=query,
                 k=candidate_k,
                 channel="bm25",
-                coverage=claim_coverage,
+                entity_ids=entity_ids,
             )
             fused = self.fuse(
                 rankings=(
@@ -2119,14 +2096,14 @@ class QueryEngine:
                 query=query,
                 k=candidate_k,
                 channel="semantic",
-                coverage=chunk_coverage,
+                entity_ids=entity_ids,
             )
             lexical = self._nominate_testimony_chunks(
                 deployment_id=deployment_id,
                 query=query,
                 k=candidate_k,
                 channel="bm25",
-                coverage=chunk_coverage,
+                entity_ids=entity_ids,
             )
             fused = self.fuse(
                 rankings=(
@@ -2160,10 +2137,10 @@ class QueryEngine:
         query: str,
         k: int,
         channel: Literal["semantic", "bm25"],
-        coverage: dict[UUID, int] | None,
+        entity_ids: tuple[UUID, ...],
     ) -> Envelope:
-        """Nominate claims globally or inside coverage-ordered exact ID sets."""
-        if coverage is None:
+        """Nominate claims globally or through one normalized entity join."""
+        if not entity_ids:
             return self.nominate_claims(
                 deployment_id=deployment_id, query=query, k=k, channel=channel
             )
@@ -2175,10 +2152,9 @@ class QueryEngine:
         method = getattr(self._search_index, method_name, None)
         if not callable(method):
             raise RuntimeError("entity-scoped testimony requires scored P1 search")
-        nominations = _coverage_ordered_nominations(
-            coverage=coverage,
-            k=k,
-            search=lambda ids, limit: method(
+        nominations = cast(
+            "tuple[P1Nomination, ...]",
+            method(
                 deployment_id=str(deployment_id),
                 **(
                     {
@@ -2191,9 +2167,9 @@ class QueryEngine:
                     if channel == "semantic"
                     else {"query": query}
                 ),
-                k=limit,
+                k=k,
                 current_only=True,
-                candidate_ids=tuple(str(item) for item in ids),
+                entity_ids=tuple(str(item) for item in entity_ids),
             ),
         )
         return _scored_nomination_envelope(
@@ -2208,10 +2184,10 @@ class QueryEngine:
         query: str,
         k: int,
         channel: Literal["semantic", "bm25"],
-        coverage: dict[UUID, int] | None,
+        entity_ids: tuple[UUID, ...],
     ) -> Envelope:
-        """Nominate passages globally or inside coverage-ordered exact ID sets."""
-        if coverage is None:
+        """Nominate passages globally or through one normalized entity join."""
+        if not entity_ids:
             return self.nominate_chunks(
                 deployment_id=deployment_id, query=query, k=k, channel=channel
             )
@@ -2223,10 +2199,9 @@ class QueryEngine:
         method = getattr(self._search_index, method_name, None)
         if not callable(method):
             raise RuntimeError("entity-scoped testimony requires scored P1 search")
-        nominations = _coverage_ordered_nominations(
-            coverage=coverage,
-            k=k,
-            search=lambda ids, limit: method(
+        nominations = cast(
+            "tuple[P1Nomination, ...]",
+            method(
                 deployment_id=str(deployment_id),
                 **(
                     {
@@ -2239,10 +2214,10 @@ class QueryEngine:
                     if channel == "semantic"
                     else {"query": query}
                 ),
-                k=limit,
+                k=k,
                 policy_generation=self._policy_generation,
                 embedder_generation=self._embedder_generation,
-                candidate_ids=tuple(str(item) for item in ids),
+                entity_ids=tuple(str(item) for item in entity_ids),
             ),
         )
         return _scored_nomination_envelope(
@@ -2255,34 +2230,13 @@ class QueryEngine:
         *,
         deployment_id: UUID,
         query: str,
-        eligibility: dict[tuple[str, UUID], int],
-        restrict_to_eligibility: bool,
+        entity_ids: tuple[UUID, ...],
         time: FactTime,
         evaluated_at: datetime,
     ) -> tuple[P1Nomination, ...]:
-        """Rank fact labels globally or inside exact time/entity eligibility."""
+        """Rank fact labels with time/entity authority in the ranked statement."""
         method = getattr(self._search_index, "search_facts_scored", None)
         if callable(method):
-            if restrict_to_eligibility:
-                return _coverage_ordered_fact_nominations(
-                    eligibility=eligibility,
-                    k=FACT_CONTEXT_CANDIDATE_K + 1,
-                    search=lambda keys, limit: method(
-                        deployment_id=str(deployment_id),
-                        vector=self._embed(
-                            query=query,
-                            call_site=SurfaceCallSite.FACT_CONTEXT,
-                            deployment_id=deployment_id,
-                        ),
-                        k=limit,
-                        kind=None,
-                        candidate_keys=tuple(
-                            (kind, str(fact_id)) for kind, fact_id in keys
-                        ),
-                        time=time,
-                        evaluated_at=evaluated_at,
-                    ),
-                )
             return cast(
                 "tuple[P1Nomination, ...]",
                 method(
@@ -2296,6 +2250,7 @@ class QueryEngine:
                     kind=None,
                     time=time,
                     evaluated_at=evaluated_at,
+                    entity_ids=tuple(str(item) for item in entity_ids),
                 ),
             )
         raise RuntimeError("fact_context requires scored, time-filtered P1 search")
@@ -2686,18 +2641,8 @@ class QueryEngine:
             projected = texts.get(str(chunk_id))
             if row is None or projected is None:
                 continue
-            # D80: P1 text is body-only when policy_generation is present.
-            # Legacy rows may store prefix + "\n\n" + body in P1 text; strip
-            # the stored prefix when hydrating so agents never see mangled body.
             location_header = row.get("location_header") or row.get("context_prefix")
-            policy_generation = row.get("policy_generation") or row.get(
-                "embedding_input_policy_version"
-            )
             chunk_text = projected.indexed_text
-            if not policy_generation and location_header:
-                chunk_text = _strip_legacy_prefix(
-                    indexed_text=chunk_text, location_header=str(location_header)
-                )
             if projected.section_role != row["section_role"]:
                 continue
             results.append(
@@ -2762,7 +2707,11 @@ class QueryEngine:
         """One query-string embedding through the configured port (D63)."""
         try:
             response = self._model_provider.embed(
-                request=EmbeddingRequest(model=self._embedding_model, texts=(query,))
+                request=EmbeddingRequest(
+                    model=self._embedding_model,
+                    texts=(query,),
+                    dimensions=P1_VECTOR_DIMENSIONS,
+                )
             )
         except ProviderCallError as error:
             if error.usage is not None and self._surface_cost is not None:
@@ -2781,22 +2730,6 @@ class QueryEngine:
                 deployment_id=deployment_id,
             )
         return response.vectors[0]
-
-
-def _strip_legacy_prefix(*, indexed_text: str, location_header: str) -> str:
-    """Remove a legacy prefix embedded in P1 text when policy stamps are absent.
-
-    Pre-D80 rows stored ``prefix + "\\n\\n" + body`` in the Lance text column.
-    D80 stores body-only; this branch keeps evidence hydration correct for
-    unrebuilt legacy rows without inventing new body bytes.
-    """
-    if not location_header:
-        return indexed_text
-    for separator in ("\n\n", "\n"):
-        marker = f"{location_header}{separator}"
-        if indexed_text.startswith(marker):
-            return indexed_text[len(marker) :]
-    return indexed_text
 
 
 def _validate_nomination_request(*, k: int, channel: str) -> None:
@@ -2882,22 +2815,6 @@ def _context_entities_are_current(
     return {row["entity_id"] for row in confirmed} == set(entity_ids)
 
 
-def _testimony_eligibility(
-    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
-) -> tuple[dict[UUID, int], dict[UUID, int]]:
-    """Enumerate current claim/chunk IDs and confirmed anchor coverage."""
-    rows = connection.execute(
-        _TESTIMONY_CONTEXT_ELIGIBILITY,
-        {"deployment_id": deployment_id, "entity_ids": list(entity_ids)},
-    ).mappings()
-    claims: dict[UUID, int] = {}
-    chunks: dict[UUID, int] = {}
-    for row in rows:
-        target = claims if row["target_kind"] == "claim" else chunks
-        target[row["target_id"]] = int(row["coverage"])
-    return claims, chunks
-
-
 def _fact_time_parameters(
     *, time: FactTime, evaluated_at: datetime
 ) -> dict[str, object]:
@@ -2909,45 +2826,6 @@ def _fact_time_parameters(
         "from": time.from_ if isinstance(time, OverlapFactTime) else None,
         "to": time.to if isinstance(time, OverlapFactTime) else None,
     }
-
-
-def _fact_eligibility(
-    *,
-    connection: Connection,
-    deployment_id: UUID,
-    entity_ids: tuple[UUID, ...],
-    time: FactTime,
-    evaluated_at: datetime,
-    deadline: float,
-) -> dict[tuple[str, UUID], int]:
-    """Nominate scoped IDs, then confirm visibility through ``memory_v1``."""
-    _configure_fact_context_connection(connection=connection, deadline=deadline)
-    candidates = (
-        connection.execute(
-            _FACT_CONTEXT_ELIGIBILITY,
-            {
-                "deployment_id": deployment_id,
-                "entity_ids": list(entity_ids),
-                **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
-            },
-        )
-        .mappings()
-        .all()
-    )
-    if not candidates:
-        return {}
-    _configure_fact_context_connection(connection=connection, deadline=deadline)
-    rows = connection.execute(
-        _CONFIRM_FACT_ELIGIBILITY,
-        {
-            "deployment_id": deployment_id,
-            "fact_ids": [row["fact_id"] for row in candidates],
-            "fact_kinds": [row["kind"] for row in candidates],
-            "entity_ids": list(entity_ids),
-            **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
-        },
-    ).mappings()
-    return {(str(row["kind"]), row["fact_id"]): int(row["coverage"]) for row in rows}
 
 
 def _confirm_fact_context(
@@ -3054,52 +2932,6 @@ def _unknown_context_entity(
             explanation="one or more entity IDs are not current survivor identities",
             workaround="call resolve_entity and retry with returned entity IDs",
         ),
-    )
-
-
-def _coverage_ordered_nominations(
-    *, coverage: dict[UUID, int], k: int, search
-) -> tuple[P1Nomination, ...]:
-    """Apply coverage before depth, then relevance inside each coverage tier."""
-    ordered: list[P1Nomination] = []
-    for count in sorted(set(coverage.values()), reverse=True):
-        remaining = k - len(ordered)
-        if remaining <= 0:
-            break
-        ids = tuple(item for item, value in coverage.items() if value == count)
-        ordered.extend(search(ids, remaining))
-    return tuple(
-        P1Nomination(
-            item_id=item.item_id,
-            rank=rank,
-            score=item.score,
-            channel=item.channel,
-            qualifier=item.qualifier,
-        )
-        for rank, item in enumerate(ordered[:k], start=1)
-    )
-
-
-def _coverage_ordered_fact_nominations(
-    *, eligibility: dict[tuple[str, UUID], int], k: int, search
-) -> tuple[P1Nomination, ...]:
-    """Fact equivalent of coverage-first, relevance-second nomination."""
-    ordered: list[P1Nomination] = []
-    for count in sorted(set(eligibility.values()), reverse=True):
-        remaining = k - len(ordered)
-        if remaining <= 0:
-            break
-        keys = tuple(key for key, value in eligibility.items() if value == count)
-        ordered.extend(search(keys, remaining))
-    return tuple(
-        P1Nomination(
-            item_id=item.item_id,
-            rank=rank,
-            score=item.score,
-            channel=item.channel,
-            qualifier=item.qualifier,
-        )
-        for rank, item in enumerate(ordered[:k], start=1)
     )
 
 
@@ -3639,34 +3471,6 @@ _LOOKUP_OBSERVATIONS = text(
     """
 )
 
-_TESTIMONY_CONTEXT_ELIGIBILITY = text(
-    """
-    WITH requested AS (
-        SELECT DISTINCT entity_id
-        FROM unnest(CAST(:entity_ids AS uuid[])) AS ids(entity_id)
-    ), claim_ids AS (
-        SELECT 'claim'::text AS target_kind, mention.claim_id AS target_id,
-               count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        JOIN requested ON requested.entity_id = mention.resolved_entity_id
-        WHERE mention.deployment_id = :deployment_id
-          AND mention.claim_id IS NOT NULL
-        GROUP BY mention.claim_id
-    ), chunk_ids AS (
-        SELECT 'chunk'::text AS target_kind, mention.chunk_id AS target_id,
-               count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        JOIN requested ON requested.entity_id = mention.resolved_entity_id
-        WHERE mention.deployment_id = :deployment_id
-        GROUP BY mention.chunk_id
-    )
-    SELECT target_kind, target_id, coverage FROM claim_ids
-    UNION ALL
-    SELECT target_kind, target_id, coverage FROM chunk_ids
-    ORDER BY target_kind, coverage DESC, target_id
-    """
-)
-
 _FACT_CONTEXT_TIME_PREDICATE = """
       AND fact.ingested_at <= :evaluated_at
       AND fact.invalidated_at IS NULL
@@ -3699,62 +3503,6 @@ _FACT_CONTEXT_COVERAGE = """
        WHERE requested.anchor = fact.subject_entity_id
           OR requested.anchor = fact.object_entity_id)
 """
-
-_FACT_CONTEXT_ELIGIBILITY = text(
-    f"""
-    WITH candidates AS (
-        SELECT relation.deployment_id, 'relation'::text AS fact_kind,
-               relation.relation_id AS fact_id,
-               subject.survivor_entity_id AS subject_entity_id,
-               object.survivor_entity_id AS object_entity_id,
-               relation.valid_from, relation.valid_until,
-               relation.ingested_at, relation.invalidated_at
-        FROM relations AS relation
-        JOIN v_memory_entity_survivor AS subject
-          ON subject.deployment_id = relation.deployment_id
-         AND subject.entity_id = relation.subject_entity_id
-        JOIN v_memory_entity_survivor AS object
-          ON object.deployment_id = relation.deployment_id
-         AND object.entity_id = relation.object_entity_id
-        UNION ALL
-        SELECT observation.deployment_id, 'observation'::text,
-               observation.observation_id,
-               subject.survivor_entity_id, NULL::uuid,
-               observation.valid_from, observation.valid_until,
-               observation.ingested_at, observation.invalidated_at
-        FROM observations AS observation
-        JOIN v_memory_entity_survivor AS subject
-          ON subject.deployment_id = observation.deployment_id
-         AND subject.entity_id = observation.subject_entity_id
-    )
-    SELECT fact.fact_kind AS kind, fact.fact_id,
-           {_FACT_CONTEXT_COVERAGE} AS coverage
-    FROM candidates AS fact
-    WHERE fact.deployment_id = :deployment_id
-      {_FACT_CONTEXT_TIME_PREDICATE}
-      {_FACT_CONTEXT_ENTITY_PREDICATE}
-    ORDER BY coverage DESC, kind, fact.fact_id
-    """  # noqa: S608 -- interpolated fragments are module constants
-)
-
-_CONFIRM_FACT_ELIGIBILITY = text(
-    f"""
-    WITH requested AS (
-        SELECT fact_id, kind
-        FROM unnest(CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[]))
-             AS candidate(fact_id, kind)
-    )
-    SELECT fact.fact_kind AS kind, fact.fact_id,
-           {_FACT_CONTEXT_COVERAGE} AS coverage
-    FROM requested
-    JOIN memory_v1.facts_visible_history AS fact
-      ON fact.deployment_id = :deployment_id
-     AND fact.fact_kind = requested.kind
-     AND fact.fact_id = requested.fact_id
-    WHERE true {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
-    ORDER BY coverage DESC, kind, fact.fact_id
-    """  # noqa: S608 -- interpolated fragments are module constants
-)
 
 _CONFIRM_FACT_CONTEXT = text(
     f"""
@@ -4047,7 +3795,7 @@ _CONFIRM_CHUNKS = text(
     FROM memory_v1.chunks_live ch
     JOIN memory_v1.documents_live d
       ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    JOIN memory_v1.sections_live s
+    LEFT JOIN memory_v1.sections_live s
       ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
@@ -4066,7 +3814,7 @@ _CONFIRM_CHUNKS_SCOPED = text(
     FROM memory_v1.chunks_live ch
     JOIN memory_v1.documents_live d
       ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    JOIN memory_v1.sections_live s
+    LEFT JOIN memory_v1.sections_live s
       ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
     JOIN LATERAL (
         SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage

@@ -1,12 +1,11 @@
 # Design: PostgreSQL-native P1 search
 
-**Status:** binding architecture, implementation pending (D94)
+**Status:** binding architecture, implemented with the D94 cutover
 **Date:** 2026-08-14
 **Decision:** [D94](../../decisions.md#d94-p1-search-is-postgresql-native)
 **Analysis:**
 [postgres_p1_search_projection_analysis.md](../analysis/postgres_p1_search_projection_analysis.md)
-**Supersedes:** D8's LanceDB placement, D93, and
-[p1_lance_maintenance_design.md](p1_lance_maintenance_design.md)
+**Supersedes:** D8's LanceDB placement, D93, and the removed D93 maintenance design
 **Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94
 
 ## 1. Problem

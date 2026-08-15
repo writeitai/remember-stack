@@ -1,7 +1,5 @@
 """Self-host adapters: pg delivery shell, local-FS object store, local mounts (WP-0.4a)."""
 
-from typing import TYPE_CHECKING
-
 from rememberstack.adapters.selfhost.forget import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost.git import LocalGitRepository
 from rememberstack.adapters.selfhost.minio import MinIOObjectStore
@@ -21,11 +19,7 @@ from rememberstack.adapters.selfhost.telemetry import FanoutTelemetry
 from rememberstack.adapters.selfhost.telemetry import JsonLineTelemetry
 from rememberstack.adapters.selfhost.watcher import LocalDirectoryWatcher
 
-if TYPE_CHECKING:
-    from rememberstack.adapters.selfhost.lance import LanceChunkIndex
-
 __all__ = (
-    "LanceChunkIndex",
     "FanoutTelemetry",
     "LocalFSForgetManifestStore",
     "LocalGitRepository",
@@ -45,12 +39,3 @@ __all__ = (
     "SelfHostWorkerLoop",
     "TokenBucket",
 )
-
-
-def __getattr__(name: str) -> object:
-    """Load the heavy LanceDB adapter only when a composition actually needs it."""
-    if name == "LanceChunkIndex":
-        from rememberstack.adapters.selfhost.lance import LanceChunkIndex
-
-        return LanceChunkIndex
-    raise AttributeError(name)
