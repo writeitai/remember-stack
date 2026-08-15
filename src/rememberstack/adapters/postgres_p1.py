@@ -891,8 +891,9 @@ class PostgresP1Index:
         kind: str | None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        entity_ids: tuple[str, ...] = (),
     ) -> tuple[P1Nomination, ...]:
-        """Rank derived unscoped candidates for a caller that confirms every row."""
+        """Rank cheap base-table candidates for a caller that confirms every row."""
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -923,8 +924,22 @@ class PostgresP1Index:
                 "query_vector": _vector_literal(vector),
                 "branch_limit": k,
                 "limit": k,
+                "entity_ids": _uuid_strings(entity_ids),
             }
         )
+        if entity_ids:
+            scope_cte = """
+                scoped_entities AS MATERIALIZED (
+                    SELECT entity_id, survivor_entity_id
+                    FROM v_memory_entity_survivor
+                    WHERE deployment_id = :deployment_id
+                      AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))
+                ),
+            """
+            result_order = "coverage DESC, distance, qualifier, item_id"
+        else:
+            scope_cte = ""
+            result_order = "distance, qualifier, item_id"
         branches: list[str] = []
         for table, fact_kind, id_column in (
             ("relations", "relation", "relation_id"),
@@ -932,27 +947,67 @@ class PostgresP1Index:
         ):
             if table not in required:
                 continue
+            if entity_ids and fact_kind == "relation":
+                scope_select = """
+                        (CASE WHEN subject_scope.entity_id IS NULL THEN 0 ELSE 1 END
+                         + CASE
+                             WHEN object_scope.entity_id IS NULL
+                               OR object_scope.survivor_entity_id
+                                  = subject_scope.survivor_entity_id
+                             THEN 0 ELSE 1
+                           END) AS coverage,
+                """
+                scope_join = """
+                 LEFT JOIN scoped_entities AS subject_scope
+                   ON subject_scope.entity_id = indexed.subject_entity_id
+                 LEFT JOIN scoped_entities AS object_scope
+                   ON object_scope.entity_id = indexed.object_entity_id
+                """
+                scope_filter = (
+                    "AND (subject_scope.entity_id IS NOT NULL"
+                    " OR object_scope.entity_id IS NOT NULL)"
+                )
+                branch_order = (
+                    "coverage DESC, indexed.embedding <=> CAST(:query_vector AS vector)"
+                )
+            elif entity_ids:
+                scope_select = "1 AS coverage,"
+                scope_join = """
+                 JOIN scoped_entities AS subject_scope
+                   ON subject_scope.entity_id = indexed.subject_entity_id
+                """
+                scope_filter = ""
+                branch_order = (
+                    "coverage DESC, indexed.embedding <=> CAST(:query_vector AS vector)"
+                )
+            else:
+                scope_select = ""
+                scope_join = ""
+                scope_filter = ""
+                branch_order = "indexed.embedding <=> CAST(:query_vector AS vector)"
             branches.append(
                 f"""
                 (SELECT indexed.{id_column}::text AS item_id,
                         '{fact_kind}'::text AS qualifier,
+                        {scope_select}
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
+                 {scope_join}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
-                   {time_sql}
-                 ORDER BY indexed.embedding <=> CAST(:query_vector AS vector),
+                   {time_sql} {scope_filter}
+                 ORDER BY {branch_order},
                           indexed.{id_column}
                  LIMIT :branch_limit)
                 """
             )
         statement = f"""
-            WITH candidates AS ({" UNION ALL ".join(branches)})
+            WITH {scope_cte} candidates AS ({" UNION ALL ".join(branches)})
             SELECT item_id, qualifier, 1.0 - distance AS score
             FROM candidates
-            ORDER BY distance, qualifier, item_id LIMIT :limit
+            ORDER BY {result_order} LIMIT :limit
         """
         return _nominations(
             self._engine_rows(statement, parameters), channel="semantic", qualified=True

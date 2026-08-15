@@ -2234,9 +2234,9 @@ class QueryEngine:
         time: FactTime,
         evaluated_at: datetime,
     ) -> tuple[P1Nomination, ...]:
-        """Rank candidates, deferring unscoped authority to the confirm gate."""
+        """Rank candidates, deferring final fact authority to the confirm gate."""
         nomination_method = getattr(self._search_index, "nominate_facts_scored", None)
-        if not entity_ids and callable(nomination_method):
+        if callable(nomination_method):
             return cast(
                 "tuple[P1Nomination, ...]",
                 nomination_method(
@@ -2250,6 +2250,7 @@ class QueryEngine:
                     kind=None,
                     time=time,
                     evaluated_at=evaluated_at,
+                    entity_ids=tuple(str(item) for item in entity_ids),
                 ),
             )
         method = getattr(self._search_index, "search_facts_scored", None)
