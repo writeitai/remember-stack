@@ -159,7 +159,12 @@ def dispatch_answer_tool(
 ) -> Envelope | ContextBundleV1 | JsonValue:
     """Dispatch one catalogued read through the public SDK or P3 mount."""
     if name in {tool.name for tool in assured_tool_catalog()}:
-        return client.run_operation(name=name, arguments=arguments)
+        operation_arguments = dict(arguments)
+        if operation_arguments.get("entity_ids") == []:
+            # Entity scope is optional. Treat the model's empty optional array as
+            # the same unscoped call as omission before public schema validation.
+            del operation_arguments["entity_ids"]
+        return client.run_operation(name=name, arguments=operation_arguments)
     if name in PRIMITIVE_TOOL_NAMES:
         return _dispatch_primitive(client=client, name=name, arguments=arguments)
     if name in OPEN_QUERY_TOOL_NAMES:
