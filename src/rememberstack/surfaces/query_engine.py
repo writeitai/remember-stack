@@ -2144,6 +2144,35 @@ class QueryEngine:
             return self.nominate_claims(
                 deployment_id=deployment_id, query=query, k=k, channel=channel
             )
+        nomination_method = getattr(
+            self._search_index, "nominate_testimony_scored", None
+        )
+        if callable(nomination_method):
+            nominations = cast(
+                "tuple[P1Nomination, ...]",
+                nomination_method(
+                    deployment_id=str(deployment_id),
+                    grain="claim",
+                    channel=channel,
+                    k=k,
+                    entity_ids=tuple(str(item) for item in entity_ids),
+                    **(
+                        {
+                            "vector": self._embed(
+                                query=query,
+                                call_site=SurfaceCallSite.TESTIMONY_CLAIMS,
+                                deployment_id=deployment_id,
+                            )
+                        }
+                        if channel == "semantic"
+                        else {"query": query}
+                    ),
+                ),
+            )
+            return _scored_nomination_envelope(
+                nominations=nominations,
+                empty_explanation="no claims were nominated inside the entity scope",
+            )
         method_name = (
             "search_claims_scored"
             if channel == "semantic"
@@ -2190,6 +2219,37 @@ class QueryEngine:
         if not entity_ids:
             return self.nominate_chunks(
                 deployment_id=deployment_id, query=query, k=k, channel=channel
+            )
+        nomination_method = getattr(
+            self._search_index, "nominate_testimony_scored", None
+        )
+        if callable(nomination_method):
+            nominations = cast(
+                "tuple[P1Nomination, ...]",
+                nomination_method(
+                    deployment_id=str(deployment_id),
+                    grain="chunk",
+                    channel=channel,
+                    k=k,
+                    entity_ids=tuple(str(item) for item in entity_ids),
+                    policy_generation=self._policy_generation,
+                    embedder_generation=self._embedder_generation,
+                    **(
+                        {
+                            "vector": self._embed(
+                                query=query,
+                                call_site=SurfaceCallSite.TESTIMONY_CHUNKS,
+                                deployment_id=deployment_id,
+                            )
+                        }
+                        if channel == "semantic"
+                        else {"query": query}
+                    ),
+                ),
+            )
+            return _scored_nomination_envelope(
+                nominations=nominations,
+                empty_explanation="no passages were nominated inside the entity scope",
             )
         method_name = (
             "search_chunks_scored"
