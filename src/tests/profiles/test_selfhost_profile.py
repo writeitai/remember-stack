@@ -25,6 +25,15 @@ def test_selfhost_setup_seeds_shipped_examples() -> None:
     assert "seed_canonical_operations" in source
 
 
+def test_selfhost_convert_uses_stock_passthrough_including_plain_text() -> None:
+    """Stock convert must route text/plain (CLI .txt) as well as text/markdown."""
+    from rememberstack.profiles import selfhost as selfhost_mod
+
+    source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
+    assert "stock_passthrough_routes" in source
+    assert '{"text/markdown": MarkdownPassthroughConverter()}' not in source
+
+
 def test_selfhost_composes_every_implemented_continuous_route() -> None:
     """Continuous handlers run; enum-only/fused stages do not get dummy workers."""
     assert _SUPPORTED_WORKER_STAGES == (
