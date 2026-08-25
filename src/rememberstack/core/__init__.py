@@ -22,6 +22,7 @@ from rememberstack.core.conversion import ConversionRouter
 from rememberstack.core.conversion import Converter
 from rememberstack.core.conversion import MarkdownPassthroughConverter
 from rememberstack.core.conversion import PASSTHROUGH_CONVERTER_VERSION
+from rememberstack.core.conversion import stock_passthrough_routes
 from rememberstack.core.core_manifest import CORE_MANIFEST
 from rememberstack.core.core_manifest import CoreManifest
 from rememberstack.core.core_manifest import EntityTypeDefinition
@@ -101,6 +102,7 @@ __all__ = (
     "EntityTypeDefinition",
     "MarkdownPassthroughConverter",
     "PASSTHROUGH_CONVERTER_VERSION",
+    "stock_passthrough_routes",
     "PredicateDefinition",
     "PredicateSignatureDefinition",
     "block_hash",

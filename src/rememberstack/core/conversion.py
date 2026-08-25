@@ -74,3 +74,14 @@ class MarkdownPassthroughConverter:
             raise ConversionError(
                 f"input declared {mime!r} is not valid UTF-8 text"
             ) from err
+
+
+def stock_passthrough_routes() -> dict[str, Converter]:
+    """Stock self-host MIME table: UTF-8 text is identity, not MarkItDown.
+
+    The CLI/SDK guess ``.txt`` as ``text/plain`` and MCP ``text`` ingest
+    defaults to the same. Routing only ``text/markdown`` dead-letters those
+    converts (UMC #228 / RememberStack #301).
+    """
+    passthrough = MarkdownPassthroughConverter()
+    return {"text/markdown": passthrough, "text/plain": passthrough}

@@ -680,7 +680,7 @@ class SelfHostProfile:
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
         from rememberstack.core import ConversionRouter
-        from rememberstack.core import MarkdownPassthroughConverter
+        from rememberstack.core import stock_passthrough_routes
         from rememberstack.model import ResolverConfig
         from rememberstack.spine import CascadeResolver
         from rememberstack.spine import ChunkCatalog
@@ -731,9 +731,7 @@ class SelfHostProfile:
                 catalog=documents,
                 raw_store=self._raw_store,
                 artifact_store=self._artifact_store,
-                router=ConversionRouter(
-                    routes={"text/markdown": MarkdownPassthroughConverter()}
-                ),
+                router=ConversionRouter(routes=stock_passthrough_routes()),
             )
         if stage is PipelineStage.STRUCTURE:
             return StructureHandler(
