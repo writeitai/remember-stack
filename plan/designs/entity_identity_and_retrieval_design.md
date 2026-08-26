@@ -60,8 +60,11 @@ thing. A name generates **candidates**. **T0 never auto-merges** (exact
 lemma only lists ids). T3 may accept a repeat when a profile exists;
 T4 when the profile is empty, fights, or several candidates exist. The
 same spelling may be two ids. Profile is T3/T4 evidence, never the
-lookup key. Relatedness is a relation. No common-name list; no
-“enable exact-T0 on a large corpus.”
+lookup key. Relatedness is a relation. No common-name list. Exact-lemma
+auto-accept as a default-off “large corpus” switch is **rejected**; a
+narrower opt-in (closed unique namespace, not entity count) remains an
+[unchosen proposal](../../design/proposals/optional-exact-t0-accept.md),
+not WP-I.5.
 
 **D96 — No entity types; extract names; profile is observation prose.**
 Mentions are a diary of names (string, claim, span). E3 does not emit
@@ -124,10 +127,16 @@ This is how father/son becomes possible (they reach T4 with different
 facts) **and** how a clean table stays affordable (repeats of a known
 person are embeddings, not judges).
 
-**Not in this design:** an operator flag that turns exact-lemma
-auto-merge back on once the corpus is “large.” A large store has
-**more** `Jan`s, not fewer. The cheap path is T3+profile, not
-resurrecting T0-as-verdict.
+**Not the default, not WP-I.5:** an operator flag that turns exact-lemma
+auto-accept back on. A large store has **more** `Jan`s, not fewer
+(birthday paradox). Enabling the old exact-hit *because* the corpus is
+large is backwards. The cheap path for repeats is T3+profile, not
+resurrecting T0-as-verdict. The idea of keeping exact-hit as a
+**manual, default-off** switch is recorded as an unchosen proposal
+([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md));
+its adoption trigger is a closed unique namespace (SKUs, employee
+numbers), **not** entity count. Identifier-shaped T0 (email, LEI,
+ORCID) is a different future path, not name-lemma auto-merge.
 
 ### 3.2 Same lemma, two ids
 
@@ -445,7 +454,8 @@ generations are abandoned, not dual-run. Sequencing:
 | Alternative | Why it lost |
 |---|---|
 | Keep T0 exact as verdict | Homonyms impossible |
-| Exact-T0 auto-merge as a default-off flag for “large corpora” | Large stores have more collisions, not fewer; T3+profile is the scale path |
+| Distinctive lemma + common-name stoplist | Second `Jan` still glues; thousands of locale-dependent names; uniqueness is a table property, not a name property |
+| Exact-T0 auto-accept as a default-off flag, enabled once the corpus is “large” | Large stores have more collisions, not fewer; T3+profile is the scale path. The flag itself is an [unchosen proposal](../../design/proposals/optional-exact-t0-accept.md) whose trigger is **not** entity count |
 | `(name, type)` unique | Forks SAP |
 | Required extract class | Error space; first-mint law |
 | D18 pre-resolve on emitted types | Not independent |

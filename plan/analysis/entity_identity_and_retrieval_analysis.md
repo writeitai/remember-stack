@@ -271,10 +271,87 @@ glues the second `Jan` unless a huge stoplist exists, and turning that
 shortcut on for a *large* corpus is backwards (more collisions). Scale
 path: T3 on mention+claim vs **profile** (repeats of James, no LLM).
 T4 when profile is empty, fights, or several Johns exist. No
-thousand-name census.
+thousand-name census. The Case A/B walk and the default-off exact-hit
+idea are §5.1.
 
 **Do not optimize extract for LoCoMo categories.** Bare-noun refusal
 helps every corpus. Father/son and person-as-employer are the tests.
+
+### 5.1 T0 never decides — distinctive names, common names, and a default-off exact-hit flag
+
+Operator follow-up (same day, after D95 bound T0 as candidates): **T0
+never auto-merges is the default; write it down.** Then: could the old
+exact-lemma auto-accept still exist as a **manual** switch, off unless
+someone turns it on after a large memory already has many entities?
+
+This section is the *why* of that conversation. Binding remains D95
+(T0 lists, never merges). The flag is an **unchosen proposal**
+([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md)),
+not WP-I.5 work.
+
+#### Two cases that look different and are not
+
+**Case A — the lemma looks distinctive.** The store currently has one
+id whose cleaned spelling is `sap`, `x æ a-12`, or a rare surname. The
+next mention with that spelling *feels* like a repeat. Old T0 accepted
+at confidence 1.0. That is safe **only until** a second real-world
+thing uses the same string. Uniqueness is a property of **this table
+right now**, not of the name. The first collision of a previously
+unique lemma is the exact moment auto-accept is fatal, and it is
+silent: no T3, no T4, no profile, father/son glued.
+
+**Case B — the lemma is common or already collides.** `Jan`, `John`,
+`James`, two employees, a man and his father. Type cannot split them
+(both people). Exact lemma cannot split them. Old T0 never lets
+profile or a judge speak.
+
+A “distinctive lemma auto-accepts; common names escalate” shortcut is
+Case A plus a stoplist for Case B. It does not scale:
+
+- The stoplist is thousands of given names, locale-dependent (`Jan` is
+  ordinary in Czech, unusual in some English stores), and still misses
+  the second `James` until he exists.
+- Case A becoming Case B is the interesting event. The stoplist never
+  contains a name the first time a collision appears.
+- Maintaining the list is a census of the world. The resolver would
+  rather not.
+
+**T0 never deciding** handles both cases with one rule. Zero
+candidates → mint. One or more → those ids are candidates; T3 may
+accept a **repeat of a known profiled person**; T4 when the profile is
+empty, fights, or several Johns exist; mint another id if T4 says
+different. No census. Father/son can reach T4. A thousand mentions of
+the same James are embeddings, not judges.
+
+#### Why “enable exact-T0 after a large corpus” is backwards
+
+The intuition: once many entities exist, most new mentions are repeats
+of names we already have, so exact-hit is a cheap cache.
+
+What actually happens as the table grows:
+
+- **More collisions, not fewer** (birthday paradox). A small diary
+  might have one Jan. A large CRM has several. Enabling auto-accept
+  *because* the store is large is enabling it at the peak collision
+  rate.
+- **Repeats of a known person are already cheap.** That is T3
+  (mention+claim vs profile), not T0. The cost T0 would save vs T3 is
+  one embedding lookup. The cost of one false merge is every later hop
+  and forget attached to the wrong id.
+- **Empty-profile cold start is worse on a large store, not better.**
+  The second Jan still has a thin or empty profile the first time he
+  appears. T0 would glue him to the first Jan without looking.
+- A default-off flag that exists in production **will be flipped**
+  under T4 cost pressure. The first silent glue has no eval alarm
+  unless `judge_pair` already treats lemma equality as a non-match
+  (D95 / WP-I.3) — and even then the store is already wrong.
+
+So: keep exact-lemma auto-accept **out of the default cascade**. Do
+not auto-enable it at an entity-count threshold. If a later operator
+still wants a switch, the adoption trigger is **not** corpus size.
+The honest triggers (closed unique namespace; identifier-shaped
+strings such as LEI/email, which are a *different* T0) live on the
+proposal. WP-I.5 does not ship the flag.
 
 ---
 
@@ -289,6 +366,8 @@ helps every corpus. Father/son and person-as-employer are the tests.
 5. Homonyms need profile/context, not type.
 6. Relatedness is a relation, not a field on the entity.
 7. Retrieval should not fall over guessing predicates.
+8. T0 never auto-merges; cheap repeats are T3+profile.
+9. Do not enable exact-lemma T0 because the store is large.
 
 ---
 
@@ -301,6 +380,8 @@ helps every corpus. Father/son and person-as-employer are the tests.
 | Identity = description | Moves city → new person; shared city → collision |
 | Entity-level `related[]` | Relatedness is a dated fact with a predicate |
 | Keep T0 exact as verdict; add profile | Profile never runs for same lemma |
+| Distinctive lemma + common-name stoplist | Second `Jan` still glues; thousands of locale-dependent names; uniqueness is a table property, not a name property |
+| Exact-T0 auto-accept, default-off, enable when the corpus is large | Birthday paradox: more collisions at scale, not fewer. T3+profile is the cheap repeat path. Flag kept as a proposal with a *different* trigger; not WP-I.5 |
 | Drop types **instead of** fixing T0 | Homonyms still collapse — D95 remains required; D96 is additional |
 | Optional M2M hats | Parallel ontology; “bank” is already an observation; default retrieval does not use kind |
 | Hats on facts | Duplicate of predicates + observation text |

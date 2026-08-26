@@ -3887,7 +3887,11 @@ the profile, not the id. Relatedness is a **relation**. The golden-pair
 harness must not treat lemma equality as an automatic match. There is
 **no** common-name census and **no** “turn exact-T0 on when the corpus
 is large” switch: a large store has more collisions; T3+profile is how
-repeats stay cheap.
+repeats stay cheap. Keeping pre-D95 exact-hit as a **manual,
+default-off** flag is an unchosen proposal
+(`design/proposals/optional-exact-t0-accept.md`); do not ship it in
+WP-I.5. Its trigger, if ever, is a closed unique namespace — not
+entity count.
 
 **Context.** Exact-lemma merge at confidence 1.0 made father/son
 impossible. A “distinctive lemma / common-name list” shortcut still
@@ -3904,12 +3908,15 @@ implies a single row. D22 must include same-name non-matches.
 **Design.** `plan/designs/entity_identity_and_retrieval_design.md`
 **Analysis.** `plan/analysis/entity_identity_and_retrieval_analysis.md`
 **Sequencing.** `plan/plans/entity_identity_and_retrieval.md`
+**Proposal (unchosen).** `design/proposals/optional-exact-t0-accept.md`
 
 **Rejected.** T0 exact as always-verdict; T0 auto-merge for “distinctive”
-names plus a given-name stoplist; exact-T0 as a default-off flag for
-large corpora; identity = description; `(name, type)` unique key;
-entity-level `related[]`; T4 emitting mushy relatedness; T4 on every
-mention of a known person.
+names plus a given-name stoplist; enabling exact-T0 because the corpus
+is large (birthday paradox; more collisions, not fewer); identity =
+description; `(name, type)` unique key; entity-level `related[]`; T4
+emitting mushy relatedness; T4 on every mention of a known person.
+Optional exact-lemma auto-accept remains an **unchosen proposal**, not
+a shipped switch.
 
 **Amends.** Refines D17 (T0 meaning). Does not replace the T0–T4 ladder,
 D20, or D21.
