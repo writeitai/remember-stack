@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from fastapi import Header
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi import Request
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -715,13 +716,19 @@ def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
 
     The `Authorization: <scheme> <value>` header is handed to the configured
     port; a failure, a missing header, or a credential for another deployment
-    is a 401/403 before any read runs. This is the single enforcement point
-    (retrieval §9) — inside, it is one trust domain.
+    is a 401/403 before any read runs. ``GET /healthz`` is the Compose
+    liveness probe and is the only path exempt from the Bearer check. This
+    is the single enforcement point (retrieval §9) — inside, it is one trust
+    domain.
     """
 
     def dependency(
-        authorization: str | None = Header(default=None),
+        request: Request, authorization: str | None = Header(default=None)
     ) -> AuthenticatedContext:
+        if request.method == "GET" and request.url.path.rstrip("/") == "/healthz":
+            return AuthenticatedContext(
+                deployment_id=deployment_id, principal="healthz"
+            )
         if not authorization:
             raise HTTPException(
                 status_code=401, detail="a perimeter credential is required"

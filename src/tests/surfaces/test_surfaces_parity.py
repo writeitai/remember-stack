@@ -367,6 +367,82 @@ def test_the_auth_perimeter_gates_every_endpoint(deployment: _Deployment) -> Non
     )
 
 
+def test_hashed_bearer_bind_for_other_deployment_is_403(
+    deployment: _Deployment,
+) -> None:
+    """A's BIND installed on process B admits A's token as issued A → 403."""
+    from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
+    from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
+
+    secret = "umc_dp_test-secret-not-for-production"
+    auth = HashedBearerAuth(
+        issued_deployment_id=_OTHER_DEPLOYMENT,
+        digest=digest_bearer_secret(secret=secret),
+    )
+    guarded = build_api(
+        engine=QueryEngine(
+            engine=deployment.engine,
+            search_index=_NullSearchIndex(),
+            model_provider=FakeModelProvider(generate_payloads={}),
+            embedding_model="toy",
+        ),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=_OpenBoundary(),
+        readiness=_OpenBoundary(),
+        surface=deployment.surface,
+        auth=auth,
+    )
+
+    @guarded.get("/healthz", include_in_schema=False)
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    client = TestClient(guarded)
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/operations").status_code == 401
+    assert (
+        client.get("/operations", headers={"Authorization": "Bearer nope"}).status_code
+        == 401
+    )
+    assert (
+        client.get(
+            "/operations", headers={"Authorization": f"Bearer {secret}"}
+        ).status_code
+        == 403
+    )
+
+
+def test_hashed_bearer_matching_bind_is_200(deployment: _Deployment) -> None:
+    """The issued UUID matching this process admits the matching secret."""
+    from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
+    from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
+
+    secret = "umc_dp_test-secret-not-for-production"
+    auth = HashedBearerAuth(
+        issued_deployment_id=_DEPLOYMENT_ID, digest=digest_bearer_secret(secret=secret)
+    )
+    guarded = build_api(
+        engine=QueryEngine(
+            engine=deployment.engine,
+            search_index=_NullSearchIndex(),
+            model_provider=FakeModelProvider(generate_payloads={}),
+            embedding_model="toy",
+        ),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=_OpenBoundary(),
+        readiness=_OpenBoundary(),
+        surface=deployment.surface,
+        auth=auth,
+    )
+    client = TestClient(guarded)
+    assert (
+        client.get(
+            "/operations", headers={"Authorization": f"Bearer {secret}"}
+        ).status_code
+        == 200
+    )
+
+
 # --- regression proofs for the Codex review fixes --------------------------
 
 

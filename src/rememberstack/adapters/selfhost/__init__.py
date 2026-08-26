@@ -2,6 +2,9 @@
 
 from rememberstack.adapters.selfhost.forget import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost.git import LocalGitRepository
+from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
+from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
+from rememberstack.adapters.selfhost.hashed_bearer_auth import parse_bearer_bind
 from rememberstack.adapters.selfhost.minio import MinIOObjectStore
 from rememberstack.adapters.selfhost.minio import MinIOSettings
 from rememberstack.adapters.selfhost.mounts import AuditedRawReader
@@ -21,6 +24,9 @@ from rememberstack.adapters.selfhost.watcher import LocalDirectoryWatcher
 
 __all__ = (
     "FanoutTelemetry",
+    "HashedBearerAuth",
+    "digest_bearer_secret",
+    "parse_bearer_bind",
     "LocalFSForgetManifestStore",
     "LocalGitRepository",
     "LocalDirectoryWatcher",
