@@ -11,6 +11,8 @@ Adversarial reviews of proposed designs before binding acceptance.
 | [`REVIEW_agy_entity_identity_retrieval_plan_2026-08-26.md`](REVIEW_agy_entity_identity_retrieval_plan_2026-08-26.md) | Antigravity (`agy`) | Same r1 |
 | [`REVIEW_codex-sol_entity_identity_retrieval_plan_r2_2026-08-26.md`](REVIEW_codex-sol_entity_identity_retrieval_plan_r2_2026-08-26.md) | Codex gpt-5.6-sol xhigh | Hard-cut plan r2 (no BC) |
 | [`REVIEW_agy_entity_identity_retrieval_plan_r2_2026-08-26.md`](REVIEW_agy_entity_identity_retrieval_plan_r2_2026-08-26.md) | Antigravity (`agy`) | Same r2 |
+| [`REVIEW_codex-sol_optional_exact_t0_2026-08-26.md`](REVIEW_codex-sol_optional_exact_t0_2026-08-26.md) | Codex gpt-5.6-sol xhigh | PR #307 T0-never-merge + unchosen exact-T0 proposal |
+| [`REVIEW_agy_optional_exact_t0_2026-08-26.md`](REVIEW_agy_optional_exact_t0_2026-08-26.md) | Antigravity (`agy`) | Same PR #307 |
 
 Revised designs after these reviews:
 

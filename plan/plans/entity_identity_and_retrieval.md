@@ -90,4 +90,8 @@ passing post-I.4 eval record.
 
 **Non-goals:** reintroducing hats; expand/contract typed columns;
 mixed-generation E3 drain; LoCoMo-only prompts; `mention_id` on
-evidence; a `bank` type; keeping `resolve(type?)`.
+evidence; a `bank` type; keeping `resolve(type?)`; shipping
+`t0_exact_accept` (or any exact-lemma auto-merge flag) in WP-I.5 —
+that idea is an unchosen proposal
+([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md)),
+and “enable it after a large corpus” is a rejected trigger.
