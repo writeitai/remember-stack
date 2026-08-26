@@ -244,7 +244,8 @@ PG entity registry             (D10/D44)                 → GCS bytes
 | `e1_chunks_design.md` | blocks + blockizer, sections on the grid, chunk packing, reuse mechanics (D57–D58) | **current** |
 | `e2_e3_claims_relations_design.md` | claim extraction + relation normalization; why there is no value gate (D31–D35, D25) | **current** |
 | `observations_design.md` | non-graph facts about one entity — untyped, entity-anchored, bi-temporal; supersession by entity-blocking + adjudication (D43) | **current** |
-| `registries_design.md` | entity resolution, ontology, governance, review, eval (D15–D24) | **current** |
+| `registries_design.md` | entity resolution, ontology, governance, review, eval (D15–D24); identity/T0/types **amended** D95–D96 | **current** (see identity design) |
+| `entity_identity_and_retrieval_design.md` | referent identity, no entity types, profile from observations, default retrieval (D95–D97) | **current** |
 | `k_layers_design.md` | plane K: planner/writer/driver compile system, compiled + authored pages, K1 plus K2 purpose scopes (D45–D47, D73) | **current** |
 | `k3_beliefs_design.md` | *(withdrawn — D73; principles are authored K2 content)* | — |
 | `p2_graph_design.md` | graph projection, rebuild, snapshots, search | **current** |

@@ -5,6 +5,10 @@ a **mountable corpus filesystem** that agents browse (P3, a projection). Decisio
 Companion working analysis: `_feature_planning/e0/` (Claude + Codex). Numbers/choices here are
 starting points to measure, not committed constants (CLAUDE.md).
 
+> **Amended 2026-08-26 (D96).** P3 Tier-1 entity leaves are
+> `entities/<entity_id>/`, not `entities/<type>/<entity_id>/`. Authority:
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §9.
+
 ## 1. Where this sits
 
 E0 is the **document layer** of plane E. Its product is a *structured document*: the original

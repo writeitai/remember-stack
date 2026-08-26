@@ -103,6 +103,12 @@ needs to restate it:
 | 7 | Operational correctness + portability | backfill/reprocessing, fixed scale batteries, configurable budgets, failure inspection/drills, hard-delete, release, portable restore | orchestration, packaging, schema §12–13 | done (exit criteria met 2026-07-23; PRs #120, #122–#124, #126, #128, #131; public `v0.1.0` release proof) |
 | 8 | Competitive benchmarks | external benchmark harness, adapters, OSS baselines (Mem0/Graphiti), capability benchmark, published methodology + results | D22 (internal) + D78 + `phase-8` survey | in progress (WP-8.1 selection complete; WP-8.2 LoCoMo setup implemented, owner-reviewed smoke intentionally pending) |
 
+**Identity/retrieval reform (D95–D97; no entity types), not a new numbered phase.** Sequencing:
+[`entity_identity_and_retrieval.md`](entity_identity_and_retrieval.md). Binding:
+[`entity_identity_and_retrieval_design.md`](../designs/entity_identity_and_retrieval_design.md).
+This reform of shipped Phase-2 ER + E3 + default retrieval does **not** reopen Phase 2
+exit; it is a later train with its own WPs.
+
 Sequencing calls already argued (see the phase files for the rest): **K after retrieval**
 (agentic writers consume retrieval tools — build against a finished surface); **lifecycle
 before projections** (P2/P3 views are simpler written against lineages than re-plumbed later).
