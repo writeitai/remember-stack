@@ -267,7 +267,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     ]
     projection = limits["p2_projection"]
     assert isinstance(projection, dict)
-    assert projection["contract_version"] == "p2-rebuild-2026.07"
+    assert projection["contract_version"] == "p2-rebuild-2026.08"
     assert set(projection["node_types"]) == {"Entity", "Document"}  # type: ignore[arg-type]
     assert set(projection["edge_types"]) == {  # type: ignore[arg-type]
         "RELATES",

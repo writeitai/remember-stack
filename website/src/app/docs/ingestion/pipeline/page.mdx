@@ -152,7 +152,7 @@ Write-time cascade tiers:
 
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
-Bare head nouns (`game`, `app`, `system`, `card`, `photo`, `module`, `the system`) are not minted as entities. Qualified names (`FIFA 23`, `James's Unity strategy game`) may mint. When the claim spelling differs from the canonical name (`App` vs `Application`), both surfaces are stored as aliases on the same id.
+Bare head nouns (`game`, `app`, `system`, `card`, `photo`, `module`, `the system`) are not minted as entities. Qualified names (`FIFA 23`, `James's Unity strategy game`) may mint. When the claim spelling differs from the canonical name (`App` vs `Application`), both surfaces are stored as aliases on the same id. Entities have **no type class**: extract emits names only. `works_for` between two people is allowed.
 
 ### Predicate governance
 

@@ -19,6 +19,12 @@ def _claim_with(*, claim_text: str) -> ClaimForNormalization:
     return base.model_copy(update={"claim_text": claim_text})
 
 
+def test_prompt_has_no_registry_types() -> None:
+    """D96: extract prompt does not list entity types."""
+    assert "REGISTRY TYPES" not in _NORMALIZE_PROMPT
+    assert "Do not emit a type field" in _NORMALIZE_PROMPT
+
+
 def test_prompt_forbids_bare_head_nouns() -> None:
     """The normalizer prompt states the Graphiti-style eligibility rule."""
     assert "Do NOT emit bare head nouns" in _NORMALIZE_PROMPT
@@ -118,6 +124,39 @@ def test_normalize_drops_game_observation_without_resolve() -> None:
         meter=NoopCostMeter(),
     )
     assert resolver.calls == []
+
+
+def test_works_for_between_people_is_not_dropped() -> None:
+    """D96: works_for is not gated on Organization; two people persist."""
+    payload = {
+        "relations": [
+            {
+                "subject": {"name": "Alice", "type": "Person"},
+                "predicate": "works_for",
+                "object": {"name": "Me", "type": "Person"},
+            }
+        ]
+    }
+    provider = FakeModelProvider(generate_payload=_payload(payload))
+    resolver = RecordingResolver()
+    facts = RecordingFacts(predicates={"works_for": None})
+    handler = _handler(provider=provider, resolver=resolver, facts=facts)
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        deployment_id=uuid4(),
+        claim=_claim_with(claim_text="Alice works for me."),
+        predicates={"works_for": None},
+        prompt_lines="works_for",
+        signatures={},
+        type_parents={"Person": None},
+        allowed_types=frozenset({"Person"}),
+        meter=NoopCostMeter(),
+    )
+    assert [ref.name for ref in resolver.calls] == ["Alice", "Me"]
+    assert facts.upserts[0]["predicate"] == "works_for"
 
 
 def test_normalize_passes_source_surface_to_resolve() -> None:

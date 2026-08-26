@@ -1578,16 +1578,11 @@
                   "name": {
                     "title": "Name",
                     "type": "string"
-                  },
-                  "type": {
-                    "title": "Type",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "entity_id",
                   "name",
-                  "type",
                   "hops"
                 ],
                 "title": "GraphNode",
@@ -3301,16 +3296,11 @@
                   "name": {
                     "title": "Name",
                     "type": "string"
-                  },
-                  "type": {
-                    "title": "Type",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "entity_id",
                   "name",
-                  "type",
                   "hops"
                 ],
                 "title": "GraphNode",
@@ -4087,9 +4077,6 @@
           "input_schema": {
             "additionalProperties": false,
             "properties": {
-              "entity_type": {
-                "type": "string"
-              },
               "name": {
                 "minLength": 1,
                 "type": "string"
@@ -5104,16 +5091,11 @@
                   "name": {
                     "title": "Name",
                     "type": "string"
-                  },
-                  "type": {
-                    "title": "Type",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "entity_id",
                   "name",
-                  "type",
                   "hops"
                 ],
                 "title": "GraphNode",
@@ -6939,16 +6921,11 @@
                   "name": {
                     "title": "Name",
                     "type": "string"
-                  },
-                  "type": {
-                    "title": "Type",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "entity_id",
                   "name",
-                  "type",
                   "hops"
                 ],
                 "title": "GraphNode",
@@ -8696,7 +8673,7 @@
       },
       "p2_projection": {
         "contract": "memory_v1.p2/1",
-        "contract_version": "p2-rebuild-2026.07",
+        "contract_version": "p2-rebuild-2026.08",
         "edge_types": {
           "DOC_CROSSREF": {
             "context": "STRING",
@@ -8737,8 +8714,7 @@
             "id": "UUID",
             "name": "STRING",
             "normalized_name": "STRING",
-            "summary": "STRING",
-            "type": "STRING"
+            "summary": "STRING"
           }
         }
       },
@@ -23944,7 +23920,7 @@
               "type": "timestamp with time zone"
             }
           ],
-          "comment": "One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires SURVIVING PROVENANCE, which is an explicit association to at least one live document lineage: a mention of this survivor in any non-tombstoned version of a live lineage, or a live document-entity bridge. An entity whose every source has been forgotten is therefore absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. MEMBERSHIP AND THE COUNTS ANSWER DIFFERENT QUESTIONS, and the difference is deliberate: the two counts are exact over CURRENT content only — they equal this entity's rows in mentions_live and entity_document_mentions — so an entity whose only mention sits in a superseded version of a live lineage is published here with both counts at zero and has no row in entity_document_mentions at all. A zero count is not an absence of provenance. graph_degree is copied from the latest published graph snapshot and is therefore orientation that can lag live state; profile_summary is orientation text, never evidence; and the clocks are registry maintenance instants that carry no world-validity meaning.",
+          "comment": "One row per survivor entity with surviving provenance. entity_type and type_confidence are vacated (always NULL) after D96; identity is the entity_id.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -24301,17 +24277,23 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "type"
-                      }
-                    ]
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "A_Const",
+                      "isnull": true
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
                   }
                 },
                 {
@@ -24349,17 +24331,27 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "e"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "type_confidence"
-                      }
-                    ]
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "A_Const",
+                      "isnull": true
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "pg_catalog"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "float4"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
                   }
                 },
                 {
@@ -37689,5 +37681,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "a5b305d9f832a8d739563e8d25b57e1387aac37500f1c70e0980e29e7692b0f6"
+  "surface_manifest_hash": "cf4a8f87bb79a7b1f59a2fe70badd6d6d5ed320174343371088c9896d6861cd8"
 }

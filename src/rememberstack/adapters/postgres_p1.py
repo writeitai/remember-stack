@@ -1143,7 +1143,7 @@ class PostgresP1Index:
         k: int,
         entity_type: str | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank live entity profiles under an optional type filter."""
+        """Rank live entity profiles. ``entity_type`` is ignored (D96)."""
         _require_vector(vector)
         self._require_channel(
             deployment_id=deployment_id,
@@ -1163,8 +1163,6 @@ class PostgresP1Index:
               AND indexed.embedding IS NOT NULL
               AND indexed.embedding_model = :embedding_model
               AND indexed.embedding_input_policy_version = :input_policy
-              AND (CAST(:entity_type AS text) IS NULL
-                   OR published.entity_type = :entity_type)
             ORDER BY indexed.embedding <=> CAST(:query_vector AS vector),
                      indexed.entity_id
             LIMIT :limit
@@ -1174,7 +1172,6 @@ class PostgresP1Index:
                 "embedding_model": self._embedding_model,
                 "input_policy": ENTITY_INPUT_POLICY,
                 "query_vector": _vector_literal(vector),
-                "entity_type": entity_type,
                 "limit": k,
             },
         )

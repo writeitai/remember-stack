@@ -248,7 +248,6 @@ class QueryEngine:
         *,
         deployment_id: UUID,
         name: str,
-        entity_type: str | None = None,
         context_entity_ids: tuple[UUID, ...] = (),
     ) -> Envelope:
         """Resolve a name to ranked current entities (T0 in the skeleton).
@@ -271,7 +270,6 @@ class QueryEngine:
                     {
                         "deployment_id": deployment_id,
                         "lemma": normalized_lemma(surface=name),
-                        "entity_type": entity_type,
                     },
                 )
                 .mappings()
@@ -875,7 +873,7 @@ class QueryEngine:
             totals[key] = int(row["evidence_total"])
 
         kept_edges_by_id: dict[UUID, GraphEdge] = {}
-        confirmed_nodes: dict[UUID, tuple[str, str]] = {}
+        confirmed_nodes: dict[UUID, str] = {}
         for relation_id in candidate_edge_ids:
             row = confirmed_rows.get(relation_id)
             if row is None:
@@ -887,14 +885,8 @@ class QueryEngine:
             if not has_current_support and not withdrawn:
                 continue
             kept_edges_by_id[relation_id] = _graph_edge_from_confirmed_row(row=row)
-            confirmed_nodes[row["subject_id"]] = (
-                str(row["subject_name"]),
-                str(row["subject_type"]),
-            )
-            confirmed_nodes[row["object_id"]] = (
-                str(row["object_name"]),
-                str(row["object_type"]),
-            )
+            confirmed_nodes[row["subject_id"]] = str(row["subject_name"])
+            confirmed_nodes[row["object_id"]] = str(row["object_name"])
 
         retained_paths = _confirmed_graph_paths(
             paths=graph.paths, edges_by_id=kept_edges_by_id, nodes_by_id=confirmed_nodes
@@ -3160,7 +3152,7 @@ def _confirmed_graph_paths(
     *,
     paths: Sequence[GraphPath],
     edges_by_id: dict[UUID, GraphEdge],
-    nodes_by_id: dict[UUID, tuple[str, str]],
+    nodes_by_id: dict[UUID, str],
 ) -> tuple[GraphPath, ...]:
     """D48-confirm paths as units and replace projection labels from PG."""
     confirmed: list[GraphPath] = []
@@ -3170,8 +3162,7 @@ def _confirmed_graph_paths(
         nodes = tuple(
             GraphNode(
                 entity_id=node.entity_id,
-                name=nodes_by_id.get(node.entity_id, (node.name, node.type))[0],
-                type=nodes_by_id.get(node.entity_id, (node.name, node.type))[1],
+                name=nodes_by_id.get(node.entity_id, node.name),
                 hops=node.hops,
             )
             for node in path.nodes
@@ -3194,7 +3185,7 @@ def _confirmed_graph_nodes(
     graph_nodes: Sequence[GraphNode],
     paths: Sequence[GraphPath],
     edges: Sequence[GraphEdge],
-    nodes_by_id: dict[UUID, tuple[str, str]],
+    nodes_by_id: dict[UUID, str],
 ) -> tuple[GraphNode, ...]:
     """Keep only nodes connected by returned edges, in graph-rank order."""
     connected_ids = {
@@ -3205,10 +3196,8 @@ def _confirmed_graph_nodes(
     for node in ordered:
         if node.entity_id not in connected_ids or node.entity_id in returned:
             continue
-        name, entity_type = nodes_by_id.get(node.entity_id, (node.name, node.type))
-        returned[node.entity_id] = node.model_copy(
-            update={"name": name, "type": entity_type}
-        )
+        name = nodes_by_id.get(node.entity_id, node.name)
+        returned[node.entity_id] = node.model_copy(update={"name": name})
     return tuple(returned.values())
 
 
@@ -3497,23 +3486,20 @@ _CHUNK_NEIGHBORS = text(
 )
 
 _RESOLVE_T0_SQL = """
-    SELECT DISTINCT entity.entity_id, entity.canonical_name,
-           entity.entity_type AS type
+    SELECT DISTINCT entity.entity_id, entity.canonical_name
     FROM memory_v1.entity_aliases_current AS alias
     JOIN memory_v1.entities_current AS entity
       ON entity.deployment_id = alias.deployment_id
      AND entity.entity_id = alias.entity_id
     WHERE alias.deployment_id = :deployment_id
       AND alias.normalized_lemma = :lemma
-      AND (CAST(:entity_type AS text) IS NULL
-           OR entity.entity_type = :entity_type)
     """
 
 _RESOLVE_T0 = text(_RESOLVE_T0_SQL)
 
 _CONFIRM_CONTEXT_ENTITIES = text(
     """
-    SELECT entity_id, canonical_name, entity_type
+    SELECT entity_id, canonical_name
     FROM memory_v1.entities_current
     WHERE deployment_id = :deployment_id
       AND entity_id = ANY(:entity_ids)

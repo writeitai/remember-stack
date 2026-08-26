@@ -155,7 +155,6 @@ EXPECTED_TABLES: Final = (
     "observation_evidence",
     "observations",
     "pipeline_component_versions",
-    "predicate_signatures",
     "predicates",
     "processing_state",
     "projection_snapshots",
@@ -343,7 +342,6 @@ leftover schema cannot masquerade as the query surface."""
 EMPTY_AT_HEAD: Final = (
     "deployments",
     "entity_types",
-    "predicate_signatures",
     "predicates",
 )
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).

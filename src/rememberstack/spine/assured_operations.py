@@ -203,7 +203,6 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         ),
         parameters={
             "name": {"type": "string", "required": True, "minLength": 1},
-            "entity_type": {"type": "string", "required": False},
         },
         result_schema=_envelope_schema(),
         execution_plan=PrimitiveChainPlan(steps=(OperationStep(op="resolve_entity"),)),

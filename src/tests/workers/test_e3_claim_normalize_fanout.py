@@ -463,8 +463,8 @@ def test_handle_claim_grain_returns_barrier() -> None:
             class _R:
                 entity_id = uuid4()
                 created = True
-                entity_type = reference.type  # type: ignore[attr-defined]
 
+            del reference
             return _R()
 
     legal = {

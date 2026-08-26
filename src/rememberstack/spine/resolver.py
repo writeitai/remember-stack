@@ -51,10 +51,10 @@ RESOLVER_VERSION: Final = "resolver-2026.07b"
 _T4_PROMPT: Final = """You adjudicate entity identity for a memory system.
 Are these the same real-world entity? Answer strictly from the evidence given.
 
-MENTION: {mention!r} (emitted type {mention_type})
+MENTION: {mention!r}
 CLAIM CONTEXT: {context}
 
-CANDIDATE: {candidate!r} (registry type {candidate_type})
+CANDIDATE: {candidate!r}
 
 Same entity?"""
 
@@ -123,7 +123,6 @@ class CascadeResolver:
                     claim=claim,
                     lemma=lemma,
                     entity_id=exact["entity_id"],
-                    entity_type=exact["type"],
                     method="T0",
                     confidence=1.0,
                     features={"lemma": lemma},
@@ -150,7 +149,6 @@ class CascadeResolver:
                     claim=claim,
                     lemma=lemma,
                     entity_id=candidate.entity_id,
-                    entity_type=candidate.type,
                     method=method,
                     confidence=confidence,
                     features=features,
@@ -209,7 +207,7 @@ class CascadeResolver:
             ).scalar_one()
         if not reachable:
             return False, "blocking"
-        thresholds = self._config.thresholds_for(entity_type=entity_type)
+        thresholds = self._config.default_thresholds
         vectors = self._model_provider.embed(
             request=EmbeddingRequest(
                 model=self._embedding_model,
@@ -224,10 +222,8 @@ class CascadeResolver:
             return False, "T3"
         prompt = _T4_PROMPT.format(
             mention=surface_b,
-            mention_type=entity_type,
             context=context_b or "(none)",
             candidate=surface_a,
-            candidate_type=entity_type,
         )
         if context_a:
             prompt += f"\nCANDIDATE CONTEXT: {context_a}"
@@ -268,7 +264,6 @@ class CascadeResolver:
             ResolutionCandidate(
                 entity_id=row["entity_id"],
                 canonical_name=row["canonical_name"],
-                type=row["type"],
                 blocking_tier=row["blocking_tier"],
                 trigram_score=row["trigram_score"],
             )
@@ -289,7 +284,7 @@ class CascadeResolver:
         """T3 embedding bands, then T4 adjudication for the ambiguous band."""
         if not candidates:
             return None
-        thresholds = self._config.thresholds_for(entity_type=reference.type)
+        thresholds = self._config.default_thresholds
         scored = self._t3_scores(
             connection=connection,
             deployment_id=deployment_id,
@@ -396,10 +391,8 @@ class CascadeResolver:
         """T4 small-model adjudication, escalating to frontier below the floor."""
         prompt = _T4_PROMPT.format(
             mention=reference.name,
-            mention_type=reference.type,
             context=claim.claim_text,
             candidate=candidate.canonical_name,
-            candidate_type=candidate.type,
         )
         verdict_call = self._model_provider.generate(
             request=ModelRequest(
@@ -412,7 +405,7 @@ class CascadeResolver:
                 call_key=f"{call_key}:small", tier="T4_small", usage=verdict_call.usage
             )
         verdict = verdict_call.output
-        thresholds = self._config.thresholds_for(entity_type=reference.type)
+        thresholds = self._config.default_thresholds
         if verdict.confidence >= thresholds.t4_small_confidence_floor:
             return verdict, "T4_small", self._small_model
         frontier_call = self._model_provider.generate(
@@ -442,18 +435,6 @@ class CascadeResolver:
         call_key: str,
     ) -> ResolvedEntity:
         """Create the canonical entity + alias and index its T3 profile."""
-        registered = connection.execute(
-            _SELECT_ENTITY_TYPE_EXISTS,
-            {"deployment_id": deployment_id, "entity_type": reference.type},
-        ).one_or_none()
-        if registered is None:
-            # D86 defense-in-depth: never hit the entity_types FK with an
-            # invented type. Callers (E3) should gate first; this is the last
-            # stop before INSERT.
-            raise UnregisteredEntityTypeError(
-                f"entity type {reference.type!r} is not registered for "
-                f"deployment {deployment_id}"
-            )
         entity_id = uuid4()
         # the mint verdict records the tier that DECIDED novelty: T0 when
         # nothing blocked, else the rejecting tier's method and confidence
@@ -466,7 +447,6 @@ class CascadeResolver:
             {
                 "entity_id": entity_id,
                 "deployment_id": deployment_id,
-                "type": reference.type,
                 "canonical_name": reference.name,
                 "normalized_name": lemma,
             },
@@ -492,7 +472,6 @@ class CascadeResolver:
             claim=claim,
             lemma=lemma,
             entity_id=entity_id,
-            entity_type=reference.type,
             method=method,
             confidence=confidence,
             features={
@@ -513,7 +492,6 @@ class CascadeResolver:
         claim: ClaimForNormalization,
         lemma: str,
         entity_id: UUID,
-        entity_type: str,
         method: str,
         confidence: float,
         features: dict[str, object],
@@ -540,7 +518,6 @@ class CascadeResolver:
                 "surface_form": surface,
                 "lemma": surface_lemma,
                 "canonical_name_form": reference.name,
-                "emitted_type": reference.type,
                 "claim_id": claim.claim_id,
                 "chunk_id": claim.chunk_id,
                 "doc_id": claim.doc_id,
@@ -592,9 +569,7 @@ class CascadeResolver:
             _BUMP_MENTION_COUNT,
             {"deployment_id": deployment_id, "entity_id": entity_id},
         )
-        return ResolvedEntity(
-            entity_id=entity_id, created=created, entity_type=entity_type
-        )
+        return ResolvedEntity(entity_id=entity_id, created=created)
 
     def _upsert_alias(
         self,
@@ -758,7 +733,7 @@ _PAIR_REACHABLE = text(
 
 _T0_EXACT = text(
     """
-    SELECT aliases.entity_id, entities.type FROM aliases
+    SELECT aliases.entity_id FROM aliases
     JOIN entities ON entities.deployment_id = aliases.deployment_id
                  AND entities.entity_id = aliases.entity_id
     WHERE aliases.deployment_id = :deployment_id
@@ -786,7 +761,7 @@ _T1_T2_BLOCK = text(
           AND daitch_mokotoff(aliases.normalized_lemma)
               && daitch_mokotoff(:lemma)
     )
-    SELECT entities.entity_id, entities.canonical_name, entities.type,
+    SELECT entities.entity_id, entities.canonical_name,
            coalesce(t1.score, 0.0) AS trigram_score,
            CASE WHEN t1.entity_id IS NOT NULL THEN 'T1' ELSE 'T2' END
                AS blocking_tier
@@ -798,15 +773,6 @@ _T1_T2_BLOCK = text(
       AND (t1.entity_id IS NOT NULL OR t2.entity_id IS NOT NULL)
     ORDER BY coalesce(t1.score, 0.0) DESC
     LIMIT :limit
-    """
-)
-
-_SELECT_ENTITY_TYPE_EXISTS = text(
-    """
-    SELECT 1
-    FROM entity_types
-    WHERE deployment_id = :deployment_id
-      AND type = :entity_type
     """
 )
 
@@ -826,9 +792,9 @@ _ENTITY_VECTOR_SCORES = text(
 _INSERT_ENTITY = text(
     """
     INSERT INTO entities (
-        entity_id, deployment_id, type, canonical_name, normalized_name
+        entity_id, deployment_id, canonical_name, normalized_name
     ) VALUES (
-        :entity_id, :deployment_id, :type, :canonical_name, :normalized_name
+        :entity_id, :deployment_id, :canonical_name, :normalized_name
     )
     """
 )
@@ -880,10 +846,10 @@ _INSERT_MENTION = text(
     """
     INSERT INTO mentions (
         mention_id, deployment_id, surface_form, normalized_lemma,
-        canonical_name_form, emitted_type, claim_id, chunk_id, doc_id
+        canonical_name_form, claim_id, chunk_id, doc_id
     ) VALUES (
         :mention_id, :deployment_id, :surface_form, :lemma,
-        :canonical_name_form, :emitted_type, :claim_id, :chunk_id, :doc_id
+        :canonical_name_form, :claim_id, :chunk_id, :doc_id
     )
     """
 )

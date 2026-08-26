@@ -377,7 +377,6 @@ class GraphNode(BaseModel):
 
     entity_id: UUID
     name: str
-    type: str
     hops: int = Field(ge=0)
 
 

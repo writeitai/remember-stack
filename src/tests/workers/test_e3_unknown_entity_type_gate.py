@@ -1,4 +1,8 @@
-"""D86: unknown entity type gate — retry then drop (unit, fake provider)."""
+"""D86: unknown entity type gate — vacated by D96 WP-I.2.
+
+These tests encode retry-then-drop on emitted types. Types are no longer
+identity; the file is skipped until rewritten as D96 discard tests.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +26,10 @@ from rememberstack.workers.e3 import _illegal_types_in_response
 from rememberstack.workers.e3 import _MAX_INNER_NORMALIZE_ATTEMPTS
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
+
+pytestmark = pytest.mark.skip(
+    reason="D86 vacated by D96 WP-I.2; rewrite as type-discard tests"
+)
 
 
 class RecordingCostMeter:
@@ -63,9 +71,7 @@ class RecordingResolver:
         """Record the reference and return a synthetic entity id."""
         del deployment_id, claim, meter, call_key
         self.calls.append(reference)
-        return ResolvedEntity(
-            entity_id=uuid4(), created=True, entity_type=reference.type
-        )
+        return ResolvedEntity(entity_id=uuid4(), created=True)
 
 
 class RecordingFacts:

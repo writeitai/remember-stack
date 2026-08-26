@@ -43,7 +43,7 @@ from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.spine.query_space.manifest import SchemaManifestError
 from rememberstack.workers.p2_analytics import GraphAnalyticsWorker
 
-P2_REBUILD_VERSION: Final = "p2-rebuild-2026.07"
+P2_REBUILD_VERSION: Final = "p2-rebuild-2026.08"
 """The rebuild worker's component version (D12)."""
 
 P2_PROJECTION_SCHEMA: Final = {
@@ -62,7 +62,6 @@ P2_PROJECTION_SCHEMA: Final = {
             "name": "STRING",
             "normalized_name": "STRING",
             "summary": "STRING",
-            "type": "STRING",
         },
     },
     "edge_types": {
@@ -103,7 +102,7 @@ _VERSION_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 GRAPH_DDL: Final = (
     # the D44 COPY contract (translation SYNTHESIS §1): analytics columns are
     # NOT loaded — pagerank/degree are graph-derived post-load (D11)
-    "CREATE NODE TABLE Entity(id UUID, type STRING, name STRING,"
+    "CREATE NODE TABLE Entity(id UUID, name STRING,"
     " normalized_name STRING, summary STRING, created_at TIMESTAMP,"
     " PRIMARY KEY (id))",
     "CREATE NODE TABLE Document(id UUID, title STRING, source_uri STRING,"
@@ -158,7 +157,6 @@ _DATE = ("date", lambda value: value)
 _TABLE_COLUMNS: Final[dict[str, tuple[tuple[str, tuple[str, Callable]], ...]]] = {
     "Entity": (
         ("id", _STRING),
-        ("type", _STRING),
         ("name", _STRING),
         ("normalized_name", _STRING),
         ("summary", _STRING),

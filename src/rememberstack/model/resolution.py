@@ -23,7 +23,6 @@ class ResolutionCandidate(BaseModel):
 
     entity_id: UUID
     canonical_name: _NonEmpty
-    type: _NonEmpty
     blocking_tier: _NonEmpty  # T0 | T1 | T2
     trigram_score: float | None = None
     embedding_score: _Unit | None = None

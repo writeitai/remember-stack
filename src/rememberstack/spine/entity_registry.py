@@ -61,14 +61,12 @@ class EntityRegistry:
             )
             created = existing is None
             entity_id = existing["entity_id"] if existing else uuid4()
-            entity_type = existing["type"] if existing else reference.type
             if created:
                 connection.execute(
                     _INSERT_ENTITY,
                     {
                         "entity_id": entity_id,
                         "deployment_id": deployment_id,
-                        "type": reference.type,
                         "canonical_name": reference.name,
                         "normalized_name": lemma,
                     },
@@ -92,7 +90,6 @@ class EntityRegistry:
                     "surface_form": reference.name,
                     "lemma": lemma,
                     "canonical_name_form": reference.name,
-                    "emitted_type": reference.type,
                     "claim_id": claim.claim_id,
                     "chunk_id": claim.chunk_id,
                     "doc_id": claim.doc_id,
@@ -110,9 +107,7 @@ class EntityRegistry:
                     "resolver_version": T0_RESOLVER_VERSION,
                 },
             )
-        return ResolvedEntity(
-            entity_id=entity_id, created=created, entity_type=entity_type
-        )
+        return ResolvedEntity(entity_id=entity_id, created=created)
 
     def claim_already_normalized(self, *, claim_id: UUID) -> bool:
         """Whether the claim's facts already landed (evidence-backed replay).
@@ -140,7 +135,7 @@ _LOCK_LEMMA = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
 _SELECT_BY_LEMMA = text(
     """
-    SELECT aliases.entity_id, entities.type FROM aliases
+    SELECT aliases.entity_id FROM aliases
     JOIN entities ON entities.deployment_id = aliases.deployment_id
                  AND entities.entity_id = aliases.entity_id
     WHERE aliases.deployment_id = :deployment_id
@@ -155,9 +150,9 @@ _SELECT_BY_LEMMA = text(
 _INSERT_ENTITY = text(
     """
     INSERT INTO entities (
-        entity_id, deployment_id, type, canonical_name, normalized_name
+        entity_id, deployment_id, canonical_name, normalized_name
     ) VALUES (
-        :entity_id, :deployment_id, :type, :canonical_name, :normalized_name
+        :entity_id, :deployment_id, :canonical_name, :normalized_name
     )
     """
 )
@@ -176,10 +171,10 @@ _INSERT_MENTION = text(
     """
     INSERT INTO mentions (
         mention_id, deployment_id, surface_form, normalized_lemma,
-        canonical_name_form, emitted_type, claim_id, chunk_id, doc_id
+        canonical_name_form, claim_id, chunk_id, doc_id
     ) VALUES (
         :mention_id, :deployment_id, :surface_form, :lemma,
-        :canonical_name_form, :emitted_type, :claim_id, :chunk_id, :doc_id
+        :canonical_name_form, :claim_id, :chunk_id, :doc_id
     )
     """
 )
