@@ -728,7 +728,6 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
             description="Resolve a name to ranked current entity candidates; ambiguity is returned, never guessed away.",
             properties={
                 "name": {"type": "string"},
-                "entity_type": {"type": "string"},
                 "context_entity_ids": {"type": "array", "items": uuid, "maxItems": 8},
             },
             required=("name",),

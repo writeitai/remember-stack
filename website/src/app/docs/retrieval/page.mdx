@@ -49,7 +49,7 @@ These are the top-level intent tools on API/CLI/MCP. Seventeen older stock patte
 
 | Operation | Args (required) | Grain | Intent |
 | --- | --- | --- | --- |
-| `resolve_entity` | `name` (optional `entity_type`) | entity candidates (envelope packaging) | Exact-name disambiguation |
+| `resolve_entity` | `name` | entity candidates (envelope packaging) | Exact-name disambiguation |
 | `testimony_context` | `query` (optional `entity_ids`, `k`, `candidate_k`) | **evidence** | Current claims + source chunks only |
 | `fact_context` | `query` (optional `entity_ids`, `k`, `evidence_per_fact`, `time`) | **fact** | Current or historical facts + associated testimony |
 | `answer_context` | `query` (optional `entity_ids`, `time`) | `ContextBundle/v1` | Complete testimony and fact envelopes, kept separate |

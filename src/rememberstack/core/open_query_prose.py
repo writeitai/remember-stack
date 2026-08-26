@@ -123,7 +123,7 @@ WHERE r.testimony_rank = 1
 #: re-grounds them without claiming the graph row is current.
 SNAPSHOT_ID_TO_LIVE_SQL: Final = """\
 -- After query_cypher returns entity ids as of built_at, re-ground live:
-SELECT e.entity_id, e.canonical_name, e.entity_type
+SELECT e.entity_id, e.canonical_name, e.profile_summary
 FROM entities_current AS e
 WHERE e.entity_id = ANY($1::uuid[]);\
 """

@@ -325,20 +325,12 @@ class FactCatalog:
         return "\n".join(lines)
 
     def active_predicates(self, *, deployment_id: UUID) -> dict[str, str | None]:
-        """The governed vocabulary: active predicate → its parent (D5/D18)."""
+        """Return the governed active predicate-to-parent vocabulary (D5)."""
         with self._engine.connect() as connection:
             rows = connection.execute(
                 _SELECT_PREDICATES, {"deployment_id": deployment_id}
             ).all()
         return {predicate: parent for predicate, parent in rows}
-
-    def entity_type_parents(self, *, deployment_id: UUID) -> dict[str, str | None]:
-        """The registry type hierarchy: type → parent (extend-never-fork)."""
-        with self._engine.connect() as connection:
-            rows = connection.execute(
-                _SELECT_TYPE_PARENTS, {"deployment_id": deployment_id}
-            ).all()
-        return {entity_type: parent for entity_type, parent in rows}
 
     def stage_normalize_observation(
         self,
@@ -609,13 +601,6 @@ _SELECT_PREDICATES = text(
     """
     SELECT predicate, parent_predicate FROM predicates
     WHERE deployment_id = :deployment_id AND status = 'active'
-    """
-)
-
-_SELECT_TYPE_PARENTS = text(
-    """
-    SELECT type, parent_type FROM entity_types
-    WHERE deployment_id = :deployment_id
     """
 )
 

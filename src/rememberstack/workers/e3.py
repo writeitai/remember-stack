@@ -92,13 +92,6 @@ GOVERNED PREDICATES:
 
 CLAIM (attributed={is_attributed}): {claim_text}"""
 
-_TYPE_RETRY_SUFFIX: Final = """
-
-TYPE GATE RETRY: The previous response used illegal entity type(s): {illegal}.
-Every entity `type` field MUST be exactly one of: {types}.
-Do not invent types. Prefer dropping a relation or observation over inventing
-a type. Re-emit the full JSON NormalizationResponse."""
-
 
 class E3Settings(BaseSettings):
     """The E3 model binding: interchangeable per-deployment port config (D70)."""

@@ -77,6 +77,5 @@ class P1EntityRow(BaseModel):
 
     entity_id: UUID
     deployment_id: UUID
-    type: _NonEmpty
     canonical_name: _NonEmpty
     vector: Annotated[tuple[float, ...], Field(min_length=1)]

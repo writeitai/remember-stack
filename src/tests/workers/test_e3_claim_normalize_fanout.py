@@ -433,14 +433,6 @@ def test_handle_claim_grain_returns_barrier() -> None:
             del kwargs
             return "works_at"
 
-        def predicate_signatures(self, **kwargs: object) -> dict:
-            del kwargs
-            return {}
-
-        def entity_type_parents(self, **kwargs: object) -> dict[str, str | None]:
-            del kwargs
-            return {"Person": None, "Organization": None}
-
         def ensure_other_predicate(self, **kwargs: object) -> None:
             del kwargs
 

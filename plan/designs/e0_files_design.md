@@ -548,7 +548,7 @@ gs://rememberstack-<dep>-corpusfs/snapshots/<version>/
   research/transformers/attention/
     attention-is-all-you-need.md
     _index.md
-  entities/organization/acme/
+  entities/018f3d8e-4a65-7a10-9b2c-73f2dcbad410/
     _index.md                   # Acme: profile + the docs/sections evidencing facts about it
 ```
 
@@ -608,7 +608,7 @@ with it.
    is kept consistent by hand.
 3. **The two-tier path contract** (accepts design-review F6). Tier 1 — **stable,
    ID-addressed leaves that never move across rebuilds**: every entity at
-   `entities/<type>/<entity_id>/`, every document lineage at one canonical per-doc path
+   `entities/<entity_id>/`, every document lineage at one canonical per-doc path
    (lineage-anchored, D55 — a living document's path survives its content versions). These
    are the durable targets agents, K pages, and cross-links may store. Tier 2 — **view
    paths** (topic/source/time subtrees), documented as freely reorganizable; every view stub
@@ -663,7 +663,7 @@ derived → P3.
 5. → E1 chunks along sections → E2/E3 extract claims/relations.
 6. On the next **P3 build**, the document appears at
    `/finance/annual-reports/2023/acme-10k-2023.md` in the mounted corpus filesystem, with a generated
-   `_index.md`, cross-linked from `/entities/organization/acme/`.
+   `_index.md`, cross-linked from `/entities/<entity_id>/` for Acme's stable id.
 
 ## 8. Decisions & spikes
 

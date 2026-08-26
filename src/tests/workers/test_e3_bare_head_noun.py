@@ -6,11 +6,11 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.model import ClaimForNormalization
 from rememberstack.workers.e3 import _NORMALIZE_PROMPT
-from tests.workers.test_e3_unknown_entity_type_gate import _claim
-from tests.workers.test_e3_unknown_entity_type_gate import _handler
-from tests.workers.test_e3_unknown_entity_type_gate import _payload
-from tests.workers.test_e3_unknown_entity_type_gate import RecordingFacts
-from tests.workers.test_e3_unknown_entity_type_gate import RecordingResolver
+from tests.workers.e3_test_doubles import _claim
+from tests.workers.e3_test_doubles import _handler
+from tests.workers.e3_test_doubles import _payload
+from tests.workers.e3_test_doubles import RecordingFacts
+from tests.workers.e3_test_doubles import RecordingResolver
 
 
 def _claim_with(*, claim_text: str) -> ClaimForNormalization:

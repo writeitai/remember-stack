@@ -1136,14 +1136,9 @@ class PostgresP1Index:
         )
 
     def search_entities_scored(
-        self,
-        *,
-        deployment_id: str,
-        vector: tuple[float, ...],
-        k: int,
-        entity_type: str | None = None,
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int
     ) -> tuple[P1Nomination, ...]:
-        """Rank live entity profiles. ``entity_type`` is ignored (D96)."""
+        """Rank live entity profiles without an entity-class filter (D96)."""
         _require_vector(vector)
         self._require_channel(
             deployment_id=deployment_id,

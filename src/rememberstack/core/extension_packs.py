@@ -1,30 +1,17 @@
-"""System-shipped extension packs (registries §4, D15): the Work pack.
+"""System-shipped extension-pack inventory and predicate bundles.
 
-Extensions are not second-class: a pack type lives in the same entity space,
-graph, ER machinery, and relations as core types — the tier is a governance
-distinction (stability commitment, golden-set obligation), not a capability
-one. Every pack type anchors to a core parent (extend-never-fork); the
-installer refuses a pack whose anchors don't exist.
+After D96, predicates remain active vocabulary while entity-type definitions
+are dormant inventory retained for the existing pack/bootstrap shape. Endpoint
+signatures are absent: relation writes never inspect a subject or object class.
 """
 
 from dataclasses import dataclass
 from typing import Final
 
-_CORE_ROOTS: Final = (
-    "Person",
-    "Organization",
-    "Place",
-    "Document",
-    "Event",
-    "Concept",
-    "Project",
-    "Product",
-)
-
 
 @dataclass(frozen=True)
 class PackEntityType:
-    """One extension entity type anchored to a core parent."""
+    """One dormant extension-type inventory row anchored to a seed parent."""
 
     type: str
     parent_type: str
@@ -34,11 +21,10 @@ class PackEntityType:
 
 @dataclass(frozen=True)
 class PackPredicate:
-    """One extension predicate with its domain/range signatures (D18)."""
+    """One active extension predicate with no endpoint class signature."""
 
     predicate: str
     description: str
-    signatures: tuple[tuple[str, str], ...]
     synonyms: tuple[str, ...] = ()
     is_change_prone: bool = False
 
@@ -52,13 +38,6 @@ class ExtensionPack:
     description: str
     entity_types: tuple[PackEntityType, ...] = ()
     predicates: tuple[PackPredicate, ...] = ()
-
-
-def _to_any(*subjects: str) -> tuple[tuple[str, str], ...]:
-    """Signatures pairing each subject with every core root ("→ any")."""
-    return tuple(
-        (subject, object_root) for subject in subjects for object_root in _CORE_ROOTS
-    )
 
 
 WORK_PACK: Final = ExtensionPack(
@@ -92,33 +71,24 @@ WORK_PACK: Final = ExtensionPack(
         PackPredicate(
             predicate="blocks",
             description="the subject task prevents progress on the object task",
-            signatures=(("Task", "Task"),),
         ),
         PackPredicate(
             predicate="depends_on",
             description="the subject task requires the object task first",
-            signatures=(("Task", "Task"),),
         ),
         PackPredicate(
             predicate="concerns",
             description="the subject task or decision is about the object",
-            signatures=_to_any("Task", "Decision"),
         ),
-        PackPredicate(
-            predicate="decided_by",
-            description="who made the decision",
-            signatures=(("Decision", "Person"), ("Decision", "Organization")),
-        ),
+        PackPredicate(predicate="decided_by", description="who made the decision"),
         PackPredicate(
             predicate="assigned_to",
             description="who is responsible for the task",
-            signatures=(("Task", "Person"), ("Task", "Organization")),
             is_change_prone=True,
         ),
         PackPredicate(
             predicate="pursues",
             description="the project or organization works toward the goal",
-            signatures=(("Project", "Goal"), ("Organization", "Goal")),
         ),
     ),
 )

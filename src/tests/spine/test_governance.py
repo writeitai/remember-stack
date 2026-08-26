@@ -142,14 +142,6 @@ def test_forking_pack_is_refused_whole(database_engine: Engine) -> None:
     assert count == 0
 
 
-@pytest.mark.skip(reason="D96 dropped predicate_signatures; D18 is not a write gate")
-def test_domain_range_gate_rejects_the_hallucination_sample(
-    database_engine: Engine,
-) -> None:
-    """D18 domain/range was retired with the type cut (D96)."""
-    del database_engine
-
-
 def test_other_funnel_registers_counts_and_ranks(database_engine: Engine) -> None:
     """The D5 escape: other:<freetext> lands as tier=other, usage-counted and
     ranked for promotion; the grammar is enforced."""

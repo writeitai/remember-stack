@@ -14,6 +14,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
+from rememberstack.spine.migrations._helpers import apply_view_ddl
 from rememberstack.spine.migrations._helpers import drop_tables
 
 revision: str = "p9_14_0035"
@@ -25,10 +26,10 @@ MEMORY_V1_TYPE_CUT_DDL = r"""
 CREATE OR REPLACE VIEW memory_v1.entities_current (
   deployment_id,
   entity_id,
-  entity_type,
+  entity_type,          -- Vacated after D96: this compatibility output position always returns NULL because identity is the entity_id and no entity class is stored; use observation or profile fact text for kind-like retrieval.
   canonical_name,
   normalized_name,
-  type_confidence,
+  type_confidence,      -- Vacated after D96: this compatibility output position always returns NULL because the removed entity-class vote has no confidence value; identity decisions are recorded by resolution tier and confidence instead.
   profile_summary,
   live_mention_count,
   live_document_count,
@@ -115,8 +116,8 @@ CREATE OR REPLACE VIEW v_memory_mention_current_content (
   surface_form,
   normalized_lemma,
   canonical_name_form,
-  emitted_type,
-  type_confidence,
+  emitted_type,            -- Vacated after D96: this compatibility output position always returns NULL because extraction emits entity names rather than type classes; the source and canonical spellings remain available on this mention.
+  type_confidence,         -- Vacated after D96: this compatibility output position always returns NULL because extraction no longer produces an entity-class confidence; resolution confidence remains available separately.
   language,
   char_start,
   char_end,
@@ -174,6 +175,60 @@ LEFT JOIN v_memory_entity_survivor AS s
 
 COMMENT ON VIEW v_memory_mention_current_content IS
   'Private single definition of a mention in current content: exactly one row per mention whose chunk is a current-content chunk of the lineage the mention itself names, carrying the mention''s coordinates and the survivor of its one live, unsuperseded resolution decision. Both mentions_live and entity_document_mentions are projections of this relation, so a count and the transcript it counts cannot disagree. Not part of memory_v1 and never granted to a query role. emitted_type and type_confidence are vacated (always NULL) after D96.';
+
+CREATE OR REPLACE VIEW memory_v1.mentions_live (
+  deployment_id,           -- The deployment that owns the mention.
+  mention_id,              -- Stable identity of this mention in the immutable mention transcript.
+  doc_id,                  -- The live lineage the mention occurs in.
+  version_id,              -- The lineage's current version the mention occurs in.
+  representation_id,       -- The current ready reading whose offsets the mention anchors use.
+  chunk_id,                -- The current-content chunk the mention occurs in.
+  section_id,              -- The section containing the mention, null when the chunk has no section in the current structure generation.
+  claim_id,                -- The claim the mention occurs in, exposed only while that claim is itself visible and null otherwise.
+  surface_form,            -- The mention exactly as it appeared in the source.
+  normalized_lemma,        -- Accent-folded lower-case form of the surface form.
+  canonical_name_form,     -- The nominative or canonical form the extractor emitted, null when it emitted none.
+  emitted_type,            -- Vacated after D96: this compatibility output position always returns NULL because extraction emits entity names rather than type classes; the source and canonical spellings remain available on this mention.
+  type_confidence,         -- Vacated after D96: this compatibility output position always returns NULL because extraction no longer produces an entity-class confidence; resolution confidence remains available separately.
+  language,                -- Language of the mention, null when undetected.
+  char_start,              -- Start character offset of the mention within the named representation's markdown, null when unrecorded.
+  char_end,                -- End character offset of the mention within the named representation's markdown, null when unrecorded.
+  created_at,              -- When the mention was recorded, which is a processing instant.
+  resolved_entity_id,      -- The survivor entity this mention currently resolves to, null while the mention is unresolved or while the entity that decision names is not itself visible.
+  resolution_method,       -- Which decision tier produced the live resolution, null exactly when resolved_entity_id is null.
+  resolution_confidence,   -- Confidence of that live resolution, null exactly when resolved_entity_id is null.
+  resolution_is_new_entity,-- True when the live resolution minted a new entity, null exactly when resolved_entity_id is null.
+  resolved_at              -- When the live resolution was decided, null exactly when resolved_entity_id is null.
+) AS
+SELECT
+  h.deployment_id,
+  h.mention_id,
+  h.doc_id,
+  h.version_id,
+  h.representation_id,
+  h.chunk_id,
+  h.section_id,
+  h.claim_id,
+  h.surface_form,
+  h.normalized_lemma,
+  h.canonical_name_form,
+  h.emitted_type,
+  h.type_confidence,
+  h.language,
+  h.char_start,
+  h.char_end,
+  h.created_at,
+  ec.entity_id,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolution_method END,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolution_confidence END,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolution_is_new_entity END,
+  CASE WHEN ec.entity_id IS NULL THEN NULL ELSE h.resolved_at END
+FROM v_memory_mention_current_content AS h
+LEFT JOIN memory_v1.entities_current AS ec
+  ON ec.deployment_id = h.deployment_id
+ AND ec.entity_id = h.survivor_entity_id;
+COMMENT ON VIEW memory_v1.mentions_live IS
+  'One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Membership binds every coordinate of the mention: the chunk must be a current-content chunk and the mention''s own lineage must be that chunk''s lineage, so mentions in superseded versions, in non-ready readings, in forgotten lineages, and mentions whose recorded lineage disagrees with their chunk''s are all absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the five resolution columns are populated together or not at all, from the mention''s single live, unsuperseded decision and only when the survivor that decision names passes the entities_current provenance gate, so a decision pointing at a retired, merged-away, or provenance-free identity leaves the whole resolution null rather than describing a decision whose subject this schema will not show. The claim coordinate is gated the same way and is null unless that claim is itself a visible claim of this lineage. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks. After D96, emitted_type and type_confidence are vacated compatibility positions that always return NULL.';
 
 """
 
@@ -322,13 +377,24 @@ WHERE e.status = 'active'
   );
 """
 
+_TYPE_COLUMN_COMMENTS_DOWNGRADE = r"""
+COMMENT ON COLUMN memory_v1.entities_current.entity_type IS
+  'Canonical type of the entity as voted across its mentions.';
+COMMENT ON COLUMN memory_v1.entities_current.type_confidence IS
+  'Confidence in the type vote, null when never scored.';
+COMMENT ON COLUMN memory_v1.mentions_live.emitted_type IS
+  'The entity type the extractor emitted for this mention, null when it emitted none.';
+COMMENT ON COLUMN memory_v1.mentions_live.type_confidence IS
+  'Extractor confidence in that emitted type, null when unscored.';
+"""
+
 
 def upgrade() -> None:
     """Vacate type on public/helper views, then drop authority type columns."""
     # Replace views *before* DROP COLUMN so dependents no longer read the
-    # authority columns. apply_view_ddl's CREATE VIEW regex does not match
-    # CREATE OR REPLACE.
-    op.execute(MEMORY_V1_TYPE_CUT_DDL)
+    # authority columns, and materialize the authored compatibility-column
+    # comments into PostgreSQL for the live query-space contract.
+    apply_view_ddl(sql=MEMORY_V1_TYPE_CUT_DDL)
     op.execute(_V_GRAPH_ENTITIES_TYPE_CUT)
     op.execute(
         "ALTER TABLE entities DROP CONSTRAINT IF EXISTS entities_deployment_id_type_fkey"
@@ -360,10 +426,20 @@ def downgrade() -> None:
         )
         """
     )
+    op.execute(
+        "COMMENT ON TABLE predicate_signatures IS "
+        "'Allowed (subject_type to object_type) pairs per predicate in the pre-D96 schema.'"
+    )
     op.execute("ALTER TABLE entities ADD COLUMN IF NOT EXISTS type text")
     op.execute("ALTER TABLE entities ADD COLUMN IF NOT EXISTS type_confidence real")
     op.execute("ALTER TABLE mentions ADD COLUMN IF NOT EXISTS emitted_type text")
     op.execute("ALTER TABLE mentions ADD COLUMN IF NOT EXISTS type_confidence real")
+    op.execute(
+        "ALTER TABLE entities ADD CONSTRAINT entities_deployment_id_type_fkey "
+        "FOREIGN KEY (deployment_id, type) REFERENCES entity_types (deployment_id, type)"
+    )
+    op.execute("CREATE INDEX ix_entities_type ON entities (deployment_id, type)")
     op.execute(_V_GRAPH_ENTITIES_DOWNGRADE)
     op.execute(_MENTION_HELPER_DOWNGRADE)
     op.execute(_ENTITIES_CURRENT_DOWNGRADE)
+    op.execute(_TYPE_COLUMN_COMMENTS_DOWNGRADE)

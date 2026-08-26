@@ -112,7 +112,7 @@ Argument names match the operation registry and [API reference](/docs/reference/
 ```bash
 curl --fail -X POST http://localhost:8000/operations/resolve_entity \
   -H 'content-type: application/json' \
-  -d '{"name":"Alice","entity_type":"person"}'
+  -d '{"name":"Alice"}'
 ```
 
 Query-time resolve is **exact-name (T0)** in the current surface: ambiguity among exact aliases is returned as ranked candidates, never guessed away. Fuzzy/phonetic/embedding tiers run on the **write-time** resolution cascade, not this hot path.

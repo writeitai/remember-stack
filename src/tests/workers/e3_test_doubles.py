@@ -1,15 +1,9 @@
-"""D86 unknown-entity-type gate — vacated by D96 WP-I.2.
-
-Shared recording doubles for E3 unit tests live here. The D86 retry-then-drop
-assertions are skipped until rewritten as D96 name-only proofs.
-"""
+"""Shared recording doubles for D96 E3 and resolver tests."""
 
 from __future__ import annotations
 
 from typing import Any
 from uuid import uuid4
-
-import pytest
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import ClaimForNormalization
@@ -19,13 +13,9 @@ from rememberstack.model import ResolvedEntity
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 
-pytestmark = pytest.mark.skip(
-    reason="D86 vacated by D96 WP-I.2; rewrite as type-discard tests"
-)
-
 
 class RecordingCostMeter:
-    """Capture call_keys for billing assertions."""
+    """Capture call keys for billing assertions."""
 
     def __init__(self) -> None:
         """Start with an empty record list."""
@@ -48,7 +38,7 @@ class RecordingResolver:
     """Resolver that records resolve calls."""
 
     def __init__(self) -> None:
-        """Empty call log."""
+        """Start with an empty call log."""
         self.calls: list[EntityRef] = []
 
     def resolve(
@@ -70,13 +60,13 @@ class RecordingFacts:
     """Minimal fact catalog for normalize unit paths that touch predicates."""
 
     def __init__(self, *, predicates: dict[str, str | None] | None = None) -> None:
-        """Bind optional predicate map."""
+        """Bind an optional predicate map."""
         self.predicates = predicates or {"related_to": None}
         self.other_ensured: list[str] = []
         self.upserts: list[dict[str, Any]] = []
 
     def ensure_other_predicate(self, *, deployment_id: object, predicate: str) -> None:
-        """Record other: registration."""
+        """Record other-predicate registration."""
         del deployment_id
         self.other_ensured.append(predicate)
 
@@ -91,7 +81,7 @@ class RecordingFacts:
         doc_id: object,
         normalizer_version: str,
     ) -> Any:
-        """Record upsert and return a created stub."""
+        """Record one upsert and return a created stub."""
         del deployment_id, subject_entity_id, object_entity_id, claim_id, doc_id
         self.upserts.append(
             {"predicate": predicate, "normalizer_version": normalizer_version}
@@ -105,7 +95,7 @@ class RecordingFacts:
 
 
 def _claim() -> ClaimForNormalization:
-    """One claim stub for unit normalize."""
+    """Return one claim stub for unit normalization."""
     return ClaimForNormalization(
         claim_id=uuid4(),
         deployment_id=uuid4(),
@@ -118,7 +108,7 @@ def _claim() -> ClaimForNormalization:
 
 
 def _payload(data: dict[str, Any]) -> dict[str, object]:
-    """Widen nested canned dicts for FakeModelProvider typing."""
+    """Widen nested canned dictionaries for fake-provider typing."""
     return data
 
 
@@ -128,7 +118,7 @@ def _handler(
     resolver: object | None = None,
     facts: object | None = None,
 ) -> NormalizeRelationsHandler:
-    """Handler with generate path wired; catalogs optional for drop tests."""
+    """Build a handler with the generate path wired to optional test doubles."""
     return NormalizeRelationsHandler(
         claim_catalog=None,  # type: ignore[arg-type]
         chunk_catalog=None,  # type: ignore[arg-type]
@@ -140,8 +130,3 @@ def _handler(
         settings=E3Settings(normalize_model="test-model"),
         chunker_version="test",
     )
-
-
-def test_d86_gate_retired() -> None:
-    """Placeholder so the skipped module stays discoverable."""
-    raise AssertionError("D86 tests must be rewritten, not re-enabled as-is")

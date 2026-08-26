@@ -29,9 +29,9 @@ from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
-from tests.workers.test_e3_unknown_entity_type_gate import _handler
-from tests.workers.test_e3_unknown_entity_type_gate import _payload
-from tests.workers.test_e3_unknown_entity_type_gate import RecordingFacts
+from tests.workers.e3_test_doubles import _handler
+from tests.workers.e3_test_doubles import _payload
+from tests.workers.e3_test_doubles import RecordingFacts
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b0000000-0000-0000-0000-000000000001")

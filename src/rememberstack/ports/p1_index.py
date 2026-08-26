@@ -262,12 +262,7 @@ class P1ScoredSearchPort(Protocol):
         ...
 
     def search_entities_scored(
-        self,
-        *,
-        deployment_id: str,
-        vector: tuple[float, ...],
-        k: int,
-        entity_type: str | None = None,
+        self, *, deployment_id: str, vector: tuple[float, ...], k: int
     ) -> tuple[P1Nomination, ...]:
         """Scored entity nominations over the profile/description vectors.
 

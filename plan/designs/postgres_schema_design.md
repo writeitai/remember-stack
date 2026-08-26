@@ -15,10 +15,13 @@ It is the binding companion to `overall_design.md` (§3 core data model, §9 lis
 `concepts.md` (the claims/relations/evidence/bi-temporality explainer) and `decisions.md`
 (D1–D69). Where a table or column exists *because of* a decision, the decision is cited inline.
 
-> **Amended 2026-08-26 (D95–D96).** `entities.type` and `mentions.emitted_type` are
-> unused; no hats table. Authority:
-> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §9.
-> Column-level drops land in the implementation WP that ships the migration.
+> **Amended 2026-08-26 (D95–D97).** Entity identity is untyped:
+> `entities.type`, `entities.type_confidence`, `mentions.emitted_type`,
+> `mentions.type_confidence`, and `predicate_signatures` are absent. There is
+> no hats table or domain/range write gate. The dormant `entity_types` seed
+> table remains only as non-authoritative registry inventory; no resolver,
+> writer, projection, or query contract consumes it. Authority:
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md).
 
 > **Reading this as a stranger (CLAUDE.md Rule 1).** You do not need to have been in the design
 > conversation. Each module opens with what it stores and *why it has the shape it has*; each
@@ -111,8 +114,9 @@ These rules apply to every table unless a module overrides them with a stated re
   that pins model + prompt hash + params. This is what makes "rebuild = replay stored state, never
   re-call the model" (D7/D33) auditable and what scopes a re-processing batch.
 - **Enums** (§1) are small, stable, system-owned vocabularies; `ALTER TYPE ... ADD VALUE` extends
-  them. User-governed vocabularies (entity types, predicates) are **registry tables** (§3), not
-  enums (D5/D15) — they must be insertable at runtime with descriptions and parent links.
+  them. The user-governed predicate vocabulary is a **registry table** (§3), not
+  an enum (D5), so deployments may insert predicates with descriptions and parent links.
+  `entity_types` is retained as dormant inventory and is not an identity vocabulary (D96).
 - **JSONB** is used only for open-ended, not-queried-by-key payloads (resolver feature vectors,
   tier configs, validation reports, DLQ payloads). Anything filtered or joined is a column.
 - **Naming.** snake_case; tables plural; `_id` = identity reference; `_ref` = opaque key into
@@ -152,8 +156,8 @@ relied on for `document_crossrefs`, §6).
 ## 1. Enum types (created first)
 
 System-owned, stable vocabularies, created before any table. Extended with
-`ALTER TYPE ... ADD VALUE`. (User-governed vocabularies — entity types, predicates — are registry
-*tables*, §3, not enums.)
+`ALTER TYPE ... ADD VALUE`. (The user-governed predicate vocabulary is a registry
+*table*, §3, not an enum. The dormant `entity_types` table is not consulted by identity.)
 
 ```sql
 CREATE TYPE deployment_status      AS ENUM ('active','suspended','archived');
@@ -548,8 +552,8 @@ No magic UUID, empty bucket sentinel, nullable tenancy, global template row, tri
 argument, or environment-only input participates.
 
 `DeploymentBootstrapResult` is also fixed: it returns `deployment_id`, `deployment_created`
-(whether this transaction inserted the deployment row), `entity_type_count = 8`,
-`predicate_count = 16`, and `signature_count = 116`. Counts describe the verified complete core
+(whether this transaction inserted the deployment row), `entity_types_count = 8`,
+`predicates_count = 16`, and `predicate_signatures_count = 0`. Counts describe the verified core
 after the operation, so a successful identical retry returns the same counts with
 `deployment_created = false`; it never fabricates a success over partial state.
 
@@ -558,26 +562,28 @@ The operation uses compare-or-insert behavior, never a value-overwriting upsert:
 | Row kind | Idempotency key | Identical retry | Conflict |
 |---|---|---|---|
 | deployment | `deployment_id` | Verify every mapped profile column; return existing row | Any mapped value differs, or `slug` belongs to another ID: typed deployment conflict |
-| entity type | `(deployment_id, type)` | Verify every manifest field | Missing/extra core key or any field differs: typed manifest conflict |
+| dormant entity-type seed | `(deployment_id, type)` | Verify every manifest field | Missing/extra core key or any field differs: typed manifest conflict; the row is still not identity authority |
 | predicate | `(deployment_id, predicate)` | Verify every definition field; verify `usage_count >= 0` and preserve it | Missing/extra core key, invalid counter, or any definition field differs: typed manifest conflict |
-| signature | `(deployment_id, predicate, subject_type, object_type)` | Verify the complete 116-row set | Missing/extra/different signature: typed manifest conflict |
 
 On an empty deployment the operation inserts in the displayed order. On retry it verifies the
 complete deployment/core state and performs no mutation. Detection of an extra row is limited to an
 extra row claiming `tier='core'` for this deployment; extension rows and pack activation are separate
-and do not conflict with the universal manifest. The exact entity-type, predicate, and signature
-values are normative in `registries_design.md` §4. `usage_count = 0` is the exact insert value, but
+and do not conflict with the universal manifest. The dormant entity-type seed and predicate
+values originate in `registries_design.md` §4; its former signatures are not installed or enforced.
+`usage_count = 0` is the exact insert value, but
 the counter is runtime-maintained thereafter; retry never resets it.
 
 ---
 
-## 3. Ontology & predicate registry (D5, D15, D18)
+## 3. Predicate registry and dormant entity-type inventory (D5, D96)
 
-The **governed vocabulary**: entity types and predicates, their hierarchy (extend-never-fork), and
-the **domain/range signatures** that mechanically reject extraction hallucinations
-(`works_for: Person → Organization`). This is *content, not new machinery* (D15) — prompts render
-from these rows. The core is identical in every deployment; **extension packs** and **scopes** add
-to it per deployment.
+The **governed predicate vocabulary** names relation edges and retains the D5
+`other:` escape. It does not constrain endpoint classes: `works_for(Alice, Me)`
+is legal regardless of how either referent would once have been classified.
+The `entity_types` table remains in the physical schema only as dormant seed
+inventory for existing pack/bootstrap structures. No extraction prompt,
+resolver, relation writer, projection, or query reads it as authority. There
+is no `predicate_signatures` table and no domain/range gate (D96).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
@@ -620,15 +626,15 @@ COMMENT ON TABLE scopes IS
   'K2 scopes (D16): perspectives over shared evidence. "Scopes multiply; truth doesn''t" — a scope is registry rows + a view definition + a git directory, never a new database.';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- entity_types — the typed-entity vocabulary (8-type core + pack/scope extensions, D18).
+-- entity_types — dormant non-authoritative seed inventory retained after D96.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE entity_types (
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  type            text NOT NULL,               -- 'Person','Organization',... ; extension subtypes like 'ResearchPaper'
-  parent_type     text,                        -- extend-never-fork: every extension declares a core parent (D15); NULL only for the 8 core roots
-  description     text NOT NULL,               -- plain-language meaning, rendered into extraction prompts (D15)
-  examples        text[] NOT NULL DEFAULT '{}',-- few-shot examples rendered into prompts
-  schema_org_ref  text,                        -- schema.org anchor (D18); spot-checked before freezing
+  type            text NOT NULL,               -- dormant seed key; never copied onto entities or mentions
+  parent_type     text,                        -- retained seed hierarchy; not consulted by resolution or relation writes
+  description     text NOT NULL,               -- inventory description; not rendered into extraction prompts
+  examples        text[] NOT NULL DEFAULT '{}',-- dormant inventory examples
+  schema_org_ref  text,                        -- dormant inventory metadata
   tier            ontology_tier NOT NULL,      -- core | extension | other | deprecated (the three speeds, D15)
   pack_id         text REFERENCES extension_packs, -- non-null if from an extension pack
   scope_id        uuid,                        -- non-null if defined by a single K2 scope
@@ -639,20 +645,19 @@ CREATE TABLE entity_types (
   FOREIGN KEY (deployment_id, scope_id)    REFERENCES scopes (deployment_id, scope_id) ON DELETE SET NULL (scope_id)
 );
 COMMENT ON TABLE entity_types IS
-  'Governed entity-type registry (D15/D18). 8 schema.org-aligned core roots + pack/scope extensions, each anchored to a core parent (extend-never-fork) so blocking and cross-scope queries always fall back to the core level.';
+  'Dormant entity-type seed inventory retained after D96 for bootstrap and pack structure only. No entity, mention, resolver, relation writer, projection, or query uses these rows as identity or as a domain/range gate.';
 CREATE INDEX ix_entity_types_parent ON entity_types (deployment_id, parent_type);
 
 -- ─────────────────────────────────────────────────────────────────────────
--- predicates — the governed relation vocabulary (D5/D18). related_to is the core parent.
+-- predicates — the governed relation vocabulary (D5). related_to is the core parent.
 -- The other:<freetext> escape (D5) is materialized here too: when the normalizer encounters an
 -- other:<value>, it UPSERTs a row with tier='other' (so relations.predicate's FK holds AND the
--- promotion funnel is countable via usage_count). Domain/range is NOT enforced for tier='other'
--- rows until a periodic job promotes them (registries §4/§7).
+-- promotion funnel is countable via usage_count). No predicate has an endpoint type signature.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE predicates (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   predicate       text NOT NULL,               -- 'works_for',... ; 'other:<freetext>' rows live here as tier='other'
-  parent_predicate text,                        -- optional predicate-side extend-never-fork anchor (default parent 'related_to', D18)
+  parent_predicate text,                        -- optional predicate-side extend-never-fork anchor (default parent 'related_to')
   description     text NOT NULL,               -- meaning rendered into normalization prompts
   examples        text[] NOT NULL DEFAULT '{}',
   synonyms        text[] NOT NULL DEFAULT '{}',-- surface variants the normalizer maps onto this predicate (works_at/employed_by → works_for) — D5
@@ -661,7 +666,7 @@ CREATE TABLE predicates (
   pack_id         text REFERENCES extension_packs,
   scope_id        uuid,
   usage_count     bigint NOT NULL DEFAULT 0,   -- cached count of relations using this predicate; ranks tier='other' values for promotion (D5 funnel)
-  is_change_prone boolean NOT NULL DEFAULT false, -- employment/affiliation/location change over time ⇒ supersession-relevant (D18)
+  is_change_prone boolean NOT NULL DEFAULT false, -- employment/affiliation/location change over time ⇒ supersession-relevant
   exclude_from_graph_distance boolean NOT NULL DEFAULT false, -- causal/promiscuous predicates excluded from graph-distance reranking (registries §4)
   status          ontology_status NOT NULL DEFAULT 'active',
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -670,32 +675,8 @@ CREATE TABLE predicates (
   FOREIGN KEY (deployment_id, scope_id) REFERENCES scopes (deployment_id, scope_id) ON DELETE SET NULL (scope_id)
 );
 COMMENT ON TABLE predicates IS
-  'Governed predicate vocabulary (D5/D18). Extraction is constrained to these names with an other:<freetext> escape, which the normalizer upserts as tier=other rows (FK holds; usage_count makes the promotion funnel queryable). related_to is the permissive core parent.';
+  'Governed predicate vocabulary (D5). Extraction is constrained to these names with an other:<freetext> escape, which the normalizer upserts as tier=other rows (FK holds; usage_count makes the promotion funnel queryable). Endpoint entity classes are not constrained.';
 CREATE INDEX ix_predicates_other ON predicates (deployment_id, usage_count DESC) WHERE tier = 'other'; -- promotion-candidate ranking
-
--- ─────────────────────────────────────────────────────────────────────────
--- predicate_signatures — the domain/range gate (Graphiti edge_type_map shape, D18).
--- A child table because a predicate may allow several (subject_type,object_type) pairs. ENFORCEMENT
--- is by the NORMALIZER at E3 write time (application-enforced, not a per-insert DB trigger — at 10⁸
--- relations a trigger walking the type hierarchy on every write is too costly): the normalizer
--- resolves the subject/object entity types, walks each up its parent chain (extend-never-fork), and
--- accepts the relation only if some signature matches at any ancestor level. A relation that fails
--- is DROPPED — and is re-derivable from its immutable claim if the entity is later retyped, so no
--- quarantine table is needed (registries §4). (An optional BEFORE INSERT trigger may be added as a
--- belt-and-braces backstop in low-throughput deployments.)
--- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE predicate_signatures (
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  predicate       text NOT NULL,               -- the predicate this signature constrains
-  subject_type    text NOT NULL,               -- allowed subject entity_type (matched at this level OR any descendant via the normalizer's parent walk)
-  object_type     text NOT NULL,               -- allowed object entity_type
-  PRIMARY KEY (deployment_id, predicate, subject_type, object_type),
-  FOREIGN KEY (deployment_id, predicate)    REFERENCES predicates (deployment_id, predicate) ON DELETE CASCADE,
-  FOREIGN KEY (deployment_id, subject_type) REFERENCES entity_types (deployment_id, type),
-  FOREIGN KEY (deployment_id, object_type)  REFERENCES entity_types (deployment_id, type)
-);
-COMMENT ON TABLE predicate_signatures IS
-  'Allowed (subject_type → object_type) pairs per predicate — the one structural ontology gate (D18), enforced by the normalizer (parent-chain walk) at E3 write time. Subtypes inherit a parent''s signatures; a relation matching none is dropped (re-derivable from its claim).';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- scope_interests — registry-declared scope views + extraction interests (D16).
@@ -710,14 +691,12 @@ CREATE TABLE scope_interests (
   FOREIGN KEY (deployment_id, scope_id) REFERENCES scopes (deployment_id, scope_id) ON DELETE CASCADE
 );
 COMMENT ON TABLE scope_interests IS
-  'Per-scope interest list (D16): the predicate/type footprint that defines the scope''s PROJECT_GRAPH_CYPHER view and what its K2 compilation selects. A query/compile-time selection over fully-extracted facts — never a promotion trigger (D28 withdrawn).';
+  'Per-scope interest list (D16): predicate, metadata, and keyword interests define the scope''s PROJECT_GRAPH_CYPHER view and K2 compilation selection. The legacy entity_type enum value is rejected after D96; scopes do not filter entities by class.';
 ```
 
-The **universal core** (D18/D64/D69) — 8 entity-type roots, 16 predicates, and 116 concrete
-signatures — is deployment-scoped data created or verified by the post-head
-`bootstrap_deployment(...)` operation in §2, not by Alembic. Its one normative inline manifest is
-`registries_design.md` §4; schema and bootstrap implementations consume that manifest without
-duplicating or interpreting shorthand.
+The deployment bootstrap creates or verifies eight dormant entity-type seed
+rows and sixteen predicate rows after Alembic reaches head. It creates zero
+signature rows. Only predicates participate in extraction and relation writes.
 
 ---
 
@@ -739,12 +718,10 @@ defined in `concepts.md` §6.
 CREATE TABLE entities (
   entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to P1/Ladybug
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  type            text NOT NULL,               -- canonical type = majority/highest-confidence vote across mentions (registries §4)
   canonical_name  text NOT NULL,               -- preferred display/blocking name; mirrored as an alias row (invariant below)
   normalized_name text NOT NULL,               -- unaccent+lower(canonical_name)
   status          entity_status NOT NULL DEFAULT 'active', -- active | merged | retired
   merged_into     uuid,                        -- redirect target when status=merged; follow the chain to the survivor (D21)
-  type_confidence real,                        -- confidence of the type vote; low + cross-mention disagreement ⇒ over-merge signal (registries §4)
   profile_summary text,                        -- short registry-maintained blurb; improves future LLM adjudication (Graphiti lesson)
   embedding vector(1536),                      -- D94 disposable vector for the canonical profile input
   embedding_model text,                        -- configured model that produced embedding
@@ -755,14 +732,12 @@ CREATE TABLE entities (
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (deployment_id, entity_id),           -- composite-FK target (tenancy isolation, §0)
-  FOREIGN KEY (deployment_id, type) REFERENCES entity_types (deployment_id, type),
   FOREIGN KEY (deployment_id, merged_into) REFERENCES entities (deployment_id, entity_id), -- same-deployment redirect only
   CHECK ((status = 'merged') = (merged_into IS NOT NULL)), -- merged iff it redirects; an active/retired entity must NOT redirect
   CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4))
 );
 COMMENT ON TABLE entities IS
-  'Canonical entity registry (D17/D21). entity_id never reused; merges are redirects via merged_into (un-mergeable), not rewrites. type is the cross-mention vote; mention_count+graph_degree cache the blast-radius inputs for review gating (registries §6/§8).';
-CREATE INDEX ix_entities_type     ON entities (deployment_id, type);
+  'Canonical entity registry (D17/D21/D95/D96). entity_id identifies the real-world referent and is never reused; merges are redirects via merged_into, not rewrites. profile_summary caches observation prose for resolution evidence, while mention_count and graph_degree cache blast-radius inputs.';
 CREATE INDEX ix_entities_redirect ON entities (merged_into) WHERE merged_into IS NOT NULL;
 -- entities is searchable by name but the PRIMARY blocking index lives on aliases (below). D68
 -- gives each deployment its own instance/schema, so the blocking GIN contains only the match key:
@@ -835,20 +810,20 @@ COMMENT ON TABLE resolution_exclusions IS
   'Adjudicated non-match constraints (D21): block re-proposing a merge the clusterer or a human ruled out (two J. Smiths, father/son). Consulted by the cascade and clustering.';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- resolver_versions — per-version tier config + per-type thresholds (D17/D22).
+-- resolver_versions — per-version tier config + one global threshold set (D17/D22/D96).
 -- Also the home of the review-routing band boundaries (auto-accept ceiling / hub-merge floor, D24).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE resolver_versions (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   resolver_version text NOT NULL,              -- e.g. 'resolver-2026-03a'
   tier_config     jsonb NOT NULL,              -- T0–T4 enable/order, blocking floors, escalation bands, review band boundaries + hub-merge blast-radius cutoff (D24)
-  thresholds_by_type jsonb NOT NULL,           -- per-entity-type accept/reject bands (golden-set-measured, D22) — starting points, not constants
+  thresholds jsonb NOT NULL,                   -- one global accept/reject band set, golden-set measured; starting points, not constants
   configured_at   timestamptz NOT NULL DEFAULT now(),
   notes           text,
   PRIMARY KEY (deployment_id, resolver_version)
 );
 COMMENT ON TABLE resolver_versions IS
-  'Versioned, per-type resolution thresholds + tier config + review-routing bands (D17/D22/D24). Block-loose/decide-tight; thresholds are golden-set-measured starting points to be re-measured, never committed constants.';
+  'Versioned global resolution thresholds plus tier config and review-routing bands (D17/D22/D24/D96). Block-loose and decide-tight; thresholds are golden-set-measured starting points to be re-measured, never committed constants.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- mentions — the immutable transcript: every entity mention as extracted (D17). ~10⁸ rows ⇒
@@ -862,8 +837,6 @@ CREATE TABLE mentions (
   surface_form    text NOT NULL,               -- the mention exactly as it appeared
   normalized_lemma text NOT NULL,              -- unaccent+lower of surface_form
   canonical_name_form text,                    -- LLM-emitted nominative/canonical form at extraction (registries §5) — feeds T0 + becomes an llm_canonical alias
-  emitted_type    text,                        -- entity type the extractor emitted for this mention (registry-constrained)
-  type_confidence real,                        -- extractor confidence in emitted_type
   context         text,                        -- short surrounding snippet for adjudication/audit (not the document body)
   language        text,                        -- mention language (per-deployment multilingual path, registries §5)
   claim_id        uuid,                        -- LOGICAL FK → claims; the claim this mention occurs in
@@ -986,7 +959,6 @@ CREATE INDEX ix_review_pending ON review_queue (deployment_id, expected_impact D
 CREATE TABLE golden_pairs (
   pair_id         uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  entity_type     text NOT NULL,               -- the type stratum this pair tests
   surface_a       text NOT NULL,               -- mention/alias A (stored as text so the set survives re-resolution)
   surface_b       text NOT NULL,
   context_a       text,                        -- disambiguating context for A
@@ -999,8 +971,7 @@ CREATE TABLE golden_pairs (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE golden_pairs IS
-  'Human-adjudicated ER evaluation pairs (D22). Measures P/R and tunes per-type thresholds; never used for training. expected_blocking_tier supports blocking-stratified recall. Stored as surface+context so it survives re-resolution.';
-CREATE INDEX ix_golden_type ON golden_pairs (deployment_id, entity_type);
+  'Human-adjudicated ER evaluation pairs (D22/D95). Measures one global precision/recall curve plus deciding-tier diagnostics and is never used for training. Same-lemma non-matches are first-class rows; surfaces and contexts survive re-resolution.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- golden_claim_labels — the E2 Selection verifiability golden set (D22/D25/D35).
@@ -1026,12 +997,12 @@ CREATE TABLE eval_runs (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   suite           eval_suite NOT NULL,         -- includes lifecycle correctness + operational scale batteries
   component_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions / resolver_versions; what was measured
-  metrics         jsonb NOT NULL,              -- per-tier/per-type P/R with Wilson CIs; recall@k per recipe; rerank weights; per-fact false-drop
+  metrics         jsonb NOT NULL,              -- global P/R plus per-tier diagnostics; recall@k per recipe; rerank weights; per-fact false-drop
   passed          boolean,                     -- did the canary regression pass for this version?
   ran_at          timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE eval_runs IS
-  'Evaluation history (D22/O6). Per-tier/per-type metrics with Wilson intervals for resolution; recall@k + rerank tuning for retrieval; per-fact false-drop for selection. A canary regression re-runs per version.';
+  'Evaluation history (D22/O6). Global precision/recall plus per-tier diagnostics for resolution; recall@k and rerank tuning for retrieval; per-fact false-drop for selection. A canary regression re-runs per version.';
 CREATE INDEX ix_eval_suite_ver ON eval_runs (deployment_id, suite, ran_at);
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -2693,8 +2664,8 @@ Labs."*
 4. **Resolution** (T0–T4) writes `resolution_decisions` (method ∈ {T0,T3,T4_*,human}) linking each
    mention to an `entities` row via the `aliases` blocking indexes; "Beacon Labs" is new
    (`is_new_entity`).
-5. **E3 normalize**: `c4` → `(alice, founded, beacon_labs)` — new `relations` row (passes
-   domain/range via the normalizer's parent-walk), one `relation_evidence(supports)` row keyed
+5. **E3 normalize**: `c4` → `(alice, founded, beacon_labs)` — new `relations` row (the
+   governed predicate is valid; endpoint classes are not a write gate), one `relation_evidence(supports)` row keyed
    `(relation_id, claim_id)` (a re-link is an `ON CONFLICT` no-op). `c3` triggers **supersession** on `(alice, works_for, acme)`: the
    blocking index `ix_relations_block_subj` finds it, the cascade adjudicates `supersede`, a
    `relation_adjudications` row records why, and the relation's `valid_until`/`invalidated_at` close
@@ -2760,7 +2731,7 @@ Labs."*
 | D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; `entity_graph_metrics.pagerank/degree` |
 | D11 communities external → write back to PG | `communities`, `entity_graph_metrics` (+ GC) |
 | D12 idempotency, retries, DLQ, debounced K triggers | `processing_state` identity/status/`attempts`/`max_attempts`; `cost_ledger`; `knowledge_refresh_queue` (retry ownership refined by D67) |
-| D15/D18 ontology core+extensions, domain/range | `entity_types`, `predicates`, `predicate_signatures` (normalizer-enforced), `extension_packs` |
+| D5/D15/D96 predicate vocabulary; no entity-class gate | `predicates`, `extension_packs`; dormant `entity_types` inventory is not identity authority; `predicate_signatures` is absent |
 | D16 one graph, scope views | `scopes`, `scope_interests` |
 | D17 T0–T4 cascade, block-loose/decide-tight | single-column blocking GIN indexes on `entities.normalized_name` and `aliases.normalized_lemma` (D68); `resolution_decisions.method` (CHECK excludes T1/T2); `resolver_versions` |
 | D19 coref in-call | `mentions.canonical_name_form` (no coref model/table) |

@@ -23841,7 +23841,7 @@
               "type": "uuid"
             },
             {
-              "comment": "Canonical type of the entity as voted across its mentions.",
+              "comment": "Vacated after D96: this compatibility output position always returns NULL because identity is the entity_id and no entity class is stored; use observation or profile fact text for kind-like retrieval.",
               "enum_values": null,
               "name": "entity_type",
               "nullable": true,
@@ -23862,7 +23862,7 @@
               "type": "text"
             },
             {
-              "comment": "Confidence in the type vote, null when never scored.",
+              "comment": "Vacated after D96: this compatibility output position always returns NULL because the removed entity-class vote has no confidence value; identity decisions are recorded by resolution tier and confidence instead.",
               "enum_values": null,
               "name": "type_confidence",
               "nullable": true,
@@ -32537,14 +32537,14 @@
               "type": "text"
             },
             {
-              "comment": "The entity type the extractor emitted for this mention, null when it emitted none.",
+              "comment": "Vacated after D96: this compatibility output position always returns NULL because extraction emits entity names rather than type classes; the source and canonical spellings remain available on this mention.",
               "enum_values": null,
               "name": "emitted_type",
               "nullable": true,
               "type": "text"
             },
             {
-              "comment": "Extractor confidence in that emitted type, null when unscored.",
+              "comment": "Vacated after D96: this compatibility output position always returns NULL because extraction no longer produces an entity-class confidence; resolution confidence remains available separately.",
               "enum_values": null,
               "name": "type_confidence",
               "nullable": true,
@@ -32620,7 +32620,7 @@
               "type": "timestamp with time zone"
             }
           ],
-          "comment": "One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Membership binds every coordinate of the mention: the chunk must be a current-content chunk and the mention's own lineage must be that chunk's lineage, so mentions in superseded versions, in non-ready readings, in forgotten lineages, and mentions whose recorded lineage disagrees with their chunk's are all absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the five resolution columns are populated together or not at all, from the mention's single live, unsuperseded decision and only when the survivor that decision names passes the entities_current provenance gate, so a decision pointing at a retired, merged-away, or provenance-free identity leaves the whole resolution null rather than describing a decision whose subject this schema will not show. The claim coordinate is gated the same way and is null unless that claim is itself a visible claim of this lineage. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks.",
+          "comment": "One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Membership binds every coordinate of the mention: the chunk must be a current-content chunk and the mention's own lineage must be that chunk's lineage, so mentions in superseded versions, in non-ready readings, in forgotten lineages, and mentions whose recorded lineage disagrees with their chunk's are all absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the five resolution columns are populated together or not at all, from the mention's single live, unsuperseded decision and only when the survivor that decision names passes the entities_current provenance gate, so a decision pointing at a retired, merged-away, or provenance-free identity leaves the whole resolution null rather than describing a decision whose subject this schema will not show. The claim coordinate is gated the same way and is null unless that claim is itself a visible claim of this lineage. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks. After D96, emitted_type and type_confidence are vacated compatibility positions that always return NULL.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -33335,7 +33335,7 @@
                 }
               ]
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -37672,5 +37672,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "58a6e5646c8d1fe96ec4e30b87031fc8a100e2f7e59749bc396aa3c8cdf192a3"
+  "surface_manifest_hash": "683d1526b26ea3d081e197e2e21d9dae918d20af3c118a9e23f8c71c956d2985"
 }

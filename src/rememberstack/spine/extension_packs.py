@@ -1,10 +1,8 @@
-"""Extension-pack installation (registries §4/§7, D15): enable a pack as a unit.
+"""Enable one predicate pack plus its dormant type-inventory rows.
 
-Installing writes the pack's registry rows for one deployment — entity types,
-predicates, and domain/range signatures, all `tier='extension'` with the pack
-id — after verifying every anchor exists (extend-never-fork: an extension
-type MUST declare a registered parent; a pack that forks is refused whole).
-Idempotent: enabling twice is a no-op.
+Predicate rows are active vocabulary. Type rows remain only for the retained
+pack/bootstrap inventory shape; D96 forbids using them or endpoint signatures
+as identity or a relation-write gate. Idempotent: enabling twice is a no-op.
 """
 
 from uuid import UUID
@@ -75,9 +73,7 @@ def _require_anchors(
     the deployment registry BEFORE the pack installs — a pack-local chain
     (Child anchored to another type from the same pack) is refused too
     (Codex review): the DDL's contract is a registered core-side parent.
-    Signatures may reference pack types (they install together).
     """
-    pack_types = {entity_type.type for entity_type in pack.entity_types}
     registered = {
         row[0]
         for row in connection.execute(_SELECT_TYPES, {"deployment_id": deployment_id})
@@ -89,18 +85,6 @@ def _require_anchors(
                 f"{entity_type.parent_type!r}, which is not already registered "
                 "(extend-never-fork, D15: pack-local anchors are refused)"
             )
-    signature_types = {
-        entity_type
-        for predicate in pack.predicates
-        for pair in predicate.signatures
-        for entity_type in pair
-    }
-    unknown = signature_types - (registered | pack_types)
-    if unknown:
-        raise PackAnchorError(
-            f"pack {pack.pack_id!r} signatures reference unregistered "
-            f"types {sorted(unknown)!r}"
-        )
 
 
 def _refuse_conflicts(

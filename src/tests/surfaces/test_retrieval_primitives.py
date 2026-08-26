@@ -916,9 +916,8 @@ def test_aggregate_count_and_group_forms(corpus: _Corpus) -> None:
     assert all(b.entity_id is not None for b in by_object.aggregate.buckets)
 
 
-def test_aggregate_timeline_and_delta_top_and_typed_absence(corpus: _Corpus) -> None:
-    """S30/S40: entity timeline, the delta-bounded leaderboard, and typed
-    absence — the anti-join the ontology makes answerable."""
+def test_aggregate_timeline_delta_top_and_predicate_absence(corpus: _Corpus) -> None:
+    """S30/S40: timeline, delta leaderboard, and predicate anti-join."""
     engine = _engine(corpus)
     alice = corpus.ids["Alice"]
     timeline = engine.aggregate(
@@ -937,10 +936,7 @@ def test_aggregate_timeline_and_delta_top_and_typed_absence(corpus: _Corpus) -> 
     assert leaders.get(alice) == 2  # two relations ingested in the window
 
     absent = engine.aggregate(
-        deployment_id=_DEPLOYMENT_ID,
-        form="typed_absence",
-        entity_type="Organization",
-        predicate="works_for",
+        deployment_id=_DEPLOYMENT_ID, form="predicate_absence", predicate="works_for"
     )
     assert absent.aggregate is not None
     absent_entities = {b.entity_id for b in absent.aggregate.buckets}
@@ -1049,8 +1045,7 @@ def test_aggregate_truncation_is_disclosed(corpus: _Corpus) -> None:
     a floor, never a silent 'this is all there is' (Codex finding)."""
     absent = _engine(corpus).aggregate(
         deployment_id=_DEPLOYMENT_ID,
-        form="typed_absence",
-        entity_type="Organization",
+        form="predicate_absence",
         predicate="works_for",
         limit=1,
     )

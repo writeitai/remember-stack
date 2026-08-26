@@ -40,10 +40,6 @@ class ResolverVersionConflictError(Exception):
     """A resolver version re-registered with a different definition (D22)."""
 
 
-class UnregisteredEntityTypeError(Exception):
-    """Mint refused: emitted type is not in the deployment entity_types registry (D86)."""
-
-
 RESOLVER_VERSION: Final = "resolver-2026.07b"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
 07b pins T4 temperature=0.0 — generation parameters are part of provenance."""

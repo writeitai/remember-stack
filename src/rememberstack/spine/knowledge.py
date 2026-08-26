@@ -2967,13 +2967,9 @@ class KnowledgeControlPlane:
             if interest_type == "predicate":
                 keys.add((KnowledgeRuleKeyKind.PREDICATE, value))
             elif interest_type == "entity_type":
-                entities = connection.execute(
-                    _SELECT_ENTITIES_OF_TYPE,
-                    {"deployment_id": deployment_id, "entity_type": value},
-                ).scalars()
-                keys.update(
-                    (KnowledgeRuleKeyKind.ENTITY, str(entity_id))
-                    for entity_id in entities
+                raise KnowledgeCompilationError(
+                    "scope interest entity_type is unsupported after D96; "
+                    "select entities through predicate, metadata, keyword, or fact text"
                 )
             elif interest_type == "metadata":
                 sources = connection.execute(
@@ -3183,17 +3179,9 @@ class KnowledgeControlPlane:
             interest_type = str(interest["interest_type"])
             value = str(interest["value"])
             if interest_type == "entity_type":
-                entity_ids = tuple(
-                    connection.execute(
-                        _SELECT_ENTITIES_OF_TYPE,
-                        {"deployment_id": deployment_id, "entity_type": value},
-                    ).scalars()
-                )
-                selected_facts, selected_claims = self._entity_candidates(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    entity_ids=entity_ids,
-                    layers=tuple(KnowledgeCandidateLayer),
+                raise KnowledgeCompilationError(
+                    "scope interest entity_type is unsupported after D96; "
+                    "select entities through predicate, metadata, keyword, or fact text"
                 )
             elif interest_type == "predicate":
                 selected_facts = _fact_fingerprints(
@@ -4538,14 +4526,6 @@ _SELECT_SCOPE_INTERESTS = text(
     FROM scope_interests
     WHERE scope_id = :scope_id
     ORDER BY interest_type, value
-    """
-)
-
-_SELECT_ENTITIES_OF_TYPE = text(
-    """
-    SELECT entity_id
-    FROM entities
-    WHERE false
     """
 )
 

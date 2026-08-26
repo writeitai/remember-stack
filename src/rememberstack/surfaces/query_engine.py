@@ -163,7 +163,7 @@ _RERANK_SIGNALS = {"graph_distance": True, "evidence_count": False}
 the focal entity wins (ascending), more corroboration wins (descending)."""
 
 _BOUNDED_AGGREGATE_FORMS = frozenset(
-    {"group_by_predicate", "group_by_object", "delta_top_entities", "typed_absence"}
+    {"group_by_predicate", "group_by_object", "delta_top_entities", "predicate_absence"}
 )
 """The aggregate forms that take a `limit` and so must disclose truncation.
 `count` and `timeline` are naturally bounded (one row / one row per year)."""
@@ -1920,7 +1920,6 @@ class QueryEngine:
         form: str,
         subject_entity_id: UUID | None = None,
         predicate: str | None = None,
-        entity_type: str | None = None,
         since: datetime | None = None,
         limit: int = 50,
     ) -> Envelope:
@@ -1931,9 +1930,9 @@ class QueryEngine:
         against the spine (the escape hatch is `scan`). The forms: `count`,
         `group_by_predicate`, `group_by_object`, `timeline` (an entity's
         facts by year), `delta_top_entities` (facts gained since T, bounded
-        by the delta window — S30), and `typed_absence` (entities of a type
-        with no relation of a predicate — S40, answerable because the
-        ontology types entities). A `limit`-bounded form that hits its cap
+        by the delta window — S30), and `predicate_absence` (active entities
+        with no live relation of a predicate — S40, with no type filter).
+        A `limit`-bounded form that hits its cap
         sets an explicit truncation marker — the bucket total is then a
         floor, never a silent "this is all there is". An unknown form is a
         typed `boundary`.
@@ -1956,14 +1955,12 @@ class QueryEngine:
             "deployment_id": deployment_id,
             "subject_entity_id": subject_entity_id,
             "predicate": predicate,
-            "entity_type": entity_type,
             "since": since,
             "fetch": limit + 1,  # one extra row reveals a truncation honestly
         }
         for required, value in (
             ("subject_entity_id", subject_entity_id),
             ("predicate", predicate),
-            ("entity_type", entity_type),
             ("since", since),
         ):
             if required in needs and value is None:
@@ -3119,9 +3116,7 @@ def _evidence_result_from_fact_row(*, row: RowMapping) -> EvidenceResult:
         "ingested_at",
         "invalidated_at",
         "subject_name",
-        "subject_type",
         "object_name",
-        "object_type",
     }
     return EvidenceResult.model_validate(
         {key: value for key, value in dict(row).items() if key not in excluded}
@@ -3718,16 +3713,14 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                r.valid_from, r.valid_until, r.ingested_at,
                NULL::timestamptz AS invalidated_at,
                subject.canonical_name AS subject_name,
-               NULL::text AS subject_type,
                object.canonical_name AS object_name,
-               NULL::text AS object_type,
                r.support_state = 'withdrawn' AS support_withdrawn
         FROM requested
         JOIN memory_v1.graph_edges_current r
           ON r.deployment_id = :deployment_id
          AND r.relation_id = requested.relation_id
         -- The graph view already proved both endpoints current. These base
-        -- joins hydrate names and types only; repeating entities_current here
+        -- joins hydrate names only; repeating entities_current here
         -- expands its full authorization plan twice without changing
         -- membership.
         JOIN entities subject
@@ -3797,8 +3790,7 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
            confirmed.subject_id, confirmed.object_id, confirmed.predicate,
            confirmed.fact, confirmed.evidence_count, confirmed.valid_from,
            confirmed.valid_until, confirmed.ingested_at, confirmed.invalidated_at,
-           confirmed.subject_name, confirmed.subject_type,
-           confirmed.object_name, confirmed.object_type,
+           confirmed.subject_name, confirmed.object_name,
            confirmed.support_withdrawn,
            limited.stance, limited.evidence_total, limited.stance_rank,
            limited.claim_id, limited.doc_id, limited.chunk_id,
@@ -4286,7 +4278,7 @@ _AGG_DELTA_TOP_ENTITIES = text(
     """
 )
 
-_AGG_TYPED_ABSENCE = text(
+_AGG_PREDICATE_ABSENCE = text(
     """
     -- entities with NO live relation of a predicate (S40, D96: no type filter).
     -- Each bucket IS one absent entity (count 1).
@@ -4311,7 +4303,7 @@ _AGGREGATE_FORMS: dict[str, tuple[TextClause, frozenset[str]]] = {
     "group_by_object": (_AGG_GROUP_BY_OBJECT, frozenset({"subject_entity_id"})),
     "timeline": (_AGG_TIMELINE, frozenset({"subject_entity_id"})),
     "delta_top_entities": (_AGG_DELTA_TOP_ENTITIES, frozenset({"since"})),
-    "typed_absence": (_AGG_TYPED_ABSENCE, frozenset({"predicate"})),
+    "predicate_absence": (_AGG_PREDICATE_ABSENCE, frozenset({"predicate"})),
 }
 
 _SCAN_EXPORTS = {
