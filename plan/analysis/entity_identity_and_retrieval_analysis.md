@@ -265,6 +265,14 @@ observations — they do not bring `entities.type` back. Identity work
 is still T0 + profile (D95); dropping types is not a substitute for
 that.
 
+**T0 never auto-merges (same-day revision).** Exact lemma only lists
+candidate ids. A “distinctive vs common-name list” shortcut still
+glues the second `Jan` unless a huge stoplist exists, and turning that
+shortcut on for a *large* corpus is backwards (more collisions). Scale
+path: T3 on mention+claim vs **profile** (repeats of James, no LLM).
+T4 when profile is empty, fights, or several Johns exist. No
+thousand-name census.
+
 **Do not optimize extract for LoCoMo categories.** Bare-noun refusal
 helps every corpus. Father/son and person-as-employer are the tests.
 

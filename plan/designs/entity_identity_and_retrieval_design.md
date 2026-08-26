@@ -56,11 +56,12 @@ query planner.
 ## 2. Decisions this design implements
 
 **D95 — Identity is the referent.** One `entity_id` per real-world
-thing. A name generates **candidates**. Exact lemma is not a merge
-verdict when the name is common, two hits exist, a profile fights the
-new claim, or the judge says different. The same spelling may be two
-ids. A short profile is evidence the judge sees, never the lookup key.
-Relatedness is a relation, not a field on the entity.
+thing. A name generates **candidates**. **T0 never auto-merges** (exact
+lemma only lists ids). T3 may accept a repeat when a profile exists;
+T4 when the profile is empty, fights, or several candidates exist. The
+same spelling may be two ids. Profile is T3/T4 evidence, never the
+lookup key. Relatedness is a relation. No common-name list; no
+“enable exact-T0 on a large corpus.”
 
 **D96 — No entity types; extract names; profile is observation prose.**
 Mentions are a diary of names (string, claim, span). E3 does not emit
@@ -86,38 +87,59 @@ the id.
 Keep T0–T4, block-loose / decide-tight, registry-self-contained (D20).
 Change what T0 *means*.
 
-### 3.1 T0 — strong candidate, not always a verdict
+### 3.1 T0 — candidate list, never a merge
 
 Exact match on `aliases.normalized_lemma` **lists** matching active
-**entity ids** (more than one distinct id is now possible). Count
-**distinct `entity_id`s**, not alias rows: two provenances (`source` and
-`llm_canonical`) on the same id are still one hit.
+**entity ids** (0, 1, or many). Count **distinct `entity_id`s**, not
+alias rows: two provenances (`source` and `llm_canonical`) on the same
+id are still one candidate.
 
-Auto-accept that hit **only when all of these hold**:
+**T0 never auto-accepts.** Same cleaned spelling is a clue, not a
+verdict. No common-name census. No “distinctive lemma” shortcut.
 
-- exactly one distinct active entity id for the lemma in the deployment
-- the lemma is **not** on `generic_identifier_guard` and is not a
-  configured common-name / too-short token (golden-set-measured list;
-  starting point: given names, tokens shorter than three letters,
-  lemmas already flagged promiscuous)
-- no stored profile (or salient observations) that **contradict** the
-  new claim (T4 if a profile exists and the claim is not obviously
-  about the same life)
+- **0 candidates** → T1/T2 blocking; if nothing usable, **mint**.
+- **1 or more** → those ids are the candidate set. Decision is T3 or T4
+  (§3.1.1). If T4 says not the same as any of them, **mint** another id
+  with that spelling (§3.2).
 
-Otherwise escalate to T1–T4 (or mint if nothing blocked). Confidence
-1.0 exact-merge is reserved for the auto-accept band above.
+A thousand mentions of the same James are **not** a thousand T4 calls.
+Repeats are T3 once a profile exists.
+
+### 3.1.1 Who actually decides (T3 cheap, T4 residue)
+
+| Situation | Verdict | Why |
+|---|---|---|
+| No candidates after blocking | Mint | No LLM |
+| One candidate, **profile exists**, mention+claim embedding sits on that profile (T3 accept band; starting threshold from D22, not a folklore constant) | **Accept, no T4** | Repeat “James” after we know him |
+| One candidate, **empty profile**, or profile **fights** the claim, or **several** exact candidates | **T4** | Father/son, second employee, first clash, thin identity |
+| T4: same | That `entity_id` | — |
+| T4: different | Mint | Same lemma, new referent |
+
+T3 embeds **mention (name + this claim) against the candidate’s
+profile** (name + summary + salient facts), never name-only vs
+name-only. Empty profile is **fail-safe**: do not treat high name-only
+cosine as certainty — that is T4 (or mint if T4 says new).
+
+This is how father/son becomes possible (they reach T4 with different
+facts) **and** how a clean table stays affordable (repeats of a known
+person are embeddings, not judges).
+
+**Not in this design:** an operator flag that turns exact-lemma
+auto-merge back on once the corpus is “large.” A large store has
+**more** `Jan`s, not fewer. The cheap path is T3+profile, not
+resurrecting T0-as-verdict.
 
 ### 3.2 Same lemma, two ids
 
-If T4 says the mention is **not** the candidate, **mint** a new
+If T4 says the mention is **not** any current candidate, **mint** a new
 `entity_id` with the same canonical spelling and a new alias row. The
 lemma advisory lock still serializes the race; it does not forbid a
 second row. `resolution_exclusions` records “these two are not the
 same” so T4 is not re-asked forever.
 
-This is how father/son and two employees in different cities exist.
-It is **not** how SAP-the-shorthand becomes two nodes: distinctive
-brand lemmas auto-accept at T0 when a single hit exists.
+Father/son and two employees in different cities are this path. SAP
+shorthand stays one id because T3/T4 see one referent, not because T0
+auto-merged the string.
 
 ### 3.3 Profile is T4 evidence (amends registries §2 as implemented)
 
@@ -381,7 +403,7 @@ Minimum rows:
 | Site | Contract |
 |---|---|
 | `EntityRef` | canonical `name`; `surface` when the claim spelling differs; **no type** |
-| `CascadeResolver.resolve` | T0 auto-accept only under §3.1; hits = distinct entity ids; else cascade or mint; same lemma may mint; no type argument |
+| `CascadeResolver.resolve` | T0 lists distinct entity ids, never auto-accepts; T3 may accept with profile; T4 if empty/conflict/many; same lemma may mint; no type argument |
 | `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
 | Profile refresher | rewrite `profile_summary` from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
@@ -423,6 +445,7 @@ generations are abandoned, not dual-run. Sequencing:
 | Alternative | Why it lost |
 |---|---|
 | Keep T0 exact as verdict | Homonyms impossible |
+| Exact-T0 auto-merge as a default-off flag for “large corpora” | Large stores have more collisions, not fewer; T3+profile is the scale path |
 | `(name, type)` unique | Forks SAP |
 | Required extract class | Error space; first-mint law |
 | D18 pre-resolve on emitted types | Not independent |
@@ -438,9 +461,9 @@ generations are abandoned, not dual-run. Sequencing:
 
 ## 11. Test battery (acceptance; numbers are starting points)
 
-- T0: distinctive unique lemma auto-merges; common given name with
-  conflicting profile does not; second mint of same lemma after T4
-  no-match.
+- T0 never auto-merges: second `Jan` with empty profile goes to T4, not
+  T0 accept. Repeat `James` with a profile can T3-accept without T4.
+  Second mint of same lemma after T4 no-match.
 - T4 sees profile **and** salient observations; two same-name vectors
   differ once profiles differ; “lives in Prague” can split homonyms.
 - `judge_pair` false-merge/false-split on §8 rows.

@@ -448,9 +448,10 @@ global constant works. Graphiti independently arrived at the same block-loose/de
 **Consequences.** LLM cost scales with ambiguity. Blocking sets a hard recall ceiling, so cheap
 tiers *escalate* near-misses, never auto-reject. Feeds O6 (every threshold needs the golden set).
 
-**Refined by D95.** T0 exact lemma is a **candidate**, not a merge verdict, when the name is
-common, several exact hits exist, a profile fights the claim, or T4 says different. The same
-spelling may be two `entity_id`s. Profile text is T4 evidence, not the identity key.
+**Refined by D95.** T0 exact lemma **never** auto-merges: it only lists
+distinct candidate ids. T3 (profile embedding) may accept repeats; T4
+handles empty/conflict/many candidates. The same spelling may be two
+`entity_id`s. Profile text is T3/T4 evidence, not the identity key.
 
 ## D18. Ontology seed core — 8 types + 14 predicates, schema.org-anchored, domain/range not OWL
 
@@ -3867,44 +3868,51 @@ statistics without a duplicated claim-search table.
 
 ## D95. Entity identity is the real-world referent
 
-**Decision (2026-08-26).** One `entity_id` per real-world referent. Names
-generate **candidates**; they are not the verdict. Exact lemma match (T0)
-auto-accepts only when the name is distinctive, there is a single active
-hit, and nothing fights it (promiscuous-lemma guard, common-name list,
-profile contradiction). Otherwise escalate. If T4 says the mention is not
-the candidate, **mint a second entity with the same spelling**. A short
-`profile_summary` is evidence shown to T4 and (with the name) the T3
-vector; it is never the identity key. Job, city, and employer changes
-update the profile, not the id. Relatedness (father/son, vendor/product,
-employer/employee) is a **relation**, not a field on the entity. The
-golden-pair harness must not treat lemma equality as an automatic match.
+**Decision (2026-08-26; T0 rule revised same day).** One `entity_id` per
+real-world referent. Names generate **candidates**; they are not the
+verdict. **T0 never auto-merges.** Exact lemma match only **lists**
+distinct active entity ids with that cleaned spelling (0, 1, or many).
+The verdict is T3 or T4:
 
-**Context.** Live stores minted junk nouns (`game`, `App`) and could not
-keep two same-named people apart: T0 exact-lemma merge at confidence 1.0
-never reached the judge, and `profile_summary` was unused. ERP metonymy
-(SAP as vendor shorthand vs suite) must stay **one** retrieval identity
-when the spelling is the same; a separately named product (S/4HANA) is a
-second id plus a relation. An operator using ERP daily ranked entity
-identity as the load-bearing quality mechanism — not LoCoMo category
-tuning. Peer engines (Mem0, Hindsight, Graphiti, Cognee) do not key
-identity on `(name, type)`; GraphRAG-shaped forks do, and fail.
+- **T3** (embeddings of mention+claim vs candidate **profile**) may
+  accept a repeat of a known person without an LLM — this is the scale
+  path, not T0.
+- **T4** when the profile is empty, fights the claim, or several exact
+  candidates exist. If T4 says not the same, **mint** another entity
+  with that spelling.
 
-**Consequences.** Homonyms become representable. Distinctive brands still
-cheap-merge at T0. T4 cost rises on common names. Same-lemma races stay
-serialized by the existing lemma lock; the lock no longer implies a
-single row. D22 must include same-name non-matches or the failure is
-invisible.
+A short `profile_summary` (plus salient observations) is evidence for
+T3/T4, never the identity key. Job, city, and employer changes update
+the profile, not the id. Relatedness is a **relation**. The golden-pair
+harness must not treat lemma equality as an automatic match. There is
+**no** common-name census and **no** “turn exact-T0 on when the corpus
+is large” switch: a large store has more collisions; T3+profile is how
+repeats stay cheap.
+
+**Context.** Exact-lemma merge at confidence 1.0 made father/son
+impossible. A “distinctive lemma / common-name list” shortcut still
+auto-merges the second `Jan` unless thousands of given names are
+maintained, and enabling that shortcut on a large corpus is backwards.
+Operator: a clean entity table is essential; T4 on *uncertain* identity
+is acceptable; T4 on every repeat of James is not.
+
+**Consequences.** Homonyms can reach T4. Repeats of a profiled entity
+are embedding calls, not judges. First clash / empty profile pays T4.
+Same-lemma races stay serialized by the lemma lock; the lock no longer
+implies a single row. D22 must include same-name non-matches.
 
 **Design.** `plan/designs/entity_identity_and_retrieval_design.md`
 **Analysis.** `plan/analysis/entity_identity_and_retrieval_analysis.md`
 **Sequencing.** `plan/plans/entity_identity_and_retrieval.md`
 
-**Rejected.** T0 exact as always-verdict; identity = description (“the
-Jiri in Prague”); `(name, type)` unique key; entity-level `related[]`;
-T4 emitting mushy relatedness instead of same/not-same.
+**Rejected.** T0 exact as always-verdict; T0 auto-merge for “distinctive”
+names plus a given-name stoplist; exact-T0 as a default-off flag for
+large corpora; identity = description; `(name, type)` unique key;
+entity-level `related[]`; T4 emitting mushy relatedness; T4 on every
+mention of a known person.
 
 **Amends.** Refines D17 (T0 meaning). Does not replace the T0–T4 ladder,
-D20 (no external authority), or D21 (reversible merges).
+D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
