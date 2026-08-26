@@ -4,6 +4,8 @@ Bare head nouns are not referents. ``game`` is not FIFA 23. The check is
 deterministic so ingest does not depend on the LLM obeying the prompt.
 A ``source`` alias must also appear in the claim so a hallucinated surface
 cannot poison T0.
+
+The helper is used from resolve, not only from E3.
 """
 
 import re
