@@ -27,12 +27,12 @@
 | src/rememberstack/adapters/testing/queue.py                                                   |       12 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/testing/telemetry.py                                               |        9 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/client.py                                                                   |       12 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/core/\_\_init\_\_.py                                                        |       77 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/core/\_\_init\_\_.py                                                        |       78 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/core/assured\_operation\_linter.py                                          |       29 |        4 |       18 |        4 |     83.0% |45, 66, 70, 75 |
 | src/rememberstack/core/blockizer.py                                                           |       93 |        5 |       36 |        5 |     92.2% |202, 217, 246, 252, 254 |
 | src/rememberstack/core/chunker.py                                                             |       73 |        0 |       20 |        0 |    100.0% |           |
 | src/rememberstack/core/consumption\_skill.py                                                  |       74 |        0 |        8 |        0 |    100.0% |           |
-| src/rememberstack/core/conversion.py                                                          |       36 |        0 |        2 |        0 |    100.0% |           |
+| src/rememberstack/core/conversion.py                                                          |       39 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/core/core\_manifest.py                                                      |       40 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/core/embedding\_input\_policy.py                                            |      191 |       13 |       74 |        9 |     89.4% |140-\>149, 159, 215-216, 258, 284-290, 310-\>312, 332, 333-\>335, 341 |
 | src/rememberstack/core/extension\_packs.py                                                    |       17 |        0 |        0 |        0 |    100.0% |           |
@@ -106,7 +106,7 @@
 | src/rememberstack/ports/queue.py                                                              |        8 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/telemetry.py                                                          |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/profiles/\_\_init\_\_.py                                                    |       10 |        7 |        4 |        0 |     21.4% |     14-22 |
-| src/rememberstack/profiles/selfhost.py                                                        |      433 |      212 |       54 |        6 |     46.6% |124, 145, 176, 186, 194, 202-218, 241, 269-299, 312-322, 357-359, 388-447, 567, 574-576, 591-613, 633-635, 639-662, 666-670, 679-844, 853-855, 860-907, 915, 919, 930-931, 1038 |
+| src/rememberstack/profiles/selfhost.py                                                        |      433 |      212 |       54 |        6 |     46.6% |124, 145, 176, 186, 194, 202-218, 241, 269-299, 312-322, 357-359, 388-447, 567, 574-576, 591-613, 633-635, 639-662, 666-670, 679-842, 851-853, 858-905, 913, 917, 928-929, 1036 |
 | src/rememberstack/profiles/selfhost\_forget.py                                                |       54 |       54 |        2 |        0 |      0.0% |     3-150 |
 | src/rememberstack/profiles/selfhost\_operations.py                                            |       44 |        5 |        4 |        1 |     87.5% |48, 62-64, 95 |
 | src/rememberstack/spine/\_\_init\_\_.py                                                       |       46 |        0 |        0 |        0 |    100.0% |           |
@@ -238,7 +238,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      150 |        8 |       38 |       11 |     89.9% |119, 194, 241, 246, 280-\>272, 282, 316, 317-\>322, 326, 399-\>410, 514 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **22941** | **2178** | **5750** | **1034** | **87.5%** |           |
+| **TOTAL**                                                                                     | **22945** | **2178** | **5750** | **1034** | **87.5%** |           |
 
 
 ## Setup coverage badge
