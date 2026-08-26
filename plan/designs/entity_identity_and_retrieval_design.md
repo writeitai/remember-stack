@@ -18,7 +18,8 @@ NOT NULL and `mentions.emitted_type` as required extract law.
 (`other:` escape remains), D43 (observations stay untyped), D48
 (hydration), D60/D61 (library boundary).
 **Operator direction (same day):** no entity type classes; profile text
-(and the observations that feed it) replace type filters.
+(and the observations that feed it) replace type filters. **No
+backward-compatible dual writer** (plan cutover).
 
 Write for a cold reader (CLAUDE.md Rule 1). Sequencing lives in
 [`entity_identity_and_retrieval.md`](../plans/entity_identity_and_retrieval.md)
@@ -369,6 +370,11 @@ migration removes it). Migrations amend `postgres_schema_design.md` in
 the same implementation PR. P2 rebuild (D7). Existing type values are
 **not** migrated into hats; they are discarded as identity. If a fact
 “X is a bank” exists, it is already an observation.
+
+**Cutover:** no mixed-version writer contract. Schema drop and name-only
+mint ship together (migration first in that PR). Old normalize
+generations are abandoned, not dual-run. Sequencing:
+[`entity_identity_and_retrieval.md`](../plans/entity_identity_and_retrieval.md).
 
 ---
 
