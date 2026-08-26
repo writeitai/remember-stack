@@ -7,6 +7,9 @@ Adversarial reviews of proposed designs before binding acceptance.
 | [`REVIEW_claude-fable_2026-08-06.md`](REVIEW_claude-fable_2026-08-06.md) | Claude Fable 5 | Rank embed cache, checkpointing, relation-label analysis |
 | [`REVIEW_codex-sol_2026-08-06.md`](REVIEW_codex-sol_2026-08-06.md) | Codex gpt-5.6-sol | Same |
 
+| [`REVIEW_codex-sol_entity_identity_retrieval_plan_2026-08-26.md`](REVIEW_codex-sol_entity_identity_retrieval_plan_2026-08-26.md) | Codex gpt-5.6-sol xhigh | D95–D97 implementation plan (WPs) |
+| [`REVIEW_agy_entity_identity_retrieval_plan_2026-08-26.md`](REVIEW_agy_entity_identity_retrieval_plan_2026-08-26.md) | Antigravity (`agy`) | Same |
+
 Revised designs after these reviews:
 
 - `plan/designs/observation_rank_embedding_cache_design.md` (rev 2)  
