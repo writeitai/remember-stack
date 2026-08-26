@@ -56,11 +56,21 @@ class TierDiagnostics(TypedDict):
     blocking: dict[str, TierDiagnostic]
 
 
+class ResolutionGateGuards(TypedDict):
+    """Non-curve safety conditions required before thresholds can pass."""
+
+    positive_labels_measured: bool
+    negative_labels_measured: bool
+    t0_negative_canary_measured: bool
+    t0_false_merge_free: bool
+
+
 class ResolutionSuiteReport(TypedDict):
     """The complete result of one resolution golden-set run."""
 
     curve: ResolutionCurve
     tier_diagnostics: TierDiagnostics
+    gate_guards: ResolutionGateGuards
     passed: bool
 
 
@@ -137,6 +147,8 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
         "label": "no_match",
         "hardness": "hard_negative",
         "expected_blocking_tier": "T0",
+        # This deliberately has no distinguishing evidence. T3 must not turn
+        # identical name-only vectors into certainty; T4 remains fail-safe.
         "context_a": None,
         "context_b": None,
     },
@@ -213,15 +225,20 @@ def run_resolution_suite(
             for tier, counts in sorted(by_blocking_tier.items())
         },
     }
-    # an UNDEFINED metric (no positive pairs, or no predicted positives) is
-    # an unmeasured stratum and BLOCKS the suite — 0/0 never counts as
-    # perfect, so global thresholds cannot be approved when the golden set
-    # does not actually measure both sides of the curve (Codex review):
-    passed = bool(pairs) and (
-        curve["precision"] is not None
-        and curve["recall"] is not None
-        and curve["precision"] >= PRECISION_FLOOR
-        and curve["recall"] >= RECALL_FLOOR
+    t0_counts = by_blocking_tier.get("T0", _empty_counts())
+    gate_guards = _gate_guards(global_counts=global_counts, t0_counts=t0_counts)
+    # Undefined metrics and absent label classes block the suite. The D95 T0
+    # negative canary is also zero-tolerance: its false merges cannot be
+    # diluted below the global precision floor by adding easy positives.
+    passed = (
+        bool(pairs)
+        and all(gate_guards.values())
+        and (
+            curve["precision"] is not None
+            and curve["recall"] is not None
+            and curve["precision"] >= PRECISION_FLOOR
+            and curve["recall"] >= RECALL_FLOOR
+        )
     )
     with engine.begin() as connection:
         connection.execute(
@@ -233,6 +250,7 @@ def run_resolution_suite(
                 "metrics": {
                     "curve": curve,
                     "tier_diagnostics": tier_diagnostics,
+                    "gate_guards": gate_guards,
                     "floors": {"precision": PRECISION_FLOOR, "recall": RECALL_FLOOR},
                 },
                 "passed": passed,
@@ -243,10 +261,19 @@ def run_resolution_suite(
             {
                 "deployment_id": deployment_id,
                 "resolver_version": component_version,
-                "notes": {"curve": curve, "tier_diagnostics": tier_diagnostics},
+                "notes": {
+                    "curve": curve,
+                    "tier_diagnostics": tier_diagnostics,
+                    "gate_guards": gate_guards,
+                },
             },
         )
-    return {"curve": curve, "tier_diagnostics": tier_diagnostics, "passed": passed}
+    return {
+        "curve": curve,
+        "tier_diagnostics": tier_diagnostics,
+        "gate_guards": gate_guards,
+        "passed": passed,
+    }
 
 
 def _empty_counts() -> dict[str, int]:
@@ -284,6 +311,18 @@ def _tier_diagnostic(*, counts: dict[str, int]) -> TierDiagnostic:
         "correct": counts["tp"] + counts["tn"],
         "false_merges": counts["fp"],
         "false_splits": counts["fn"],
+    }
+
+
+def _gate_guards(
+    *, global_counts: dict[str, int], t0_counts: dict[str, int]
+) -> ResolutionGateGuards:
+    """Require both label classes and a measured, false-merge-free T0 canary."""
+    return {
+        "positive_labels_measured": global_counts["tp"] + global_counts["fn"] > 0,
+        "negative_labels_measured": global_counts["tn"] + global_counts["fp"] > 0,
+        "t0_negative_canary_measured": t0_counts["tn"] + t0_counts["fp"] > 0,
+        "t0_false_merge_free": t0_counts["fp"] == 0,
     }
 
 

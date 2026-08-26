@@ -215,8 +215,14 @@ that, D22 cannot see the failure this design exists to fix.
 Thresholds are **one global** precision/recall curve (types are gone).
 The harness still **records the deciding tier** (T0 / T3 / T4) so a
 false merge can be blamed on the right step. “One curve” does not mean
-deleting per-tier diagnostics. Activating D95 T0 requires a recorded
-passing run of this suite **after** profile/T3 safety exists.
+deleting per-tier diagnostics. A passing run must measure both positive
+and negative labels and at least one same-lemma/T0 negative canary; any
+false merge of that canary blocks the run independently of the global
+precision floor, so easy positives cannot dilute the D95 failure. Before
+profiles exist, a same-lemma golden pair may exercise T3 only when its
+stored contexts provide distinguishing evidence; an empty-profile pair
+skips unsafe name-only cosine and reaches T4. Activating D95 T0 requires
+a recorded passing run of this suite **after** profile/T3 safety exists.
 
 ### 3.5 Relatedness
 

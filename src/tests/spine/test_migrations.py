@@ -715,12 +715,48 @@ def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
             golden_index = connection.execute(
                 text("SELECT to_regclass('public.ix_golden_type')")
             ).scalar_one()
+            upgraded_comments = (
+                connection.execute(
+                    text(
+                        "SELECT"
+                        " col_description('resolver_versions'::regclass,"
+                        " (SELECT attnum FROM pg_attribute"
+                        "  WHERE attrelid = 'resolver_versions'::regclass"
+                        "  AND attname = 'thresholds')) AS thresholds,"
+                        " obj_description('resolver_versions'::regclass, 'pg_class')"
+                        " AS resolver_table,"
+                        " obj_description('golden_pairs'::regclass, 'pg_class')"
+                        " AS golden_table"
+                    )
+                )
+                .mappings()
+                .one()
+            )
         assert "thresholds" in resolver_columns
         assert "thresholds_by_type" not in resolver_columns
         assert "entity_type" not in golden_columns
         assert thresholds == {"t3_accept": 0.91, "t3_reject": 0.63}
         assert pair_count == 1
         assert golden_index is None
+        assert upgraded_comments == {
+            "thresholds": (
+                "one global accept/reject band set, golden-set measured; "
+                "starting points, not constants"
+            ),
+            "resolver_table": (
+                "Versioned global resolution thresholds plus tier config and "
+                "review-routing bands (D17/D22/D24/D96). Block-loose and "
+                "decide-tight; thresholds are golden-set-measured starting points "
+                "to be re-measured, never committed constants."
+            ),
+            "golden_table": (
+                "Human-adjudicated ER evaluation pairs (D22/D95). Measures one "
+                "global precision/recall curve plus blocking-stratum and "
+                "deciding-tier diagnostics and is never used for training. "
+                "Same-lemma non-matches are first-class rows; surfaces and "
+                "contexts survive re-resolution."
+            ),
+        }
 
         command.downgrade(config=config, revision="p9_14_0035")
         with engine.connect() as connection:
@@ -738,11 +774,46 @@ def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
             restored_index = connection.execute(
                 text("SELECT to_regclass('public.ix_golden_type')")
             ).scalar_one()
+            restored_comments = (
+                connection.execute(
+                    text(
+                        "SELECT"
+                        " col_description('resolver_versions'::regclass,"
+                        " (SELECT attnum FROM pg_attribute"
+                        "  WHERE attrelid = 'resolver_versions'::regclass"
+                        "  AND attname = 'thresholds_by_type')) AS thresholds,"
+                        " obj_description('resolver_versions'::regclass, 'pg_class')"
+                        " AS resolver_table,"
+                        " obj_description('golden_pairs'::regclass, 'pg_class')"
+                        " AS golden_table"
+                    )
+                )
+                .mappings()
+                .one()
+            )
         assert restored_thresholds == {
             "default": {"t3_accept": 0.91, "t3_reject": 0.63}
         }
         assert restored_type == "Unknown"
         assert restored_index == "ix_golden_type"
+        assert restored_comments == {
+            "thresholds": (
+                "per-entity-type accept/reject bands (golden-set-measured, D22) — "
+                "starting points, not constants"
+            ),
+            "resolver_table": (
+                "Versioned, per-type resolution thresholds + tier config + "
+                "review-routing bands (D17/D22/D24). Block-loose/decide-tight; "
+                "thresholds are golden-set-measured starting points to be "
+                "re-measured, never committed constants."
+            ),
+            "golden_table": (
+                "Human-adjudicated ER evaluation pairs (D22). Measures P/R and "
+                "tunes per-type thresholds; never used for training. "
+                "expected_blocking_tier supports blocking-stratified recall. "
+                "Stored as surface+context so it survives re-resolution."
+            ),
+        }
     finally:
         engine.dispose()
         command.downgrade(config=config, revision="base")

@@ -134,8 +134,9 @@ One canonical cascade. Stop at the first confident match. **Registry-self-contai
 
 - **Thresholds are global, golden-set-measured, and versioned** (`resolver_versions`), stamped
   on every decision. No threshold ships without one global P/R curve plus blocking-stratum and
-  deciding-tier diagnostics (D17, D22, D96). The old JW≥0.92 / cosine≥0.88 are placeholders to
-  overwrite.
+  deciding-tier diagnostics (D17, D22, D96). The suite must measure both label classes and a
+  same-lemma/T0 negative canary; any false merge of that canary blocks independently of the
+  global precision floor. The old JW≥0.92 / cosine≥0.88 are placeholders to overwrite.
 - Blocking (T1/T2) sets a hard recall ceiling, so cheap tiers **escalate near-misses to T4**,
   never auto-reject — textual recall is mediocre and over-rejection is a silent hole.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions

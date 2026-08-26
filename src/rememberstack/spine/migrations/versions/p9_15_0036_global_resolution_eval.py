@@ -37,8 +37,8 @@ def upgrade() -> None:
     )
     op.execute(
         "COMMENT ON COLUMN resolver_versions.thresholds IS"
-        " 'One global set of golden-set-measured resolution decision bands"
-        " (D22/D96); versioned starting points, never unmeasured constants.'"
+        " 'one global accept/reject band set, golden-set measured; starting"
+        " points, not constants'"
     )
     op.execute(
         "COMMENT ON TABLE resolver_versions IS"
@@ -67,14 +67,15 @@ def downgrade() -> None:
     )
     op.execute(
         "COMMENT ON COLUMN resolver_versions.thresholds_by_type IS"
-        " 'Per-entity-type accept/reject bands (golden-set-measured, D22);"
-        " starting points, not constants.'"
+        " 'per-entity-type accept/reject bands (golden-set-measured, D22) —"
+        " starting points, not constants'"
     )
     op.execute(
         "COMMENT ON TABLE resolver_versions IS"
-        " 'Versioned, per-type resolution thresholds plus tier config and"
-        " review-routing bands (D17/D22/D24). Block-loose and decide-tight;"
-        " thresholds are golden-set-measured starting points.'"
+        " 'Versioned, per-type resolution thresholds + tier config +"
+        " review-routing bands (D17/D22/D24). Block-loose/decide-tight;"
+        " thresholds are golden-set-measured starting points to be re-measured,"
+        " never committed constants.'"
     )
     op.execute(
         "ALTER TABLE golden_pairs"
@@ -88,8 +89,10 @@ def downgrade() -> None:
     )
     op.execute(
         "COMMENT ON TABLE golden_pairs IS"
-        " 'Human-adjudicated ER evaluation pairs (D22). Measures precision and"
-        " recall by type stratum and is never used for training.'"
+        " 'Human-adjudicated ER evaluation pairs (D22). Measures P/R and tunes"
+        " per-type thresholds; never used for training. expected_blocking_tier"
+        " supports blocking-stratified recall. Stored as surface+context so it"
+        " survives re-resolution.'"
     )
     op.execute(
         "CREATE INDEX ix_golden_type ON golden_pairs (deployment_id, entity_type)"

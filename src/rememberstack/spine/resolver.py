@@ -40,9 +40,10 @@ class ResolverVersionConflictError(Exception):
     """A resolver version re-registered with a different definition (D22)."""
 
 
-RESOLVER_VERSION: Final = "resolver-2026.07b"
+RESOLVER_VERSION: Final = "resolver-2026.08a"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
-07b pins T4 temperature=0.0 — generation parameters are part of provenance."""
+08a cuts threshold provenance from per-type maps to one global set. Generation
+parameters remain part of provenance; T4 stays pinned to temperature=0.0."""
 
 _T4_PROMPT: Final = """You adjudicate entity identity for a memory system.
 Are these the same real-world entity? Answer strictly from the evidence given.
@@ -189,9 +190,10 @@ class CascadeResolver:
         surfaces. Lemma equality records T0 candidate reachability but is never
         a verdict. Non-T0 pairs must be reachable through T1/T2 (a pair that
         blocking cannot reach is a no-match by the recall ceiling). T3 may
-        decide non-identical spellings; same-lemma pairs go to T4 because their
-        name-only vectors carry no distinguishing evidence until WP-I.4 adds
-        profiles. Returns (match, deciding_tier).
+        decide non-identical spellings. Same-lemma pairs exercise T3 only when
+        the golden pair supplies distinguishing context as a stand-in for the
+        profile evidence WP-I.4 adds; an empty-profile pair skips unsafe
+        name-only cosine and goes to T4. Returns (match, deciding_tier).
         """
         lemma_a = normalized_lemma(surface=surface_a)
         lemma_b = normalized_lemma(surface=surface_b)
@@ -205,11 +207,23 @@ class CascadeResolver:
             if not reachable:
                 return False, "blocking"
         thresholds = self._config.thresholds
-        if not same_lemma:
+        has_context_evidence = bool(
+            (context_a is not None and context_a.strip())
+            or (context_b is not None and context_b.strip())
+        )
+        if not same_lemma or has_context_evidence:
+            embedding_texts = (
+                (
+                    _pair_embedding_input(surface=surface_a, context=context_a),
+                    _pair_embedding_input(surface=surface_b, context=context_b),
+                )
+                if same_lemma
+                else (surface_a, surface_b)
+            )
             vectors = self._model_provider.embed(
                 request=EmbeddingRequest(
                     model=self._embedding_model,
-                    texts=(surface_a, surface_b),
+                    texts=embedding_texts,
                     dimensions=P1_VECTOR_DIMENSIONS,
                 )
             ).vectors
@@ -698,6 +712,13 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...] | None) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+def _pair_embedding_input(*, surface: str, context: str | None) -> str:
+    """Build profile-like T3 evidence for one context-bearing golden surface."""
+    if context is None or not context.strip():
+        return surface
+    return f"{surface}\n{context.strip()}"
 
 
 def _vector_literal(vector: tuple[float, ...]) -> str:

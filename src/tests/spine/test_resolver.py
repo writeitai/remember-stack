@@ -15,6 +15,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.eval import PRECISION_FLOOR
 from rememberstack.eval import run_resolution_suite
 from rememberstack.eval import seed_synthetic_golden_pairs
 from rememberstack.model import ClaimForNormalization
@@ -300,6 +301,12 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         "false_splits": 0,
     }
     assert diagnostics["deciding"]["T4_small"]["pairs"] == 7
+    assert report["gate_guards"] == {
+        "positive_labels_measured": True,
+        "negative_labels_measured": True,
+        "t0_negative_canary_measured": True,
+        "t0_false_merge_free": True,
+    }
 
     with database_engine.connect() as connection:
         notes = connection.execute(
@@ -336,6 +343,63 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
     regression_diagnostics = regression["tier_diagnostics"]
     assert regression_diagnostics["blocking"]["T0"]["false_merges"] == 2
     assert regression_diagnostics["deciding"]["T4_small"]["false_merges"] >= 2
+    assert regression["gate_guards"]["t0_false_merge_free"] is False
+
+    # Once profile-like context exists, the same-name pair must be able to
+    # expose a loose T3 band rather than being structurally hidden from it.
+    # Add enough easy positives that the global 0.90 floor alone would dilute
+    # the false merge; the zero-tolerance T0 canary must still block the run.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO golden_pairs (pair_id, deployment_id, surface_a,"
+                " surface_b, label, hardness, expected_blocking_tier,"
+                " is_synthetic, adjudicated_by) VALUES"
+                " (:pair, :deployment, 'Known Entity', 'Known Co', 'match',"
+                " 'easy', 'T1', true, 'dilution-proof')"
+            ),
+            [{"pair": uuid4(), "deployment": _DEPLOYMENT_ID} for _ in range(100)],
+        )
+    loose_t3 = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_first_token_router),
+        thresholds=ResolutionThresholds(t3_accept=0.7, t3_reject=0.0),
+    )
+    t3_regression = run_resolution_suite(
+        engine=database_engine,
+        resolver=loose_t3,
+        deployment_id=_DEPLOYMENT_ID,
+        component_version=RESOLVER_VERSION,
+    )
+    assert not t3_regression["passed"]
+    assert t3_regression["curve"]["precision"] is not None
+    assert t3_regression["curve"]["precision"] >= PRECISION_FLOOR
+    t3_diagnostics = t3_regression["tier_diagnostics"]
+    assert t3_diagnostics["blocking"]["T0"]["false_merges"] >= 1
+    assert t3_diagnostics["deciding"]["T3"]["false_merges"] >= 1
+    assert t3_regression["gate_guards"]["t0_false_merge_free"] is False
+
+    # A one-class golden set cannot manufacture perfect precision: both match
+    # and no-match labels, including a T0 negative canary, are mandatory.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM golden_pairs"
+                " WHERE deployment_id = :deployment AND label = 'no_match'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+    positive_only = run_resolution_suite(
+        engine=database_engine,
+        resolver=resolver,
+        deployment_id=_DEPLOYMENT_ID,
+        component_version=RESOLVER_VERSION,
+    )
+    assert positive_only["curve"]["precision"] == 1.0
+    assert positive_only["curve"]["recall"] == 1.0
+    assert positive_only["gate_guards"]["negative_labels_measured"] is False
+    assert positive_only["gate_guards"]["t0_negative_canary_measured"] is False
+    assert not positive_only["passed"]
 
 
 def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> None:

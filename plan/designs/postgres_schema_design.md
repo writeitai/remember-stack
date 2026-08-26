@@ -971,7 +971,7 @@ CREATE TABLE golden_pairs (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE golden_pairs IS
-  'Human-adjudicated ER evaluation pairs (D22/D95). Measures one global precision/recall curve plus deciding-tier diagnostics and is never used for training. Same-lemma non-matches are first-class rows; surfaces and contexts survive re-resolution.';
+  'Human-adjudicated ER evaluation pairs (D22/D95). Measures one global precision/recall curve plus blocking-stratum and deciding-tier diagnostics and is never used for training. Same-lemma non-matches are first-class rows; surfaces and contexts survive re-resolution.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- golden_claim_labels — the E2 Selection verifiability golden set (D22/D25/D35).
