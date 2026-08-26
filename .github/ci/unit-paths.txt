@@ -42,6 +42,7 @@ src/tests/model/test_forget.py
 src/tests/packaging/test_client_wheel.py
 src/tests/packaging/test_release_contract.py
 src/tests/spine/test_catalog_lanes.py
+src/tests/spine/test_entity_eligibility.py
 src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py
 src/tests/surfaces/test_assured_operation_authorities.py
@@ -63,6 +64,7 @@ src/tests/workers/test_d79_summaries.py
 src/tests/workers/test_d79_summary_consumption.py
 src/tests/workers/test_e3_claim_normalize_fanout.py
 src/tests/workers/test_e3_entity_obs_flush_fanout.py
+src/tests/workers/test_e3_bare_head_noun.py
 src/tests/workers/test_e3_unknown_entity_type_gate.py
 src/tests/workers/test_extraction_temperature.py
 src/tests/workers/test_hard_forget_handler.py
