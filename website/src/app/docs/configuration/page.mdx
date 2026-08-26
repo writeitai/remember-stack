@@ -44,6 +44,9 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | Short slug (also default Sentry environment) |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | Human label |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | API listen port (Compose) |
+| `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | Optional `{issued_deployment_uuid}:{sha256hex}` of the API Bearer secret. When set, `/operations` and other memory routes require that Bearer. `GET /healthz` stays unauthenticated |
+| `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | Optional plaintext Bearer for local self-host; hashed at startup and bound to `SELFHOST_DEPLOYMENT_ID`. Must match BIND when both are set |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | When `true`, the API process refuses to start without a well-formed `API_BEARER_BIND`. Default `false` (open quickstart) |
 | `REMEMBERSTACK_API_URL` | Client target; defaults to `http://127.0.0.1:8000` — **must match** if you change the port |
 | `REMEMBERSTACK_TOKEN_HOST` | Device-grant host for `remember login` (required unless `--token-host` is passed). Never derived from the query API URL |
 | `REMEMBERSTACK_CONFIG_DIR` | Optional override for the CLI credential directory |

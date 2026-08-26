@@ -83,8 +83,14 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "LANGFUSE_PUBLIC_KEY",
         "LANGFUSE_SECRET_KEY",
         "LANGFUSE_HOST",
+        "REMEMBERSTACK_SELFHOST_API_BEARER_BIND",
+        "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
+    assert (
+        "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH: "
+        "${REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH:-false}" in compose
+    )
 
 
 def test_observability_imports_are_absent_without_environment_opt_in(

@@ -16,6 +16,7 @@ from alembic.config import Config
 import psycopg
 from psycopg import sql as pg_sql
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -26,6 +27,7 @@ from sqlalchemy.engine import make_url
 
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
+from rememberstack.adapters.selfhost import HashedBearerAuth
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
@@ -105,6 +107,69 @@ class SelfHostSettings(BaseSettings):
     worker_burst: float = Field(default=20.0, ge=1)
     worker_fallback_poll_s: float = Field(default=5.0, gt=0)
     worker_session_s: float = Field(default=3_600.0, gt=0)
+    api_bearer_bind: str | None = None
+    api_bearer_token: SecretStr | None = None
+    require_api_auth: bool = False
+
+    @field_validator("api_bearer_bind", mode="before")
+    @classmethod
+    def _blank_bind_is_unset(cls, value: object) -> object:
+        """Treat empty BIND env as omitted."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("require_api_auth", mode="before")
+    @classmethod
+    def _blank_require_is_false(cls, value: object) -> object:
+        """Compose interpolates unset REQUIRE as empty string; that is false."""
+        if isinstance(value, str) and not value.strip():
+            return False
+        return value
+
+
+def resolve_selfhost_api_auth(*, settings: SelfHostSettings) -> HashedBearerAuth | None:
+    """Return the perimeter adapter, or None for the open quickstart.
+
+    ``require_api_auth`` without a well-formed BIND refuses to start so a
+    managed host cannot silently serve memory routes open.
+    """
+    from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
+    from rememberstack.adapters.selfhost.hashed_bearer_auth import parse_bearer_bind
+
+    bind_text = settings.api_bearer_bind
+    token_value = None
+    if settings.api_bearer_token is not None:
+        raw = settings.api_bearer_token.get_secret_value().strip()
+        token_value = raw or None
+
+    if settings.require_api_auth and not bind_text:
+        raise RuntimeError(
+            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND is missing"
+        )
+    if bind_text is None and token_value is None:
+        return None
+
+    bind_auth: HashedBearerAuth | None = None
+    if bind_text is not None:
+        issued_id, digest = parse_bearer_bind(bind=bind_text)
+        bind_auth = HashedBearerAuth(issued_deployment_id=issued_id, digest=digest)
+
+    if token_value is not None:
+        token_auth = HashedBearerAuth(
+            issued_deployment_id=settings.deployment_id,
+            digest=digest_bearer_secret(secret=token_value),
+        )
+        if bind_auth is None:
+            return token_auth
+        if not token_auth.same_binding(other=bind_auth):
+            raise RuntimeError(
+                "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN does not match "
+                "REMEMBERSTACK_SELFHOST_API_BEARER_BIND"
+            )
+        return bind_auth
+    return bind_auth
 
 
 class SentrySettings(BaseSettings):
@@ -536,6 +601,7 @@ class SelfHostProfile:
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
             admission=ForgetCatalog(engine=self._engine),
+            auth=resolve_selfhost_api_auth(settings=self._settings),
             readiness=_FreshDeploymentReadiness(
                 store=LocalFSForgetManifestStore(
                     root=self._settings.forget_manifest_root
