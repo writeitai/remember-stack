@@ -1,4 +1,5 @@
 src/tests/adapters/test_codex_writer.py
+src/tests/adapters/test_control_plane_spend_lease.py
 src/tests/adapters/test_hashed_bearer_auth.py
 src/tests/adapters/test_postgres_p1.py
 src/tests/adapters/test_minio_store.py

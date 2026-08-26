@@ -50,6 +50,9 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from rememberstack.adapters.selfhost import SelfHostWorkerLoop
+    from rememberstack.adapters.selfhost.control_plane_spend_lease import (
+        ControlPlaneSpendLease,
+    )
     from rememberstack.ports.telemetry import TelemetryPort
     from rememberstack.workers import StageHandler
 
@@ -110,6 +113,7 @@ class SelfHostSettings(BaseSettings):
     api_bearer_bind: str | None = None
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
+    spend_lease_url: str | None = None
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod
@@ -125,6 +129,14 @@ class SelfHostSettings(BaseSettings):
         """Compose interpolates unset REQUIRE as empty string; that is false."""
         if isinstance(value, str) and not value.strip():
             return False
+        return value
+
+    @field_validator("spend_lease_url", mode="before")
+    @classmethod
+    def _blank_spend_lease_is_unset(cls, value: object) -> object:
+        """Treat empty SPEND_LEASE_URL env as omitted."""
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
 
@@ -170,6 +182,36 @@ def resolve_selfhost_api_auth(*, settings: SelfHostSettings) -> HashedBearerAuth
             )
         return bind_auth
     return bind_auth
+
+
+def resolve_selfhost_spend_lease(
+    *, settings: SelfHostSettings
+) -> ControlPlaneSpendLease | None:
+    """Return the D46 lease adapter, or None for unpaid-open OSS quickstart.
+
+    ``require_api_auth`` without a well-formed lease URL refuses to start so a
+    managed BIND-only process cannot serve unpaid writes.
+    """
+    from urllib.parse import urlparse
+
+    from rememberstack.adapters.selfhost.control_plane_spend_lease import (
+        ControlPlaneSpendLease,
+    )
+
+    url = settings.spend_lease_url
+    if settings.require_api_auth and not url:
+        raise RuntimeError(
+            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but "
+            "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL is missing"
+        )
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(
+            "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL must be an absolute http(s) URL"
+        )
+    return ControlPlaneSpendLease(base_url=url)
 
 
 class SentrySettings(BaseSettings):
@@ -602,6 +644,7 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
+            spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
             readiness=_FreshDeploymentReadiness(
                 store=LocalFSForgetManifestStore(
                     root=self._settings.forget_manifest_root
