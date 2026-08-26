@@ -257,12 +257,13 @@ starts. Do not collapse every edge to unlabeled `related_to` with no
 fact sentence — that makes one hop a hairball. Graphiti kept the fact
 sentence; Hindsight kept the fact as the unit of recall.
 
-**Hats, if any, are optional and additive.** They are not identity.
-They are not required to extract a name. They must not unique
-`(name, label)`. They may support filters and optional signature
-checks. The complete system does not wait on a later “drop types vs
-M2M” fork: hats are optional; extract does not emit a required class;
-identity works without them.
+**No entity types (operator chose C, same day).** Hats on the id, hats
+on facts, and required classes all lost. “Bank” / “based in Italy” are
+observations; the profile is a cached projection of those facts for
+T4/T3 and for “list banks” as text. Facets, if ever, derive from
+observations — they do not bring `entities.type` back. Identity work
+is still T0 + profile (D95); dropping types is not a substitute for
+that.
 
 **Do not optimize extract for LoCoMo categories.** Bare-noun refusal
 helps every corpus. Father/son and person-as-employer are the tests.
@@ -292,7 +293,9 @@ helps every corpus. Father/son and person-as-employer are the tests.
 | Identity = description | Moves city → new person; shared city → collision |
 | Entity-level `related[]` | Relatedness is a dated fact with a predicate |
 | Keep T0 exact as verdict; add profile | Profile never runs for same lemma |
-| Drop types **instead of** fixing T0 | Homonyms still collapse |
+| Drop types **instead of** fixing T0 | Homonyms still collapse — D95 remains required; D96 is additional |
+| Optional M2M hats | Parallel ontology; “bank” is already an observation; default retrieval does not use kind |
+| Hats on facts | Duplicate of predicates + observation text |
 | Required class on every mention | Error space; first-mint poison |
 | D18 pre-resolve on emitted types | Model grading its own homework |
 | Unlabeled `related_to` only, no fact text | Hairball neighborhood |

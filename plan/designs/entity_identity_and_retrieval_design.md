@@ -17,6 +17,8 @@ NOT NULL and `mentions.emitted_type` as required extract law.
 **Does not amend:** D2 (claims vs relations), D3–D4 (supersession), D5
 (`other:` escape remains), D43 (observations stay untyped), D48
 (hydration), D60/D61 (library boundary).
+**Operator direction (same day):** no entity type classes; profile text
+(and the observations that feed it) replace type filters.
 
 Write for a cold reader (CLAUDE.md Rule 1). Sequencing lives in
 [`entity_identity_and_retrieval.md`](../plans/entity_identity_and_retrieval.md)
@@ -59,14 +61,14 @@ new claim, or the judge says different. The same spelling may be two
 ids. A short profile is evidence the judge sees, never the lookup key.
 Relatedness is a relation, not a field on the entity.
 
-**D96 — Extract names; type is not identity.** Mentions are a diary of
-names (string, claim, span). A class is not required to emit or resolve
-a name. Optional **hats** (many types on one id, additive) may exist
-for filters and optional signature checks. They never unique with the
-name. Domain/range must not force a second id for dual roles.
-`works_for` may point at a person. Signature checks fail **open** when
-an end has no hat. D86 still applies when a hat *is* emitted and is not
-in the registry.
+**D96 — No entity types; extract names; profile is observation prose.**
+Mentions are a diary of names (string, claim, span). E3 does not emit
+a class. There is no `entities.type`, no hats table, no domain/range
+on kinds, no D86 type gate. Dual-role facts (`works_for` pointing at
+a person) are allowed because both ends are ids. What used to be
+“Company” / “bank” / “lives in Italy” lives in **observations** and in
+the **profile**, which is a cached prose (and salient-observation)
+projection of those facts — not a classification.
 
 **D97 — Default retrieval does not speak ontology.** The ordinary
 question path is: resolve to ids → load observations and relations for
@@ -95,11 +97,9 @@ Auto-accept that hit **only when all of these hold**:
   configured common-name / too-short token (golden-set-measured list;
   starting point: given names, tokens shorter than three letters,
   lemmas already flagged promiscuous)
-- no stored profile that **contradicts** the new claim (T4 if a profile
-  exists and the claim is not obviously about the same life)
-- if hats exist on the candidate and the mention suggested a hat, they
-  need not match — hat disagreement **escalates**, it does not split
-  by itself
+- no stored profile (or salient observations) that **contradict** the
+  new claim (T4 if a profile exists and the claim is not obviously
+  about the same life)
 
 Otherwise escalate to T1–T4 (or mint if nothing blocked). Confidence
 1.0 exact-merge is reserved for the auto-accept band above.
@@ -118,9 +118,25 @@ brand lemmas auto-accept at T0 when a single hit exists.
 
 ### 3.3 Profile is T4 evidence (amends registries §2 as implemented)
 
-`entities.profile_summary` is a short blurb maintained by the designed
-profile refresher (debounced on evidence change). Until a profile
-exists, T4 sees claim text + candidate name only.
+The profile is **not** a type, a label, or a second identity. It is a
+**cached projection of the entity’s important observations** (and
+salient relations), written as short prose plus the statements it was
+built from.
+
+- **Truth stays in observations** (D43): “KB is a bank licensed by
+  ČNB”; “based in Italy”; “lives in Prague.” Those rows are the
+  join table. There is no parallel `entity_types` / hats vocabulary.
+- **`profile_summary`** is the refresher’s blurb over that join
+  (debounced on evidence change), e.g. “Czech commercial bank; seat
+  Prague; ČNB licence.” Until any observation exists, T4 sees claim
+  text + candidate name only.
+- **Salient observations** (starting point: a small evidence-ranked
+  set for the candidate) are passed to T4 with the blurb so “is a
+  bank” / “lives in Prague” is visible even if the blurb is stale or
+  thin. This *is* the profile mechanism, not a later add-on.
+- “List banks” is fact/profile **text** retrieval over those
+  statements, not a type filter. Boolean lists are only as sharp as
+  the observations. That is accepted.
 
 Production `_T4_PROMPT` includes:
 
@@ -129,21 +145,21 @@ MENTION: {name}
 CLAIM CONTEXT: {claim_text}
 CANDIDATE: {canonical_name}
 CANDIDATE PROFILE: {profile_summary or "(none)"}
+CANDIDATE FACTS: {salient observation statements or "(none)"}
 Same real-world entity?
 ```
 
-Hats, if present, may appear as a hint, never as the question. T4
-answers **same / not-same** only. It does not emit `related_to`.
+T4 answers **same / not-same** only. It does not emit `related_to`.
 Father/son, if the claim states kinship, is a **relation** written
 after both ids exist, not a merge.
 
 T3 compares the mention embedding to the candidate’s **profile
-embedding** (name + summary), not the name-only vector stamped at
-mint. Two people with the same given name must not share a vector
-because they share a spelling.
+embedding** (name + summary + salient facts), not the name-only
+vector stamped at mint. Two people with the same given name must not
+share a vector because they share a spelling.
 
-City, job, and employer changes **update the profile**. They do not
-change `entity_id`.
+City, job, employer, “is a bank” **update observations and then the
+profile**. They do not change `entity_id` and do not mint a type.
 
 ### 3.4 `judge_pair`
 
@@ -168,21 +184,19 @@ this name in this claim.” Columns that remain load-bearing:
 `surface_form`, `normalized_lemma`, `canonical_name_form`, `claim_id`,
 `chunk_id`, `doc_id`, spans when known.
 
-`emitted_type` is **not required**. If written, it is optional
-low-trust (“this sentence’s guess”) and is **never** copied onto the
-entity as law. Prefer NULL until a consumer other than first-mint
-exists.
+Do not write `emitted_type`. The column, if left in the schema, stays
+NULL and unused. Mentions are names, not classifications.
 
 Mentions are not candidates. Do not SELECT mentions to resolve a name.
 Do not add `mention_id` to evidence tables.
 
 ### 4.2 EntityRef
 
-E3 structured output for an endpoint is a **name** (canonical
-nominative form). A hat/type field is optional. The prompt does not
-require a class. Illegal hats, **when present**, still hit D86
-(retry then drop that assertion; never coerce to `Concept`; never
-auto-register).
+E3 structured output for an endpoint is a **name** only (canonical
+nominative form). No `type` field. The prompt has no registry-types
+block. D86’s unknown-type path is vacated (D96): there is nothing
+illegal to retry. Unknown **predicates** still follow D5 (`other:` or
+drop).
 
 ### 4.3 Eligibility — do not mint filler nouns
 
@@ -211,63 +225,48 @@ down-weighted in T1/T2 blocking.
 
 ---
 
-## 5. Hats, not a required class (amends D18 typing-from-extract)
+## 5. No entity types (amends D18 typing and domain/range)
 
-### 5.1 One id, optional many hats
+There is **no** class on the entity, **no** hats table, **no** extract
+type, **no** domain/range over kinds.
 
-Replace “exactly one NOT NULL `entities.type` written at mint” with:
+“Company”, “bank”, “court”, “based in Italy” are **facts** (observations
+or relation `fact_label`s). They appear in the profile because the
+profile is a projection of those facts (§3.3). They are not a second
+ontology.
 
-- Identity does not include type.
-- An entity **may** carry zero or more hats from `entity_types`
-  (core + enabled extensions). Storage is a many-to-many
-  `(deployment_id, entity_id, type)` table. Adding a hat does not
-  mint a second id. A later mention may **add** a hat; it must not
-  **drop** an existing specific hat silently (do not copy Graphiti’s
-  “already specific → discard incoming”).
-- Extract does not have to assign a hat. Hats may be derived later
-  from observations (optional), review, or an explicit extract guess.
+### 5.1 Dual role
 
-`(name, hat)` is **not** unique. That is the GraphRAG fork.
+“Someone works for me” is two resolved ids and `works_for`. The object
+does not have to be an Organization. A separately **named** company
+is a second entity plus a relation. Signature tables (`predicate_signatures`,
+`_signature_allows`) are removed. Predicates remain a **name vocabulary**
+(D5): governed list plus `other:`.
 
-Display may pick a primary hat for UI; it is not identity.
+Travel, residence, “is a bank”: observation and/or a generic edge with
+a fact sentence. Do not invent a core verb per noun, and do not invent
+a type per sector.
 
-### 5.2 Domain/range without a second me
+### 5.2 What remains of D15 / D18 / D86
 
-`works_for` (synonyms `works_at`, `employed_by`, `employee_of`)
-**allows object type Person or Organization**. “Someone works for me”
-is one id. A separately **named** company is a second entity plus a
-relation.
+- **D5 predicates** stay (governed + `other:`). Retrieval filters on
+  them are optional and, when used, may name any stored predicate
+  including `other:traveled` (D97).
+- **D18 entity types and domain/range** are withdrawn as identity and
+  as a write gate. Extension packs that only added types are unused;
+  packs may still add **predicates**.
+- **D86** (unknown entity type retry-then-drop) is vacated: extract
+  does not emit types. Unknown predicates still map to `other:` or
+  drop.
 
-Pre-resolve signature checks on LLM-emitted classes are **removed**.
-They were the model grading its own homework.
+### 5.3 Documented non-goals
 
-Post-resolve: if **both** ends have hats and **no** signature matches
-at any ancestor, drop the candidate (re-derivable from the claim). If
-either end has **no** hat, **allow** (fail open). Do not drop a true
-edge because first-mint typed Daisy as Person.
-
-`located_in` continues to describe places; a person’s travel or
-residence that does not fit a governed signature is an **observation**
-or `other:` / generic edge with a fact sentence — not a second entity
-type. Do not invent a new core verb per `traveled`.
-
-### 5.3 What we keep of D18 / D86 / D5
-
-- The eight core types remain a **vocabulary of hats**, not a mint
-  requirement.
-- Sixteen governed predicates remain the **filter vocabulary** plus
-  `other:<snake>` (D5). Retrieval does not require the caller to name
-  them (D97).
-- D86 remains for **emitted** illegal hats.
-- `Concept` is still not a junk drawer.
-
-### 5.4 Documented non-goal
-
-Deleting the hats table and all signatures is a viable simpler
-system (Hindsight-shaped). It is **not** this design. Adoption
-trigger: the golden set in §8 shows hats never change a correct
-same/not-same or a correct keep/drop of a relation that fail-open
-would not have handled. Until then, hats stay optional.
+- M2M hats / Graphiti labels on the entity (optional kind filters).
+  Kind browse (“list companies”) is observation/profile text until a
+  later **facet** design exists. That facet would be derived from
+  observations, not a return of `entities.type`.
+- Hats on facts as a second vocabulary beside predicates.
+- `(name, type)` uniqueness.
 
 ---
 
@@ -276,14 +275,14 @@ would not have handled. Until then, hats stay optional.
 Relations stay `(subject_entity_id, predicate, object_entity_id)` plus
 bi-temporal metadata and `fact_label`. Observations stay untyped
 statements on one `subject_entity_id` (D43). Evidence stays claim →
-fact. **No schema change** to those fact tables for hats or mentions.
+fact. **No schema change** to those fact tables for types or mentions.
 
-Keep a **short** governed list for filters people actually use
-(`works_for`, `knows`, `reports_to`, `part_of`, `uses`, …). Everything
-else: observation (if you do not need a hop target) or a generic edge
-with a fact sentence (if you do). Do not promote `other:traveled` into
-core just because it is common; load it as fact text and, if both ends
-are entities, walk it as `RELATES`.
+Governed predicates remain a convenience vocabulary for **optional**
+filters (`works_for`, `knows`, `reports_to`, …). The set of **legal**
+filters is **dynamic**: any predicate that exists in the store,
+including `other:`. Named recipes may still bind a common verb. Default
+retrieval does not require a predicate (D97). Do not promote
+`other:traveled` into core just because it is common.
 
 Unlabeled `related_to` with **no** fact text is rejected: one hop
 becomes a hairball and “who works here” becomes an LLM filter over
@@ -307,8 +306,9 @@ does on the hot path — T0–T3 only, D17):
    they came from step 2.
 4. `search` fact text (relation labels, observation statements, claims)
    constrained to those ids / neighborhood ids when ids were supplied.
-5. A governed predicate is an **optional** argument when the question is
-   clearly that filter (“who reports to X”).
+5. A predicate is an **optional** argument when the question is
+   clearly that filter (“who reports to X”). Any stored predicate is
+   legal, including `other:`. Do not require `type` on `resolve`.
 
 Assured operations (`fact_context`, `answer_context`, D87) follow the
 same default: do not require a predicate list to return an entity’s
@@ -338,6 +338,7 @@ Minimum rows:
 | “Someone works for me” (I am a person) | one id for me; relation allowed |
 | Bare `the system` / `game` | no entity |
 | James traveled to Italy as a sentence | observation and/or generic edge; Italy is an entity **only** if nominated as a name, not because travel must be `located_in` |
+| “KB is a bank”; “based in Italy” | one id; facts on observations; profile repeats them; “list banks” hits that text, not a type |
 
 `judge_pair` must be able to score the same-name **non**-matches.
 
@@ -347,27 +348,27 @@ Minimum rows:
 
 | Site | Contract |
 |---|---|
-| `EntityRef` | `name` required; type/hat optional |
-| `CascadeResolver.resolve` | T0 auto-accept only under §3.1; else cascade or mint; same lemma may mint |
-| `_T4_PROMPT` | includes `CANDIDATE PROFILE` |
-| T3 upsert | embed name+profile when profile exists |
-| `_INSERT_MENTION` | do not require `emitted_type` |
-| `_INSERT_ENTITY` | do not require a type column; hats are a separate table |
-| `_signature_allows` | not called on emitted classes before resolve; post-resolve fail-open if a hat is missing |
-| `works_for` signatures | object Person \| Organization |
+| `EntityRef` | `name` only |
+| `CascadeResolver.resolve` | T0 auto-accept only under §3.1; else cascade or mint; same lemma may mint; no type argument |
+| `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
+| T3 upsert | embed name+profile (+ salient facts) when they exist |
+| Profile refresher | rewrite `profile_summary` from the entity’s observations/relations; does not write types |
+| `_INSERT_MENTION` | no `emitted_type` |
+| `_INSERT_ENTITY` | no `type` column |
+| `_signature_allows` | removed |
 | `generic_identifier_guard` | written by resolve/cluster, not only deleted by forget |
 | `GraphQueries.neighborhood` | empty predicates = all `RELATES` (keep) |
 | `judge_pair` | lemma equality is not automatic match |
-| E3 prompt | names + governed predicates; no mandatory REGISTRY TYPES; bare-noun refusal |
+| E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
+| `resolve` primitive | drop `type?` |
 
-Schema: `entities.type` is no longer NOT NULL identity. Hats live in
-`entity_hats(deployment_id, entity_id, type)` with FK to `entity_types`.
-Existing rows migrate: current `entities.type` becomes one hat.
-`mentions.emitted_type` nullable. Migrations implement
-`postgres_schema_design.md` as amended in the same implementation PR.
-
-Rebuild P2 after hat/signature changes (D7). Dropped D18 edges remain
-re-derivable from claims.
+Schema: drop `entities.type` NOT NULL (column dropped or unused). Drop
+or stop writing `mentions.emitted_type`. `predicate_signatures` unused.
+`entity_types` unused for identity (may remain as dead registry until
+migration removes it). Migrations amend `postgres_schema_design.md` in
+the same implementation PR. P2 rebuild (D7). Existing type values are
+**not** migrated into hats; they are discarded as identity. If a fact
+“X is a bank” exists, it is already an observation.
 
 ---
 
@@ -382,8 +383,10 @@ re-derivable from claims.
 | `works_for` Organization-only | Dual-role second id |
 | Delete mentions | Lose naming transcript |
 | Unlabeled edges, no fact text | Hairball |
-| Hats that drop conflicting specifics | Hides dual-role |
-| Description as identity key | Move city → new person |
+| Optional M2M hats / Graphiti labels | Kind filter without paying D18; still a parallel ontology; “bank” is a fact |
+| Hats on facts | Duplicate of predicates + observation text |
+| Keep types for “list companies” | Enumerative lists come from observation/profile text; facets if ever added are derived from those facts |
+| Description as identity key | Move city → new person; profile is evidence, not the key |
 
 ---
 
@@ -392,14 +395,17 @@ re-derivable from claims.
 - T0: distinctive unique lemma auto-merges; common given name with
   conflicting profile does not; second mint of same lemma after T4
   no-match.
-- T4 sees profile; two same-name vectors differ once profiles differ.
+- T4 sees profile **and** salient observations; two same-name vectors
+  differ once profiles differ; “lives in Prague” can split homonyms.
 - `judge_pair` false-merge/false-split on §8 rows.
-- E3: `game` not minted; `FIFA 23` may mint; EntityRef without type
-  resolves.
-- `works_for(Alice, Me)` when Me is a person persists.
+- E3: `game` not minted; `FIFA 23` may mint; `EntityRef` is name-only.
+- `works_for(Alice, Me)` persists with no types on either end.
+- Profile refresher: bank + Italy observations appear in
+  `profile_summary`; “list banks” can match that text.
 - Neighborhood with no predicates returns `other:traveled` neighbors;
   observations for the same id load via lookup, not as graph nodes.
 - Guard: a lemma linking many entities is down-weighted.
-- Forget still purges hats and guard rows with the entity (D74).
+- Forget still purges profile, observations, and guard rows with the
+  entity (D74).
 
 No LLM on the query path is added (D9).

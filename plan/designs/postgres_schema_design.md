@@ -15,10 +15,10 @@ It is the binding companion to `overall_design.md` (§3 core data model, §9 lis
 `concepts.md` (the claims/relations/evidence/bi-temporality explainer) and `decisions.md`
 (D1–D69). Where a table or column exists *because of* a decision, the decision is cited inline.
 
-> **Amended 2026-08-26 (D95–D96).** `entities.type` is no longer NOT NULL identity; hats are
-> many-to-many; `mentions.emitted_type` is not required. Authority:
+> **Amended 2026-08-26 (D95–D96).** `entities.type` and `mentions.emitted_type` are
+> unused; no hats table. Authority:
 > [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §9.
-> Column-level edits land in the implementation WP that ships the migration.
+> Column-level drops land in the implementation WP that ships the migration.
 
 > **Reading this as a stranger (CLAUDE.md Rule 1).** You do not need to have been in the design
 > conversation. Each module opens with what it stores and *why it has the shape it has*; each

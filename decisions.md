@@ -485,10 +485,9 @@ registries §4 watchlist — the first watchlist graduations. Everything else he
 signatures are fixed by the inline registry manifest. `Document.parent_type = NULL` and its
 `schema_org_ref` is `https://schema.org/CreativeWork`; `CreativeWork` is not a registry row.
 
-**Refined by D96.** Core types remain a **hat vocabulary**, not a mint requirement. Extract
-does not have to pick a class. Domain/range must not force a second `entity_id` for dual
-roles (`works_for` may point at a Person). Signature checks fail open when an end has no
-hat. Pre-resolve checks on LLM-emitted classes are withdrawn.
+**Refined by D96.** Entity types and domain/range as a write gate are
+**withdrawn**. Predicates remain (D5). Dual-role facts are two ids; no
+Organization hat is required for “works for me.”
 
 ## D19. Coref is satisfied inside the E2 extraction call (no dedicated model)
 
@@ -3432,6 +3431,9 @@ version normalize completes so later stages and scoring can run. Bumps
 **Design.** `plan/designs/e3_unknown_entity_type_gate_design.md`  
 **Analysis.** `plan/analysis/e3_unknown_entity_type_gate_analysis.md`
 
+**Vacated by D96** for entity types (extract no longer emits a class).
+Unknown **predicates** remain D5.
+
 ## D87. Context operations mirror identity, testimony, and fact authorities
 
 **Decision (2026-08-10).** The assured retrieval catalog contains exactly four
@@ -3904,55 +3906,59 @@ T4 emitting mushy relatedness instead of same/not-same.
 **Amends.** Refines D17 (T0 meaning). Does not replace the T0–T4 ladder,
 D20 (no external authority), or D21 (reversible merges).
 
-## D96. Extract names; type is not identity
+## D96. No entity types; profile is observation prose
 
-**Decision (2026-08-26).** E3 emits **names**, not a required class.
-Mentions remain the naming transcript (string, claim, span) and are not
-a candidate list. `emitted_type` is not required and is never copied onto
-the entity as law. An entity **may** wear zero or more hats from the
-registry (many-to-many, **additive** — a later hat does not silently drop
-an earlier specific one). Hats are not identity and do not unique with
-the name. Domain/range must not mint a second id for dual roles:
-`works_for` may have a **Person** object (“someone works for me” is one
-me). Pre-resolve signature checks on LLM-emitted classes are withdrawn.
-Post-resolve domain/range **fails open** when either end has no hat; it
-drops only when both ends have hats and no signature matches. Bare head
-nouns (`game`, `the system`) are not entities. Source surfaces become
-aliases. `generic_identifier_guard` is populated in resolve, not only
-deleted on forget. D86 still gates **emitted** illegal hats (retry then
-drop; never coerce to `Concept`).
+**Decision (2026-08-26; revised same day).** There are **no** entity
+type classes. E3 emits **names** only. Mentions are a naming transcript
+(string, claim, span) with no `emitted_type`. `entities.type`, hats,
+`predicate_signatures`, and D18 domain/range as a write gate are
+**out**. Dual-role facts (`works_for` with a person as object) persist
+because both ends are ids.
 
-**Context.** Required `EntityRef.type` forced a class on every name
-(first-mint-wins, against the designed vote). D18 `works_for: Person →
-Organization` dropped true person-as-employer facts or implied a Company
-twin. Pre-resolve `_signature_allows` used the same JSON that proposed
-the edge — not an independent check. `located_in` forbids Person as
-subject, so travel became `other:` or an observation; that is the
-strict set **pushing facts out**, not missing them.
+What would have been “Company”, “bank”, “based in Italy” lives in
+**observations** (D43) and in the **profile**. The profile is a cached
+projection of the entity’s important observations (and salient
+relations): `profile_summary` prose plus those statements passed to T4
+and T3. It is not a classification and not the identity key. “List
+banks” is fact/profile **text** retrieval. Facets, if ever added, are
+derived from observations — they are not a return of `entities.type`.
 
-**Consequences.** Extract prompt shrinks. Dual-role facts persist on one
-id. Signature tables remain for when hats exist. P2 rebuild after
-signature/hat migration. Observations stay untyped (D43).
+Bare head nouns are not entities. Source surfaces become aliases.
+`generic_identifier_guard` is populated in resolve. D86 is **vacated**
+(nothing typed to reject). Unknown predicates still follow D5.
+
+**Context.** Required classes and first-mint type forked SAP, glued
+homonyms’ D18 gates, and implied a Company twin of a person. Optional
+M2M hats were considered as a middle path; they still duplicate facts
+(“is a bank”) and do not help default retrieval. Operator chose
+Hindsight-shaped untyped entities with profile text. Czech
+law/judgments still get “list banks” via observations, not a Bank type.
+
+**Consequences.** Extract prompt has no type list. Resolver thresholds
+are not per-type (one measured curve, D22). Signature-reject paths
+disappear; predicate vocabulary (D5) remains. P2/graph nodes lose a
+type property. Extension packs that only shipped types are unused;
+packs may still add predicates.
 
 **Design / analysis / sequencing.** same as D95.
 
-**Rejected.** Required class on every mention; first-mint type as law;
-D18 pre-resolve on emitted types; unique `(name, hat)`; Graphiti
-drop-conflicting-label; deleting the mentions table; dropping hats
-*instead of* D95.
+**Rejected.** Required extract class; first-mint type as law; M2M hats
+on the id; hats on facts as a second vocabulary; `(name, type)` unique;
+D18 pre-resolve; deleting mentions; dropping types *instead of* D95.
 
-**Amends.** Refines D18 (types as hats, `works_for` range, fail-open).
-Narrows D86 to optional emitted hats. Does not withdraw D5 (`other:`
-escape) or D15 (core + extensions as hat vocabulary).
+**Amends.** Withdraws D18 entity types and domain/range. Vacates D86.
+Does not withdraw D5, D15’s **predicate** extend-never-fork, D43, or
+D95.
 
 ## D97. Default retrieval is entity neighborhood plus fact text
 
 **Decision (2026-08-26).** The ordinary question path does not require a
-predicate or a type filter. Resolve names to `entity_id`s; load
+predicate (and there is no type filter). Resolve names to `entity_id`s; load
 **observations and relations** for those ids; `neighborhood` with an
 **empty** predicate list (already: every `RELATES` edge); match **fact
-text** (`fact_label`, observation `statement`, claims). A governed
-predicate is an optional narrowing filter. Observations are not graph
+text** (`fact_label`, observation `statement`, claims). A predicate is an optional narrowing filter and, when used, may be
+**any stored predicate** (governed or `other:`). There is no type
+filter. Observations are not graph
 neighbors. Callers must not be required to guess `other:traveled` vs
 `visited`. Unlabeled `related_to` with no fact sentence is rejected as
 the only edge shape (hairball). Clean neighborhoods (no filler nouns, no
