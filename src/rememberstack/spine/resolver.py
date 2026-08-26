@@ -470,16 +470,6 @@ class CascadeResolver:
                 "normalized_name": lemma,
             },
         )
-        connection.execute(
-            _INSERT_ALIAS,
-            {
-                "alias_id": uuid4(),
-                "deployment_id": deployment_id,
-                "entity_id": entity_id,
-                "alias_text": reference.name,
-                "lemma": lemma,
-            },
-        )
         vector = self._embed(
             surface=reference.name, meter=meter, call_key=f"{call_key}:mint"
         )
@@ -530,13 +520,15 @@ class CascadeResolver:
     ) -> ResolvedEntity:
         """Write the mention + append-only verdict; return the resolution."""
         mention_id = uuid4()
+        surface = reference.mention_surface()
+        surface_lemma = normalized_lemma(surface=surface)
         connection.execute(
             _INSERT_MENTION,
             {
                 "mention_id": mention_id,
                 "deployment_id": deployment_id,
-                "surface_form": reference.name,
-                "lemma": lemma,
+                "surface_form": surface,
+                "lemma": surface_lemma,
                 "canonical_name_form": reference.name,
                 "emitted_type": reference.type,
                 "claim_id": claim.claim_id,
@@ -544,6 +536,29 @@ class CascadeResolver:
                 "doc_id": claim.doc_id,
             },
         )
+        self._upsert_alias(
+            connection=connection,
+            deployment_id=deployment_id,
+            entity_id=entity_id,
+            alias_text=reference.name,
+            lemma=lemma,
+            provenance="llm_canonical",
+        )
+        self._upsert_alias(
+            connection=connection,
+            deployment_id=deployment_id,
+            entity_id=entity_id,
+            alias_text=surface,
+            lemma=surface_lemma,
+            provenance="source",
+        )
+        self.refresh_generic_identifier_guard(
+            connection=connection, deployment_id=deployment_id, lemma=lemma
+        )
+        if surface_lemma != lemma:
+            self.refresh_generic_identifier_guard(
+                connection=connection, deployment_id=deployment_id, lemma=surface_lemma
+            )
         connection.execute(
             _INSERT_DECISION,
             {
@@ -564,6 +579,47 @@ class CascadeResolver:
         )
         return ResolvedEntity(
             entity_id=entity_id, created=created, entity_type=entity_type
+        )
+
+    def _upsert_alias(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        entity_id: UUID,
+        alias_text: str,
+        lemma: str,
+        provenance: str,
+    ) -> None:
+        """Insert or refresh one alias row (source or llm_canonical)."""
+        connection.execute(
+            _UPSERT_ALIAS,
+            {
+                "alias_id": uuid4(),
+                "deployment_id": deployment_id,
+                "entity_id": entity_id,
+                "alias_text": alias_text,
+                "lemma": lemma,
+                "provenance": provenance,
+            },
+        )
+
+    def refresh_generic_identifier_guard(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        lemma: str,
+        distinct_floor: int = 2,
+    ) -> None:
+        """Recount how many entities share ``lemma`` and upsert the guard row.
+
+        Down-weighted when the lemma points at ``distinct_floor`` or more
+        ids. Called from resolve so I.5 can trust the table for T1/T2.
+        """
+        connection.execute(
+            _UPSERT_GENERIC_GUARD,
+            {"deployment_id": deployment_id, "lemma": lemma, "floor": distinct_floor},
         )
 
     def _embed(
@@ -762,13 +818,34 @@ _INSERT_ENTITY = text(
     """
 )
 
-_INSERT_ALIAS = text(
+_UPSERT_ALIAS = text(
     """
     INSERT INTO aliases (
         alias_id, deployment_id, entity_id, alias_text, normalized_lemma, provenance
     ) VALUES (
-        :alias_id, :deployment_id, :entity_id, :alias_text, :lemma, 'llm_canonical'
+        :alias_id, :deployment_id, :entity_id, :alias_text, :lemma, :provenance
     )
+    ON CONFLICT (deployment_id, entity_id, normalized_lemma, provenance)
+    DO UPDATE SET last_seen = now(), alias_text = EXCLUDED.alias_text
+    """
+)
+
+_UPSERT_GENERIC_GUARD = text(
+    """
+    INSERT INTO generic_identifier_guard (
+        deployment_id, normalized_lemma, distinct_entity_count,
+        is_downweighted, reason, evaluated_at
+    )
+    SELECT :deployment_id, :lemma, COUNT(DISTINCT entity_id),
+           COUNT(DISTINCT entity_id) >= :floor, 'promiscuous-lemma', now()
+    FROM aliases
+    WHERE deployment_id = :deployment_id AND normalized_lemma = :lemma
+    ON CONFLICT (deployment_id, normalized_lemma)
+    DO UPDATE SET
+        distinct_entity_count = EXCLUDED.distinct_entity_count,
+        is_downweighted = EXCLUDED.is_downweighted,
+        reason = EXCLUDED.reason,
+        evaluated_at = EXCLUDED.evaluated_at
     """
 )
 

@@ -1,0 +1,148 @@
+"""WP-I.1: E3 drops bare-head-noun endpoints before resolve."""
+
+from uuid import uuid4
+
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.workers.e3 import _NORMALIZE_PROMPT
+from tests.workers.test_e3_unknown_entity_type_gate import _claim
+from tests.workers.test_e3_unknown_entity_type_gate import _handler
+from tests.workers.test_e3_unknown_entity_type_gate import _payload
+from tests.workers.test_e3_unknown_entity_type_gate import RecordingFacts
+from tests.workers.test_e3_unknown_entity_type_gate import RecordingResolver
+
+
+def test_prompt_forbids_bare_head_nouns() -> None:
+    """The normalizer prompt states the Graphiti-style eligibility rule."""
+    assert "Do NOT emit bare head nouns" in _NORMALIZE_PROMPT
+    assert "FIFA 23" in _NORMALIZE_PROMPT
+
+
+def test_normalize_drops_game_relation_without_resolve() -> None:
+    """Legal types still drop when an endpoint is the noun ``game``."""
+    payload = {
+        "relations": [
+            {
+                "subject": {"name": "James", "type": "Person"},
+                "predicate": "related_to",
+                "object": {"name": "game", "type": "Product"},
+            }
+        ]
+    }
+    provider = FakeModelProvider(generate_payload=_payload(payload))
+    resolver = RecordingResolver()
+    facts = RecordingFacts(predicates={"related_to": None})
+    handler = _handler(provider=provider, resolver=resolver, facts=facts)
+    handler._normalize_claim(
+        created_relations=[],
+        observations_by_entity={},
+        staged_observations=None,
+        deployment_id=uuid4(),
+        claim=_claim(),
+        predicates={"related_to": None},
+        prompt_lines="related_to",
+        signatures={},
+        type_parents={"Person": None, "Product": None},
+        allowed_types=frozenset({"Person", "Product"}),
+        meter=NoopCostMeter(),
+    )
+    assert resolver.calls == []
+    assert facts.upserts == []
+
+
+def test_normalize_resolves_fifa_23() -> None:
+    """A qualified product name is not treated as a bare noun."""
+    payload = {
+        "relations": [
+            {
+                "subject": {"name": "James", "type": "Person"},
+                "predicate": "related_to",
+                "object": {"name": "FIFA 23", "type": "Product"},
+            }
+        ]
+    }
+    provider = FakeModelProvider(generate_payload=_payload(payload))
+    resolver = RecordingResolver()
+    facts = RecordingFacts(predicates={"related_to": None})
+    handler = _handler(provider=provider, resolver=resolver, facts=facts)
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        deployment_id=uuid4(),
+        claim=_claim(),
+        predicates={"related_to": None},
+        prompt_lines="related_to",
+        signatures={},
+        type_parents={"Person": None, "Product": None},
+        allowed_types=frozenset({"Person", "Product"}),
+        meter=NoopCostMeter(),
+    )
+    assert [ref.name for ref in resolver.calls] == ["James", "FIFA 23"]
+    assert len(facts.upserts) == 1
+
+
+def test_normalize_drops_game_observation_without_resolve() -> None:
+    """Bare-noun observation subjects are dropped the same way as relations."""
+    payload = {
+        "observations": [
+            {
+                "subject": {"name": "game", "type": "Product"},
+                "statement": "the game is fun",
+            }
+        ]
+    }
+    provider = FakeModelProvider(generate_payload=_payload(payload))
+    resolver = RecordingResolver()
+    facts = RecordingFacts(predicates={"related_to": None})
+    handler = _handler(provider=provider, resolver=resolver, facts=facts)
+    handler._normalize_claim(
+        created_relations=[],
+        observations_by_entity={},
+        staged_observations=None,
+        deployment_id=uuid4(),
+        claim=_claim(),
+        predicates={"related_to": None},
+        prompt_lines="related_to",
+        signatures={},
+        type_parents={"Person": None, "Product": None},
+        allowed_types=frozenset({"Person", "Product"}),
+        meter=NoopCostMeter(),
+    )
+    assert resolver.calls == []
+
+
+def test_normalize_passes_source_surface_to_resolve() -> None:
+    """Claim spelling App rides EntityRef.surface into resolve."""
+    payload = {
+        "relations": [
+            {
+                "subject": {"name": "James", "type": "Person"},
+                "predicate": "related_to",
+                "object": {"name": "Application", "type": "Product", "surface": "App"},
+            }
+        ]
+    }
+    provider = FakeModelProvider(generate_payload=_payload(payload))
+    resolver = RecordingResolver()
+    facts = RecordingFacts(predicates={"related_to": None})
+    handler = _handler(provider=provider, resolver=resolver, facts=facts)
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        deployment_id=uuid4(),
+        claim=_claim(),
+        predicates={"related_to": None},
+        prompt_lines="related_to",
+        signatures={},
+        type_parents={"Person": None, "Product": None},
+        allowed_types=frozenset({"Person", "Product"}),
+        meter=NoopCostMeter(),
+    )
+    assert resolver.calls[1].name == "Application"
+    assert resolver.calls[1].surface == "App"
+    assert resolver.calls[1].mention_surface() == "App"
+    assert len(facts.upserts) == 1

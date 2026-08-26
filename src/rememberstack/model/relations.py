@@ -11,12 +11,24 @@ _NonEmpty = Annotated[str, Field(min_length=1)]
 
 
 class EntityRef(BaseModel):
-    """One entity as the normalizer emitted it: canonical form + registry type."""
+    """One entity as the normalizer emitted it: canonical name, optional surface, type.
+
+    ``name`` is the nominative/canonical form. ``surface`` is the span as it
+    appeared in the claim when it differs (``App`` vs ``Application``). Type
+    remains until the D96 type-cut (WP-I.2).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: _NonEmpty
     type: _NonEmpty
+    surface: str | None = None
+
+    def mention_surface(self) -> str:
+        """The claim spelling used for source aliases; falls back to ``name``."""
+        if self.surface is None or not self.surface.strip():
+            return self.name
+        return self.surface.strip()
 
 
 class RelationCandidate(BaseModel):

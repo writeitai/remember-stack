@@ -34,6 +34,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
+from rememberstack.spine.entity_eligibility import is_bare_head_noun
 from rememberstack.spine.entity_registry import EntityRegistry
 from rememberstack.spine.fact_catalog import FactCatalog
 from rememberstack.spine.fact_catalog import OTHER_PREDICATE_GRAMMAR
@@ -54,10 +55,11 @@ _OTHER_PREDICATE: Final = OTHER_PREDICATE_GRAMMAR
 """The escape-value routing check (the spine re-validates authoritatively)."""
 
 E3_NORMALIZER_VERSION: Final = (
-    "e3-normalize-2026.08a:temp0-1:unknown-type-gate-1:claim-fanout-1"
+    "e3-normalize-2026.08b:temp0-1:unknown-type-gate-1:claim-fanout-1:bare-noun-1"
 )
 """The normalize sub-worker's component version (D12 idempotency member).
 
+08b: WP-I.1 bare-head-noun refusal + source-surface names.
 08a: D86 unknown-entity-type gate; claim-fanout-1: D88 per-claim ledger grain.
 Temperature=0.0 is part of provenance.
 """
@@ -83,7 +85,12 @@ the CLAIM into zero or more of:
   believes / opposes Y") becomes a stance observation anchored on X — never a
   fact about Y.
 Entity names must be canonical nominative forms; entity types must come from
-the registry types below. Time is never a relation object.
+the registry types below. Do NOT emit bare head nouns as entities (game, app,
+system, card, photo, module, the system) unless the claim qualifies a specific
+referent (FIFA 23, James's Unity strategy game). Prefer dropping the
+relation or observation. When the claim spelling differs from the canonical
+name, set EntityRef.surface to the claim span (App vs Application).
+Time is never a relation object.
 
 GOVERNED PREDICATES:
 {predicates}
@@ -443,6 +450,17 @@ class NormalizeRelationsHandler:
                     claim.claim_id,
                 )
                 continue
+            if is_bare_head_noun(name=relation.subject.name) or is_bare_head_noun(
+                name=relation.object.name
+            ):
+                _logger.warning(
+                    "e3.bare_head_noun_dropped claim_id=%s kind=relation "
+                    "subject=%r object=%r",
+                    claim.claim_id,
+                    relation.subject.name,
+                    relation.object.name,
+                )
+                continue
             if not _signature_allows(
                 predicate=relation.predicate,
                 subject_type=relation.subject.type,
@@ -510,6 +528,13 @@ class NormalizeRelationsHandler:
                         _bounded_type_label(value=value)
                         for value in [observation.subject.type]
                     ],
+                )
+                continue
+            if is_bare_head_noun(name=observation.subject.name):
+                _logger.warning(
+                    "e3.bare_head_noun_dropped claim_id=%s kind=observation subject=%r",
+                    claim.claim_id,
+                    observation.subject.name,
                 )
                 continue
             subject = self._resolver.resolve(

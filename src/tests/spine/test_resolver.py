@@ -25,6 +25,7 @@ from rememberstack.spine import CascadeResolver
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import seed_resolver_version
+from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -361,3 +362,125 @@ def test_missing_profile_vector_escalates_to_t4(database_engine: Engine) -> None
     )
     assert not drifted.created
     assert drifted.entity_id == minted.entity_id
+
+
+def test_source_and_canonical_aliases_on_mint_and_replay(
+    database_engine: Engine,
+) -> None:
+    """WP-I.1: claim surface App and canonical Application share one id."""
+    provider = FakeModelProvider(generate_router=_first_token_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    minted = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Application", surface="App", type="Product"),
+        claim=_claim(),
+    )
+    assert minted.created
+    replay = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Application", surface="App", type="Product"),
+        claim=_claim(),
+    )
+    assert not replay.created
+    assert replay.entity_id == minted.entity_id
+    with database_engine.connect() as connection:
+        aliases = (
+            connection.execute(
+                text(
+                    "SELECT alias_text, provenance FROM aliases"
+                    " WHERE entity_id = :entity_id"
+                ),
+                {"entity_id": minted.entity_id},
+            )
+            .mappings()
+            .all()
+        )
+        mentions = (
+            connection.execute(
+                text("SELECT DISTINCT surface_form, canonical_name_form FROM mentions")
+            )
+            .mappings()
+            .all()
+        )
+        guards = (
+            connection.execute(
+                text(
+                    "SELECT normalized_lemma, distinct_entity_count, is_downweighted"
+                    " FROM generic_identifier_guard"
+                    " WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
+            .mappings()
+            .all()
+        )
+    provenances = {(row["provenance"], row["alias_text"]) for row in aliases}
+    assert ("llm_canonical", "Application") in provenances
+    assert ("source", "App") in provenances
+    assert any(
+        row["surface_form"] == "App" and row["canonical_name_form"] == "Application"
+        for row in mentions
+    )
+    by_lemma = {row["normalized_lemma"]: row for row in guards}
+    assert by_lemma["application"]["distinct_entity_count"] == 1
+    assert by_lemma["application"]["is_downweighted"] is False
+    assert by_lemma["app"]["distinct_entity_count"] == 1
+    assert by_lemma["app"]["is_downweighted"] is False
+
+
+def test_generic_identifier_guard_downweights_shared_lemma(
+    database_engine: Engine,
+) -> None:
+    """WP-I.1 writer: a lemma pointing at two entity ids is marked promiscuous."""
+    provider = FakeModelProvider(generate_router=_first_token_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    first = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Jan Novák", type="Person"),
+        claim=_claim(),
+    )
+    second = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Karel Dvořák", type="Person"),
+        claim=_claim(),
+    )
+    jan_lemma = normalized_lemma(surface="Jan Novák")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO aliases ("
+                " alias_id, deployment_id, entity_id, alias_text,"
+                " normalized_lemma, provenance"
+                ") VALUES ("
+                " :alias_id, :deployment_id, :entity_id, 'Jan Novák',"
+                " :lemma, 'source'"
+                ")"
+            ),
+            {
+                "alias_id": uuid4(),
+                "deployment_id": _DEPLOYMENT_ID,
+                "entity_id": second.entity_id,
+                "lemma": jan_lemma,
+            },
+        )
+        resolver.refresh_generic_identifier_guard(
+            connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=jan_lemma
+        )
+    with database_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT distinct_entity_count, is_downweighted, reason"
+                    " FROM generic_identifier_guard"
+                    " WHERE deployment_id = :deployment_id"
+                    " AND normalized_lemma = :lemma"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID, "lemma": jan_lemma},
+            )
+            .mappings()
+            .one()
+        )
+    assert first.entity_id != second.entity_id
+    assert row["distinct_entity_count"] == 2
+    assert row["is_downweighted"] is True
+    assert row["reason"] == "promiscuous-lemma"
