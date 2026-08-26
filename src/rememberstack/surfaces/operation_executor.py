@@ -58,8 +58,7 @@ class OperationExecutor:
         name = operation.name
         if name is AssuredOperationName.RESOLVE_ENTITY:
             return self._engine.resolve(
-                deployment_id=deployment_id,
-                name=cast(str, arguments["name"]),
+                deployment_id=deployment_id, name=cast(str, arguments["name"])
             )
         evaluation = evaluated_at or datetime.now(UTC)
         query = cast(str, arguments["query"])

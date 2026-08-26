@@ -409,9 +409,7 @@ class NormalizeRelationsHandler:
             claim_text=claim.claim_text,
         )
         response = self._generate_normalize_response(
-            claim=claim,
-            base_prompt=base_prompt,
-            meter=meter,
+            claim=claim, base_prompt=base_prompt, meter=meter
         )
         if response is None:
             return True
@@ -497,11 +495,7 @@ class NormalizeRelationsHandler:
         return False
 
     def _generate_normalize_response(
-        self,
-        *,
-        claim: ClaimForNormalization,
-        base_prompt: str,
-        meter: CostMeterPort,
+        self, *, claim: ClaimForNormalization, base_prompt: str, meter: CostMeterPort
     ) -> NormalizationResponse | None:
         """Generate one normalize response. Content poison is claim-soft.
 

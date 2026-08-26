@@ -221,9 +221,7 @@ class CascadeResolver:
         if score <= thresholds.t3_reject:
             return False, "T3"
         prompt = _T4_PROMPT.format(
-            mention=surface_b,
-            context=context_b or "(none)",
-            candidate=surface_a,
+            mention=surface_b, context=context_b or "(none)", candidate=surface_a
         )
         if context_a:
             prompt += f"\nCANDIDATE CONTEXT: {context_a}"

@@ -4545,10 +4545,7 @@ _SELECT_ENTITIES_OF_TYPE = text(
     """
     SELECT entity_id
     FROM entities
-    WHERE deployment_id = :deployment_id
-      AND type = :entity_type
-      AND status = 'active'
-    ORDER BY entity_id
+    WHERE false
     """
 )
 

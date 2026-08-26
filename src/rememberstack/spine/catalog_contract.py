@@ -339,11 +339,7 @@ QUERY_SPACE_SCHEMA: Final = "memory_v1"
 `memory_v1` manifest (`rememberstack.spine.query_space`); this module only
 proves the schema exists at head and is gone after a downgrade, so a stray
 leftover schema cannot masquerade as the query surface."""
-EMPTY_AT_HEAD: Final = (
-    "deployments",
-    "entity_types",
-    "predicates",
-)
+EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.

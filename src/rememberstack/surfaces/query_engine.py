@@ -4289,13 +4289,11 @@ _AGG_DELTA_TOP_ENTITIES = text(
 
 _AGG_TYPED_ABSENCE = text(
     """
-    -- entities of a type with NO live relation of a predicate (S40): an
-    -- anti-join, answerable because the ontology types entities. Each bucket
-    -- IS one absent entity (count 1), so the total is how many lack it.
+    -- entities with NO live relation of a predicate (S40, D96: no type filter).
+    -- Each bucket IS one absent entity (count 1).
     SELECT e.canonical_name AS key, 1 AS count, e.entity_id AS entity_id
     FROM entities e
     WHERE e.deployment_id = :deployment_id AND e.status = 'active'
-      AND e.type = :entity_type
       AND NOT EXISTS (
           SELECT 1 FROM relations r
           WHERE r.deployment_id = e.deployment_id
@@ -4314,7 +4312,7 @@ _AGGREGATE_FORMS: dict[str, tuple[TextClause, frozenset[str]]] = {
     "group_by_object": (_AGG_GROUP_BY_OBJECT, frozenset({"subject_entity_id"})),
     "timeline": (_AGG_TIMELINE, frozenset({"subject_entity_id"})),
     "delta_top_entities": (_AGG_DELTA_TOP_ENTITIES, frozenset({"since"})),
-    "typed_absence": (_AGG_TYPED_ABSENCE, frozenset({"entity_type", "predicate"})),
+    "typed_absence": (_AGG_TYPED_ABSENCE, frozenset({"predicate"})),
 }
 
 _SCAN_EXPORTS = {
