@@ -25,10 +25,10 @@ MEMORY_V1_TYPE_CUT_DDL = r"""
 CREATE OR REPLACE VIEW memory_v1.entities_current (
   deployment_id,
   entity_id,
-  entity_type,          -- Vacated after D96: always NULL. Identity is entity_id.
+  entity_type,
   canonical_name,
   normalized_name,
-  type_confidence,      -- Vacated after D96: always NULL.
+  type_confidence,
   profile_summary,
   live_mention_count,
   live_document_count,
@@ -101,7 +101,7 @@ WHERE e.status = 'active'
   );
 
 COMMENT ON VIEW memory_v1.entities_current IS
-  'One row per survivor entity with surviving provenance. entity_type and type_confidence are vacated (always NULL) after D96; identity is the entity_id.';
+  'One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires SURVIVING PROVENANCE, which is an explicit association to at least one live document lineage: a mention of this survivor in any non-tombstoned version of a live lineage, or a live document-entity bridge. An entity whose every source has been forgotten is therefore absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. MEMBERSHIP AND THE COUNTS ANSWER DIFFERENT QUESTIONS, and the difference is deliberate: the two counts are exact over CURRENT content only — they equal this entity''s rows in mentions_live and entity_document_mentions — so an entity whose only mention sits in a superseded version of a live lineage is published here with both counts at zero and has no row in entity_document_mentions at all. A zero count is not an absence of provenance. graph_degree is copied from the latest published graph snapshot and is therefore orientation that can lag live state; profile_summary is orientation text, never evidence; and the clocks are registry maintenance instants that carry no world-validity meaning. After D96, entity_type and type_confidence are vacated (always NULL); identity is the entity_id.';
 
 CREATE OR REPLACE VIEW v_memory_mention_current_content (
   deployment_id,
@@ -115,8 +115,8 @@ CREATE OR REPLACE VIEW v_memory_mention_current_content (
   surface_form,
   normalized_lemma,
   canonical_name_form,
-  emitted_type,            -- Vacated after D96: always NULL.
-  type_confidence,         -- Vacated after D96: always NULL.
+  emitted_type,
+  type_confidence,
   language,
   char_start,
   char_end,

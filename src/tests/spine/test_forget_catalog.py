@@ -989,7 +989,7 @@ def _seed_knowledge_and_residuals(*, connection: Connection) -> None:
         text(
             "INSERT INTO golden_pairs (pair_id, deployment_id, entity_type,"
             " surface_a, surface_b, context_a, context_b, label, hardness,"
-            " adjudicated_by) VALUES (:id, :d, :token, :token, :token,"
+            " adjudicated_by) VALUES (:id, :d, 'Person', :token, :token, :token,"
             " :token, 'match', 'easy', 'proof')"
         ),
         {
@@ -1016,7 +1016,7 @@ def _seed_knowledge_and_residuals(*, connection: Connection) -> None:
         text(
             "INSERT INTO processing_state (processing_id, deployment_id,"
             " target_kind, target_id, stage, component_version, content_hash,"
-            " lane, last_error, payload) VALUES (:id, :d, :doc,"
+            " lane, last_error, payload) VALUES (:id, :d, 'document', :doc,"
             " 'convert', 'converter-test', :hash, 'steady', :token,"
             " jsonb_build_object('marker', CAST(:token AS text)))"
         ),

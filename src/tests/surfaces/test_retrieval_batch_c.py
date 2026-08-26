@@ -146,7 +146,7 @@ class _Corpus:
                 text(
                     "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:entity, :deployment, :kind, :name, lower(:name))"
+                    " VALUES (:entity, :deployment, :name, lower(:name))"
                 ),
                 {
                     "entity": entity_id,
@@ -417,7 +417,7 @@ class _Corpus:
                 text(
                     "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name) VALUES (:entity, :deployment,"
-                    " 'Organization', :name, lower(:name))"
+                    " :name, lower(:name))"
                 ),
                 {
                     "entity": object_id,

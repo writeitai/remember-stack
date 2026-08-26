@@ -226,7 +226,7 @@ def test_conflicting_existing_row_fails_the_whole_install(
             text(
                 "INSERT INTO entity_types (deployment_id, type, parent_type,"
                 " description, tier)"
-                " VALUES (:d, 'Concept', 'a pre-existing Task', 'extension')"
+                " VALUES (:d, 'Task', 'Concept', 'a pre-existing Task', 'extension')"
             ),
             {"d": _DEPLOYMENT_ID},
         )

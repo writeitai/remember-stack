@@ -432,7 +432,7 @@ def test_tier_one_roots_carry_member_tables(corpus: _Corpus, tmp_path: Path) -> 
 
     # an entity page's member rows link to canonical paths that resolve
     page = tree.read(f"entities/{corpus.entity_id}/_index.md")
-    assert "../../../documents/" in page  # a real relative link, not a dead name
+    assert "../../documents/" in page  # a real relative link, not a dead name
 
 
 def test_pathological_titles_and_refs_are_contained(

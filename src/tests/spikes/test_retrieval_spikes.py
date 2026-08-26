@@ -724,7 +724,7 @@ def _resolve_context(*, engine: Engine) -> RetrievalSpikeMeasurement:
                     text(
                         "INSERT INTO entities (entity_id, deployment_id,"
                         " canonical_name, normalized_name) VALUES"
-                        " (:entity_id, :deployment_id, :type, :name, lower(:name))"
+                        " (:entity_id, :deployment_id, :name, lower(:name))"
                     ),
                     {
                         "entity_id": entity_id,
