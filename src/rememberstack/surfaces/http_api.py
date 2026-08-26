@@ -34,10 +34,6 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretBytes
 
-from rememberstack.adapters.selfhost.control_plane_spend_lease import SpendLeaseRefused
-from rememberstack.adapters.selfhost.control_plane_spend_lease import (
-    SpendLeaseUnavailable,
-)
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
@@ -50,6 +46,8 @@ from rememberstack.model import IngestedVersion
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
+from rememberstack.model import SpendLeaseRefused
+from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError

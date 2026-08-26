@@ -327,6 +327,8 @@ from rememberstack.model.sections import SkeletonStats
 from rememberstack.model.sections import SkeletonVerdict
 from rememberstack.model.sections import SnappedSection
 from rememberstack.model.sections import StructureRouteTag
+from rememberstack.model.spend_lease import SpendLeaseRefused
+from rememberstack.model.spend_lease import SpendLeaseUnavailable
 from rememberstack.model.telemetry import TelemetryAttribute
 from rememberstack.model.telemetry import TelemetryEvent
 
@@ -438,6 +440,8 @@ __all__ = (
     "ForgetRedactionRequiredError",
     "ForgetTargetNotFoundError",
     "ForgottenSourceError",
+    "SpendLeaseRefused",
+    "SpendLeaseUnavailable",
     "Freshness",
     "Grain",
     "IdentityRegime",

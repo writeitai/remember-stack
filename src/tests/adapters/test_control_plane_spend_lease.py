@@ -12,14 +12,12 @@ import pytest
 from rememberstack.adapters.selfhost.control_plane_spend_lease import (
     ControlPlaneSpendLease,
 )
-from rememberstack.adapters.selfhost.control_plane_spend_lease import SpendLeaseRefused
-from rememberstack.adapters.selfhost.control_plane_spend_lease import (
-    SpendLeaseUnavailable,
-)
 from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
 from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import IngestedVersion
+from rememberstack.model import SpendLeaseRefused
+from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.profiles.selfhost import resolve_selfhost_spend_lease
 from rememberstack.profiles.selfhost import SelfHostSettings
 from rememberstack.surfaces.http_api import build_api
