@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.eval import run_resolution_suite
 from rememberstack.eval import seed_synthetic_golden_pairs
 from rememberstack.model import ClaimForNormalization
@@ -27,6 +28,10 @@ from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers.e3 import NormalizeRelationsHandler
+from tests.workers.test_e3_unknown_entity_type_gate import _handler
+from tests.workers.test_e3_unknown_entity_type_gate import _payload
+from tests.workers.test_e3_unknown_entity_type_gate import RecordingFacts
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b0000000-0000-0000-0000-000000000001")
@@ -116,14 +121,14 @@ def _resolver(
     )
 
 
-def _claim() -> ClaimForNormalization:
+def _claim(*, claim_text: str | None = None) -> ClaimForNormalization:
     """A synthetic claim context for resolutions."""
     return ClaimForNormalization(
         claim_id=uuid4(),
         deployment_id=uuid4(),
         doc_id=uuid4(),
         chunk_id=uuid4(),
-        claim_text="Karel Dvorzak from sales joined the Atlas project.",
+        claim_text=claim_text or "Karel Dvorzak from sales joined the Atlas project.",
         is_attributed=False,
         extractor_version="e2-test",
     )
@@ -370,16 +375,17 @@ def test_source_and_canonical_aliases_on_mint_and_replay(
     """WP-I.1: claim surface App and canonical Application share one id."""
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
+    claim = _claim(claim_text="We opened the App to file the report.")
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Application", surface="App", type="Product"),
-        claim=_claim(),
+        claim=claim,
     )
     assert minted.created
     replay = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Application", surface="App", type="Product"),
-        claim=_claim(),
+        claim=_claim(claim_text="We opened the App to file the report."),
     )
     assert not replay.created
     assert replay.entity_id == minted.entity_id
@@ -484,3 +490,133 @@ def test_generic_identifier_guard_downweights_shared_lemma(
     assert row["distinct_entity_count"] == 2
     assert row["is_downweighted"] is True
     assert row["reason"] == "promiscuous-lemma"
+
+
+def test_ungrounded_surface_does_not_write_source_alias(
+    database_engine: Engine,
+) -> None:
+    """A hallucinated App span is not stored as provenance=source."""
+    provider = FakeModelProvider(generate_router=_first_token_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    minted = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Application", surface="App", type="Product"),
+        claim=_claim(),
+    )
+    assert minted.created
+    with database_engine.connect() as connection:
+        aliases = (
+            connection.execute(
+                text(
+                    "SELECT alias_text, provenance FROM aliases"
+                    " WHERE entity_id = :entity_id"
+                ),
+                {"entity_id": minted.entity_id},
+            )
+            .mappings()
+            .all()
+        )
+        mentions = (
+            connection.execute(
+                text("SELECT DISTINCT surface_form, canonical_name_form FROM mentions")
+            )
+            .mappings()
+            .all()
+        )
+    provenances = {(row["provenance"], row["alias_text"]) for row in aliases}
+    assert ("llm_canonical", "Application") in provenances
+    assert ("source", "App") not in provenances
+    assert ("source", "Application") in provenances
+    assert all(row["surface_form"] == "Application" for row in mentions)
+
+
+def _normalize_through_shipped_resolver(
+    *, database_engine: Engine, payload: dict[str, object], claim_text: str
+) -> CascadeResolver:
+    """E3 handler plus the production cascade; returns the resolver used."""
+    provider = FakeModelProvider(generate_payload=_payload(payload))
+    resolver = _resolver(engine=database_engine, provider=provider)
+    facts = RecordingFacts(predicates={"related_to": None})
+    handler: NormalizeRelationsHandler = _handler(
+        provider=provider, resolver=resolver, facts=facts
+    )
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        deployment_id=_DEPLOYMENT_ID,
+        claim=_claim(claim_text=claim_text),
+        predicates={"related_to": None},
+        prompt_lines="related_to",
+        signatures={},
+        type_parents={"Person": None, "Product": None},
+        allowed_types=frozenset({"Person", "Product"}),
+        meter=NoopCostMeter(),
+    )
+    return resolver
+
+
+def test_e3_drops_game_before_shipped_resolver_mints(database_engine: Engine) -> None:
+    """Bare ``game`` never becomes a row in the alias table."""
+    _normalize_through_shipped_resolver(
+        database_engine=database_engine,
+        payload={
+            "relations": [
+                {
+                    "subject": {"name": "James", "type": "Person"},
+                    "predicate": "related_to",
+                    "object": {"name": "game", "type": "Product"},
+                }
+            ]
+        },
+        claim_text="James played the game after dinner.",
+    )
+    with database_engine.connect() as connection:
+        lemmas = [
+            row[0]
+            for row in connection.execute(text("SELECT normalized_lemma FROM aliases"))
+        ]
+    assert "game" not in lemmas
+
+
+def test_e3_mints_fifa_23_and_app_application_on_shipped_resolver(
+    database_engine: Engine,
+) -> None:
+    """FIFA 23 may mint; claim-text App records source+canonical aliases."""
+    _normalize_through_shipped_resolver(
+        database_engine=database_engine,
+        payload={
+            "relations": [
+                {
+                    "subject": {"name": "James", "type": "Person"},
+                    "predicate": "related_to",
+                    "object": {"name": "FIFA 23", "type": "Product"},
+                },
+                {
+                    "subject": {"name": "James", "type": "Person"},
+                    "predicate": "related_to",
+                    "object": {
+                        "name": "Application",
+                        "type": "Product",
+                        "surface": "App",
+                    },
+                },
+            ]
+        },
+        claim_text="James played FIFA 23 and then opened the App.",
+    )
+    with database_engine.connect() as connection:
+        aliases = (
+            connection.execute(
+                text("SELECT alias_text, provenance, normalized_lemma FROM aliases")
+            )
+            .mappings()
+            .all()
+        )
+    provenances = {(row["provenance"], row["alias_text"]) for row in aliases}
+    lemmas = {row["normalized_lemma"] for row in aliases}
+    assert "fifa 23" in lemmas
+    assert ("llm_canonical", "Application") in provenances
+    assert ("source", "App") in provenances
+    assert ("source", "game") not in provenances

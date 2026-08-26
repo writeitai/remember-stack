@@ -4,12 +4,19 @@ from uuid import uuid4
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.model import ClaimForNormalization
 from rememberstack.workers.e3 import _NORMALIZE_PROMPT
 from tests.workers.test_e3_unknown_entity_type_gate import _claim
 from tests.workers.test_e3_unknown_entity_type_gate import _handler
 from tests.workers.test_e3_unknown_entity_type_gate import _payload
 from tests.workers.test_e3_unknown_entity_type_gate import RecordingFacts
 from tests.workers.test_e3_unknown_entity_type_gate import RecordingResolver
+
+
+def _claim_with(*, claim_text: str) -> ClaimForNormalization:
+    """A claim stub whose text can ground EntityRef.surface."""
+    base = _claim()
+    return base.model_copy(update={"claim_text": claim_text})
 
 
 def test_prompt_forbids_bare_head_nouns() -> None:
@@ -71,7 +78,7 @@ def test_normalize_resolves_fifa_23() -> None:
         observations_by_entity={},
         staged_observations=None,
         deployment_id=uuid4(),
-        claim=_claim(),
+        claim=_claim_with(claim_text="James played FIFA 23 after dinner."),
         predicates={"related_to": None},
         prompt_lines="related_to",
         signatures={},
@@ -134,7 +141,7 @@ def test_normalize_passes_source_surface_to_resolve() -> None:
         observations_by_entity={},
         staged_observations=None,
         deployment_id=uuid4(),
-        claim=_claim(),
+        claim=_claim_with(claim_text="James opened the App after dinner."),
         predicates={"related_to": None},
         prompt_lines="related_to",
         signatures={},

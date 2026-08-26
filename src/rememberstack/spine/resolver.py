@@ -32,6 +32,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 from rememberstack.spine.entity_registry import normalized_lemma
 
 
@@ -520,7 +521,11 @@ class CascadeResolver:
     ) -> ResolvedEntity:
         """Write the mention + append-only verdict; return the resolution."""
         mention_id = uuid4()
-        surface = reference.mention_surface()
+        emitted = reference.mention_surface()
+        if surface_appears_in_claim(surface=emitted, claim_text=claim.claim_text):
+            surface = emitted
+        else:
+            surface = reference.name
         surface_lemma = normalized_lemma(surface=surface)
         connection.execute(
             _INSERT_MENTION,
