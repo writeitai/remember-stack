@@ -9,7 +9,7 @@ x-app: &app
       # Empty when the caller does not supply it; released images get the tag's
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
-  image: ghcr.io/writeitai/remember-stack:0.4.2
+  image: ghcr.io/writeitai/remember-stack:0.4.3
   environment:
     REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://${REMEMBERSTACK_POSTGRES_USER}:${REMEMBERSTACK_POSTGRES_PASSWORD}@postgres:5432/${REMEMBERSTACK_POSTGRES_DB}
     REMEMBERSTACK_MINIO_ENDPOINT_URL: http://minio:9000

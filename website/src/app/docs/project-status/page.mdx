@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.4.2`](https://github.com/writeitai/remember-stack/releases/tag/v0.4.2) on [PyPI](https://pypi.org/project/rememberstack/0.4.2/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.4.3`](https://github.com/writeitai/remember-stack/releases/tag/v0.4.3) on [PyPI](https://pypi.org/project/rememberstack/0.4.3/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -35,6 +35,7 @@ Current public release: [`v0.4.2`](https://github.com/writeitai/remember-stack/r
 ### Operations
 
 - Docker Compose single-deployment self-host (Postgres, object storage, API, continuous workers)
+- Optional API Bearer BIND (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND`); default Compose stays open
 - PostgreSQL-native P1 search indexes; no separate search-store maintenance process
 - Work ledger with retries, dead-letter queue, optional spend ceilings
 - Request-path surface metering plus a content-free `v_cost_receipts` export (`remember ops cost-export` and optional second-bind HTTP)
@@ -72,6 +73,13 @@ Current public release: [`v0.4.2`](https://github.com/writeitai/remember-stack/r
 - Stock self-host convert routes `text/plain` through the same UTF-8
   passthrough as `text/markdown` ([#302](https://github.com/writeitai/remember-stack/pull/302)).
   CLI/SDK `.txt` ingest no longer dead-letters as unroutable MIME.
+
+## What landed after v0.4.2 (in v0.4.3)
+
+- Optional API perimeter: SHA-256 Bearer BIND
+  `{issued_deployment_uuid}:{sha256hex}`
+  ([#305](https://github.com/writeitai/remember-stack/pull/305)). Unset keeps
+  the open quickstart. `GET /healthz` stays unauthenticated.
 
 ## Intentionally not in the library
 
