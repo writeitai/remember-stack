@@ -218,7 +218,6 @@ EXPECTED_INDEXES: Final = (
     "ix_entities_name_trgm",
     "ix_entities_embedding_hnsw",
     "ix_entities_redirect",
-    "ix_entities_type",
     "ix_entity_types_parent",
     "ix_eval_suite_ver",
     "ix_forget_content_guard",
@@ -348,9 +347,9 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 68,
-    "f": 132,
-    "n": 553,
-    "p": 73,
+    "f": 127,
+    "n": 548,
+    "p": 72,
     "u": 36,
     "x": 1,
 }

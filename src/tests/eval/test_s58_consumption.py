@@ -241,9 +241,9 @@ def test_s58_and_skeleton_canaries_share_one_retrieval_evaluator(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:entity_id, :deployment_id, 'Organization',"
+                " VALUES (:entity_id, :deployment_id,"
                 " 'Acme', 'acme')"
             ),
             {"entity_id": acme_id, "deployment_id": _DEPLOYMENT_ID},

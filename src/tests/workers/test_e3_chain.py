@@ -667,9 +667,9 @@ def test_signature_gate_binds_on_resolved_stored_types(rig: _E3Rig) -> None:
     with rig.engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Person', 'Acme', 'acme')"
+                " VALUES (:e, :d, 'Acme', 'acme')"
             ),
             {"e": person_acme, "d": _DEPLOYMENT_ID},
         )
@@ -719,17 +719,17 @@ def test_t0_never_resolves_to_a_merged_entity(rig: _E3Rig) -> None:
         for entity_id, name, lemma in ((survivor, "Beta Corp", "beta corp"),):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:e, :d, 'Organization', :n, :l)"
+                    " VALUES (:e, :d, :n, :l)"
                 ),
                 {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "l": lemma},
             )
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name, status, merged_into)"
-                " VALUES (:e, :d, 'Organization', 'Gamma Ltd', 'gamma ltd',"
+                " VALUES (:e, :d, 'Gamma Ltd', 'gamma ltd',"
                 " 'merged', :m)"
             ),
             {"e": merged, "d": _DEPLOYMENT_ID, "m": survivor},
@@ -745,7 +745,7 @@ def test_t0_never_resolves_to_a_merged_entity(rig: _E3Rig) -> None:
 
     resolved = _Registry(engine=rig.engine).resolve_t0(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Gamma Ltd", type="Organization"),
+        reference=EntityRef(name="Gamma Ltd"),
         claim=ClaimForNormalization(
             claim_id=_uuid4(),
             deployment_id=_DEPLOYMENT_ID,

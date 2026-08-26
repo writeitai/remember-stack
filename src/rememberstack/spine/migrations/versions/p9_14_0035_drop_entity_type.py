@@ -3,10 +3,11 @@
 revision: p9_14_0035
 
 ``entities.type`` and ``mentions.emitted_type`` stop being identity.
-``predicate_signatures`` is dropped. ``memory_v1.entities_current`` keeps
-the ``entity_type`` / ``type_confidence`` *column names* as always-NULL
-so query-space dependents do not CASCADE-drop; those columns are vacated
-and must not be filtered on. The authority table columns are gone.
+``predicate_signatures`` is dropped. Public and helper views keep the
+vacated column *names* (``entity_type`` / ``type_confidence`` /
+``emitted_type``) as always-NULL so dependents do not CASCADE-drop;
+those columns must not be filtered on. The authority table columns
+are gone.
 """
 
 from collections.abc import Sequence
@@ -24,10 +25,10 @@ MEMORY_V1_TYPE_CUT_DDL = r"""
 CREATE OR REPLACE VIEW memory_v1.entities_current (
   deployment_id,
   entity_id,
-  entity_type,
+  entity_type,          -- Vacated after D96: always NULL. Identity is entity_id.
   canonical_name,
   normalized_name,
-  type_confidence,
+  type_confidence,      -- Vacated after D96: always NULL.
   profile_summary,
   live_mention_count,
   live_document_count,
@@ -99,21 +100,236 @@ WHERE e.status = 'active'
       AND provenance.entity_id = e.entity_id
   );
 
+COMMENT ON VIEW memory_v1.entities_current IS
+  'One row per survivor entity with surviving provenance. entity_type and type_confidence are vacated (always NULL) after D96; identity is the entity_id.';
+
+CREATE OR REPLACE VIEW v_memory_mention_current_content (
+  deployment_id,
+  mention_id,
+  doc_id,
+  version_id,
+  representation_id,
+  chunk_id,
+  section_id,
+  claim_id,
+  surface_form,
+  normalized_lemma,
+  canonical_name_form,
+  emitted_type,            -- Vacated after D96: always NULL.
+  type_confidence,         -- Vacated after D96: always NULL.
+  language,
+  char_start,
+  char_end,
+  created_at,
+  survivor_entity_id,
+  resolution_method,
+  resolution_confidence,
+  resolution_is_new_entity,
+  resolved_at
+) AS
+SELECT
+  m.deployment_id,
+  m.mention_id,
+  cl.doc_id,
+  cl.version_id,
+  cl.representation_id,
+  cl.chunk_id,
+  cl.section_id,
+  mc.claim_id,
+  m.surface_form,
+  m.normalized_lemma,
+  m.canonical_name_form,
+  NULL::text,
+  NULL::real,
+  m.language,
+  m.char_start,
+  m.char_end,
+  m.created_at,
+  s.survivor_entity_id,
+  live.method::text,
+  live.confidence,
+  live.is_new_entity,
+  live.decided_at
+FROM mentions AS m
+JOIN memory_v1.chunks_live AS cl
+  ON cl.deployment_id = m.deployment_id
+ AND cl.chunk_id = m.chunk_id
+ AND cl.doc_id = m.doc_id
+LEFT JOIN memory_v1.claims_visible_history AS mc
+  ON mc.deployment_id = m.deployment_id
+ AND mc.claim_id = m.claim_id
+ AND mc.doc_id = cl.doc_id
+LEFT JOIN LATERAL (
+  SELECT rd.entity_id, rd.method, rd.confidence, rd.is_new_entity, rd.decided_at
+  FROM resolution_decisions AS rd
+  WHERE rd.deployment_id = m.deployment_id
+    AND rd.mention_id = m.mention_id
+    AND rd.superseded_by IS NULL
+  ORDER BY rd.decided_at DESC, rd.decision_id DESC
+  LIMIT 1
+) AS live ON true
+LEFT JOIN v_memory_entity_survivor AS s
+  ON s.deployment_id = m.deployment_id
+ AND s.entity_id = live.entity_id;
+
+COMMENT ON VIEW v_memory_mention_current_content IS
+  'Private single definition of a mention in current content: exactly one row per mention whose chunk is a current-content chunk of the lineage the mention itself names, carrying the mention''s coordinates and the survivor of its one live, unsuperseded resolution decision. Both mentions_live and entity_document_mentions are projections of this relation, so a count and the transcript it counts cannot disagree. Not part of memory_v1 and never granted to a query role. emitted_type and type_confidence are vacated (always NULL) after D96.';
+
 """
 
-_COMMENT_ENTITIES_CURRENT = (
-    "COMMENT ON VIEW memory_v1.entities_current IS "
-    "'One row per survivor entity with surviving provenance. entity_type and "
-    "type_confidence are vacated (always NULL) after D96; identity is the entity_id.';"
-)
+_V_GRAPH_ENTITIES_TYPE_CUT = """
+CREATE OR REPLACE VIEW v_graph_entities AS
+SELECT entity_id AS id, NULL::text AS type, canonical_name AS name, normalized_name,
+       profile_summary AS summary, (created_at AT TIME ZONE 'UTC') AS created_at
+FROM   entities WHERE status = 'active';
+"""
+
+_V_GRAPH_ENTITIES_DOWNGRADE = """
+CREATE OR REPLACE VIEW v_graph_entities AS
+SELECT entity_id AS id, type, canonical_name AS name, normalized_name,
+       profile_summary AS summary, (created_at AT TIME ZONE 'UTC') AS created_at
+FROM   entities WHERE status = 'active';
+"""
+
+_MENTION_HELPER_DOWNGRADE = r"""
+CREATE OR REPLACE VIEW v_memory_mention_current_content (
+  deployment_id,
+  mention_id,
+  doc_id,
+  version_id,
+  representation_id,
+  chunk_id,
+  section_id,
+  claim_id,
+  surface_form,
+  normalized_lemma,
+  canonical_name_form,
+  emitted_type,
+  type_confidence,
+  language,
+  char_start,
+  char_end,
+  created_at,
+  survivor_entity_id,
+  resolution_method,
+  resolution_confidence,
+  resolution_is_new_entity,
+  resolved_at
+) AS
+SELECT
+  m.deployment_id,
+  m.mention_id,
+  cl.doc_id,
+  cl.version_id,
+  cl.representation_id,
+  cl.chunk_id,
+  cl.section_id,
+  mc.claim_id,
+  m.surface_form,
+  m.normalized_lemma,
+  m.canonical_name_form,
+  m.emitted_type,
+  m.type_confidence,
+  m.language,
+  m.char_start,
+  m.char_end,
+  m.created_at,
+  s.survivor_entity_id,
+  live.method::text,
+  live.confidence,
+  live.is_new_entity,
+  live.decided_at
+FROM mentions AS m
+JOIN memory_v1.chunks_live AS cl
+  ON cl.deployment_id = m.deployment_id
+ AND cl.chunk_id = m.chunk_id
+ AND cl.doc_id = m.doc_id
+LEFT JOIN memory_v1.claims_visible_history AS mc
+  ON mc.deployment_id = m.deployment_id
+ AND mc.claim_id = m.claim_id
+ AND mc.doc_id = cl.doc_id
+LEFT JOIN LATERAL (
+  SELECT rd.entity_id, rd.method, rd.confidence, rd.is_new_entity, rd.decided_at
+  FROM resolution_decisions AS rd
+  WHERE rd.deployment_id = m.deployment_id
+    AND rd.mention_id = m.mention_id
+    AND rd.superseded_by IS NULL
+  ORDER BY rd.decided_at DESC, rd.decision_id DESC
+  LIMIT 1
+) AS live ON true
+LEFT JOIN v_memory_entity_survivor AS s
+  ON s.deployment_id = m.deployment_id
+ AND s.entity_id = live.entity_id;
+"""
+
+_ENTITIES_CURRENT_DOWNGRADE = r"""
+CREATE OR REPLACE VIEW memory_v1.entities_current (
+  deployment_id, entity_id, entity_type, canonical_name, normalized_name,
+  type_confidence, profile_summary, live_mention_count, live_document_count,
+  graph_degree, created_at, updated_at
+) AS
+SELECT e.deployment_id, e.entity_id, e.type, e.canonical_name, e.normalized_name,
+       e.type_confidence, e.profile_summary, live.mention_count, live.document_count,
+       e.graph_degree::bigint, e.created_at, e.updated_at
+FROM entities AS e
+CROSS JOIN LATERAL (
+  SELECT coalesce(sum(edm.mention_count), 0)::bigint AS mention_count,
+         count(*)::bigint AS document_count
+  FROM memory_v1.entity_document_mentions AS edm
+  WHERE edm.deployment_id = e.deployment_id AND edm.entity_id = e.entity_id
+) AS live
+WHERE e.status = 'active'
+  AND EXISTS (
+    SELECT 1
+    FROM (
+      SELECT m.deployment_id, s.survivor_entity_id AS entity_id
+      FROM mentions AS m
+      JOIN chunks AS ch
+        ON ch.deployment_id = m.deployment_id
+       AND ch.chunk_id = m.chunk_id
+       AND ch.doc_id = m.doc_id
+      JOIN memory_v1.document_versions_visible AS vv
+        ON vv.deployment_id = ch.deployment_id
+       AND vv.version_id = ch.version_id
+       AND vv.doc_id = ch.doc_id
+      JOIN document_representations AS representation
+        ON representation.deployment_id = ch.deployment_id
+       AND representation.version_id = ch.version_id
+       AND representation.representation_id = ch.representation_id
+       AND representation.status = 'ready'
+      CROSS JOIN LATERAL (
+        SELECT rd.entity_id
+        FROM resolution_decisions AS rd
+        WHERE rd.deployment_id = m.deployment_id
+          AND rd.mention_id = m.mention_id
+          AND rd.superseded_by IS NULL
+        ORDER BY rd.decided_at DESC, rd.decision_id DESC
+        LIMIT 1
+      ) AS decided
+      JOIN v_memory_entity_survivor AS s
+        ON s.deployment_id = m.deployment_id
+       AND s.entity_id = decided.entity_id
+      UNION ALL
+      SELECT d.deployment_id, s.survivor_entity_id
+      FROM documents AS d
+      JOIN v_memory_entity_survivor AS s
+        ON s.deployment_id = d.deployment_id
+       AND s.entity_id = d.document_entity_id
+      WHERE d.deleted_at IS NULL
+    ) AS provenance
+    WHERE provenance.deployment_id = e.deployment_id
+      AND provenance.entity_id = e.entity_id
+  );
+"""
 
 
 def upgrade() -> None:
-    """Vacate type on the public view, then drop authority type columns."""
-    # Replace the view *before* DROP COLUMN so dependents no longer read e.type.
-    # apply_view_ddl's CREATE VIEW regex does not match CREATE OR REPLACE.
+    """Vacate type on public/helper views, then drop authority type columns."""
+    # Replace views *before* DROP COLUMN so dependents no longer read the
+    # authority columns. apply_view_ddl's CREATE VIEW regex does not match
+    # CREATE OR REPLACE.
     op.execute(MEMORY_V1_TYPE_CUT_DDL)
-    op.execute(_COMMENT_ENTITIES_CURRENT)
+    op.execute(_V_GRAPH_ENTITIES_TYPE_CUT)
     op.execute(
         "ALTER TABLE entities DROP CONSTRAINT IF EXISTS entities_deployment_id_type_fkey"
     )
@@ -148,23 +364,6 @@ def downgrade() -> None:
     op.execute("ALTER TABLE entities ADD COLUMN IF NOT EXISTS type_confidence real")
     op.execute("ALTER TABLE mentions ADD COLUMN IF NOT EXISTS emitted_type text")
     op.execute("ALTER TABLE mentions ADD COLUMN IF NOT EXISTS type_confidence real")
-    op.execute(
-        """
-        CREATE OR REPLACE VIEW memory_v1.entities_current (
-          deployment_id, entity_id, entity_type, canonical_name, normalized_name,
-          type_confidence, profile_summary, live_mention_count, live_document_count,
-          graph_degree, created_at, updated_at
-        ) AS
-        SELECT e.deployment_id, e.entity_id, e.type, e.canonical_name, e.normalized_name,
-               e.type_confidence, e.profile_summary, live.mention_count, live.document_count,
-               e.graph_degree::bigint, e.created_at, e.updated_at
-        FROM entities AS e
-        CROSS JOIN LATERAL (
-          SELECT coalesce(sum(edm.mention_count), 0)::bigint AS mention_count,
-                 count(*)::bigint AS document_count
-          FROM memory_v1.entity_document_mentions AS edm
-          WHERE edm.deployment_id = e.deployment_id AND edm.entity_id = e.entity_id
-        ) AS live
-        WHERE e.status = 'active'
-        """
-    )
+    op.execute(_V_GRAPH_ENTITIES_DOWNGRADE)
+    op.execute(_MENTION_HELPER_DOWNGRADE)
+    op.execute(_ENTITIES_CURRENT_DOWNGRADE)

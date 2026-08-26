@@ -85,9 +85,9 @@ class _Corpus:
             self.entity_ids[key] = entity_id
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:entity, :deployment, 'Person', :name, lower(:name))"
+                    " VALUES (:entity, :deployment, :name, lower(:name))"
                 ),
                 {"entity": entity_id, "deployment": _DEPLOYMENT_ID, "name": name},
             )

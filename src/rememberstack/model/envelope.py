@@ -226,7 +226,6 @@ class EntityCandidate(BaseModel):
 
     entity_id: UUID
     canonical_name: str
-    type: str
     tier: str  # which resolution tier surfaced it (T0 in the skeleton)
     context_hits: int = 0
 

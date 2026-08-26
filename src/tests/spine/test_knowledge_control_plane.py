@@ -258,9 +258,9 @@ class _Corpus:
         ):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:e, :d, :t, :n, lower(:n))"
+                    " VALUES (:e, :d, :n, lower(:n))"
                 ),
                 {"e": entity_id, "d": _DEPLOYMENT_ID, "t": entity_type, "n": name},
             )
@@ -858,9 +858,9 @@ def test_subtree_membership_rematerializes_before_routing(corpus: _Corpus) -> No
     with corpus.engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name) VALUES"
-                " (:e, :d, 'Project', 'Grandchild', 'grandchild')"
+                " (:e, :d, 'Grandchild', 'grandchild')"
             ),
             {"e": grandchild, "d": _DEPLOYMENT_ID},
         )

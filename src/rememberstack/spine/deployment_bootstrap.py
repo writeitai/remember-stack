@@ -11,7 +11,6 @@ from sqlalchemy.engine import RowMapping
 from rememberstack.core import CORE_MANIFEST
 from rememberstack.core import EntityTypeDefinition
 from rememberstack.core import PredicateDefinition
-from rememberstack.core import PredicateSignatureDefinition
 from rememberstack.model import CoreManifestConflictError
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBootstrapResult
@@ -119,20 +118,6 @@ INSERT INTO predicates (
 )
 """
 
-_INSERT_PREDICATE_SIGNATURE = """
-INSERT INTO predicate_signatures (
-    deployment_id,
-    predicate,
-    subject_type,
-    object_type
-) VALUES (
-    :deployment_id,
-    :predicate,
-    :subject_type,
-    :object_type
-)
-"""
-
 _SELECT_CORE_ENTITY_TYPES = """
 SELECT
     type,
@@ -169,19 +154,6 @@ WHERE deployment_id = :deployment_id AND tier = 'core'
 FOR UPDATE
 """
 
-_SELECT_CORE_PREDICATE_SIGNATURES = """
-SELECT
-    signature.predicate,
-    signature.subject_type,
-    signature.object_type
-FROM predicate_signatures AS signature
-JOIN predicates AS predicate
-  ON predicate.deployment_id = signature.deployment_id
- AND predicate.predicate = signature.predicate
-WHERE signature.deployment_id = :deployment_id AND predicate.tier = 'core'
-FOR UPDATE OF signature
-"""
-
 
 class DeploymentBootstrapper:
     """Create or verify one D68 deployment and its exact core-v1 manifest."""
@@ -213,7 +185,7 @@ class DeploymentBootstrapper:
                 deployment_created=deployment_created,
                 entity_types_count=len(CORE_MANIFEST.entity_types),
                 predicates_count=len(CORE_MANIFEST.predicates),
-                predicate_signatures_count=len(CORE_MANIFEST.predicate_signatures),
+                predicate_signatures_count=0,
             )
 
 
@@ -261,15 +233,6 @@ def _insert_core_manifest(*, connection: Connection, deployment_id: UUID) -> Non
             for definition in CORE_MANIFEST.predicates
         ],
     )
-    connection.execute(
-        statement=text(_INSERT_PREDICATE_SIGNATURE),
-        parameters=[
-            _predicate_signature_values(
-                deployment_id=deployment_id, definition=definition
-            )
-            for definition in CORE_MANIFEST.predicate_signatures
-        ],
-    )
 
 
 def _compare_core_manifest(*, connection: Connection, deployment_id: UUID) -> None:
@@ -289,20 +252,11 @@ def _compare_core_manifest(*, connection: Connection, deployment_id: UUID) -> No
         .mappings()
         .all()
     )
-    signature_rows = (
-        connection.execute(
-            statement=text(_SELECT_CORE_PREDICATE_SIGNATURES), parameters=parameters
-        )
-        .mappings()
-        .all()
-    )
 
     if _entity_state(rows=entity_rows) != _expected_entity_state():
         raise CoreManifestConflictError("core entity-type state conflicts")
     if _predicate_state(rows=predicate_rows) != _expected_predicate_state():
         raise CoreManifestConflictError("core predicate state conflicts")
-    if _signature_state(rows=signature_rows) != _expected_signature_state():
-        raise CoreManifestConflictError("core predicate-signature state conflicts")
 
 
 def _deployment_values(
@@ -370,18 +324,6 @@ def _predicate_definition_values(definition: PredicateDefinition) -> dict[str, o
     }
 
 
-def _predicate_signature_values(
-    *, deployment_id: UUID, definition: PredicateSignatureDefinition
-) -> dict[str, object]:
-    """Map one immutable signature definition to bound SQL values."""
-    return {
-        "deployment_id": deployment_id,
-        "predicate": definition.predicate,
-        "subject_type": definition.subject_type,
-        "object_type": definition.object_type,
-    }
-
-
 def _entity_state(*, rows: Sequence[RowMapping]) -> dict[str, dict[str, object]]:
     """Canonicalize stored entity definitions by their manifest key."""
     return {
@@ -426,20 +368,4 @@ def _expected_predicate_state() -> dict[str, dict[str, object]]:
             if key not in {"predicate", "usage_count"}
         }
         for definition in CORE_MANIFEST.predicates
-    }
-
-
-def _signature_state(*, rows: Sequence[RowMapping]) -> set[tuple[str, str, str]]:
-    """Canonicalize stored signatures as their complete compound-key set."""
-    return {
-        (str(row["predicate"]), str(row["subject_type"]), str(row["object_type"]))
-        for row in rows
-    }
-
-
-def _expected_signature_state() -> set[tuple[str, str, str]]:
-    """Canonicalize expected signatures as their complete compound-key set."""
-    return {
-        (definition.predicate, definition.subject_type, definition.object_type)
-        for definition in CORE_MANIFEST.predicate_signatures
     }

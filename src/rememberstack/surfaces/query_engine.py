@@ -295,7 +295,6 @@ class QueryEngine:
             EntityCandidate(
                 entity_id=row["entity_id"],
                 canonical_name=row["canonical_name"],
-                type=row["type"],
                 tier="T0",
                 context_hits=context_hits.get(row["entity_id"], 0),
             )
@@ -3719,9 +3718,9 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                r.valid_from, r.valid_until, r.ingested_at,
                NULL::timestamptz AS invalidated_at,
                subject.canonical_name AS subject_name,
-               subject.type::text AS subject_type,
+               NULL::text AS subject_type,
                object.canonical_name AS object_name,
-               object.type::text AS object_type,
+               NULL::text AS object_type,
                r.support_state = 'withdrawn' AS support_withdrawn
         FROM requested
         JOIN memory_v1.graph_edges_current r

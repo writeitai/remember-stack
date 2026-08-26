@@ -50,7 +50,7 @@ FILTER_ALLOWLISTS: Final[dict[str, frozenset[str]]] = {
             "support_state",
         }
     ),
-    "entities": frozenset({"entity_type"}),
+    "entities": frozenset(),
 }
 
 #: The column contract each target answers with, used when a search returns
@@ -527,7 +527,7 @@ _FILTER_COLUMNS: Final[dict[str, dict[str, str]]] = {
         "object_entity_id": "object_entity_id",
         "support_state": "support_state",
     },
-    "entities": {"entity_type": "entity_type"},
+    "entities": {},
 }
 
 

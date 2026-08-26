@@ -332,19 +332,6 @@ class FactCatalog:
             ).all()
         return {predicate: parent for predicate, parent in rows}
 
-    def predicate_signatures(
-        self, *, deployment_id: UUID
-    ) -> dict[str, tuple[tuple[str, str], ...]]:
-        """Allowed (subject_type, object_type) pairs per predicate (D18)."""
-        with self._engine.connect() as connection:
-            rows = connection.execute(
-                _SELECT_SIGNATURES, {"deployment_id": deployment_id}
-            ).all()
-        signatures: dict[str, list[tuple[str, str]]] = {}
-        for predicate, subject_type, object_type in rows:
-            signatures.setdefault(predicate, []).append((subject_type, object_type))
-        return {predicate: tuple(pairs) for predicate, pairs in signatures.items()}
-
     def entity_type_parents(self, *, deployment_id: UUID) -> dict[str, str | None]:
         """The registry type hierarchy: type → parent (extend-never-fork)."""
         with self._engine.connect() as connection:
@@ -622,13 +609,6 @@ _SELECT_PREDICATES = text(
     """
     SELECT predicate, parent_predicate FROM predicates
     WHERE deployment_id = :deployment_id AND status = 'active'
-    """
-)
-
-_SELECT_SIGNATURES = text(
-    """
-    SELECT predicate, subject_type, object_type FROM predicate_signatures
-    WHERE deployment_id = :deployment_id
     """
 )
 

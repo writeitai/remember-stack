@@ -265,9 +265,9 @@ def seeded(database_engine: Engine) -> dict[str, object]:
         ):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name) VALUES (:entity,"
-                    " :deployment, 'Concept', :name, lower(:name))"
+                    " :deployment, :name, lower(:name))"
                 ),
                 {"entity": entity_id, "deployment": _DEPLOYMENT_ID, "name": name},
             )
@@ -652,9 +652,9 @@ def test_ranked_search_never_crosses_deployments(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name) VALUES"
-                " (:entity, :deployment, 'Concept', 'Nearest foreign row',"
+                " (:entity, :deployment, 'Nearest foreign row',"
                 " 'nearest foreign row')"
             ),
             {"entity": other_entity, "deployment": _OTHER_DEPLOYMENT_ID},

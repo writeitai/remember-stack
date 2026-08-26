@@ -8,7 +8,7 @@ from alembic import op
 _TABLE_START = re.compile(r"^CREATE TABLE (?P<table>[a-z_][a-z0-9_]*) \($")
 _COLUMN_START = re.compile(r"^(?P<column>[a-z_][a-z0-9_]*)\s+")
 _VIEW_START = re.compile(
-    r"^CREATE VIEW (?P<view>[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?) \($"
+    r"^CREATE(?: OR REPLACE)? VIEW (?P<view>[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?) \($"
 )
 _VIEW_COLUMN = re.compile(r"^(?P<column>[a-z_][a-z0-9_]*),?\s*--\s*(?P<comment>.+)$")
 

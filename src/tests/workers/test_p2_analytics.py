@@ -69,9 +69,9 @@ class _Corpus:
                 self.ids[name] = entity_id
                 connection.execute(
                     text(
-                        "INSERT INTO entities (entity_id, deployment_id, type,"
+                        "INSERT INTO entities (entity_id, deployment_id,"
                         " canonical_name, normalized_name)"
-                        " VALUES (:e, :d, 'Person', :n, lower(:n))"
+                        " VALUES (:e, :d, :n, lower(:n))"
                     ),
                     {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name},
                 )
@@ -425,9 +425,9 @@ def test_failed_snapshot_leaves_no_analytics_behind(
         for entity_id, name in ((left, "cyc-l"), (right, "cyc-r")):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:e, :d, 'Person', :n, lower(:n))"
+                    " VALUES (:e, :d, :n, lower(:n))"
                 ),
                 {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name},
             )

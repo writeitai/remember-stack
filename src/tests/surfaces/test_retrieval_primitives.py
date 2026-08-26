@@ -127,9 +127,9 @@ class _Corpus:
         self.ids[name] = entity_id
         connection.execute(  # type: ignore[attr-defined]
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, :t, :n, lower(:n))"
+                " VALUES (:e, :d, :n, lower(:n))"
             ),
             {"e": entity_id, "d": _DEPLOYMENT_ID, "t": entity_type, "n": name},
         )
@@ -149,9 +149,9 @@ class _Corpus:
         self.ids["A. Nowak"] = absorbed
         connection.execute(  # type: ignore[attr-defined]
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name, status, merged_into)"
-                " VALUES (:e, :d, 'Person', 'A. Nowak', 'a. nowak', 'merged', :m)"
+                " VALUES (:e, :d, 'A. Nowak', 'a. nowak', 'merged', :m)"
             ),
             {"e": absorbed, "d": _DEPLOYMENT_ID, "m": self.ids["Alice"]},
         )

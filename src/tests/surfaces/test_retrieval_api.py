@@ -629,9 +629,9 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
         ):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:entity_id, :deployment_id, 'Person',"
+                    " VALUES (:entity_id, :deployment_id,"
                     " :canonical_name, lower(:canonical_name))"
                 ),
                 {
@@ -665,9 +665,9 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
             )
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name) VALUES"
-                " (:entity_id, :deployment_id, 'Organization',"
+                " (:entity_id, :deployment_id,"
                 " 'Second context', 'second context')"
             ),
             {"entity_id": second_context, "deployment_id": _DEPLOYMENT_ID},
@@ -992,9 +992,9 @@ def test_resolve_follows_merge_redirects_to_the_survivor(rig: _ApiRig) -> None:
     with rig.engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name, status, merged_into)"
-                " VALUES (:e, :d, 'Person', 'A. Novak', 'a. novak', 'merged', :m)"
+                " VALUES (:e, :d, 'A. Novak', 'a. novak', 'merged', :m)"
             ),
             {"e": merged, "d": _DEPLOYMENT_ID, "m": alice["entity_id"]},
         )

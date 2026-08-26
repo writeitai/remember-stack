@@ -64,16 +64,6 @@ def install_pack(*, engine: Engine, deployment_id: UUID, pack: ExtensionPack) ->
                     "pack_id": pack.pack_id,
                 },
             )
-            for subject_type, object_type in predicate.signatures:
-                connection.execute(
-                    _INSERT_SIGNATURE,
-                    {
-                        "deployment_id": deployment_id,
-                        "predicate": predicate.predicate,
-                        "subject_type": subject_type,
-                        "object_type": object_type,
-                    },
-                )
 
 
 def _require_anchors(
@@ -191,17 +181,6 @@ _INSERT_PREDICATE = text(
         :is_change_prone, 'extension', :pack_id
     )
     ON CONFLICT (deployment_id, predicate) DO NOTHING
-    """
-)
-
-_INSERT_SIGNATURE = text(
-    """
-    INSERT INTO predicate_signatures (
-        deployment_id, predicate, subject_type, object_type
-    ) VALUES (
-        :deployment_id, :predicate, :subject_type, :object_type
-    )
-    ON CONFLICT (deployment_id, predicate, subject_type, object_type) DO NOTHING
     """
 )
 

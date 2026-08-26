@@ -153,7 +153,7 @@ class GraphQueries:
         total, exact = self._count_reachable(
             connection, pattern=pattern, parameters=parameters
         )
-        projection = "b.id, b.name, b.type, length(r) AS hops"
+        projection = "b.id, b.name, length(r) AS hops"
         if include_paths:
             projection += ", nodes(p) AS path_nodes, rels(p) AS path_edges"
         rows = _rows(
@@ -168,8 +168,7 @@ class GraphQueries:
             GraphNode(
                 entity_id=cast("UUID", row[0]),
                 name=cast("str", row[1]),
-                type=cast("str", row[2]),
-                hops=cast("int", row[3]),
+                hops=cast("int", row[2]),
             )
             for row in page_rows
         )
@@ -177,7 +176,7 @@ class GraphQueries:
         edges: tuple[GraphEdge, ...] = ()
         if include_paths:
             ranked_paths = tuple(
-                _path_from_row([row[3], row[4], row[5]]) for row in page_rows
+                _path_from_row([row[2], row[3], row[4]]) for row in page_rows
             )
             edges_by_id: dict[UUID, GraphEdge] = {}
             for path in ranked_paths:
@@ -630,7 +629,6 @@ def _path_from_row(row: list[object]) -> GraphPath:
         GraphNode(
             entity_id=cast("UUID", node["id"]),
             name=cast("str", node["name"]),
-            type=cast("str", node["type"]),
             hops=index,
         )
         for index, node in enumerate(raw_nodes)
@@ -663,7 +661,6 @@ def _citation_path_from_row(row: list[object]) -> GraphPath:
         GraphNode(
             entity_id=cast("UUID", node["id"]),
             name=cast("str", node.get("title") or ""),
-            type="Document",
             hops=index,
         )
         for index, node in enumerate(raw_nodes)

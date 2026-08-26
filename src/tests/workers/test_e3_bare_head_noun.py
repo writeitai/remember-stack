@@ -54,9 +54,6 @@ def test_normalize_drops_game_relation_without_resolve() -> None:
         claim=_claim(),
         predicates={"related_to": None},
         prompt_lines="related_to",
-        signatures={},
-        type_parents={"Person": None, "Product": None},
-        allowed_types=frozenset({"Person", "Product"}),
         meter=NoopCostMeter(),
     )
     assert resolver.calls == []
@@ -87,9 +84,6 @@ def test_normalize_resolves_fifa_23() -> None:
         claim=_claim_with(claim_text="James played FIFA 23 after dinner."),
         predicates={"related_to": None},
         prompt_lines="related_to",
-        signatures={},
-        type_parents={"Person": None, "Product": None},
-        allowed_types=frozenset({"Person", "Product"}),
         meter=NoopCostMeter(),
     )
     assert [ref.name for ref in resolver.calls] == ["James", "FIFA 23"]
@@ -118,9 +112,6 @@ def test_normalize_drops_game_observation_without_resolve() -> None:
         claim=_claim(),
         predicates={"related_to": None},
         prompt_lines="related_to",
-        signatures={},
-        type_parents={"Person": None, "Product": None},
-        allowed_types=frozenset({"Person", "Product"}),
         meter=NoopCostMeter(),
     )
     assert resolver.calls == []
@@ -150,9 +141,6 @@ def test_works_for_between_people_is_not_dropped() -> None:
         claim=_claim_with(claim_text="Alice works for me."),
         predicates={"works_for": None},
         prompt_lines="works_for",
-        signatures={},
-        type_parents={"Person": None},
-        allowed_types=frozenset({"Person"}),
         meter=NoopCostMeter(),
     )
     assert [ref.name for ref in resolver.calls] == ["Alice", "Me"]
@@ -183,9 +171,6 @@ def test_normalize_passes_source_surface_to_resolve() -> None:
         claim=_claim_with(claim_text="James opened the App after dinner."),
         predicates={"related_to": None},
         prompt_lines="related_to",
-        signatures={},
-        type_parents={"Person": None, "Product": None},
-        allowed_types=frozenset({"Person", "Product"}),
         meter=NoopCostMeter(),
     )
     assert resolver.calls[1].name == "Application"

@@ -669,7 +669,6 @@ VIEW_CONTRACTS: Final = (
             {
                 "deployment_id",
                 "entity_id",
-                "entity_type",
                 "canonical_name",
                 "normalized_name",
                 "live_mention_count",
@@ -694,7 +693,7 @@ VIEW_CONTRACTS: Final = (
             "created_at": "timestamp with time zone",
             "updated_at": "timestamp with time zone",
         },
-        indexes_used=("entities_pkey", "ix_entities_type"),
+        indexes_used=("entities_pkey",),
         positive_fixture="entities_current.survivor_with_live_provenance_present",
         negative_fixture="entities_current.merged_entity_absent",
     ),
