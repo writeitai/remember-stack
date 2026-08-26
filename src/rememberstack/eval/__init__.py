@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from rememberstack.eval.operational_scale import record_operational_scale_report
     from rememberstack.eval.resolution import PRECISION_FLOOR
     from rememberstack.eval.resolution import RECALL_FLOOR
+    from rememberstack.eval.resolution import ResolutionSuiteRecordError
     from rememberstack.eval.resolution import run_resolution_suite
     from rememberstack.eval.resolution import seed_synthetic_golden_pairs
     from rememberstack.eval.retrieval_spikes import record_retrieval_spike_report
@@ -56,6 +57,7 @@ __all__ = (
     "OPERATIONAL_SCALE_VERSION",
     "PRECISION_FLOOR",
     "RECALL_FLOOR",
+    "ResolutionSuiteRecordError",
     "record_retrieval_spike_report",
     "record_operational_scale_report",
     "RETRIEVAL_SPIKE_VERSION",
@@ -108,6 +110,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     ),
     "PRECISION_FLOOR": ("rememberstack.eval.resolution", "PRECISION_FLOOR"),
     "RECALL_FLOOR": ("rememberstack.eval.resolution", "RECALL_FLOOR"),
+    "ResolutionSuiteRecordError": (
+        "rememberstack.eval.resolution",
+        "ResolutionSuiteRecordError",
+    ),
     "record_retrieval_spike_report": (
         "rememberstack.eval.retrieval_spikes",
         "record_retrieval_spike_report",

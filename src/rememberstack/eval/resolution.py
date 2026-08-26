@@ -19,6 +19,7 @@ from sqlalchemy import JSON
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.resolver import CascadeResolver
 
 PRECISION_FLOOR: Final = 0.90
@@ -28,6 +29,10 @@ RECALL_FLOOR: Final = 0.80
 """Suite-blocking global recall floor (starting point, D22/D96)."""
 
 _PAIR_NAMESPACE: Final = UUID("601de77a-0000-4000-8000-000000000000")
+
+
+class ResolutionSuiteRecordError(RuntimeError):
+    """The suite could not persist its acceptance record on a resolver version."""
 
 
 class ResolutionCurve(TypedDict):
@@ -199,6 +204,7 @@ def run_resolution_suite(
             .all()
         )
     global_counts = _empty_counts()
+    same_lemma_negative_counts = _empty_counts()
     by_deciding_tier: dict[str, dict[str, int]] = {}
     by_blocking_tier: dict[str, dict[str, int]] = {}
     for pair in pairs:
@@ -214,6 +220,12 @@ def run_resolution_suite(
         blocking_counts = by_blocking_tier.setdefault(blocking_tier, _empty_counts())
         for counts in (global_counts, deciding_counts, blocking_counts):
             _record_outcome(counts=counts, matched=matched, actual=actual)
+        if not actual and normalized_lemma(
+            surface=str(pair["surface_a"])
+        ) == normalized_lemma(surface=str(pair["surface_b"])):
+            _record_outcome(
+                counts=same_lemma_negative_counts, matched=matched, actual=actual
+            )
     curve = _curve(counts=global_counts)
     tier_diagnostics: TierDiagnostics = {
         "deciding": {
@@ -225,8 +237,10 @@ def run_resolution_suite(
             for tier, counts in sorted(by_blocking_tier.items())
         },
     }
-    t0_counts = by_blocking_tier.get("T0", _empty_counts())
-    gate_guards = _gate_guards(global_counts=global_counts, t0_counts=t0_counts)
+    gate_guards = _gate_guards(
+        global_counts=global_counts,
+        same_lemma_negative_counts=same_lemma_negative_counts,
+    )
     # Undefined metrics and absent label classes block the suite. The D95 T0
     # negative canary is also zero-tolerance: its false merges cannot be
     # diluted below the global precision floor by adding easy positives.
@@ -256,7 +270,7 @@ def run_resolution_suite(
                 "passed": passed,
             },
         )
-        connection.execute(
+        resolver_record = connection.execute(
             _RECORD_CURVES,
             {
                 "deployment_id": deployment_id,
@@ -268,6 +282,12 @@ def run_resolution_suite(
                 },
             },
         )
+        if resolver_record.rowcount != 1:
+            raise ResolutionSuiteRecordError(
+                "resolution suite result was not recorded: resolver version "
+                f"{component_version!r} is not registered for deployment "
+                f"{deployment_id}"
+            )
     return {
         "curve": curve,
         "tier_diagnostics": tier_diagnostics,
@@ -315,14 +335,16 @@ def _tier_diagnostic(*, counts: dict[str, int]) -> TierDiagnostic:
 
 
 def _gate_guards(
-    *, global_counts: dict[str, int], t0_counts: dict[str, int]
+    *, global_counts: dict[str, int], same_lemma_negative_counts: dict[str, int]
 ) -> ResolutionGateGuards:
     """Require both label classes and a measured, false-merge-free T0 canary."""
     return {
         "positive_labels_measured": global_counts["tp"] + global_counts["fn"] > 0,
         "negative_labels_measured": global_counts["tn"] + global_counts["fp"] > 0,
-        "t0_negative_canary_measured": t0_counts["tn"] + t0_counts["fp"] > 0,
-        "t0_false_merge_free": t0_counts["fp"] == 0,
+        "t0_negative_canary_measured": (
+            same_lemma_negative_counts["tn"] + same_lemma_negative_counts["fp"] > 0
+        ),
+        "t0_false_merge_free": same_lemma_negative_counts["fp"] == 0,
     }
 
 

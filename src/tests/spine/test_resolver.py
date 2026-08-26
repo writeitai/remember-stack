@@ -16,6 +16,7 @@ from sqlalchemy.engine import Engine
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.eval import PRECISION_FLOOR
+from rememberstack.eval import ResolutionSuiteRecordError
 from rememberstack.eval import run_resolution_suite
 from rememberstack.eval import seed_synthetic_golden_pairs
 from rememberstack.model import ClaimForNormalization
@@ -308,6 +309,20 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         "t0_false_merge_free": True,
     }
 
+    one_sided_provider = FakeModelProvider(generate_router=_first_token_router)
+    one_sided = _resolver(
+        engine=database_engine,
+        provider=one_sided_provider,
+        thresholds=ResolutionThresholds(t3_accept=0.0, t3_reject=-1.0),
+    )
+    assert one_sided.judge_pair(
+        surface_a="John Smith",
+        surface_b="John Smith",
+        context_a="John Smith lives in Bristol.",
+        context_b=None,
+    ) == (False, "T4_small")
+    assert one_sided_provider.embedded_texts == []
+
     with database_engine.connect() as connection:
         notes = connection.execute(
             text(
@@ -379,6 +394,29 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
     assert t3_diagnostics["deciding"]["T3"]["false_merges"] >= 1
     assert t3_regression["gate_guards"]["t0_false_merge_free"] is False
 
+    # The safety canary is measured from the actual lemmas, not from nullable
+    # human-entered blocking metadata that can be stale or misclassified.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE golden_pairs SET expected_blocking_tier = NULL"
+                " WHERE deployment_id = :deployment"
+                " AND surface_a = 'John Smith' AND surface_b = 'John Smith'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+    misclassified_t3 = run_resolution_suite(
+        engine=database_engine,
+        resolver=loose_t3,
+        deployment_id=_DEPLOYMENT_ID,
+        component_version=RESOLVER_VERSION,
+    )
+    assert misclassified_t3["curve"]["precision"] is not None
+    assert misclassified_t3["curve"]["precision"] >= PRECISION_FLOOR
+    assert misclassified_t3["tier_diagnostics"]["deciding"]["T3"]["false_merges"] >= 1
+    assert misclassified_t3["gate_guards"]["t0_false_merge_free"] is False
+    assert not misclassified_t3["passed"]
+
     # A one-class golden set cannot manufacture perfect precision: both match
     # and no-match labels, including a T0 negative canary, are mandatory.
     with database_engine.begin() as connection:
@@ -400,6 +438,26 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
     assert positive_only["gate_guards"]["negative_labels_measured"] is False
     assert positive_only["gate_guards"]["t0_negative_canary_measured"] is False
     assert not positive_only["passed"]
+
+    with pytest.raises(
+        ResolutionSuiteRecordError, match="resolver version 'resolver-missing'"
+    ):
+        run_resolution_suite(
+            engine=database_engine,
+            resolver=resolver,
+            deployment_id=_DEPLOYMENT_ID,
+            component_version="resolver-missing",
+        )
+    with database_engine.connect() as connection:
+        missing_runs = connection.execute(
+            text(
+                "SELECT count(*) FROM eval_runs"
+                " WHERE deployment_id = :deployment"
+                " AND component_version = 'resolver-missing'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one()
+    assert missing_runs == 0
 
 
 def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> None:

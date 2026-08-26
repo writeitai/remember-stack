@@ -52,6 +52,7 @@ MENTION: {mention!r}
 CLAIM CONTEXT: {context}
 
 CANDIDATE: {candidate!r}
+CANDIDATE EVIDENCE: {candidate_evidence}
 
 Same entity?"""
 
@@ -191,8 +192,8 @@ class CascadeResolver:
         a verdict. Non-T0 pairs must be reachable through T1/T2 (a pair that
         blocking cannot reach is a no-match by the recall ceiling). T3 may
         decide non-identical spellings. Same-lemma pairs exercise T3 only when
-        the golden pair supplies distinguishing context as a stand-in for the
-        profile evidence WP-I.4 adds; an empty-profile pair skips unsafe
+        both sides of the golden pair supply distinguishing context as a
+        stand-in for profile evidence; an empty-profile pair skips unsafe
         name-only cosine and goes to T4. Returns (match, deciding_tier).
         """
         lemma_a = normalized_lemma(surface=surface_a)
@@ -208,8 +209,10 @@ class CascadeResolver:
                 return False, "blocking"
         thresholds = self._config.thresholds
         has_context_evidence = bool(
-            (context_a is not None and context_a.strip())
-            or (context_b is not None and context_b.strip())
+            context_a is not None
+            and context_a.strip()
+            and context_b is not None
+            and context_b.strip()
         )
         if not same_lemma or has_context_evidence:
             embedding_texts = (
@@ -233,10 +236,11 @@ class CascadeResolver:
             if score <= thresholds.t3_reject:
                 return False, "T3"
         prompt = _T4_PROMPT.format(
-            mention=surface_b, context=context_b or "(none)", candidate=surface_a
+            mention=surface_b,
+            context=context_b or "(none)",
+            candidate=surface_a,
+            candidate_evidence=context_a or "(none)",
         )
-        if context_a:
-            prompt += f"\nCANDIDATE CONTEXT: {context_a}"
         verdict = self._model_provider.generate(
             request=ModelRequest(
                 model=self._small_model, prompt=prompt, temperature=0.0
@@ -403,6 +407,7 @@ class CascadeResolver:
             mention=reference.name,
             context=claim.claim_text,
             candidate=candidate.canonical_name,
+            candidate_evidence="(none)",
         )
         verdict_call = self._model_provider.generate(
             request=ModelRequest(
