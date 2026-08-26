@@ -28,6 +28,7 @@ from fastapi import Header
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -45,6 +46,8 @@ from rememberstack.model import IngestedVersion
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
+from rememberstack.model import SpendLeaseRefused
+from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
@@ -81,6 +84,24 @@ class IngestPort(Protocol):
         source_version_ref: str | None,
         sync_cycle_id: UUID | None,
     ) -> IngestedVersion: ...
+
+
+class SpendLeasePort(Protocol):
+    """Metadata-only spend hold used by managed self-host (D46)."""
+
+    def reserve(
+        self,
+        *,
+        authorization: str,
+        path_id: str,
+        content_length: int | None = None,
+        mime: str | None = None,
+        operation_name: str | None = None,
+    ) -> UUID: ...
+
+    def commit(self, *, authorization: str, reservation_id: UUID) -> None: ...
+
+    def release(self, *, authorization: str, reservation_id: UUID) -> None: ...
 
 
 class ConnectorManagementPort(Protocol):
@@ -187,6 +208,7 @@ def build_api(
     surface: OperationSurface | None = None,
     open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
+    spend_lease: SpendLeasePort | None = None,
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
@@ -195,9 +217,10 @@ def build_api(
 
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
-    deployment-side connector configuration; and `auth` gates every endpoint
-    on one perimeter credential. Each capability is explicitly composed;
-    absent services do not pretend to exist.
+    deployment-side connector configuration; `auth` gates every endpoint
+    on one perimeter credential; and `spend_lease` holds estimate on the
+    control plane for ingest/search/operations POST (D46). Each capability
+    is explicitly composed; absent services do not pretend to exist.
     """
     if surface is not None and surface.deployment_id != deployment_id:
         raise ValueError(
@@ -319,6 +342,9 @@ def build_api(
         _mount_pipeline_readiness(
             app=app, readiness=pipeline_readiness, deployment_id=deployment_id
         )
+
+    if spend_lease is not None:
+        _install_spend_lease(app=app, spend_lease=spend_lease)
 
     return app
 
@@ -766,3 +792,80 @@ def _admission(*, admission: AdmissionPort, deployment_id: UUID):  # noqa: ANN20
             ) from error
 
     return dependency
+
+
+def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | None:
+    """Return ``(path_id, operation_name)`` for D46 spend-gated engine routes."""
+    normalized = path.rstrip("/") or "/"
+    if method == "POST" and normalized == "/ingest":
+        return ("ingest", None)
+    if method == "GET" and normalized in {"/search/claims", "/search/chunks"}:
+        return ("search", None)
+    if method == "POST" and normalized.startswith("/operations/"):
+        name = normalized.removeprefix("/operations/")
+        if name and "/" not in name:
+            return ("recipe", name)
+    return None
+
+
+def _content_length(*, request: Request) -> int | None:
+    """Parse Content-Length without reading the body."""
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _install_spend_lease(*, app: FastAPI, spend_lease: SpendLeasePort) -> None:
+    """Reserve metadata on spend-gated routes; commit 2xx, release otherwise."""
+
+    @app.middleware("http")
+    async def spend_lease_middleware(request: Request, call_next: Any) -> Any:
+        gated = _spend_gated_route(method=request.method, path=request.url.path)
+        if gated is None:
+            return await call_next(request)
+        authorization = request.headers.get("authorization")
+        if not authorization:
+            return await call_next(request)
+        path_id, operation_name = gated
+        try:
+            reservation_id = spend_lease.reserve(
+                authorization=authorization,
+                path_id=path_id,
+                content_length=_content_length(request=request),
+                mime=request.query_params.get("mime"),
+                operation_name=operation_name,
+            )
+        except SpendLeaseRefused as error:
+            return JSONResponse(
+                status_code=error.status_code, content={"detail": error.detail}
+            )
+        except SpendLeaseUnavailable:
+            return JSONResponse(
+                status_code=503, content={"detail": "spend_lease_unavailable"}
+            )
+        try:
+            response = await call_next(request)
+        except Exception:
+            spend_lease.release(
+                authorization=authorization, reservation_id=reservation_id
+            )
+            raise
+        if 200 <= response.status_code < 300:
+            try:
+                spend_lease.commit(
+                    authorization=authorization, reservation_id=reservation_id
+                )
+            except (SpendLeaseRefused, SpendLeaseUnavailable):
+                pass
+        else:
+            try:
+                spend_lease.release(
+                    authorization=authorization, reservation_id=reservation_id
+                )
+            except (SpendLeaseRefused, SpendLeaseUnavailable):
+                pass
+        return response

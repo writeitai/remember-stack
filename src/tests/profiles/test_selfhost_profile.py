@@ -85,6 +85,7 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "LANGFUSE_HOST",
         "REMEMBERSTACK_SELFHOST_API_BEARER_BIND",
         "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN",
+        "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
     assert (
