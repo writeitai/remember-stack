@@ -523,9 +523,14 @@ class CascadeResolver:
         mention_id = uuid4()
         emitted = reference.mention_surface()
         if surface_appears_in_claim(surface=emitted, claim_text=claim.claim_text):
-            surface = emitted
+            source_text = emitted
+        elif surface_appears_in_claim(
+            surface=reference.name, claim_text=claim.claim_text
+        ):
+            source_text = reference.name
         else:
-            surface = reference.name
+            source_text = None
+        surface = source_text if source_text is not None else reference.name
         surface_lemma = normalized_lemma(surface=surface)
         connection.execute(
             _INSERT_MENTION,
@@ -549,21 +554,26 @@ class CascadeResolver:
             lemma=lemma,
             provenance="llm_canonical",
         )
-        self._upsert_alias(
-            connection=connection,
-            deployment_id=deployment_id,
-            entity_id=entity_id,
-            alias_text=surface,
-            lemma=surface_lemma,
-            provenance="source",
-        )
+        if source_text is not None:
+            self._upsert_alias(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_id=entity_id,
+                alias_text=source_text,
+                lemma=normalized_lemma(surface=source_text),
+                provenance="source",
+            )
         self.refresh_generic_identifier_guard(
             connection=connection, deployment_id=deployment_id, lemma=lemma
         )
-        if surface_lemma != lemma:
-            self.refresh_generic_identifier_guard(
-                connection=connection, deployment_id=deployment_id, lemma=surface_lemma
-            )
+        if source_text is not None:
+            source_lemma = normalized_lemma(surface=source_text)
+            if source_lemma != lemma:
+                self.refresh_generic_identifier_guard(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    lemma=source_lemma,
+                )
         connection.execute(
             _INSERT_DECISION,
             {

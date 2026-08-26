@@ -526,7 +526,8 @@ def test_ungrounded_surface_does_not_write_source_alias(
     provenances = {(row["provenance"], row["alias_text"]) for row in aliases}
     assert ("llm_canonical", "Application") in provenances
     assert ("source", "App") not in provenances
-    assert ("source", "Application") in provenances
+    assert ("source", "Application") not in provenances
+    assert not any(provenance == "source" for provenance, _ in provenances)
     assert all(row["surface_form"] == "Application" for row in mentions)
 
 
