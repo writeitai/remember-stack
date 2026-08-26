@@ -6,6 +6,12 @@ analysis (`plan/analysis/entity_registry.md`) into binding design. Formalizes ob
 decisions **D15–D24** (and D4/D5). Numbers here are starting points to be measured on the
 golden set (D22) / a corpus slice — not committed constants.
 
+> **Amended 2026-08-26 (D95–D96).** Identity, T0-as-verdict, required extract type, and
+> first-mint `entities.type` are superseded by
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md).
+> This file remains current for blocking, clustering, review, packs, and eval harness
+> shape except where that design speaks.
+
 ## 1. Role and scope
 
 The registries are **cross-cutting substrate of plane E**, not a layer (D14): layers

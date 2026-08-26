@@ -6,6 +6,12 @@ the cost center and the quality bottleneck of plane E, so the design is opiniona
 extract and *how* to keep it faithful. Decisions: **D31–D35** (this layer), building on D2, D4, D7,
 D12, D17–D19. Full research + evidence: `plan/analysis/claimify_research/SYNTHESIS.md`.
 
+> **Amended 2026-08-26 (D95–D96).** E3 `EntityRef` is a **name**; a class is not required.
+> Pre-resolve domain/range on emitted types is withdrawn. Bare-noun eligibility, aliases, and
+> `works_for` Person objects:
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md).
+> Claimify (E2) is unchanged.
+
 ## 1. Where this sits
 
 ```

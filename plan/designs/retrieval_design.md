@@ -12,6 +12,11 @@ implementation analysis
 [`retrieval_default_path.md`](../analysis/retrieval_default_path.md). Numbers are starting
 points to measure, not committed constants (CLAUDE.md).
 
+> **Amended 2026-08-26 (D97).** Ordinary questions resolve to ids, load observations **and**
+> relations, hop `neighborhood` with an **empty** predicate list, and match fact text.
+> Predicates are optional filters. Details:
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §7.
+
 > **Reading this cold (CLAUDE.md Rule 1).** The memory has three planes: **E** (evidence —
 > immutable claims, adjudicated relations/observations, all anchored on canonical entities with
 > bi-temporal validity), **K** (compiled + authored knowledge pages in git), and **P**

@@ -448,6 +448,10 @@ global constant works. Graphiti independently arrived at the same block-loose/de
 **Consequences.** LLM cost scales with ambiguity. Blocking sets a hard recall ceiling, so cheap
 tiers *escalate* near-misses, never auto-reject. Feeds O6 (every threshold needs the golden set).
 
+**Refined by D95.** T0 exact lemma is a **candidate**, not a merge verdict, when the name is
+common, several exact hits exist, a profile fights the claim, or T4 says different. The same
+spelling may be two `entity_id`s. Profile text is T4 evidence, not the identity key.
+
 ## D18. Ontology seed core — 8 types + 14 predicates, schema.org-anchored, domain/range not OWL
 
 **Decision.** Seed core: 8 entity types (`Person`, `Organization`, `Place`, `Document` (a root
@@ -480,6 +484,11 @@ registries §4 watchlist — the first watchlist graduations. Everything else he
 **Refined by D69.** The eight roots, all required/behavior-bearing row values, and all concrete
 signatures are fixed by the inline registry manifest. `Document.parent_type = NULL` and its
 `schema_org_ref` is `https://schema.org/CreativeWork`; `CreativeWork` is not a registry row.
+
+**Refined by D96.** Core types remain a **hat vocabulary**, not a mint requirement. Extract
+does not have to pick a class. Domain/range must not force a second `entity_id` for dual
+roles (`works_for` may point at a Person). Signature checks fail open when an end has no
+hat. Pre-resolve checks on LLM-emitted classes are withdrawn.
 
 ## D19. Coref is satisfied inside the E2 extraction call (no dedicated model)
 
@@ -3853,3 +3862,117 @@ explicit unready/rebuild/publish maintenance procedure. Amends D63 by pinning
 the reference Qwen/pgvector profile to 1,536 dimensions. Amends D23 by removing
 `claims` from monthly partitioning so its in-row BM25 index has global corpus
 statistics without a duplicated claim-search table.
+
+## D95. Entity identity is the real-world referent
+
+**Decision (2026-08-26).** One `entity_id` per real-world referent. Names
+generate **candidates**; they are not the verdict. Exact lemma match (T0)
+auto-accepts only when the name is distinctive, there is a single active
+hit, and nothing fights it (promiscuous-lemma guard, common-name list,
+profile contradiction). Otherwise escalate. If T4 says the mention is not
+the candidate, **mint a second entity with the same spelling**. A short
+`profile_summary` is evidence shown to T4 and (with the name) the T3
+vector; it is never the identity key. Job, city, and employer changes
+update the profile, not the id. Relatedness (father/son, vendor/product,
+employer/employee) is a **relation**, not a field on the entity. The
+golden-pair harness must not treat lemma equality as an automatic match.
+
+**Context.** Live stores minted junk nouns (`game`, `App`) and could not
+keep two same-named people apart: T0 exact-lemma merge at confidence 1.0
+never reached the judge, and `profile_summary` was unused. ERP metonymy
+(SAP as vendor shorthand vs suite) must stay **one** retrieval identity
+when the spelling is the same; a separately named product (S/4HANA) is a
+second id plus a relation. An operator using ERP daily ranked entity
+identity as the load-bearing quality mechanism — not LoCoMo category
+tuning. Peer engines (Mem0, Hindsight, Graphiti, Cognee) do not key
+identity on `(name, type)`; GraphRAG-shaped forks do, and fail.
+
+**Consequences.** Homonyms become representable. Distinctive brands still
+cheap-merge at T0. T4 cost rises on common names. Same-lemma races stay
+serialized by the existing lemma lock; the lock no longer implies a
+single row. D22 must include same-name non-matches or the failure is
+invisible.
+
+**Design.** `plan/designs/entity_identity_and_retrieval_design.md`
+**Analysis.** `plan/analysis/entity_identity_and_retrieval_analysis.md`
+**Sequencing.** `plan/plans/entity_identity_and_retrieval.md`
+
+**Rejected.** T0 exact as always-verdict; identity = description (“the
+Jiri in Prague”); `(name, type)` unique key; entity-level `related[]`;
+T4 emitting mushy relatedness instead of same/not-same.
+
+**Amends.** Refines D17 (T0 meaning). Does not replace the T0–T4 ladder,
+D20 (no external authority), or D21 (reversible merges).
+
+## D96. Extract names; type is not identity
+
+**Decision (2026-08-26).** E3 emits **names**, not a required class.
+Mentions remain the naming transcript (string, claim, span) and are not
+a candidate list. `emitted_type` is not required and is never copied onto
+the entity as law. An entity **may** wear zero or more hats from the
+registry (many-to-many, **additive** — a later hat does not silently drop
+an earlier specific one). Hats are not identity and do not unique with
+the name. Domain/range must not mint a second id for dual roles:
+`works_for` may have a **Person** object (“someone works for me” is one
+me). Pre-resolve signature checks on LLM-emitted classes are withdrawn.
+Post-resolve domain/range **fails open** when either end has no hat; it
+drops only when both ends have hats and no signature matches. Bare head
+nouns (`game`, `the system`) are not entities. Source surfaces become
+aliases. `generic_identifier_guard` is populated in resolve, not only
+deleted on forget. D86 still gates **emitted** illegal hats (retry then
+drop; never coerce to `Concept`).
+
+**Context.** Required `EntityRef.type` forced a class on every name
+(first-mint-wins, against the designed vote). D18 `works_for: Person →
+Organization` dropped true person-as-employer facts or implied a Company
+twin. Pre-resolve `_signature_allows` used the same JSON that proposed
+the edge — not an independent check. `located_in` forbids Person as
+subject, so travel became `other:` or an observation; that is the
+strict set **pushing facts out**, not missing them.
+
+**Consequences.** Extract prompt shrinks. Dual-role facts persist on one
+id. Signature tables remain for when hats exist. P2 rebuild after
+signature/hat migration. Observations stay untyped (D43).
+
+**Design / analysis / sequencing.** same as D95.
+
+**Rejected.** Required class on every mention; first-mint type as law;
+D18 pre-resolve on emitted types; unique `(name, hat)`; Graphiti
+drop-conflicting-label; deleting the mentions table; dropping hats
+*instead of* D95.
+
+**Amends.** Refines D18 (types as hats, `works_for` range, fail-open).
+Narrows D86 to optional emitted hats. Does not withdraw D5 (`other:`
+escape) or D15 (core + extensions as hat vocabulary).
+
+## D97. Default retrieval is entity neighborhood plus fact text
+
+**Decision (2026-08-26).** The ordinary question path does not require a
+predicate or a type filter. Resolve names to `entity_id`s; load
+**observations and relations** for those ids; `neighborhood` with an
+**empty** predicate list (already: every `RELATES` edge); match **fact
+text** (`fact_label`, observation `statement`, claims). A governed
+predicate is an optional narrowing filter. Observations are not graph
+neighbors. Callers must not be required to guess `other:traveled` vs
+`visited`. Unlabeled `related_to` with no fact sentence is rejected as
+the only edge shape (hairball). Clean neighborhoods (no filler nouns, no
+duplicate-me) are part of the contract.
+
+**Context.** `GraphQueries.neighborhood` already walks all relations when
+`predicates` is empty; registry `parent_predicate=related_to` is not the
+hop. Hindsight retrieves by fact text + shared entities; Graphiti walks
+`RELATES_TO*` and searches the fact sentence. Retrieval that keys on
+predicate vocabulary falls over on the D5 escape hatch.
+
+**Consequences.** Assured context operations (D87) default to the same
+shape. No new query-path LLM (D9). Graph hops still need an id, not a
+raw name.
+
+**Design / analysis / sequencing.** same as D95.
+
+**Rejected.** Require a predicate on every neighborhood; query-time
+union of all types named X; collapse every edge to unlabeled
+`related_to` without fact text.
+
+**Amends.** Clarifies D9/D50/D87 defaults. Does not change zero-LLM
+query path, envelope grain, or hydration (D48–D49).
