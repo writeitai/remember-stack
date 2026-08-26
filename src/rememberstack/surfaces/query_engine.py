@@ -163,7 +163,7 @@ _RERANK_SIGNALS = {"graph_distance": True, "evidence_count": False}
 the focal entity wins (ascending), more corroboration wins (descending)."""
 
 _BOUNDED_AGGREGATE_FORMS = frozenset(
-    {"group_by_predicate", "group_by_object", "delta_top_entities", "typed_absence"}
+    {"group_by_predicate", "group_by_object", "delta_top_entities", "predicate_absence"}
 )
 """The aggregate forms that take a `limit` and so must disclose truncation.
 `count` and `timeline` are naturally bounded (one row / one row per year)."""
@@ -248,7 +248,6 @@ class QueryEngine:
         *,
         deployment_id: UUID,
         name: str,
-        entity_type: str | None = None,
         context_entity_ids: tuple[UUID, ...] = (),
     ) -> Envelope:
         """Resolve a name to ranked current entities (T0 in the skeleton).
@@ -271,7 +270,6 @@ class QueryEngine:
                     {
                         "deployment_id": deployment_id,
                         "lemma": normalized_lemma(surface=name),
-                        "entity_type": entity_type,
                     },
                 )
                 .mappings()
@@ -297,7 +295,6 @@ class QueryEngine:
             EntityCandidate(
                 entity_id=row["entity_id"],
                 canonical_name=row["canonical_name"],
-                type=row["type"],
                 tier="T0",
                 context_hits=context_hits.get(row["entity_id"], 0),
             )
@@ -875,7 +872,7 @@ class QueryEngine:
             totals[key] = int(row["evidence_total"])
 
         kept_edges_by_id: dict[UUID, GraphEdge] = {}
-        confirmed_nodes: dict[UUID, tuple[str, str]] = {}
+        confirmed_nodes: dict[UUID, str] = {}
         for relation_id in candidate_edge_ids:
             row = confirmed_rows.get(relation_id)
             if row is None:
@@ -887,14 +884,8 @@ class QueryEngine:
             if not has_current_support and not withdrawn:
                 continue
             kept_edges_by_id[relation_id] = _graph_edge_from_confirmed_row(row=row)
-            confirmed_nodes[row["subject_id"]] = (
-                str(row["subject_name"]),
-                str(row["subject_type"]),
-            )
-            confirmed_nodes[row["object_id"]] = (
-                str(row["object_name"]),
-                str(row["object_type"]),
-            )
+            confirmed_nodes[row["subject_id"]] = str(row["subject_name"])
+            confirmed_nodes[row["object_id"]] = str(row["object_name"])
 
         retained_paths = _confirmed_graph_paths(
             paths=graph.paths, edges_by_id=kept_edges_by_id, nodes_by_id=confirmed_nodes
@@ -1929,7 +1920,6 @@ class QueryEngine:
         form: str,
         subject_entity_id: UUID | None = None,
         predicate: str | None = None,
-        entity_type: str | None = None,
         since: datetime | None = None,
         limit: int = 50,
     ) -> Envelope:
@@ -1940,9 +1930,9 @@ class QueryEngine:
         against the spine (the escape hatch is `scan`). The forms: `count`,
         `group_by_predicate`, `group_by_object`, `timeline` (an entity's
         facts by year), `delta_top_entities` (facts gained since T, bounded
-        by the delta window — S30), and `typed_absence` (entities of a type
-        with no relation of a predicate — S40, answerable because the
-        ontology types entities). A `limit`-bounded form that hits its cap
+        by the delta window — S30), and `predicate_absence` (active entities
+        with no live relation of a predicate — S40, with no type filter).
+        A `limit`-bounded form that hits its cap
         sets an explicit truncation marker — the bucket total is then a
         floor, never a silent "this is all there is". An unknown form is a
         typed `boundary`.
@@ -1965,14 +1955,12 @@ class QueryEngine:
             "deployment_id": deployment_id,
             "subject_entity_id": subject_entity_id,
             "predicate": predicate,
-            "entity_type": entity_type,
             "since": since,
             "fetch": limit + 1,  # one extra row reveals a truncation honestly
         }
         for required, value in (
             ("subject_entity_id", subject_entity_id),
             ("predicate", predicate),
-            ("entity_type", entity_type),
             ("since", since),
         ):
             if required in needs and value is None:
@@ -3128,9 +3116,7 @@ def _evidence_result_from_fact_row(*, row: RowMapping) -> EvidenceResult:
         "ingested_at",
         "invalidated_at",
         "subject_name",
-        "subject_type",
         "object_name",
-        "object_type",
     }
     return EvidenceResult.model_validate(
         {key: value for key, value in dict(row).items() if key not in excluded}
@@ -3160,7 +3146,7 @@ def _confirmed_graph_paths(
     *,
     paths: Sequence[GraphPath],
     edges_by_id: dict[UUID, GraphEdge],
-    nodes_by_id: dict[UUID, tuple[str, str]],
+    nodes_by_id: dict[UUID, str],
 ) -> tuple[GraphPath, ...]:
     """D48-confirm paths as units and replace projection labels from PG."""
     confirmed: list[GraphPath] = []
@@ -3170,8 +3156,7 @@ def _confirmed_graph_paths(
         nodes = tuple(
             GraphNode(
                 entity_id=node.entity_id,
-                name=nodes_by_id.get(node.entity_id, (node.name, node.type))[0],
-                type=nodes_by_id.get(node.entity_id, (node.name, node.type))[1],
+                name=nodes_by_id.get(node.entity_id, node.name),
                 hops=node.hops,
             )
             for node in path.nodes
@@ -3194,7 +3179,7 @@ def _confirmed_graph_nodes(
     graph_nodes: Sequence[GraphNode],
     paths: Sequence[GraphPath],
     edges: Sequence[GraphEdge],
-    nodes_by_id: dict[UUID, tuple[str, str]],
+    nodes_by_id: dict[UUID, str],
 ) -> tuple[GraphNode, ...]:
     """Keep only nodes connected by returned edges, in graph-rank order."""
     connected_ids = {
@@ -3205,10 +3190,8 @@ def _confirmed_graph_nodes(
     for node in ordered:
         if node.entity_id not in connected_ids or node.entity_id in returned:
             continue
-        name, entity_type = nodes_by_id.get(node.entity_id, (node.name, node.type))
-        returned[node.entity_id] = node.model_copy(
-            update={"name": name, "type": entity_type}
-        )
+        name = nodes_by_id.get(node.entity_id, node.name)
+        returned[node.entity_id] = node.model_copy(update={"name": name})
     return tuple(returned.values())
 
 
@@ -3497,23 +3480,20 @@ _CHUNK_NEIGHBORS = text(
 )
 
 _RESOLVE_T0_SQL = """
-    SELECT DISTINCT entity.entity_id, entity.canonical_name,
-           entity.entity_type AS type
+    SELECT DISTINCT entity.entity_id, entity.canonical_name
     FROM memory_v1.entity_aliases_current AS alias
     JOIN memory_v1.entities_current AS entity
       ON entity.deployment_id = alias.deployment_id
      AND entity.entity_id = alias.entity_id
     WHERE alias.deployment_id = :deployment_id
       AND alias.normalized_lemma = :lemma
-      AND (CAST(:entity_type AS text) IS NULL
-           OR entity.entity_type = :entity_type)
     """
 
 _RESOLVE_T0 = text(_RESOLVE_T0_SQL)
 
 _CONFIRM_CONTEXT_ENTITIES = text(
     """
-    SELECT entity_id, canonical_name, entity_type
+    SELECT entity_id, canonical_name
     FROM memory_v1.entities_current
     WHERE deployment_id = :deployment_id
       AND entity_id = ANY(:entity_ids)
@@ -3733,16 +3713,14 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
                r.valid_from, r.valid_until, r.ingested_at,
                NULL::timestamptz AS invalidated_at,
                subject.canonical_name AS subject_name,
-               subject.type::text AS subject_type,
                object.canonical_name AS object_name,
-               object.type::text AS object_type,
                r.support_state = 'withdrawn' AS support_withdrawn
         FROM requested
         JOIN memory_v1.graph_edges_current r
           ON r.deployment_id = :deployment_id
          AND r.relation_id = requested.relation_id
         -- The graph view already proved both endpoints current. These base
-        -- joins hydrate names and types only; repeating entities_current here
+        -- joins hydrate names only; repeating entities_current here
         -- expands its full authorization plan twice without changing
         -- membership.
         JOIN entities subject
@@ -3812,8 +3790,7 @@ _MULTI_HOP_EDGE_EVIDENCE = text(
            confirmed.subject_id, confirmed.object_id, confirmed.predicate,
            confirmed.fact, confirmed.evidence_count, confirmed.valid_from,
            confirmed.valid_until, confirmed.ingested_at, confirmed.invalidated_at,
-           confirmed.subject_name, confirmed.subject_type,
-           confirmed.object_name, confirmed.object_type,
+           confirmed.subject_name, confirmed.object_name,
            confirmed.support_withdrawn,
            limited.stance, limited.evidence_total, limited.stance_rank,
            limited.claim_id, limited.doc_id, limited.chunk_id,
@@ -4301,15 +4278,13 @@ _AGG_DELTA_TOP_ENTITIES = text(
     """
 )
 
-_AGG_TYPED_ABSENCE = text(
+_AGG_PREDICATE_ABSENCE = text(
     """
-    -- entities of a type with NO live relation of a predicate (S40): an
-    -- anti-join, answerable because the ontology types entities. Each bucket
-    -- IS one absent entity (count 1), so the total is how many lack it.
+    -- entities with NO live relation of a predicate (S40, D96: no type filter).
+    -- Each bucket IS one absent entity (count 1).
     SELECT e.canonical_name AS key, 1 AS count, e.entity_id AS entity_id
     FROM entities e
     WHERE e.deployment_id = :deployment_id AND e.status = 'active'
-      AND e.type = :entity_type
       AND NOT EXISTS (
           SELECT 1 FROM relations r
           WHERE r.deployment_id = e.deployment_id
@@ -4328,7 +4303,7 @@ _AGGREGATE_FORMS: dict[str, tuple[TextClause, frozenset[str]]] = {
     "group_by_object": (_AGG_GROUP_BY_OBJECT, frozenset({"subject_entity_id"})),
     "timeline": (_AGG_TIMELINE, frozenset({"subject_entity_id"})),
     "delta_top_entities": (_AGG_DELTA_TOP_ENTITIES, frozenset({"since"})),
-    "typed_absence": (_AGG_TYPED_ABSENCE, frozenset({"entity_type", "predicate"})),
+    "predicate_absence": (_AGG_PREDICATE_ABSENCE, frozenset({"predicate"})),
 }
 
 _SCAN_EXPORTS = {

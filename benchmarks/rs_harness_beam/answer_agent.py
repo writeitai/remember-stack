@@ -95,7 +95,7 @@ class RetrievalBundle:
         if self.entities:
             lines = [
                 f"- {e.get('canonical_name') or e.get('name') or e.get('entity_id')}"
-                f" (id={e.get('entity_id')}, type={e.get('entity_type') or e.get('type')})"
+                f" (id={e.get('entity_id')})"
                 for e in self.entities[:12]
             ]
             sections.append("## Resolved entities\n" + "\n".join(lines))
@@ -313,7 +313,6 @@ def _ingest_envelope(
                     "entity_id": eid,
                     "canonical_name": payload.get("canonical_name")
                     or payload.get("name"),
-                    "entity_type": payload.get("entity_type") or payload.get("type"),
                 }
             )
 

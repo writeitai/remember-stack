@@ -165,9 +165,9 @@ class _Corpus:
             self.entity[key] = entity_id
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name, mention_count, graph_degree)"
-                    " VALUES (:entity, :deployment, :type, :name, lower(:name), 0, 3)"
+                    " VALUES (:entity, :deployment, :name, lower(:name), 0, 3)"
                 ),
                 {
                     "entity": entity_id,
@@ -664,10 +664,10 @@ class _Corpus:
             connection.execute(
                 text(
                     "INSERT INTO mentions (mention_id, deployment_id, surface_form,"
-                    " normalized_lemma, canonical_name_form, emitted_type, language,"
+                    " normalized_lemma, canonical_name_form, language,"
                     " claim_id, chunk_id, doc_id, char_start, char_end, created_at)"
                     " VALUES (:mention, :deployment, :surface, lower(:surface),"
-                    " :surface, 'Person', 'en', :claim, :chunk, :doc, 0, 5, :at)"
+                    " :surface, 'en', :claim, :chunk, :doc, 0, 5, :at)"
                 ),
                 {
                     "mention": mention_id,
@@ -2821,9 +2821,9 @@ def test_a_merge_cycle_resolves_to_no_survivor_at_all(corpus: _Corpus) -> None:
         for entity_id, name in ((first, "Cycle One"), (second, "Cycle Two")):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name, mention_count, graph_degree)"
-                    " VALUES (:entity, :deployment, 'Person', :name, lower(:name), 0, 0)"
+                    " VALUES (:entity, :deployment, :name, lower(:name), 0, 0)"
                 ),
                 {"entity": entity_id, "deployment": _DEPLOYMENT_ID, "name": name},
             )
@@ -2904,9 +2904,9 @@ def test_a_long_acyclic_merge_chain_resolves_without_a_guessed_depth_bound(
         for position, entity_id in enumerate(chain):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name, mention_count, graph_degree)"
-                    " VALUES (:entity, :deployment, 'Person', :name, lower(:name), 0, 0)"
+                    " VALUES (:entity, :deployment, :name, lower(:name), 0, 0)"
                 ),
                 {
                     "entity": entity_id,
@@ -3608,9 +3608,9 @@ def test_an_entity_seen_only_in_superseded_content_stays_a_member(
             assert superseded is not None, "the corpus must contain superseded content"
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name) VALUES (:entity,"
-                    " :deployment, 'Person', 'Superseded Only', 'superseded only')"
+                    " :deployment, 'Superseded Only', 'superseded only')"
                 ),
                 {"entity": entity_id, "deployment": _DEPLOYMENT_ID},
             )
@@ -3618,10 +3618,10 @@ def test_an_entity_seen_only_in_superseded_content_stays_a_member(
                 text(
                     "INSERT INTO mentions (mention_id, deployment_id,"
                     " surface_form, normalized_lemma, canonical_name_form,"
-                    " emitted_type, language, claim_id, chunk_id, doc_id,"
+                    " language, claim_id, chunk_id, doc_id,"
                     " char_start, char_end, created_at)"
                     " VALUES (:mention, :deployment, 'Superseded Only',"
-                    " 'superseded only', 'Superseded Only', 'Person', 'en',"
+                    " 'superseded only', 'Superseded Only', 'en',"
                     " :claim, :chunk, :doc, 0, 5, now())"
                 ),
                 {

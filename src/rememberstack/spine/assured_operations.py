@@ -201,10 +201,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         description=(
             "Resolve a name to ranked current survivor candidates; never silently guess."
         ),
-        parameters={
-            "name": {"type": "string", "required": True, "minLength": 1},
-            "entity_type": {"type": "string", "required": False},
-        },
+        parameters={"name": {"type": "string", "required": True, "minLength": 1}},
         result_schema=_envelope_schema(),
         execution_plan=PrimitiveChainPlan(steps=(OperationStep(op="resolve_entity"),)),
         result_contract=AssuredResultContract.ENVELOPE,

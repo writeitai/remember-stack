@@ -448,7 +448,7 @@ _EXPORT_SQL: Final[dict[str, TextClause]] = {
     # graph_edges_* views, so P2 and live SQL can disagree on that edge alone.
     "Entity": text(
         """
-        SELECT e.entity_id AS id, e.type AS type,
+        SELECT e.entity_id AS id,
                e.canonical_name AS name, e.normalized_name,
                e.profile_summary AS summary,
                (e.created_at AT TIME ZONE 'UTC') AS created_at
@@ -686,7 +686,7 @@ _SELECT_CORPUS_DOCUMENTS = text(
 
 _SELECT_CORPUS_ENTITIES = text(
     """
-    SELECT e.entity_id, e.type, e.canonical_name, e.profile_summary,
+    SELECT e.entity_id, e.canonical_name, e.profile_summary,
            e.mention_count, e.graph_degree
     FROM entities e
     WHERE e.deployment_id = :deployment_id AND e.status = 'active'

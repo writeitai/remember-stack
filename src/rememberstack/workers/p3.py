@@ -15,7 +15,7 @@ before contents.
 **The two-tier path contract (F6) is the load-bearing rule.**
 
 - *Tier 1 — stable, ID-addressed leaves that never move across rebuilds*:
-  `entities/<type>/<entity_id>/` and `documents/<doc_id>/`. Lineage-anchored
+  `entities/<entity_id>/` and `documents/<doc_id>/`. Lineage-anchored
   (D55), so a living document's canonical path survives its versions. These
   are the durable targets agents and K pages may store.
 - *Tier 2 — view paths* (`by-source/…`, `by-topic/…`), freely reorganizable
@@ -44,7 +44,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.projection import ProjectionCatalog
 
-P3_BUILDER_VERSION: Final = "p3-corpusfs-2026.07"
+P3_BUILDER_VERSION: Final = "p3-corpusfs-2026.08"
 """The builder's component version (D12)."""
 
 INDEX_FILE: Final = "_index.md"
@@ -162,7 +162,7 @@ class CorpusFsBuilder:
             )
         for entity in entities:
             entity_id = UUID(str(entity["entity_id"]))
-            path = _entity_path(entity_id=entity_id, entity_type=str(entity["type"]))
+            path = _entity_path(entity_id=entity_id)
             files[f"{path}/{INDEX_FILE}"] = _entity_index(
                 entity=entity,
                 documents=[
@@ -208,9 +208,9 @@ def _document_path(*, doc_id: UUID) -> str:
     return f"documents/{doc_id}"
 
 
-def _entity_path(*, entity_id: UUID, entity_type: str) -> str:
+def _entity_path(*, entity_id: UUID) -> str:
     """The canonical Tier-1 path for one entity."""
-    return f"entities/{_slug(entity_type)}/{entity_id}"
+    return f"entities/{entity_id}"
 
 
 def _view_paths(*, document: dict[str, object]) -> tuple[str, ...]:
@@ -347,17 +347,16 @@ def _entity_index(
 ) -> str:
     """An entity's Tier-1 page: profile plus the documents evidencing it."""
     entity_id = UUID(str(entity["entity_id"]))
-    canonical = _entity_path(entity_id=entity_id, entity_type=str(entity["type"]))
+    canonical = _entity_path(entity_id=entity_id)
     lines = [
         "---",
         f"entity_id: {json.dumps(str(entity_id))}",
-        f"type: {json.dumps(str(entity['type']))}",
         f"canonical_path: {json.dumps(canonical)}",
         "---",
         "",
         f"# {_one_line(str(entity['canonical_name']))}",
         "",
-        f"{entity['type']} · {entity.get('mention_count') or 0} mention(s)"
+        f"{entity.get('mention_count') or 0} mention(s)"
         f" · graph degree {entity.get('graph_degree') or 0}",
         "",
     ]
@@ -548,16 +547,14 @@ def _tier_one_entities_index(*, entities: tuple[dict[str, object], ...]) -> str:
         "Canonical (Tier 1) entity leaves — these paths never move across"
         f" rebuilds. {len(entities)} active entity/entities.",
         "",
-        "| Entity | Type | Mentions | Canonical |",
-        "|---|---|---|---|",
+        "| Entity | Mentions | Canonical |",
+        "|---|---|---|",
     ]
     for entity in sorted(entities, key=lambda item: str(item["canonical_name"])):
-        canonical = _entity_path(
-            entity_id=UUID(str(entity["entity_id"])), entity_type=str(entity["type"])
-        )
+        canonical = _entity_path(entity_id=UUID(str(entity["entity_id"])))
         link = f"{_relative(base='entities', target=canonical)}/{INDEX_FILE}"
         lines.append(
-            f"| {_one_line(str(entity['canonical_name']))} | {entity['type']} |"
+            f"| {_one_line(str(entity['canonical_name']))} |"
             f" {entity.get('mention_count') or 0} | [`{canonical}/`]({link}) |"
         )
     if len(lines) == 6:

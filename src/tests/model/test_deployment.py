@@ -79,7 +79,7 @@ def test_bootstrap_result_has_exact_immutable_shape() -> None:
         deployment_created=True,
         entity_types_count=8,
         predicates_count=16,
-        predicate_signatures_count=116,
+        predicate_signatures_count=0,
     )
 
     assert tuple(DeploymentBootstrapResult.model_fields) == (

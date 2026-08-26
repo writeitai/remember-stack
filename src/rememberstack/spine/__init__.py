@@ -37,7 +37,6 @@ from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.resolver import CascadeResolver
 from rememberstack.spine.resolver import RESOLVER_VERSION
 from rememberstack.spine.resolver import seed_resolver_version
-from rememberstack.spine.resolver import UnregisteredEntityTypeError
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
@@ -57,7 +56,6 @@ __all__ = (
     "install_pack",
     "ADJUDICATOR_VERSION",
     "CascadeResolver",
-    "UnregisteredEntityTypeError",
     "SupersessionAdjudicator",
     "SupersessionSettings",
     "SyncCatalog",

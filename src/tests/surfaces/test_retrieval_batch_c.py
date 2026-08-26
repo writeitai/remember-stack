@@ -144,9 +144,9 @@ class _Corpus:
         ):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:entity, :deployment, :kind, :name, lower(:name))"
+                    " VALUES (:entity, :deployment, :name, lower(:name))"
                 ),
                 {
                     "entity": entity_id,
@@ -415,9 +415,9 @@ class _Corpus:
             object_id = uuid4()
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name) VALUES (:entity, :deployment,"
-                    " 'Organization', :name, lower(:name))"
+                    " :name, lower(:name))"
                 ),
                 {
                     "entity": object_id,

@@ -283,13 +283,13 @@ def seeded_profile(
         )
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name) VALUES"
-                " (:hub, :deployment_id, 'Organization', 'Alexander Hub',"
+                " (:hub, :deployment_id, 'Alexander Hub',"
                 " 'alexander hub'),"
-                " (:subject, :deployment_id, 'Organization', 'Fact Subject',"
+                " (:subject, :deployment_id, 'Fact Subject',"
                 " 'fact subject'),"
-                " (:batch, :deployment_id, 'Organization', 'Batch Subject',"
+                " (:batch, :deployment_id, 'Batch Subject',"
                 " 'batch subject')"
             ),
             {
@@ -317,9 +317,9 @@ def seeded_profile(
             connection.execute(
                 text(
                     "WITH objects AS ("
-                    " INSERT INTO entities (entity_id, deployment_id, type,"
+                    " INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " SELECT gen_random_uuid(), :deployment_id, 'Concept',"
+                    " SELECT gen_random_uuid(), :deployment_id,"
                     " 'Scale Object ' || n, 'scale object ' || n"
                     " FROM generate_series(1, :rows) n RETURNING entity_id"
                     ") INSERT INTO relations (relation_id, deployment_id,"

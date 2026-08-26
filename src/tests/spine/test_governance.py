@@ -25,7 +25,6 @@ from rememberstack.spine import install_pack
 from rememberstack.spine import PackAnchorError
 from rememberstack.spine import PackConflictError
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.workers.e3 import _signature_allows
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("d0000000-0000-0000-0000-000000000001")
@@ -143,38 +142,6 @@ def test_forking_pack_is_refused_whole(database_engine: Engine) -> None:
     assert count == 0
 
 
-def test_domain_range_gate_rejects_the_hallucination_sample(
-    database_engine: Engine,
-) -> None:
-    """The WP acceptance: pack signatures matched at ancestor level accept the
-    designed shapes and reject a hallucination sample."""
-    install_pack(engine=database_engine, deployment_id=_DEPLOYMENT_ID, pack=WORK_PACK)
-    facts = FactCatalog(engine=database_engine)
-    signatures = facts.predicate_signatures(deployment_id=_DEPLOYMENT_ID)
-    parents = facts.entity_type_parents(deployment_id=_DEPLOYMENT_ID)
-
-    def allowed(predicate: str, subject: str, object_: str) -> bool:
-        return _signature_allows(
-            predicate=predicate,
-            subject_type=subject,
-            object_type=object_,
-            signatures=signatures,
-            type_parents=parents,
-        )
-
-    # designed shapes accepted:
-    assert allowed("blocks", "Task", "Task")
-    assert allowed("assigned_to", "Task", "Person")
-    assert allowed("pursues", "Organization", "Goal")
-    assert allowed("concerns", "Decision", "Document")
-    # the hallucination sample rejected:
-    assert not allowed("blocks", "Person", "Task")  # people don't block tasks
-    assert not allowed("assigned_to", "Goal", "Person")  # goals aren't assigned
-    assert not allowed("pursues", "Person", "Goal")  # not in the signature
-    assert not allowed("decided_by", "Task", "Person")  # tasks aren't decided
-    assert not allowed("blocks", "Task", "Unregistered")  # unknown type fails closed
-
-
 def test_other_funnel_registers_counts_and_ranks(database_engine: Engine) -> None:
     """The D5 escape: other:<freetext> lands as tier=other, usage-counted and
     ranked for promotion; the grammar is enforced."""
@@ -194,9 +161,9 @@ def test_other_funnel_registers_counts_and_ranks(database_engine: Engine) -> Non
         for entity_id, name in ((subject, "Acme"), (object_, "City Marathon")):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:e, :d, 'Organization', :n, lower(:n))"
+                    " VALUES (:e, :d, :n, lower(:n))"
                 ),
                 {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name},
             )

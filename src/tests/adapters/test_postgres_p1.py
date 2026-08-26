@@ -265,9 +265,9 @@ def seeded(database_engine: Engine) -> dict[str, object]:
         ):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name) VALUES (:entity,"
-                    " :deployment, 'Concept', :name, lower(:name))"
+                    " :deployment, :name, lower(:name))"
                 ),
                 {"entity": entity_id, "deployment": _DEPLOYMENT_ID, "name": name},
             )
@@ -652,9 +652,9 @@ def test_ranked_search_never_crosses_deployments(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name) VALUES"
-                " (:entity, :deployment, 'Concept', 'Nearest foreign row',"
+                " (:entity, :deployment, 'Nearest foreign row',"
                 " 'nearest foreign row')"
             ),
             {"entity": other_entity, "deployment": _OTHER_DEPLOYMENT_ID},
@@ -667,14 +667,12 @@ def test_ranked_search_never_crosses_deployments(
                 entity_id=first_entity,
                 deployment_id=_DEPLOYMENT_ID,
                 canonical_name="Aster",
-                type="Concept",
                 vector=_vector(axis=1),
             ),
             P1EntityRow(
                 entity_id=other_entity,
                 deployment_id=_OTHER_DEPLOYMENT_ID,
                 canonical_name="Nearest foreign row",
-                type="Concept",
                 vector=_vector(axis=0),
             ),
         )

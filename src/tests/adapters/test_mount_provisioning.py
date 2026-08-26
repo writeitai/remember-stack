@@ -79,9 +79,9 @@ def deployment(database_engine: Engine) -> Engine:
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Organization', 'Acme', 'acme')"
+                " VALUES (:e, :d, 'Acme', 'acme')"
             ),
             {"e": uuid4(), "d": _DEPLOYMENT_ID},
         )
@@ -135,9 +135,9 @@ def test_the_mount_swaps_whole_trees(deployment: Engine, tmp_path: Path) -> None
     with deployment.begin() as connection:  # the corpus grows
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Person', 'Wile E', 'wile e')"
+                " VALUES (:e, :d, 'Wile E', 'wile e')"
             ),
             {"e": uuid4(), "d": _DEPLOYMENT_ID},
         )

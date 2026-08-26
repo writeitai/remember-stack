@@ -39,7 +39,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "a5b305d9f832a8d739563e8d25b57e1387aac37500f1c70e0980e29e7692b0f6"
+    "683d1526b26ea3d081e197e2e21d9dae918d20af3c118a9e23f8c71c956d2985"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -70,7 +70,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
-            "e3-normalize-2026.08a:temp0-1:unknown-type-gate-1:claim-fanout-1"
+            "e3-normalize-2026.08c:temp0-1:claim-fanout-1:bare-noun-1:no-types-1"
         ),
         "adjudicate_observations": (
             "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"

@@ -695,10 +695,7 @@ def _nominator(
 
     def semantic_entities(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
         return search.search_entities_scored(  # type: ignore[attr-defined]
-            deployment_id=deployment,
-            vector=vector(query),
-            k=k,
-            entity_type=filters.get("entity_type"),
+            deployment_id=deployment, vector=vector(query), k=k
         )
 
     return {

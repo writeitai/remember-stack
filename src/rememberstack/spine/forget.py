@@ -1335,7 +1335,6 @@ _POSTGRES_SCRUB = (
             normalized_name = '',
             status = 'retired',
             merged_into = NULL,
-            type_confidence = NULL,
             profile_summary = NULL,
             embedding = NULL,
             embedding_model = NULL,

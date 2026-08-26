@@ -1,7 +1,15 @@
 """WP-I.1: bare head nouns are not entity referents."""
 
+from rememberstack.model import EntityRef
 from rememberstack.spine.entity_eligibility import is_bare_head_noun
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
+
+
+def test_entity_ref_discards_legacy_type() -> None:
+    """D96: inbound type is not identity and is not stored on EntityRef."""
+    ref = EntityRef.model_validate({"name": "Alice", "type": "Person"})
+    assert ref.name == "Alice"
+    assert not hasattr(ref, "type")
 
 
 def test_bare_head_nouns_are_rejected() -> None:

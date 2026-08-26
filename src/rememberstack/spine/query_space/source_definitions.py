@@ -56,6 +56,9 @@ from rememberstack.spine.migrations.versions.p9_09_0030_fact_authority_performan
 from rememberstack.spine.migrations.versions.p9_09_0030_fact_authority_performance import (
     FACT_AUTHORITY_HELPER_VIEWS,
 )
+from rememberstack.spine.migrations.versions.p9_14_0035_drop_entity_type import (
+    MEMORY_V1_TYPE_CUT_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -153,6 +156,7 @@ def _authored_parts() -> tuple[
         MEMORY_V1_CORRECTION_DDL,
         GRAPH_EDGE_VIEW_DDL,
         FACT_AUTHORITY_DDL,
+        MEMORY_V1_TYPE_CUT_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

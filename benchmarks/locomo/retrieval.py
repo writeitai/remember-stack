@@ -644,7 +644,7 @@ def _dispatch_primitive(
     if name == "resolve":
         _require_keys(
             arguments=arguments,
-            allowed={"name", "entity_type", "context_entity_ids"},
+            allowed={"name", "context_entity_ids"},
             required={"name"},
         )
         raw_context = arguments.get("context_entity_ids", [])
@@ -654,9 +654,6 @@ def _dispatch_primitive(
             )
         return client.resolve(
             name=_required_string(arguments.get("name"), field="name"),
-            entity_type=_optional_nullable_string(
-                arguments=arguments, field="entity_type"
-            ),
             context_entity_ids=tuple(_uuid(value=value) for value in raw_context),
         )
     if name == "lookup_relations":
@@ -731,7 +728,6 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
             description="Resolve a name to ranked current entity candidates; ambiguity is returned, never guessed away.",
             properties={
                 "name": {"type": "string"},
-                "entity_type": {"type": "string"},
                 "context_entity_ids": {"type": "array", "items": uuid, "maxItems": 8},
             },
             required=("name",),

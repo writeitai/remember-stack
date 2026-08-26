@@ -110,9 +110,9 @@ def _entity(*, engine: Engine, name: str) -> UUID:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Person', :n, lower(:n))"
+                " VALUES (:e, :d, :n, lower(:n))"
             ),
             {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name},
         )

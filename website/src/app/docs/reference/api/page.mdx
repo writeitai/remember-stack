@@ -190,8 +190,7 @@ MCP client discovers:
     "input_schema": {
       "type": "object",
       "properties": {
-        "name": { "type": "string" },
-        "entity_type": { "type": "string" }
+        "name": { "type": "string" }
       },
       "required": ["name"]
     },
@@ -214,7 +213,7 @@ need (a UUID string to a UUID, an ISO-8601 string to an instant):
 ```bash
 curl -X POST "$REMEMBERSTACK_API_URL/operations/resolve_entity" \
   -H "content-type: application/json" \
-  -d '{"name": "Alice", "entity_type": "person"}'
+  -d '{"name": "Alice"}'
 ```
 
 An unknown operation is **404**; a missing required argument is **422**.
@@ -223,7 +222,7 @@ The complete operation catalog is:
 
 | Operation | Arguments | What it returns |
 | --- | --- | --- |
-| `resolve_entity` | `name`, optional `entity_type` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
+| `resolve_entity` | `name` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
 | `testimony_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
 | `fact_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | relations and observations for `current`, `at`, `overlap`, or `history`, with supporting and contradicting testimony and exact association totals |
 | `answer_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `time` | `ContextBundle/v1`: complete `testimony_context` and `fact_context` child envelopes, never a blended result list |
@@ -325,7 +324,7 @@ plans. Each returns the envelope.
 
 | Method & path | What it answers |
 | --- | --- |
-| `GET /resolve?name=&entity_type=&context_entity_ids=` | resolve a name to ranked current entities; repeat `context_entity_ids` up to eight times to rank ambiguous names by their current relation adjacency (never a silent guess) |
+| `GET /resolve?name=&context_entity_ids=` | resolve a name to ranked current entities; repeat `context_entity_ids` up to eight times to rank ambiguous names by their current relation adjacency (never a silent guess) |
 | `GET /lookup/relations?subject_entity_id=&predicate=&object_entity_id=&valid_at=` | relations matching an (s, p, o) pattern — current, or as-of a world-time instant |
 | `GET /lookup/observations?entity_id=&property_query=&k=` | live observations on one entity, semantic over statements |
 | `GET /search/claims?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked claim search — **evidence** grain, never a current-fact answer; `k` is 1–400 |

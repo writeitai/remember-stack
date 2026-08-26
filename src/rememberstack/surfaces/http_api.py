@@ -253,7 +253,6 @@ def build_api(
     @app.get("/resolve", response_model=Envelope)
     def resolve(
         name: str,
-        entity_type: str | None = None,
         context_entity_ids: Annotated[
             list[UUID] | None, Query(max_length=RESOLVE_CONTEXT_LIMIT)
         ] = None,
@@ -262,7 +261,6 @@ def build_api(
         return engine.resolve(
             deployment_id=deployment_id,
             name=name,
-            entity_type=entity_type,
             context_entity_ids=tuple(context_entity_ids or ()),
         )
 

@@ -29,9 +29,9 @@ from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
-from tests.workers.test_e3_unknown_entity_type_gate import _handler
-from tests.workers.test_e3_unknown_entity_type_gate import _payload
-from tests.workers.test_e3_unknown_entity_type_gate import RecordingFacts
+from tests.workers.e3_test_doubles import _handler
+from tests.workers.e3_test_doubles import _payload
+from tests.workers.e3_test_doubles import RecordingFacts
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b0000000-0000-0000-0000-000000000001")
@@ -142,14 +142,14 @@ def test_cascade_mints_then_t0_then_t4_with_verdicts(database_engine: Engine) ->
 
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Karel Dvořák", type="Person"),
+        reference=EntityRef(name="Karel Dvořák"),
         claim=_claim(),
     )
     assert minted.created
 
     exact = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Karel Dvořák", type="Person"),
+        reference=EntityRef(name="Karel Dvořák"),
         claim=_claim(),
     )
     assert not exact.created
@@ -158,7 +158,7 @@ def test_cascade_mints_then_t0_then_t4_with_verdicts(database_engine: Engine) ->
     # phonetic/trigram drift: blocked, escalated to T4, matched:
     drifted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Karel Dvorzak", type="Person"),
+        reference=EntityRef(name="Karel Dvorzak"),
         claim=_claim(),
     )
     assert not drifted.created
@@ -191,12 +191,12 @@ def test_t4_no_match_mints_a_distinct_entity(database_engine: Engine) -> None:
 
     jan = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Jan Novák", type="Person"),
+        reference=EntityRef(name="Jan Novák"),
         claim=_claim(),
     )
     jana = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Jana Nováková", type="Person"),
+        reference=EntityRef(name="Jana Nováková"),
         claim=_claim(),
     )
     assert jana.created
@@ -231,13 +231,13 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
     resolver = _resolver(engine=database_engine, provider=provider)
     resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Acme Corporation", type="Organization"),
+        reference=EntityRef(name="Acme Corporation"),
         claim=_claim(),
     )
     calls_before = len(provider.generated_prompts)
     resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Acme Corp", type="Organization"),
+        reference=EntityRef(name="Acme Corp"),
         claim=_claim(),
     )
     assert len(provider.generated_prompts) == calls_before + 2  # small + frontier
@@ -347,7 +347,7 @@ def test_missing_profile_vector_escalates_to_t4(database_engine: Engine) -> None
     resolver = _resolver(engine=database_engine, provider=provider)
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Beta Systems", type="Organization"),
+        reference=EntityRef(name="Beta Systems"),
         claim=_claim(),
     )
     with database_engine.begin() as connection:
@@ -362,7 +362,7 @@ def test_missing_profile_vector_escalates_to_t4(database_engine: Engine) -> None
     blind = _resolver(engine=database_engine, provider=provider)
     drifted = blind.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Beta Sistems", type="Organization"),
+        reference=EntityRef(name="Beta Sistems"),
         claim=_claim(),
     )
     assert not drifted.created
@@ -378,13 +378,13 @@ def test_source_and_canonical_aliases_on_mint_and_replay(
     claim = _claim(claim_text="We opened the App to file the report.")
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Application", surface="App", type="Product"),
+        reference=EntityRef(name="Application", surface="App"),
         claim=claim,
     )
     assert minted.created
     replay = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Application", surface="App", type="Product"),
+        reference=EntityRef(name="Application", surface="App"),
         claim=_claim(claim_text="We opened the App to file the report."),
     )
     assert not replay.created
@@ -442,12 +442,12 @@ def test_generic_identifier_guard_downweights_shared_lemma(
     resolver = _resolver(engine=database_engine, provider=provider)
     first = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Jan Novák", type="Person"),
+        reference=EntityRef(name="Jan Novák"),
         claim=_claim(),
     )
     second = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Karel Dvořák", type="Person"),
+        reference=EntityRef(name="Karel Dvořák"),
         claim=_claim(),
     )
     jan_lemma = normalized_lemma(surface="Jan Novák")
@@ -500,7 +500,7 @@ def test_ungrounded_surface_does_not_write_source_alias(
     resolver = _resolver(engine=database_engine, provider=provider)
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Application", surface="App", type="Product"),
+        reference=EntityRef(name="Application", surface="App"),
         claim=_claim(),
     )
     assert minted.created
@@ -550,9 +550,6 @@ def _normalize_through_shipped_resolver(
         claim=_claim(claim_text=claim_text),
         predicates={"related_to": None},
         prompt_lines="related_to",
-        signatures={},
-        type_parents={"Person": None, "Product": None},
-        allowed_types=frozenset({"Person", "Product"}),
         meter=NoopCostMeter(),
     )
     return resolver

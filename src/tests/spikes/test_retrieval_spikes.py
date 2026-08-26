@@ -547,9 +547,9 @@ def _hydration_batching(*, engine: Engine) -> RetrievalSpikeMeasurement:
             row[0]
             for row in connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " SELECT gen_random_uuid(), :deployment_id, 'Concept',"
+                    " SELECT gen_random_uuid(), :deployment_id,"
                     " 'Hydration ' || n, 'hydration-' || n"
                     " FROM generate_series(1, 512) n RETURNING entity_id"
                 ),
@@ -722,9 +722,9 @@ def _resolve_context(*, engine: Engine) -> RetrievalSpikeMeasurement:
             ):
                 connection.execute(
                     text(
-                        "INSERT INTO entities (entity_id, deployment_id, type,"
+                        "INSERT INTO entities (entity_id, deployment_id,"
                         " canonical_name, normalized_name) VALUES"
-                        " (:entity_id, :deployment_id, :type, :name, lower(:name))"
+                        " (:entity_id, :deployment_id, :name, lower(:name))"
                     ),
                     {
                         "entity_id": entity_id,

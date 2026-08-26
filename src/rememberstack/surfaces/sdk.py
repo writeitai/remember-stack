@@ -426,16 +426,10 @@ class MemoryClient:
         raise ValueError(f"unknown open-query tool {name!r}")
 
     def resolve(
-        self,
-        *,
-        name: str,
-        entity_type: str | None = None,
-        context_entity_ids: tuple[UUID, ...] = (),
+        self, *, name: str, context_entity_ids: tuple[UUID, ...] = ()
     ) -> Envelope:
         """Resolve a name, optionally using bounded focal-entity context."""
         params: list[tuple[str, str]] = [("name", name)]
-        if entity_type is not None:
-            params.append(("entity_type", entity_type))
         params.extend(
             ("context_entity_ids", str(value)) for value in context_entity_ids
         )

@@ -438,13 +438,6 @@ def _state_hash(*, engine: Engine) -> str:
                 connection=connection,
                 query="SELECT * FROM predicates ORDER BY deployment_id, predicate",
             ),
-            "predicate_signatures": _rows(
-                connection=connection,
-                query=(
-                    "SELECT * FROM predicate_signatures "
-                    "ORDER BY deployment_id, predicate, subject_type, object_type"
-                ),
-            ),
             "pipeline_component_versions": _rows(
                 connection=connection,
                 query=(

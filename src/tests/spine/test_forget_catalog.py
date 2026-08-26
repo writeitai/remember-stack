@@ -555,9 +555,9 @@ def _seed_evidence(*, connection: Connection) -> None:
     ):
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name, profile_summary) VALUES"
-                " (:entity, :d, 'Person', :name, lower(:name), :profile)"
+                " (:entity, :d, :name, lower(:name), :profile)"
             ),
             {
                 "entity": entity_id,

@@ -65,7 +65,6 @@ src/tests/workers/test_d79_summary_consumption.py
 src/tests/workers/test_e3_claim_normalize_fanout.py
 src/tests/workers/test_e3_entity_obs_flush_fanout.py
 src/tests/workers/test_e3_bare_head_noun.py
-src/tests/workers/test_e3_unknown_entity_type_gate.py
 src/tests/workers/test_extraction_temperature.py
 src/tests/workers/test_hard_forget_handler.py
 src/tests/workers/test_hard_forget_service.py

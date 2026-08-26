@@ -114,9 +114,9 @@ def _arrive(*, engine: Engine, index: _ScriptedEntityIndex, name: str) -> UUID:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Person', :n, :l)"
+                " VALUES (:e, :d, :n, :l)"
             ),
             {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "l": lemma},
         )
@@ -133,7 +133,6 @@ def _arrive(*, engine: Engine, index: _ScriptedEntityIndex, name: str) -> UUID:
             P1EntityRow(
                 entity_id=entity_id,
                 deployment_id=_DEPLOYMENT_ID,
-                type="Person",
                 canonical_name=name,
                 vector=_VECTORS[name],
             ),

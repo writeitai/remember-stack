@@ -61,7 +61,7 @@ def empty_deployment_state(database_engine: Engine) -> None:
 def test_fresh_head_bootstrap_commits_exact_deployment_and_manifest(
     database_engine: Engine,
 ) -> None:
-    """Commit one default-owned deployment and exact live 8/16/116 core state."""
+    """Commit one default-owned deployment and exact live 8/16/0 core state."""
     deployment_input = _deployment_input()
     result = DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=deployment_input
@@ -71,7 +71,7 @@ def test_fresh_head_bootstrap_commits_exact_deployment_and_manifest(
     assert result.deployment_created is True
     assert result.entity_types_count == 8
     assert result.predicates_count == 16
-    assert result.predicate_signatures_count == 116
+    assert result.predicate_signatures_count == 0
 
     with database_engine.connect() as connection:
         deployment = (
@@ -146,7 +146,7 @@ def test_identical_retry_is_noop_and_preserves_usage_count(
         result.entity_types_count,
         result.predicates_count,
         result.predicate_signatures_count,
-    ) == (8, 16, 116)
+    ) == (8, 16, 0)
     assert after == before
     with database_engine.connect() as connection:
         assert (
@@ -226,32 +226,6 @@ def test_changed_core_predicate_conflicts_without_other_mutation(
                 UPDATE predicates
                 SET synonyms = ARRAY['conflicting_synonym']
                 WHERE deployment_id = :deployment_id AND predicate = 'works_for'
-                """
-            ),
-            parameters={"deployment_id": _DEPLOYMENT_ID},
-        )
-    expected_hash = _state_hash(engine=database_engine)
-
-    with pytest.raises(CoreManifestConflictError):
-        bootstrapper.bootstrap_deployment(deployment_input=_deployment_input())
-
-    assert _state_hash(engine=database_engine) == expected_hash
-
-
-def test_missing_core_signature_conflicts_without_other_mutation(
-    database_engine: Engine,
-) -> None:
-    """Preserve a missing core signature and reject the incomplete core as typed conflict."""
-    bootstrapper = _bootstrapped(database_engine=database_engine)
-    with database_engine.begin() as connection:
-        connection.execute(
-            statement=text(
-                """
-                DELETE FROM predicate_signatures
-                WHERE deployment_id = :deployment_id
-                  AND predicate = 'works_for'
-                  AND subject_type = 'Person'
-                  AND object_type = 'Organization'
                 """
             ),
             parameters={"deployment_id": _DEPLOYMENT_ID},
@@ -346,24 +320,6 @@ def test_non_core_extension_rows_do_not_conflict_or_change_on_retry(
             ),
             parameters={"deployment_id": _DEPLOYMENT_ID},
         )
-        connection.execute(
-            statement=text(
-                """
-                INSERT INTO predicate_signatures (
-                    deployment_id,
-                    predicate,
-                    subject_type,
-                    object_type
-                ) VALUES (
-                    :deployment_id,
-                    'cites',
-                    'ResearchPaper',
-                    'Document'
-                )
-                """
-            ),
-            parameters={"deployment_id": _DEPLOYMENT_ID},
-        )
     expected_hash = _state_hash(engine=database_engine)
 
     result = bootstrapper.bootstrap_deployment(deployment_input=_deployment_input())
@@ -407,7 +363,7 @@ def test_mid_transaction_postgresql_failure_rolls_back_then_retry_succeeds(
         with pytest.raises(SQLAlchemyError) as caught:
             bootstrapper.bootstrap_deployment(deployment_input=_deployment_input())
         assert caught.value.__cause__ is not None
-        assert _bootstrap_counts(engine=database_engine) == (0, 0, 0, 0)
+        assert _bootstrap_counts(engine=database_engine) == (0, 0, 0)
     finally:
         with database_engine.begin() as connection:
             connection.execute(
@@ -423,7 +379,7 @@ def test_mid_transaction_postgresql_failure_rolls_back_then_retry_succeeds(
 
     result = bootstrapper.bootstrap_deployment(deployment_input=_deployment_input())
     assert result.deployment_created is True
-    assert _bootstrap_counts(engine=database_engine) == (1, 8, 16, 116)
+    assert _bootstrap_counts(engine=database_engine) == (1, 8, 16)
 
 
 def _deployment_input() -> DeploymentBootstrapInput:
@@ -526,24 +482,6 @@ def _assert_live_manifest(*, connection: Connection, deployment_id: UUID) -> Non
         for definition in CORE_MANIFEST.predicates
     }
 
-    signature_rows = connection.execute(
-        statement=text(
-            """
-            SELECT predicate, subject_type, object_type
-            FROM predicate_signatures
-            WHERE deployment_id = :deployment_id
-            """
-        ),
-        parameters={"deployment_id": deployment_id},
-    ).mappings()
-    assert {
-        (str(row["predicate"]), str(row["subject_type"]), str(row["object_type"]))
-        for row in signature_rows
-    } == {
-        (definition.predicate, definition.subject_type, definition.object_type)
-        for definition in CORE_MANIFEST.predicate_signatures
-    }
-
 
 def _state_hash(*, engine: Engine) -> str:
     """Hash all deployment/core state deterministically for no-mutation proofs."""
@@ -561,13 +499,6 @@ def _state_hash(*, engine: Engine) -> str:
                 connection=connection,
                 query=("SELECT * FROM predicates ORDER BY deployment_id, predicate"),
             ),
-            "predicate_signatures": _rows(
-                connection=connection,
-                query=(
-                    "SELECT * FROM predicate_signatures "
-                    "ORDER BY deployment_id, predicate, subject_type, object_type"
-                ),
-            ),
         }
     encoded = json.dumps(
         snapshot, sort_keys=True, separators=(",", ":"), default=str
@@ -582,8 +513,8 @@ def _rows(*, connection: Connection, query: str) -> list[dict[str, Any]]:
     ]
 
 
-def _bootstrap_counts(*, engine: Engine) -> tuple[int, int, int, int]:
-    """Return deployment/entity/predicate/signature counts after an attempt."""
+def _bootstrap_counts(*, engine: Engine) -> tuple[int, int, int]:
+    """Return deployment/entity/predicate counts after an attempt."""
     with engine.connect() as connection:
         return tuple(
             int(
@@ -591,10 +522,5 @@ def _bootstrap_counts(*, engine: Engine) -> tuple[int, int, int, int]:
                     statement=text(f"SELECT count(*) FROM {table}")
                 ).scalar_one()
             )
-            for table in (
-                "deployments",
-                "entity_types",
-                "predicates",
-                "predicate_signatures",
-            )
+            for table in ("deployments", "entity_types", "predicates")
         )  # type: ignore[return-value]

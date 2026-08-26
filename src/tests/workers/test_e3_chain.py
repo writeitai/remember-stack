@@ -99,8 +99,9 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
 
 # The SAME normalizer output for BOTH claims — the D2/D54 collapse proof: one
 # relation row, two evidence links, ONE lineage-distinct count. Plus one
-# candidate with an invented predicate and one failing the D18 signature gate,
-# both of which must be dropped, and one observation (a value about Acme).
+# candidate with an invented predicate, which must still be dropped (unknown
+# vocabulary, not ``other:``), and one observation (a value about Acme).
+# D18 domain/range is gone (D96); type-mismatched works_for is no longer a gate.
 _NORMALIZATION_PAYLOAD: dict[str, object] = {
     "relations": [
         {
@@ -111,11 +112,6 @@ _NORMALIZATION_PAYLOAD: dict[str, object] = {
         {
             "subject": {"name": "Alice Novak", "type": "Person"},
             "predicate": "invented_predicate",
-            "object": {"name": "Acme", "type": "Organization"},
-        },
-        {
-            "subject": {"name": "Quarterly Report", "type": "Document"},
-            "predicate": "works_for",
             "object": {"name": "Acme", "type": "Organization"},
         },
     ],
@@ -413,7 +409,7 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
         ).scalar_one()
         entities = (
             connection.execute(
-                text("SELECT canonical_name, type FROM entities ORDER BY type")
+                text("SELECT canonical_name FROM entities ORDER BY canonical_name")
             )
             .mappings()
             .all()
@@ -444,12 +440,9 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
     assert evidence == 2
     assert relation["evidence_count"] == 1
 
-    # the invented predicate and the signature-violating candidate never
-    # landed (only works_for exists); T0 minted each entity exactly once:
-    assert [(e["canonical_name"], e["type"]) for e in entities] == [
-        ("Acme", "Organization"),
-        ("Alice Novak", "Person"),
-    ]
+    # the invented predicate never landed (only works_for exists); T0 minted
+    # each entity exactly once:
+    assert [e["canonical_name"] for e in entities] == ["Acme", "Alice Novak"]
     assert new_decisions == 2
 
     # the observation landed once with collapsed evidence and its novelty-gate
@@ -658,18 +651,18 @@ def test_rerunning_normalization_replays_without_model_calls(rig: _E3Rig) -> Non
     assert relation_count == 1
 
 
-def test_signature_gate_binds_on_resolved_stored_types(rig: _E3Rig) -> None:
-    """Codex review: T0 may map an emitted name onto a differently-typed
-    entity — the D18 gate must re-check the RESOLVED types, not the emitted."""
+def test_works_for_persists_without_a_type_gate(rig: _E3Rig) -> None:
+    """D96: works_for is unconstrained by entity types; a pre-existing Acme
+    still receives the relation instead of being dropped as a D18 miss."""
     from uuid import uuid4 as _uuid4
 
     person_acme = _uuid4()
     with rig.engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Person', 'Acme', 'acme')"
+                " VALUES (:e, :d, 'Acme', 'acme')"
             ),
             {"e": person_acme, "d": _DEPLOYMENT_ID},
         )
@@ -699,9 +692,7 @@ def test_signature_gate_binds_on_resolved_stored_types(rig: _E3Rig) -> None:
         observation_subject = connection.execute(
             text("SELECT subject_entity_id FROM observations")
         ).scalar_one()
-    # works_for(Person -> Person-typed Acme) violates the signature: no
-    # relation lands; the observation still anchors on the resolved entity:
-    assert relations == 0
+    assert relations == 1
     assert observation_subject == person_acme
 
 
@@ -719,17 +710,17 @@ def test_t0_never_resolves_to_a_merged_entity(rig: _E3Rig) -> None:
         for entity_id, name, lemma in ((survivor, "Beta Corp", "beta corp"),):
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name)"
-                    " VALUES (:e, :d, 'Organization', :n, :l)"
+                    " VALUES (:e, :d, :n, :l)"
                 ),
                 {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "l": lemma},
             )
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name, status, merged_into)"
-                " VALUES (:e, :d, 'Organization', 'Gamma Ltd', 'gamma ltd',"
+                " VALUES (:e, :d, 'Gamma Ltd', 'gamma ltd',"
                 " 'merged', :m)"
             ),
             {"e": merged, "d": _DEPLOYMENT_ID, "m": survivor},
@@ -745,7 +736,7 @@ def test_t0_never_resolves_to_a_merged_entity(rig: _E3Rig) -> None:
 
     resolved = _Registry(engine=rig.engine).resolve_t0(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Gamma Ltd", type="Organization"),
+        reference=EntityRef(name="Gamma Ltd"),
         claim=ClaimForNormalization(
             claim_id=_uuid4(),
             deployment_id=_DEPLOYMENT_ID,

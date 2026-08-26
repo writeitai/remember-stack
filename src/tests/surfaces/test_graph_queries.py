@@ -83,9 +83,9 @@ class _Graph:
                 self.ids[name] = entity_id
                 connection.execute(
                     text(
-                        "INSERT INTO entities (entity_id, deployment_id, type,"
+                        "INSERT INTO entities (entity_id, deployment_id,"
                         " canonical_name, normalized_name)"
-                        " VALUES (:e, :d, :t, :n, lower(:n))"
+                        " VALUES (:e, :d, :n, lower(:n))"
                     ),
                     {"e": entity_id, "d": _DEPLOYMENT_ID, "t": entity_type, "n": name},
                 )

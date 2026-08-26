@@ -27,7 +27,6 @@ from rememberstack.core.core_manifest import CORE_MANIFEST
 from rememberstack.core.core_manifest import CoreManifest
 from rememberstack.core.core_manifest import EntityTypeDefinition
 from rememberstack.core.core_manifest import PredicateDefinition
-from rememberstack.core.core_manifest import PredicateSignatureDefinition
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import render_embedding_input
 from rememberstack.core.extension_packs import ExtensionPack
@@ -104,7 +103,6 @@ __all__ = (
     "PASSTHROUGH_CONVERTER_VERSION",
     "stock_passthrough_routes",
     "PredicateDefinition",
-    "PredicateSignatureDefinition",
     "block_hash",
     "blockize",
     "blocks_from_sidecar",

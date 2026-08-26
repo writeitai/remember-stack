@@ -64,10 +64,10 @@ class _Corpus:
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id, type,"
+                    "INSERT INTO entities (entity_id, deployment_id,"
                     " canonical_name, normalized_name, profile_summary,"
                     " mention_count)"
-                    " VALUES (:e, :d, 'Organization', 'Acme', 'acme',"
+                    " VALUES (:e, :d, 'Acme', 'acme',"
                     " 'A manufacturer of anvils.', 3)"
                 ),
                 {"e": self.entity_id, "d": _DEPLOYMENT_ID},
@@ -321,9 +321,9 @@ def test_tier_one_paths_survive_rebuilds(corpus: _Corpus, tmp_path: Path) -> Non
     with corpus.engine.begin() as connection:  # the corpus grows
         connection.execute(
             text(
-                "INSERT INTO entities (entity_id, deployment_id, type,"
+                "INSERT INTO entities (entity_id, deployment_id,"
                 " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Person', 'Wile E', 'wile e')"
+                " VALUES (:e, :d, 'Wile E', 'wile e')"
             ),
             {"e": uuid4(), "d": _DEPLOYMENT_ID},
         )
@@ -351,10 +351,10 @@ def test_placement_hints_drive_topic_views(corpus: _Corpus, tmp_path: Path) -> N
 def test_entity_pages_carry_their_evidencing_documents(
     corpus: _Corpus, tmp_path: Path
 ) -> None:
-    """`entities/<type>/<id>/_index.md`: profile plus the documents that
+    """`entities/<id>/_index.md`: profile plus the documents that
     mention it — the evidence side of understanding ↔ evidence."""
     tree, _ = _build(corpus, tmp_path)
-    page = tree.read(f"entities/organization/{corpus.entity_id}/_index.md")
+    page = tree.read(f"entities/{corpus.entity_id}/_index.md")
     assert "# Acme" in page
     assert "A manufacturer of anvils." in page
     assert "3 mention(s)" in page
@@ -431,8 +431,8 @@ def test_tier_one_roots_carry_member_tables(corpus: _Corpus, tmp_path: Path) -> 
     assert str(corpus.entity_id) in entities_index
 
     # an entity page's member rows link to canonical paths that resolve
-    page = tree.read(f"entities/organization/{corpus.entity_id}/_index.md")
-    assert "../../../documents/" in page  # a real relative link, not a dead name
+    page = tree.read(f"entities/{corpus.entity_id}/_index.md")
+    assert "../../documents/" in page  # a real relative link, not a dead name
 
 
 def test_pathological_titles_and_refs_are_contained(

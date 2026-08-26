@@ -155,7 +155,6 @@ EXPECTED_TABLES: Final = (
     "observation_evidence",
     "observations",
     "pipeline_component_versions",
-    "predicate_signatures",
     "predicates",
     "processing_state",
     "projection_snapshots",
@@ -219,7 +218,6 @@ EXPECTED_INDEXES: Final = (
     "ix_entities_name_trgm",
     "ix_entities_embedding_hnsw",
     "ix_entities_redirect",
-    "ix_entities_type",
     "ix_entity_types_parent",
     "ix_eval_suite_ver",
     "ix_forget_content_guard",
@@ -340,12 +338,7 @@ QUERY_SPACE_SCHEMA: Final = "memory_v1"
 `memory_v1` manifest (`rememberstack.spine.query_space`); this module only
 proves the schema exists at head and is gone after a downgrade, so a stray
 leftover schema cannot masquerade as the query surface."""
-EMPTY_AT_HEAD: Final = (
-    "deployments",
-    "entity_types",
-    "predicate_signatures",
-    "predicates",
-)
+EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
@@ -354,9 +347,9 @@ EMPTY_AT_HEAD: Final = (
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 68,
-    "f": 132,
-    "n": 553,
-    "p": 73,
+    "f": 127,
+    "n": 548,
+    "p": 72,
     "u": 36,
     "x": 1,
 }

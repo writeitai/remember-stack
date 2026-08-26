@@ -195,9 +195,9 @@ def _seed_entity(
     """One entity row with the minimum the projection reads."""
     connection.execute(  # type: ignore[attr-defined]
         text(
-            "INSERT INTO entities (entity_id, deployment_id, type,"
+            "INSERT INTO entities (entity_id, deployment_id,"
             " canonical_name, normalized_name, status, merged_into)"
-            " VALUES (:e, :d, 'Person', :n, lower(:n),"
+            " VALUES (:e, :d, :n, lower(:n),"
             " CAST(:s AS entity_status), :m)"
         ),
         {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "s": status, "m": merged_into},

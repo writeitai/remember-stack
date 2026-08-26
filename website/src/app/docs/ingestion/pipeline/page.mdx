@@ -24,7 +24,7 @@ ingest → convert → structure → chunk → embed(chunks)
                          P1 updates · (scheduled) P2/P3 · K triggers
 ```
 
-All stages are **idempotent** with respect to their versioned inputs. Workers use the deployment work ledger: retry, then dead-letter for **systemic** failures (provider outage, database errors, unrecoverable handler bugs). That is not the same as **re-derivable soft drops** inside a successful stage: unknown predicates, signature rejects, and **unknown entity types after the E3 type-gate retry budget (D86)** are dropped with structured logs/metrics (`e3.unknown_entity_type*`) and do not dead-letter the document version. Soft drops are intentional and instrumented — not silent.
+All stages are **idempotent** with respect to their versioned inputs. Workers use the deployment work ledger: retry, then dead-letter for **systemic** failures (provider outage, database errors, unrecoverable handler bugs). That is not the same as a **re-derivable soft drop** inside a successful stage: a predicate outside the governed vocabulary is preserved through the `other:` escape when possible, otherwise it is dropped with structured telemetry and does not dead-letter the document version. Entity types and domain/range signature gates are not part of E3.
 
 ---
 
@@ -152,7 +152,7 @@ Write-time cascade tiers:
 
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
-Bare head nouns (`game`, `app`, `system`, `card`, `photo`, `module`, `the system`) are not minted as entities. Qualified names (`FIFA 23`, `James's Unity strategy game`) may mint. When the claim spelling differs from the canonical name (`App` vs `Application`), both surfaces are stored as aliases on the same id.
+Bare head nouns (`game`, `app`, `system`, `card`, `photo`, `module`, `the system`) are not minted as entities. Qualified names (`FIFA 23`, `James's Unity strategy game`) may mint. When the claim spelling differs from the canonical name (`App` vs `Application`), both surfaces are stored as aliases on the same id. Entities have **no type class**: extract emits names only. `works_for` between two people is allowed.
 
 ### Predicate governance
 

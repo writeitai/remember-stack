@@ -146,9 +146,9 @@ def _seed_entity(
     """One entity row with the minimum the projection reads."""
     connection.execute(  # type: ignore[attr-defined]
         text(
-            "INSERT INTO entities (entity_id, deployment_id, type,"
+            "INSERT INTO entities (entity_id, deployment_id,"
             " canonical_name, normalized_name, status, merged_into)"
-            " VALUES (:e, :d, 'Person', :n, lower(:n),"
+            " VALUES (:e, :d, :n, lower(:n),"
             " CAST(:s AS entity_status), :m)"
         ),
         {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "s": status, "m": merged_into},
@@ -159,9 +159,9 @@ def _seed_entities_bulk(connection: object, *, count: int, prefix: str) -> None:
     """Set-based entity seeding — the seeding must never dominate the timing."""
     connection.execute(  # type: ignore[attr-defined]
         text(
-            "INSERT INTO entities (entity_id, deployment_id, type,"
+            "INSERT INTO entities (entity_id, deployment_id,"
             " canonical_name, normalized_name)"
-            " SELECT gen_random_uuid(), :d, 'Person',"
+            " SELECT gen_random_uuid(), :d,"
             " :p || i, :p || i FROM generate_series(1, :n) AS i"
         ),
         {"d": _DEPLOYMENT_ID, "p": prefix, "n": count},
