@@ -119,6 +119,14 @@ class SelfHostSettings(BaseSettings):
             return None
         return value
 
+    @field_validator("require_api_auth", mode="before")
+    @classmethod
+    def _blank_require_is_false(cls, value: object) -> object:
+        """Compose interpolates unset REQUIRE as empty string; that is false."""
+        if isinstance(value, str) and not value.strip():
+            return False
+        return value
+
 
 def resolve_selfhost_api_auth(*, settings: SelfHostSettings) -> HashedBearerAuth | None:
     """Return the perimeter adapter, or None for the open quickstart.

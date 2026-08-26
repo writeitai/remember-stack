@@ -62,6 +62,15 @@ def test_require_api_auth_without_bind_refuses_to_start() -> None:
         resolve_selfhost_api_auth(settings=settings)
 
 
+def test_empty_require_api_auth_string_is_false() -> None:
+    """Compose may pass REQUIRE_API_AUTH=; that must not fail settings parse."""
+    settings = SelfHostSettings.model_validate(
+        {"deployment_id": _DEPLOYMENT_B, "require_api_auth": ""}
+    )
+    assert settings.require_api_auth is False
+    assert resolve_selfhost_api_auth(settings=settings) is None
+
+
 def test_open_quickstart_when_auth_env_unset() -> None:
     """D60: unset BIND and REQUIRE_API_AUTH=false leaves the perimeter open."""
     settings = SelfHostSettings(deployment_id=_DEPLOYMENT_B)
