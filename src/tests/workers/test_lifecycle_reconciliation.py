@@ -156,9 +156,9 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
             return {
                 "relations": [
                     {
-                        "subject": {"name": "Alice Novak", "type": "Person"},
+                        "subject": {"name": "Alice Novak"},
                         "predicate": "works_for",
-                        "object": {"name": "Acme", "type": "Organization"},
+                        "object": {"name": "Acme"},
                     }
                 ],
                 "observations": [],

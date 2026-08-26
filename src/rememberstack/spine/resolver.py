@@ -180,42 +180,44 @@ class CascadeResolver:
         *,
         surface_a: str,
         surface_b: str,
-        entity_type: str,
         context_a: str | None,
         context_b: str | None,
     ) -> tuple[bool, str]:
         """The cascade's decision function over one golden pair (D22).
 
         Registry-free: measures whether the tiers would identify the two
-        surfaces — lemma equality (T0), blocking reachability (T1/T2; a pair
-        blocking cannot reach is a no_match by the recall ceiling), the T3
-        band over the two surface embeddings, then T4 with both contexts.
-        Returns (match, deciding_tier).
+        surfaces. Lemma equality records T0 candidate reachability but is never
+        a verdict. Non-T0 pairs must be reachable through T1/T2 (a pair that
+        blocking cannot reach is a no-match by the recall ceiling). T3 may
+        decide non-identical spellings; same-lemma pairs go to T4 because their
+        name-only vectors carry no distinguishing evidence until WP-I.4 adds
+        profiles. Returns (match, deciding_tier).
         """
         lemma_a = normalized_lemma(surface=surface_a)
         lemma_b = normalized_lemma(surface=surface_b)
-        if lemma_a == lemma_b:
-            return True, "T0"
-        with self._engine.connect() as connection:
-            reachable = connection.execute(
-                _PAIR_REACHABLE,
-                {"a": lemma_a, "b": lemma_b, "floor": self._config.trigram_floor},
-            ).scalar_one()
-        if not reachable:
-            return False, "blocking"
-        thresholds = self._config.default_thresholds
-        vectors = self._model_provider.embed(
-            request=EmbeddingRequest(
-                model=self._embedding_model,
-                texts=(surface_a, surface_b),
-                dimensions=P1_VECTOR_DIMENSIONS,
-            )
-        ).vectors
-        score = _cosine(vectors[0], vectors[1])
-        if score >= thresholds.t3_accept:
-            return True, "T3"
-        if score <= thresholds.t3_reject:
-            return False, "T3"
+        same_lemma = lemma_a == lemma_b
+        if not same_lemma:
+            with self._engine.connect() as connection:
+                reachable = connection.execute(
+                    _PAIR_REACHABLE,
+                    {"a": lemma_a, "b": lemma_b, "floor": self._config.trigram_floor},
+                ).scalar_one()
+            if not reachable:
+                return False, "blocking"
+        thresholds = self._config.thresholds
+        if not same_lemma:
+            vectors = self._model_provider.embed(
+                request=EmbeddingRequest(
+                    model=self._embedding_model,
+                    texts=(surface_a, surface_b),
+                    dimensions=P1_VECTOR_DIMENSIONS,
+                )
+            ).vectors
+            score = _cosine(vectors[0], vectors[1])
+            if score >= thresholds.t3_accept:
+                return True, "T3"
+            if score <= thresholds.t3_reject:
+                return False, "T3"
         prompt = _T4_PROMPT.format(
             mention=surface_b, context=context_b or "(none)", candidate=surface_a
         )
@@ -278,7 +280,7 @@ class CascadeResolver:
         """T3 embedding bands, then T4 adjudication for the ambiguous band."""
         if not candidates:
             return None
-        thresholds = self._config.default_thresholds
+        thresholds = self._config.thresholds
         scored = self._t3_scores(
             connection=connection,
             deployment_id=deployment_id,
@@ -399,7 +401,7 @@ class CascadeResolver:
                 call_key=f"{call_key}:small", tier="T4_small", usage=verdict_call.usage
             )
         verdict = verdict_call.output
-        thresholds = self._config.default_thresholds
+        thresholds = self._config.thresholds
         if verdict.confidence >= thresholds.t4_small_confidence_floor:
             return verdict, "T4_small", self._small_model
         frontier_call = self._model_provider.generate(
@@ -670,10 +672,7 @@ def _stored_config(
         )
     if row is None:
         return None
-    return {
-        "tier_config": row["tier_config"],
-        "thresholds_by_type": row["thresholds_by_type"],
-    }
+    return {"tier_config": row["tier_config"], "thresholds": row["thresholds"]}
 
 
 def _config_definition(*, config: ResolverConfig) -> dict[str, object]:
@@ -685,13 +684,7 @@ def _config_definition(*, config: ResolverConfig) -> dict[str, object]:
             "blocking_limit": config.blocking_limit,
             "t4_max_candidates": config.t4_max_candidates,
         },
-        "thresholds_by_type": {
-            "default": config.default_thresholds.model_dump(),
-            **{
-                entity_type: thresholds.model_dump()
-                for entity_type, thresholds in config.thresholds_by_type.items()
-            },
-        },
+        "thresholds": config.thresholds.model_dump(),
     }
 
 
@@ -863,19 +856,17 @@ _INSERT_DECISION = text(
 _SEED_RESOLVER_VERSION = text(
     """
     INSERT INTO resolver_versions (
-        deployment_id, resolver_version, tier_config, thresholds_by_type
+        deployment_id, resolver_version, tier_config, thresholds
     ) VALUES (
-        :deployment_id, :resolver_version, :tier_config, :thresholds_by_type
+        :deployment_id, :resolver_version, :tier_config, :thresholds
     )
     ON CONFLICT (deployment_id, resolver_version) DO NOTHING
     """
-).bindparams(
-    bindparam("tier_config", type_=JSON), bindparam("thresholds_by_type", type_=JSON)
-)
+).bindparams(bindparam("tier_config", type_=JSON), bindparam("thresholds", type_=JSON))
 
 _SELECT_RESOLVER_VERSION = text(
     """
-    SELECT tier_config, thresholds_by_type FROM resolver_versions
+    SELECT tier_config, thresholds FROM resolver_versions
     WHERE deployment_id = :deployment_id
       AND resolver_version = :resolver_version
     """

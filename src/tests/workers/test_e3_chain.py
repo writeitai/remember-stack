@@ -105,19 +105,19 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
 _NORMALIZATION_PAYLOAD: dict[str, object] = {
     "relations": [
         {
-            "subject": {"name": "Alice Novak", "type": "Person"},
+            "subject": {"name": "Alice Novak"},
             "predicate": "works_for",
-            "object": {"name": "Acme", "type": "Organization"},
+            "object": {"name": "Acme"},
         },
         {
-            "subject": {"name": "Alice Novak", "type": "Person"},
+            "subject": {"name": "Alice Novak"},
             "predicate": "invented_predicate",
-            "object": {"name": "Acme", "type": "Organization"},
+            "object": {"name": "Acme"},
         },
     ],
     "observations": [
         {
-            "subject": {"name": "Acme", "type": "Organization"},
+            "subject": {"name": "Acme"},
             "statement": "Acme employs Alice Novak as an engineer.",
         }
     ],

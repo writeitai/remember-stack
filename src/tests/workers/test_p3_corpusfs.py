@@ -30,6 +30,7 @@ from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import CorpusFsSettings
+from rememberstack.workers.p3 import _tier_one_entities_index
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("45000000-0000-0000-0000-000000000001")
@@ -433,6 +434,14 @@ def test_tier_one_roots_carry_member_tables(corpus: _Corpus, tmp_path: Path) -> 
     # an entity page's member rows link to canonical paths that resolve
     page = tree.read(f"entities/{corpus.entity_id}/_index.md")
     assert "../../documents/" in page  # a real relative link, not a dead name
+
+
+def test_empty_entity_root_keeps_three_column_table_shape() -> None:
+    """The empty sentinel must match the post-D96 three-column header."""
+    index = _tier_one_entities_index(entities=())
+    assert "| Entity | Mentions | Canonical |" in index
+    assert "| — | — | — |" in index
+    assert "| — | — | — | — |" not in index
 
 
 def test_pathological_titles_and_refs_are_contained(

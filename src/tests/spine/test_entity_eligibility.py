@@ -1,15 +1,26 @@
 """WP-I.1: bare head nouns are not entity referents."""
 
+from pydantic import ValidationError
+import pytest
+
 from rememberstack.model import EntityRef
+from rememberstack.model import ResolvedEntity
 from rememberstack.spine.entity_eligibility import is_bare_head_noun
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 
 
-def test_entity_ref_discards_legacy_type() -> None:
-    """D96: inbound type is not identity and is not stored on EntityRef."""
-    ref = EntityRef.model_validate({"name": "Alice", "type": "Person"})
-    assert ref.name == "Alice"
-    assert not hasattr(ref, "type")
+def test_entity_values_reject_legacy_type_fields() -> None:
+    """D96 hard cut: stale type-producing callers fail instead of hiding drift."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        EntityRef.model_validate({"name": "Alice", "type": "Person"})
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ResolvedEntity.model_validate(
+            {
+                "entity_id": "00000000-0000-0000-0000-000000000001",
+                "created": False,
+                "entity_type": "Person",
+            }
+        )
 
 
 def test_bare_head_nouns_are_rejected() -> None:

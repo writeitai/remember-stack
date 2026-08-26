@@ -865,7 +865,7 @@ CREATE TABLE resolution_decisions (
   mention_id      uuid NOT NULL,               -- LOGICAL FK → mentions
   entity_id       uuid NOT NULL,               -- LOGICAL FK → entities; the resolved canonical id
   method          resolution_tier NOT NULL,    -- T0 | T3 | T4_small | T4_frontier | human (NOT T1/T2 — see CHECK)
-  confidence      real NOT NULL,               -- tier confidence; bands per resolver_versions.thresholds_by_type
+  confidence      real NOT NULL,               -- tier confidence; bands in resolver_versions.thresholds
   is_new_entity   boolean NOT NULL DEFAULT false, -- true if this decision minted a new entity (no confident match)
   features        jsonb,                       -- evidence used (trigram/phonetic/cosine scores incl. the surfacing blocking tier, LLM rationale)
   resolver_version text NOT NULL,              -- LOGICAL FK → resolver_versions; pins the thresholds in force

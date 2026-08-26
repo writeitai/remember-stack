@@ -1,13 +1,15 @@
-"""The ER golden-set suite (WP-2.1, D17/D22): per-type P/R over golden pairs.
+"""The ER golden-set suite (WP-I.3, D22/D95): global P/R over golden pairs.
 
 Runs the cascade's decision function over every human-adjudicated pair,
-computes precision/recall per entity type, records the curves on the
-`resolver_versions` row (the acceptance home) and the run in `eval_runs`.
-No threshold ships as final without these curves; the floors here are
-starting points to tighten as the golden set grows.
+computes one global precision/recall curve, and retains both blocking-stratum
+and deciding-tier diagnostics. The result is recorded on the
+`resolver_versions` row (the acceptance home) and in `eval_runs`. No threshold
+ships as final without this curve; the floors here are starting points to
+tighten as the golden set grows.
 """
 
 from typing import Final
+from typing import TypedDict
 from uuid import UUID
 from uuid import uuid4
 from uuid import uuid5
@@ -20,17 +22,51 @@ from sqlalchemy.engine import Engine
 from rememberstack.spine.resolver import CascadeResolver
 
 PRECISION_FLOOR: Final = 0.90
-"""Suite-blocking precision floor per type (starting point, D22)."""
+"""Suite-blocking global precision floor (starting point, D22/D96)."""
 
 RECALL_FLOOR: Final = 0.80
-"""Suite-blocking recall floor per type (starting point, D22)."""
+"""Suite-blocking global recall floor (starting point, D22/D96)."""
 
 _PAIR_NAMESPACE: Final = UUID("601de77a-0000-4000-8000-000000000000")
+
+
+class ResolutionCurve(TypedDict):
+    """The single suite-blocking global precision/recall curve."""
+
+    precision: float | None
+    recall: float | None
+    pairs: int
+    false_merges: int
+    false_splits: int
+
+
+class TierDiagnostic(TypedDict):
+    """Non-gating error attribution for one blocking or deciding tier."""
+
+    pairs: int
+    correct: int
+    false_merges: int
+    false_splits: int
+
+
+class TierDiagnostics(TypedDict):
+    """Diagnostics grouped by expected blocking and actual deciding tier."""
+
+    deciding: dict[str, TierDiagnostic]
+    blocking: dict[str, TierDiagnostic]
+
+
+class ResolutionSuiteReport(TypedDict):
+    """The complete result of one resolution golden-set run."""
+
+    curve: ResolutionCurve
+    tier_diagnostics: TierDiagnostics
+    passed: bool
+
 
 SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
     # exact / near-exact strata
     {
-        "entity_type": "Organization",
         "surface_a": "Acme Corporation",
         "surface_b": "Acme Corp",
         "label": "match",
@@ -40,7 +76,6 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
         "context_b": "Acme Corp announced quarterly results.",
     },
     {
-        "entity_type": "Organization",
         "surface_a": "Acme Corporation",
         "surface_b": "Zenith Industries",
         "label": "no_match",
@@ -51,7 +86,6 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
     },
     # the Czech slice (registries §5): diacritics, inflection, family names
     {
-        "entity_type": "Person",
         "surface_a": "Pavel Kovář",
         "surface_b": "Pavel Kovar",
         "label": "match",
@@ -61,7 +95,6 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
         "context_b": "an email signed Pavel Kovar, Brno office",
     },
     {
-        "entity_type": "Person",
         "surface_a": "Jan Novák",
         "surface_b": "Jana Nováková",
         "label": "no_match",  # feminine surname: typically a different person
@@ -71,7 +104,6 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
         "context_b": "Jana Nováková from the legal team.",
     },
     {
-        "entity_type": "Person",
         "surface_a": "Petr Svoboda",
         "surface_b": "Petra Svobodu",  # accusative inflection of a NAME variant
         "label": "no_match",
@@ -81,7 +113,6 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
         "context_b": "the committee appointed Petra Svobodu",
     },
     {
-        "entity_type": "Person",
         "surface_a": "Karel Dvořák",
         "surface_b": "Karel Dvorzak",  # phonetic spelling drift
         "label": "match",
@@ -89,6 +120,25 @@ SYNTHETIC_GOLDEN_PAIRS: Final[tuple[dict[str, object], ...]] = (
         "expected_blocking_tier": "T2",
         "context_a": "Karel Dvořák, the composer's namesake in sales.",
         "context_b": "meeting notes mention Karel Dvorzak from sales",
+    },
+    # D95's load-bearing counterexamples: T0 reaches them but never decides.
+    {
+        "surface_a": "John Smith",
+        "surface_b": "John Smith",
+        "label": "no_match",
+        "hardness": "hard_negative",
+        "expected_blocking_tier": "T0",
+        "context_a": "John Smith, the retired father living in Bristol.",
+        "context_b": "John Smith, his son and an engineer living in Leeds.",
+    },
+    {
+        "surface_a": "John",
+        "surface_b": "John",
+        "label": "no_match",
+        "hardness": "hard_negative",
+        "expected_blocking_tier": "T0",
+        "context_a": None,
+        "context_b": None,
     },
 )
 
@@ -121,11 +171,13 @@ def run_resolution_suite(
     resolver: CascadeResolver,
     deployment_id: UUID,
     component_version: str,
-) -> dict[str, object]:
+) -> ResolutionSuiteReport:
     """Judge every golden pair, record curves + the run, return the report.
 
-    Passing means every measured type meets the precision and recall floors.
-    The curves land on the resolver_versions row (notes) — the D22 record the
+    Passing means the global curve meets both floors. Diagnostics preserve the
+    expected blocking stratum and actual deciding tier for every outcome, so a
+    T0-reachable same-name pair can still blame a false merge on T3 or T4.
+    The report lands on the resolver_versions row (notes) — the D22 record the
     exit criterion names — and the run in eval_runs.
     """
     with engine.connect() as connection:
@@ -134,46 +186,42 @@ def run_resolution_suite(
             .mappings()
             .all()
         )
-    by_type: dict[str, dict[str, int]] = {}
+    global_counts = _empty_counts()
+    by_deciding_tier: dict[str, dict[str, int]] = {}
+    by_blocking_tier: dict[str, dict[str, int]] = {}
     for pair in pairs:
         matched, tier = resolver.judge_pair(
             surface_a=pair["surface_a"],
             surface_b=pair["surface_b"],
-            entity_type=pair["entity_type"],
             context_a=pair["context_a"],
             context_b=pair["context_b"],
         )
-        counts = by_type.setdefault(
-            pair["entity_type"], {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
-        )
         actual = pair["label"] == "match"
-        if matched and actual:
-            counts["tp"] += 1
-        elif matched and not actual:
-            counts["fp"] += 1
-        elif not matched and actual:
-            counts["fn"] += 1
-        else:
-            counts["tn"] += 1
-        del tier  # per-pair deciding tier; stratified curves arrive with WP-0.6
-    curves = {
-        entity_type: {
-            "precision": _ratio(counts["tp"], counts["tp"] + counts["fp"]),
-            "recall": _ratio(counts["tp"], counts["tp"] + counts["fn"]),
-            "pairs": sum(counts.values()),
-        }
-        for entity_type, counts in by_type.items()
+        blocking_tier = str(pair["expected_blocking_tier"] or "unreachable")
+        deciding_counts = by_deciding_tier.setdefault(tier, _empty_counts())
+        blocking_counts = by_blocking_tier.setdefault(blocking_tier, _empty_counts())
+        for counts in (global_counts, deciding_counts, blocking_counts):
+            _record_outcome(counts=counts, matched=matched, actual=actual)
+    curve = _curve(counts=global_counts)
+    tier_diagnostics: TierDiagnostics = {
+        "deciding": {
+            tier: _tier_diagnostic(counts=counts)
+            for tier, counts in sorted(by_deciding_tier.items())
+        },
+        "blocking": {
+            tier: _tier_diagnostic(counts=counts)
+            for tier, counts in sorted(by_blocking_tier.items())
+        },
     }
     # an UNDEFINED metric (no positive pairs, or no predicted positives) is
     # an unmeasured stratum and BLOCKS the suite — 0/0 never counts as
-    # perfect, so thresholds cannot be approved for a type the golden set
-    # does not actually measure (Codex review):
-    passed = bool(curves) and all(
+    # perfect, so global thresholds cannot be approved when the golden set
+    # does not actually measure both sides of the curve (Codex review):
+    passed = bool(pairs) and (
         curve["precision"] is not None
         and curve["recall"] is not None
         and curve["precision"] >= PRECISION_FLOOR
         and curve["recall"] >= RECALL_FLOOR
-        for curve in curves.values()
     )
     with engine.begin() as connection:
         connection.execute(
@@ -183,7 +231,8 @@ def run_resolution_suite(
                 "deployment_id": deployment_id,
                 "component_version": component_version,
                 "metrics": {
-                    "curves": curves,
+                    "curve": curve,
+                    "tier_diagnostics": tier_diagnostics,
                     "floors": {"precision": PRECISION_FLOOR, "recall": RECALL_FLOOR},
                 },
                 "passed": passed,
@@ -194,10 +243,48 @@ def run_resolution_suite(
             {
                 "deployment_id": deployment_id,
                 "resolver_version": component_version,
-                "notes": {"curves": curves},
+                "notes": {"curve": curve, "tier_diagnostics": tier_diagnostics},
             },
         )
-    return {"curves": curves, "passed": passed}
+    return {"curve": curve, "tier_diagnostics": tier_diagnostics, "passed": passed}
+
+
+def _empty_counts() -> dict[str, int]:
+    """Return a fresh confusion-matrix accumulator."""
+    return {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+
+
+def _record_outcome(*, counts: dict[str, int], matched: bool, actual: bool) -> None:
+    """Add one predicted/actual outcome to a confusion matrix."""
+    if matched and actual:
+        counts["tp"] += 1
+    elif matched and not actual:
+        counts["fp"] += 1
+    elif not matched and actual:
+        counts["fn"] += 1
+    else:
+        counts["tn"] += 1
+
+
+def _curve(*, counts: dict[str, int]) -> ResolutionCurve:
+    """Build the one suite-blocking global precision/recall curve."""
+    return {
+        "precision": _ratio(counts["tp"], counts["tp"] + counts["fp"]),
+        "recall": _ratio(counts["tp"], counts["tp"] + counts["fn"]),
+        "pairs": sum(counts.values()),
+        "false_merges": counts["fp"],
+        "false_splits": counts["fn"],
+    }
+
+
+def _tier_diagnostic(*, counts: dict[str, int]) -> TierDiagnostic:
+    """Summarize errors for one blocking or deciding tier without gating it."""
+    return {
+        "pairs": sum(counts.values()),
+        "correct": counts["tp"] + counts["tn"],
+        "false_merges": counts["fp"],
+        "false_splits": counts["fn"],
+    }
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -208,11 +295,11 @@ def _ratio(numerator: int, denominator: int) -> float | None:
 _UPSERT_PAIR = text(
     """
     INSERT INTO golden_pairs (
-        pair_id, deployment_id, entity_type, surface_a, surface_b,
+        pair_id, deployment_id, surface_a, surface_b,
         context_a, context_b, label, hardness, expected_blocking_tier,
         is_synthetic, adjudicated_by
     ) VALUES (
-        :pair_id, :deployment_id, :entity_type, :surface_a, :surface_b,
+        :pair_id, :deployment_id, :surface_a, :surface_b,
         :context_a, :context_b, :label, :hardness, :expected_blocking_tier,
         true, 'synthetic-starter'
     )
@@ -227,10 +314,11 @@ _UPSERT_PAIR = text(
 
 _SELECT_PAIRS = text(
     """
-    SELECT entity_type, surface_a, surface_b, context_a, context_b, label
+    SELECT surface_a, surface_b, context_a, context_b, label,
+           expected_blocking_tier
     FROM golden_pairs
     WHERE deployment_id = :deployment_id
-    ORDER BY entity_type, pair_id
+    ORDER BY pair_id
     """
 )
 

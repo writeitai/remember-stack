@@ -287,7 +287,7 @@ in §3.2. Entity-free v2 stays deferred (§6).
 | Semantic/profile entity discovery (name unknown) | needs entity-vector nomination design | after T-ladder upgrade below |
 | Resolve ladder T1–T3 (fuzzy/semantic aliasing) | separate design; current tools inherit T0 | recall failures attributable to aliasing in production traces |
 | Negative-testimony polarity ("X does not…") | relations lack polarity; boundary recorded — such content is reachable only as claims/observations today | polarity modeling design |
-| Absence/exhaustive queries ("did X ever…") | `typed_absence`/`scan` primitives exist engine-side; agent surface needs its own cost design | dedicated design |
+| Absence/exhaustive queries ("did X ever…") | `predicate_absence`/`scan` primitives exist engine-side; agent surface needs its own cost design | dedicated design |
 | Session/transcript fetch | privacy grain + size budget design needed | dedicated design |
 | Mention-record transcript tool | mentions stay internal joins in this wave | first consumer needing mention provenance itself |
 | Fact as-of (point-in-time facts) | supersession history exists; surface needs its own design | first as-of question class in production traces |

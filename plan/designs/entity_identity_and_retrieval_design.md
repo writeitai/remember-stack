@@ -429,7 +429,7 @@ Minimum rows:
 **Type-cut consumer checklist** (same PR as the schema drop; not
 compatibility): `workers/p2.py`, `spine/projection.py` Entity export,
 `workers/p3.py` + P3 path above, P1 entity search, `memory_v1.entities_current`,
-`GraphNode` / envelope, `query_engine` `resolve`/`typed_absence`,
+`GraphNode` / envelope, `query_engine` `resolve`/`predicate_absence`,
 `http_api.py` / `sdk.py`, `assured_operations.py`, bootstrap/`core_manifest`
 type seed, eval type strata, migration tests. Dropping the SQL column
 without these still fails the hard cut.

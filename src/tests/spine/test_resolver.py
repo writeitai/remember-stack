@@ -20,8 +20,8 @@ from rememberstack.eval import seed_synthetic_golden_pairs
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EntityRef
+from rememberstack.model import ResolutionThresholds
 from rememberstack.model import ResolverConfig
-from rememberstack.model import TypeThresholds
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RESOLVER_VERSION
@@ -36,7 +36,7 @@ from tests.workers.e3_test_doubles import RecordingFacts
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b0000000-0000-0000-0000-000000000001")
 
-_ALWAYS_ESCALATE = TypeThresholds(t3_accept=1.0, t3_reject=-1.0)
+_ALWAYS_ESCALATE = ResolutionThresholds(t3_accept=1.0, t3_reject=-1.0)
 """Bands that route every blocked candidate through T4 (deterministic tests)."""
 
 
@@ -54,8 +54,21 @@ def _first_token_router(prompt: str, type_name: str) -> dict[str, object]:
         stripped = "".join(c for c in folded if not unicodedata.combining(c))
         return stripped.lower().split()[0]
 
+    mention = next(
+        line.split("'")[1]
+        for line in prompt.splitlines()
+        if line.startswith("MENTION:")
+    )
+    candidate = next(
+        line.split("'")[1]
+        for line in prompt.splitlines()
+        if line.startswith("CANDIDATE:")
+    )
     return {
-        "match": first_token("MENTION:") == first_token("CANDIDATE:"),
+        "match": (
+            mention != candidate
+            and first_token("MENTION:") == first_token("CANDIDATE:")
+        ),
         "confidence": 0.9,
     }
 
@@ -104,12 +117,11 @@ def _resolver(
     *,
     engine: Engine,
     provider: FakeModelProvider,
-    thresholds: TypeThresholds | None = None,
+    thresholds: ResolutionThresholds | None = None,
 ) -> CascadeResolver:
     """One composed cascade with test bands."""
     config = ResolverConfig(
-        resolver_version=RESOLVER_VERSION,
-        default_thresholds=thresholds or _ALWAYS_ESCALATE,
+        resolver_version=RESOLVER_VERSION, thresholds=thresholds or _ALWAYS_ESCALATE
     )
     return CascadeResolver(
         engine=engine,
@@ -254,8 +266,7 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
 def test_resolution_suite_records_curves_and_blocks_on_regression(
     database_engine: Engine,
 ) -> None:
-    """The exit-criterion machinery: per-type P/R over the golden set, curves
-    recorded on resolver_versions, run in eval_runs; a broken judge fails."""
+    """Global P/R gates while blocking and deciding tiers retain blame."""
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     # the judge's own config registers itself (immutable per version):
@@ -263,7 +274,7 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         engine=database_engine,
         deployment_id=_DEPLOYMENT_ID,
         config=ResolverConfig(
-            resolver_version=RESOLVER_VERSION, default_thresholds=_ALWAYS_ESCALATE
+            resolver_version=RESOLVER_VERSION, thresholds=_ALWAYS_ESCALATE
         ),
     )
     seed_synthetic_golden_pairs(engine=database_engine, deployment_id=_DEPLOYMENT_ID)
@@ -273,12 +284,22 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         deployment_id=_DEPLOYMENT_ID,
         component_version=RESOLVER_VERSION,
     )
-    assert report["passed"], report["curves"]
-    curves = report["curves"]
-    assert isinstance(curves, dict)
-    person, organization = curves["Person"], curves["Organization"]
-    assert person == {"precision": 1.0, "recall": 1.0, "pairs": 4}
-    assert organization["pairs"] == 2
+    assert report["passed"], report["curve"]
+    assert report["curve"] == {
+        "precision": 1.0,
+        "recall": 1.0,
+        "pairs": 8,
+        "false_merges": 0,
+        "false_splits": 0,
+    }
+    diagnostics = report["tier_diagnostics"]
+    assert diagnostics["blocking"]["T0"] == {
+        "pairs": 3,
+        "correct": 3,
+        "false_merges": 0,
+        "false_splits": 0,
+    }
+    assert diagnostics["deciding"]["T4_small"]["pairs"] == 7
 
     with database_engine.connect() as connection:
         notes = connection.execute(
@@ -294,15 +315,16 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
                 " ORDER BY ran_at DESC LIMIT 1"
             )
         ).scalar_one()
-    assert "curves" in str(notes)
+    assert "tier_diagnostics" in str(notes)
     assert recorded is True
 
-    def broken_router(prompt: str, type_name: str) -> dict[str, object]:
-        return {"match": False, "confidence": 0.9}  # kills recall
+    def false_merge_router(prompt: str, type_name: str) -> dict[str, object]:
+        """Regress T4 to match everything, including same-name non-matches."""
+        return {"match": True, "confidence": 0.9}
 
     broken = _resolver(
         engine=database_engine,
-        provider=FakeModelProvider(generate_router=broken_router),
+        provider=FakeModelProvider(generate_router=false_merge_router),
     )
     regression = run_resolution_suite(
         engine=database_engine,
@@ -311,6 +333,9 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         component_version=RESOLVER_VERSION,
     )
     assert not regression["passed"]
+    regression_diagnostics = regression["tier_diagnostics"]
+    assert regression_diagnostics["blocking"]["T0"]["false_merges"] == 2
+    assert regression_diagnostics["deciding"]["T4_small"]["false_merges"] >= 2
 
 
 def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> None:
@@ -335,7 +360,7 @@ def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> 
             deployment_id=_DEPLOYMENT_ID,
             config=ResolverConfig(
                 resolver_version="resolver-immutable-test",
-                default_thresholds=TypeThresholds(t3_accept=0.95),
+                thresholds=ResolutionThresholds(t3_accept=0.95),
             ),
         )
 
@@ -562,9 +587,9 @@ def test_e3_drops_game_before_shipped_resolver_mints(database_engine: Engine) ->
         payload={
             "relations": [
                 {
-                    "subject": {"name": "James", "type": "Person"},
+                    "subject": {"name": "James"},
                     "predicate": "related_to",
-                    "object": {"name": "game", "type": "Product"},
+                    "object": {"name": "game"},
                 }
             ]
         },
@@ -587,18 +612,14 @@ def test_e3_mints_fifa_23_and_app_application_on_shipped_resolver(
         payload={
             "relations": [
                 {
-                    "subject": {"name": "James", "type": "Person"},
+                    "subject": {"name": "James"},
                     "predicate": "related_to",
-                    "object": {"name": "FIFA 23", "type": "Product"},
+                    "object": {"name": "FIFA 23"},
                 },
                 {
-                    "subject": {"name": "James", "type": "Person"},
+                    "subject": {"name": "James"},
                     "predicate": "related_to",
-                    "object": {
-                        "name": "Application",
-                        "type": "Product",
-                        "surface": "App",
-                    },
+                    "object": {"name": "Application", "surface": "App"},
                 },
             ]
         },

@@ -87,7 +87,7 @@ entity_types(type, parent_type → entity_types, description, examples, schema_o
 predicates(predicate, parent_predicate, subject_type, object_type, description, examples,
            synonyms[], status ∈ {core,extension,other,deprecated}, scope_id nullable)
 scope_interests(scope_id, interest_type ∈ {entity_type,predicate,metadata,keyword}, value)
-resolver_versions(resolver_version, tier_config jsonb, thresholds_by_type jsonb, configured_at)
+resolver_versions(resolver_version, tier_config jsonb, thresholds jsonb, configured_at)
 ```
 
 Invariants: `entity_id` is **never reused**; a merge is a **redirect** (`merged_into`), never a
@@ -114,8 +114,8 @@ build is re-summarized and re-embedded on the next batch (new entities get a fir
 soon as they have any evidence to summarize; until then T3/T4 fall back to alias/mention
 signals alone). Boundaries: the refresher writes **only** these two fields — never names,
 aliases, types, or status (identity belongs to resolution) — and profile staleness degrades
-inside the cascade's existing safety envelope: thresholds are per-type and golden-set-measured
-(D22), near-misses escalate rather than auto-reject (§3), and high-blast-radius merges route
+inside the cascade's existing safety envelope: one global threshold set is golden-set-measured
+(D22/D96), near-misses escalate rather than auto-reject (§3), and high-blast-radius merges route
 to review regardless (§6) — a stale profile costs match quality, never an unreviewed
 catastrophic merge.
 
@@ -132,9 +132,10 @@ One canonical cascade. Stop at the first confident match. **Registry-self-contai
 | **T3** | embedding similarity, residue only | decision (mid band) | PostgreSQL P1 (D94) |
 | **T4** | LLM adjudication (small→frontier); human review for high blast-radius | decision (ambiguous band) | worker |
 
-- **Thresholds are per-type, golden-set-measured, versioned** (`resolver_versions`), stamped on
-  every decision. No threshold ships without a per-type P/R curve (D17, D22). The old JW≥0.92 /
-  cosine≥0.88 are placeholders to overwrite.
+- **Thresholds are global, golden-set-measured, and versioned** (`resolver_versions`), stamped
+  on every decision. No threshold ships without one global P/R curve plus blocking-stratum and
+  deciding-tier diagnostics (D17, D22, D96). The old JW≥0.92 / cosine≥0.88 are placeholders to
+  overwrite.
 - Blocking (T1/T2) sets a hard recall ceiling, so cheap tiers **escalate near-misses to T4**,
   never auto-reject — textual recall is mediocre and over-rejection is a silent hole.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions
