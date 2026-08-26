@@ -88,12 +88,14 @@ Change what T0 *means*.
 
 ### 3.1 T0 — strong candidate, not always a verdict
 
-Exact match on `aliases.normalized_lemma` **lists** the matching active
-entity (or entities — more than one exact hit is now possible).
+Exact match on `aliases.normalized_lemma` **lists** matching active
+**entity ids** (more than one distinct id is now possible). Count
+**distinct `entity_id`s**, not alias rows: two provenances (`source` and
+`llm_canonical`) on the same id are still one hit.
 
 Auto-accept that hit **only when all of these hold**:
 
-- exactly one active exact hit in the deployment
+- exactly one distinct active entity id for the lemma in the deployment
 - the lemma is **not** on `generic_identifier_guard` and is not a
   configured common-name / too-short token (golden-set-measured list;
   starting point: given names, tokens shorter than three letters,
@@ -162,11 +164,28 @@ share a vector because they share a spelling.
 City, job, employer, “is a bank” **update observations and then the
 profile**. They do not change `entity_id` and do not mint a type.
 
+**Forget (D74).** Hard-forget is lineage-scoped: a fact evidenced by
+another remaining document stays. The **profile** is a derived cache, so
+forgetting document A on a **shared** entity must **invalidate and
+recompute** that entity’s `profile_summary`, salient-observation set, and
+profile embedding from remaining evidence (or clear until recomputed).
+Scrubbing only `exclusive` entity ids leaves A’s distinctive phrase in
+the blurb. Queued refresh work whose inputs included A must be rejected
+as stale. Verification: after forget, the forgotten phrase is absent
+from summary, salient inputs, vector attestation, and profile/fact
+search.
+
 ### 3.4 `judge_pair`
 
 The golden-pair harness must **not** return true solely because lemmas
 are equal. Same-name non-matches are first-class eval cases. Without
 that, D22 cannot see the failure this design exists to fix.
+
+Thresholds are **one global** precision/recall curve (types are gone).
+The harness still **records the deciding tier** (T0 / T3 / T4) so a
+false merge can be blamed on the right step. “One curve” does not mean
+deleting per-tier diagnostics. Activating D95 T0 requires a recorded
+passing run of this suite **after** profile/T3 safety exists.
 
 ### 3.5 Relatedness
 
@@ -193,11 +212,23 @@ Do not add `mention_id` to evidence tables.
 
 ### 4.2 EntityRef
 
-E3 structured output for an endpoint is a **name** only (canonical
-nominative form). No `type` field. The prompt has no registry-types
-block. D86’s unknown-type path is vacated (D96): there is nothing
-illegal to retry. Unknown **predicates** still follow D5 (`other:` or
-drop).
+E3 structured output for an endpoint has **no type**. “Name-only” means
+no class, not “drop the spelling that appeared in the claim.”
+
+The payload carries:
+
+- **`name`** — canonical nominative form (feeds T0 / `llm_canonical`
+  alias), and
+- **`surface`** — the span as it appeared in the claim when it differs
+  (`App` vs `Application`). If they are the same, `surface` may equal
+  `name` or be omitted.
+
+Resolver writes `surface` as `mentions.surface_form` and as a
+`provenance=source` alias, and `name` as `canonical_name_form` /
+`llm_canonical`. Without `surface`, WP-I.1 cannot record `App` and
+`Application` as one id. The prompt has no registry-types block. D86’s
+unknown-type path is vacated (D96). Unknown **predicates** still follow
+D5 (`other:` or drop).
 
 ### 4.3 Eligibility — do not mint filler nouns
 
@@ -349,11 +380,11 @@ Minimum rows:
 
 | Site | Contract |
 |---|---|
-| `EntityRef` | `name` only |
-| `CascadeResolver.resolve` | T0 auto-accept only under §3.1; else cascade or mint; same lemma may mint; no type argument |
+| `EntityRef` | canonical `name`; `surface` when the claim spelling differs; **no type** |
+| `CascadeResolver.resolve` | T0 auto-accept only under §3.1; hits = distinct entity ids; else cascade or mint; same lemma may mint; no type argument |
 | `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
-| Profile refresher | rewrite `profile_summary` from the entity’s observations/relations; does not write types |
+| Profile refresher | rewrite `profile_summary` from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |
@@ -362,6 +393,15 @@ Minimum rows:
 | `judge_pair` | lemma equality is not automatic match |
 | E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
 | `resolve` primitive | drop `type?` |
+| P3 Tier 1 | `entities/<entity_id>/` — not `entities/<type>/<entity_id>/` (`e0_files_design.md`) |
+
+**Type-cut consumer checklist** (same PR as the schema drop; not
+compatibility): `workers/p2.py`, `spine/projection.py` Entity export,
+`workers/p3.py` + P3 path above, P1 entity search, `memory_v1.entities_current`,
+`GraphNode` / envelope, `query_engine` `resolve`/`typed_absence`,
+`http_api.py` / `sdk.py`, `assured_operations.py`, bootstrap/`core_manifest`
+type seed, eval type strata, migration tests. Dropping the SQL column
+without these still fails the hard cut.
 
 Schema: drop `entities.type` NOT NULL (column dropped or unused). Drop
 or stop writing `mentions.emitted_type`. `predicate_signatures` unused.
@@ -404,14 +444,16 @@ generations are abandoned, not dual-run. Sequencing:
 - T4 sees profile **and** salient observations; two same-name vectors
   differ once profiles differ; “lives in Prague” can split homonyms.
 - `judge_pair` false-merge/false-split on §8 rows.
-- E3: `game` not minted; `FIFA 23` may mint; `EntityRef` is name-only.
+- E3: `game` not minted; `FIFA 23` may mint; `EntityRef` has no type;
+  source `App` + canonical `Application` become two aliases on one id.
 - `works_for(Alice, Me)` persists with no types on either end.
 - Profile refresher: bank + Italy observations appear in
   `profile_summary`; “list banks” can match that text.
 - Neighborhood with no predicates returns `other:traveled` neighbors;
   observations for the same id load via lookup, not as graph nodes.
 - Guard: a lemma linking many entities is down-weighted.
-- Forget still purges profile, observations, and guard rows with the
-  entity (D74).
+- Forget: exclusive entity still fully purged; **shared** survivor
+  profile no longer contains the forgotten document’s distinctive
+  phrase (D74).
 
 No LLM on the query path is added (D9).

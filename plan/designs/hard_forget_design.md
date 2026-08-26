@@ -12,6 +12,12 @@ cannot surface content unique to that lineage, and their public negative is the 
 that never existed (S55). Information independently supported by another live lineage remains: the
 operation forgets a source contribution, not every independently obtained copy of a fact.
 
+> **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
+> are a **derived cache**. Forgetting a lineage that contributed to a **shared**
+> surviving entity must invalidate and recompute that cache from remaining
+> evidence (or clear until recomputed), not only scrub exclusive entity ids.
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §3.3.
+
 The library owns:
 
 - the portable, content-free forget manifest and its append/replay port;
