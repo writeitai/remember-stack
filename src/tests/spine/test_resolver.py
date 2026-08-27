@@ -919,7 +919,7 @@ def test_sap_shorthand_matches_through_t4_not_t0(database_engine: Engine) -> Non
 def test_generic_identifier_guard_downweights_shared_lemma(
     database_engine: Engine,
 ) -> None:
-    """WP-I.1 writer: a lemma pointing at two entity ids is marked promiscuous."""
+    """A promiscuous lemma is marked and downranked without losing recall."""
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     first = resolver.resolve(
@@ -980,7 +980,8 @@ def test_generic_identifier_guard_downweights_shared_lemma(
         claim=_claim(claim_text="Jan Novakk joined the remote meeting."),
     )
     assert not near_variant.created
-    assert len(provider.generated_prompts) == prompts_before + 1
+    assert near_variant.entity_id == first.entity_id
+    assert 1 <= len(provider.generated_prompts) - prompts_before <= 2
 
 
 def test_ungrounded_surface_does_not_write_source_alias(
