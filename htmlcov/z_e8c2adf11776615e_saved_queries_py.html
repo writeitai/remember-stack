@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_96f21cdf4a4be28f_remote_mcp_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-26 06:22 +0000
+            created at 2026-08-27 16:43 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -185,7 +185,7 @@
     <p class="pln"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t"><span class="com">#: Bound actor used by the self-host seed path for shipped `examples.*` install.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t"><span class="nam">PLATFORM_SEED_ACTOR</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="str">&quot;platform:shipped-examples&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t"><span class="com">#: Platform-owned namespace for the seventeen shipped demotion examples (&#167;2).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t"><span class="com">#: Platform-owned namespace for the eighteen shipped demotion examples (&#167;2).</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t"><span class="com">#: Customer drafts must copy into another namespace; only platform seed installs here.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="nam">EXAMPLES_NAMESPACE</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="str">&quot;examples&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1145,7 +1145,7 @@
     <p class="run run2"><span class="n"><a id="t1061" href="#t1061">1061</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1062" href="#t1062">1062</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1063" href="#t1063">1063</a></span><span class="t">    <span class="key">def</span> <span class="nam">install_shipped_examples</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1064" href="#t1064">1064</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Idempotently install the seventeen `examples.*` registry identities.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1064" href="#t1064">1064</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Idempotently install the eighteen `examples.*` registry identities.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1065" href="#t1065">1065</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1066" href="#t1066">1066</a></span><span class="t"><span class="str">        Requires activation authority on the bound actor (the self-host seed</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1067" href="#t1067">1067</a></span><span class="t"><span class="str">        path binds `PLATFORM_SEED_ACTOR`). Each body is grammar-checked, stored</span>&nbsp;</span><span class="r"></span></p>
@@ -1908,7 +1908,7 @@
     <p class="run"><span class="n"><a id="t1824" href="#t1824">1824</a></span><span class="t"><span class="key">def</span> <span class="nam">seed_shipped_examples</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1825" href="#t1825">1825</a></span><span class="t">    <span class="op">*</span><span class="op">,</span> <span class="nam">connection</span><span class="op">:</span> <span class="nam">psycopg</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span> <span class="nam">deployment_id</span><span class="op">:</span> <span class="nam">UUID</span><span class="op">,</span> <span class="nam">manifest_hash</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1826" href="#t1826">1826</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1827" href="#t1827">1827</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Idempotently install all seventeen `examples.*` identities (bootstrap).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1827" href="#t1827">1827</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Idempotently install all eighteen `examples.*` identities (bootstrap).</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1828" href="#t1828">1828</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1829" href="#t1829">1829</a></span><span class="t"><span class="str">    Constructs a registry bound to `PLATFORM_SEED_ACTOR` with a matching</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1830" href="#t1830">1830</a></span><span class="t"><span class="str">    activation policy and delegates to `install_shipped_examples`. Safe to call</span>&nbsp;</span><span class="r"></span></p>
@@ -2396,7 +2396,7 @@
             <a class="nav" href="z_96f21cdf4a4be28f_remote_mcp_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-26 06:22 +0000
+            created at 2026-08-27 16:43 +0000
         </p>
     </div>
 </footer>
