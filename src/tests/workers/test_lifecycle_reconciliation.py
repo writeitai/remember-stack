@@ -52,6 +52,7 @@ from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
@@ -222,14 +223,23 @@ class _LifecycleRig:
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
         self.provider = FakeModelProvider(generate_router=_canned)
+        self.profile_refresher = EntityProfileRefresher(
+            engine=engine,
+            model_provider=self.provider,
+            embedding_model=P1Settings().embedding_model,
+        )
         document_catalog = DocumentCatalog(engine=engine)
         chunk_catalog = ChunkCatalog(engine=engine)
         claim_catalog = ClaimCatalog(engine=engine)
         self.lifecycle = LifecycleCatalog(engine=engine)
-        self.review = ReviewQueue(engine=engine)
+        self.review = ReviewQueue(
+            engine=engine, profile_refresher=self.profile_refresher
+        )
         self.sync = SyncCatalog(engine=engine)
         self.finalizer = CycleFinalizer(catalog=self.lifecycle)
-        self.deletion = DeletionService(catalog=self.lifecycle)
+        self.deletion = DeletionService(
+            catalog=self.lifecycle, profile_refresher=self.profile_refresher
+        )
         self.ingestor = UploadIngestor(
             catalog=document_catalog,
             raw_store=raw_store,
@@ -304,6 +314,7 @@ class _LifecycleRig:
                 ),
                 facts=facts,
                 observation_adjudicator=obs_adjudicator,
+                profile_refresher=self.profile_refresher,
                 model_provider=self.provider,
                 settings=E3Settings(),
                 chunker_version=chunker_version(params=_PARAMS),
@@ -314,6 +325,7 @@ class _LifecycleRig:
             handler=AdjudicateObservationsHandler(
                 facts=facts,
                 observation_adjudicator=obs_adjudicator,
+                profile_refresher=self.profile_refresher,
                 chunk_catalog=chunk_catalog,
                 claim_catalog=claim_catalog,
                 chunker_version=chunker_version(params=_PARAMS),
@@ -326,7 +338,8 @@ class _LifecycleRig:
                     engine=engine,
                     model_provider=self.provider,
                     settings=SupersessionSettings(),
-                )
+                ),
+                profile_refresher=self.profile_refresher,
             ),
         )
         registry.register(
@@ -350,7 +363,9 @@ class _LifecycleRig:
             ),
         )
         self.reconcile_handler = ReconcileHandler(
-            catalog=self.lifecycle, review_queue=self.review
+            catalog=self.lifecycle,
+            review_queue=self.review,
+            profile_refresher=self.profile_refresher,
         )
         registry.register(stage=PipelineStage.RECONCILE, handler=self.reconcile_handler)
         self.worker = Worker(
@@ -743,12 +758,20 @@ def test_a_no_claims_replacement_still_supersedes(rig: _LifecycleRig) -> None:
     rig.observe(source_ref="c.md", content=f"{_FACT_SENTENCE}\n")
     rig.drain()
     assert rig.relation()["evidence_count"] == 1
+    assert (
+        rig.scalar("SELECT count(*) FROM entities WHERE profile_summary IS NOT NULL")
+        == 2
+    )
     # sentences the Selection seat drops entirely (see _canned): no claims
     rig.observe(source_ref="c.md", content="DROP EVERYTHING HERE.\n")
     rig.drain()
     fact = rig.relation()
     assert fact["evidence_count"] == 0
     assert fact["valid_until"] is not None  # closed: the source acted
+    assert (
+        rig.scalar("SELECT count(*) FROM entities WHERE profile_summary IS NOT NULL")
+        == 0
+    )
     assert (
         rig.scalar(
             "SELECT count(*) FROM testimony_currency_events"

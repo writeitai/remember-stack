@@ -25,7 +25,6 @@ from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
-from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
@@ -631,6 +630,42 @@ def test_channel_readiness_fails_closed(
         index.configure_channels(deployment_id=_DEPLOYMENT_ID)
 
 
+def test_setup_backfill_gate_tracks_the_exact_entity_channel(
+    database_engine: Engine, seeded: dict[str, object]
+) -> None:
+    """Idempotent setup skips scans only after the profile channel is exact-ready."""
+    index = seeded["index"]
+    assert isinstance(index, PostgresP1Index)
+    assert not index.entity_profile_backfill_required(deployment_id=_DEPLOYMENT_ID)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE p1_search_channels SET ready = false"
+                " WHERE deployment_id = :deployment AND target = 'entities'"
+                " AND channel = 'semantic'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+    try:
+        assert index.entity_profile_backfill_required(deployment_id=_DEPLOYMENT_ID)
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID, include_entity=False)
+        with database_engine.connect() as connection:
+            readiness = {
+                str(target): bool(ready)
+                for target, ready in connection.execute(
+                    text(
+                        "SELECT target::text, ready FROM p1_search_channels"
+                        " WHERE deployment_id = :deployment AND channel = 'semantic'"
+                    ),
+                    {"deployment": _DEPLOYMENT_ID},
+                )
+            }
+        assert readiness["entities"] is False
+        assert all(ready for target, ready in readiness.items() if target != "entities")
+    finally:
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID)
+
+
 def test_ranked_search_never_crosses_deployments(
     database_engine: Engine, seeded: dict[str, object]
 ) -> None:
@@ -661,22 +696,33 @@ def test_ranked_search_never_crosses_deployments(
         )
     index = seeded["index"]
     assert isinstance(index, PostgresP1Index)
-    index.upsert_entities(
-        rows=(
-            P1EntityRow(
-                entity_id=first_entity,
-                deployment_id=_DEPLOYMENT_ID,
-                canonical_name="Aster",
-                vector=_vector(axis=1),
+    with database_engine.begin() as connection:
+        for entity_id, deployment_id, summary, vector in (
+            (first_entity, _DEPLOYMENT_ID, "Aster is a bank", _vector(axis=1)),
+            (
+                other_entity,
+                _OTHER_DEPLOYMENT_ID,
+                "Nearest foreign row is a control entity",
+                _vector(axis=0),
             ),
-            P1EntityRow(
-                entity_id=other_entity,
-                deployment_id=_OTHER_DEPLOYMENT_ID,
-                canonical_name="Nearest foreign row",
-                vector=_vector(axis=0),
-            ),
-        )
-    )
+        ):
+            connection.execute(
+                text(
+                    "UPDATE entities SET profile_summary = :summary,"
+                    " embedding = CAST(:embedding AS vector),"
+                    " embedding_model = :model,"
+                    " embedding_input_policy_version = 'entity-profile-v2',"
+                    " embedding_text_hash = 'search-scope-proof'"
+                    " WHERE deployment_id = :deployment AND entity_id = :entity"
+                ),
+                {
+                    "summary": summary,
+                    "embedding": "[" + ",".join(map(str, vector)) + "]",
+                    "model": _MODEL,
+                    "deployment": deployment_id,
+                    "entity": entity_id,
+                },
+            )
 
     results = index.search_entities_scored(
         deployment_id=str(_DEPLOYMENT_ID), vector=_vector(axis=0), k=1

@@ -190,7 +190,10 @@ def test_supersession_closes_the_window_and_kills_the_zombie(
     assert provider.generated_prompts == []  # novelty gate: no candidates, no LLM
 
     new = _relation(engine=database_engine, facts=facts, subject=alice, object_=beta)
-    adjudicator.adjudicate_new_relation(deployment_id=_DEPLOYMENT_ID, relation_id=new)
+    closed = adjudicator.adjudicate_new_relation(
+        deployment_id=_DEPLOYMENT_ID, relation_id=new
+    )
+    assert closed == (old,)
     assert len(provider.generated_prompts) == 1  # small-model rung sufficed
 
     engine = _query(engine=database_engine)
@@ -219,8 +222,11 @@ def test_supersession_closes_the_window_and_kills_the_zombie(
     assert supersede.subject_kind == "relation"
     assert supersede.method == "small_model"
 
-    # replay (D7): a second pass makes no further model calls
-    adjudicator.adjudicate_new_relation(deployment_id=_DEPLOYMENT_ID, relation_id=new)
+    # Replay (D7) makes no further model calls but returns the durable closed
+    # coordinate so a post-commit profile-refresh retry can repair old endpoints.
+    assert adjudicator.adjudicate_new_relation(
+        deployment_id=_DEPLOYMENT_ID, relation_id=new
+    ) == (old,)
     assert len(provider.generated_prompts) == 1
 
 

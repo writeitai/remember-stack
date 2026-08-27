@@ -172,6 +172,47 @@ built from.
   statements, not a type filter. Boolean lists are only as sharp as
   the observations. That is accepted.
 
+The as-built starting refresher is deterministic: it evidence-ranks a
+bounded set of supported, open-ended observation statements and canonical
+relation prose (`valid_until IS NULL`, a deliberate stable projection so a timed
+fact cannot expire without an evidence event to trigger refresh), joins the leading statements
+into `profile_summary`, and
+embeds `name + summary + salient facts` under `entity-profile-v2`. It is
+composed synchronously after evidence add/recount/supersession, merge/un-merge, terminal human
+review, normal deletion, and the D74 lineage scrub. Survivor profiles aggregate the complete
+redirect closure. Merged members retain separately attested member-local profiles solely for
+joint neighborhood re-decision; retired rows clear, and public resolution/search still exposes
+only active survivors. Deployment setup keyset-
+backfills every active or merged entity after a policy-cut migration and republishes the
+entity semantic channel only after that resumable pass completes. The exact
+text hash debounces unchanged evidence. Resolution
+reconstructs the expected summary/hash from current facts; stale or missing
+attestation disables T3 and T4 still receives the current salient statements.
+Clustering performs the same exact current-input check under evidence locks before reading a
+generation-pinned vector, so stale or missing member state cannot authorize a merge or split.
+Merged-member relation prose keeps endpoints inside the member subtree named as that local profile
+root and preserves raw canonical names outside it, rather than rewriting a sibling to the shared
+outer survivor and self-reinforcing an earlier merge.
+Hot-path redirect traversal uses recursive CTEs anchored at the requested ids rather than the
+deployment-wide survivor view. No queued stale snapshot can overwrite newer evidence: the
+refresher snapshots under the identity/evidence locks, releases the transaction for the provider
+call, then reacquires the locks and rebuilds the exact input. A changed hash discards and meters
+the stale vector and triggers a bounded retry rather than writing it. Multi-entity refreshes use
+bounded provider batches, but each entity still revalidates and commits independently. Salient
+facts use index-backed per-member/per-endpoint prefix scans before the final bounded entity rank,
+so a hub cannot turn profile refresh into a deployment-wide fact sort under lock. Worker-side
+contention exhaustion leaves the stale cache empty and completes already-durable evidence work;
+the later evidence mutation owns another refresh, preventing paid normalization replay and DLQ.
+Setup and operator surfaces continue to surface exhaustion as a failure.
+
+Merge application also resolves a queued survivor to its live terminal root and requires the
+absorbed target to remain active. A target that joined another cluster after proposal creation is
+rejected for re-evaluation rather than silently extending the stale proposal's blast radius.
+
+Worker refresh calls retain their processing-attempt meter. Setup backfill, human-review, and
+hard-forget readiness replay have no worker identity, so they write provider receipts to the
+operational surface-cost ledger instead of disappearing between ledgers.
+
 Production `_T4_PROMPT` includes:
 
 ```text
@@ -422,7 +463,7 @@ Minimum rows:
 | `CascadeResolver.resolve` | T0 lists distinct entity ids, never auto-accepts; T3 may accept with profile; T4 if empty/conflict/many; same lemma may mint; no type argument |
 | `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
-| Profile refresher | rewrite `profile_summary` from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
+| Profile refresher | deterministic current-fact projection under `entity-profile-v2`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |

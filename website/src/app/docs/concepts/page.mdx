@@ -117,6 +117,18 @@ Entities live in a **canonical registry** with aliases and tiered resolution.
 | **Write-time resolution** | Full cascade (exact → fuzzy → phonetic → embedding → gated LLM) |
 | **Query-time `resolve_entity`** | **T0 exact alias** match; ranked candidates on ambiguity — never a silent single guess |
 
+An entity profile is orientation, not identity or a type. It is a disposable
+projection of current supported observations and relations. Write-time T3
+compares the mention name plus its claim context with the candidate name plus
+profile and salient facts; it never compares two name-only vectors. An entity
+with no evidence has no T3 vector and reaches gated T4 instead. T4 receives the
+candidate profile and the current salient statements explicitly.
+
+Profile refreshes are evidence-change debounced. If evidence is withdrawn, the
+cached summary and vector rebuild or clear. Hard-forgetting one source of a
+shared entity rebuilds from the surviving sources, so forgotten phrases do not
+remain in the summary or semantic vector.
+
 Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve.
 
 ## Document identity (write path)

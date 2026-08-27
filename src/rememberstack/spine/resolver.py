@@ -20,6 +20,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.core.entity_profile_input import entity_profile_embedding_input
+from rememberstack.core.entity_profile_input import mention_profile_embedding_input
 from rememberstack.model import AdjudicationVerdict
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EmbeddingRequest
@@ -34,15 +36,20 @@ from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.profile_refresher import load_entity_profile_evidence_many
+from rememberstack.spine.profile_refresher import (
+    profile_summary as build_profile_summary,
+)
 
 
 class ResolverVersionConflictError(Exception):
     """A resolver version re-registered with a different definition (D22)."""
 
 
-RESOLVER_VERSION: Final = "resolver-2026.08a"
+RESOLVER_VERSION: Final = "resolver-2026.08b"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
-08a cuts threshold provenance from per-type maps to one global set. Generation
+08b makes T3 profile-only and gives T4 current profile evidence. 08a cuts
+threshold provenance from per-type maps to one global set. Generation
 parameters remain part of provenance; T4 stays pinned to temperature=0.0."""
 
 _T4_PROMPT: Final = """You adjudicate entity identity for a memory system.
@@ -52,9 +59,11 @@ MENTION: {mention!r}
 CLAIM CONTEXT: {context}
 
 CANDIDATE: {candidate!r}
-CANDIDATE EVIDENCE: {candidate_evidence}
+CANDIDATE PROFILE: {candidate_profile}
+CANDIDATE FACTS:
+{candidate_facts}
 
-Same entity?"""
+Same real-world entity?"""
 
 
 class CascadeResolver:
@@ -194,7 +203,8 @@ class CascadeResolver:
         decide non-identical spellings. Same-lemma pairs exercise T3 only when
         both sides of the golden pair supply distinguishing context as a
         stand-in for profile evidence; an empty-profile pair skips unsafe
-        name-only cosine and goes to T4. Returns (match, deciding_tier).
+        name-only cosine and goes to T4. T3 therefore decides only
+        context-bearing pairs. Returns (match, deciding_tier).
         """
         lemma_a = normalized_lemma(surface=surface_a)
         lemma_b = normalized_lemma(surface=surface_b)
@@ -214,14 +224,18 @@ class CascadeResolver:
             and context_b is not None
             and context_b.strip()
         )
-        if not same_lemma or has_context_evidence:
+        if has_context_evidence:
+            candidate_facts = (context_a.strip(),) if context_a is not None else ()
+            candidate_summary = build_profile_summary(salient_facts=candidate_facts)
             embedding_texts = (
-                (
-                    _pair_embedding_input(surface=surface_a, context=context_a),
-                    _pair_embedding_input(surface=surface_b, context=context_b),
-                )
-                if same_lemma
-                else (surface_a, surface_b)
+                entity_profile_embedding_input(
+                    canonical_name=surface_a,
+                    profile_summary=candidate_summary,
+                    salient_facts=candidate_facts,
+                ),
+                mention_profile_embedding_input(
+                    name=surface_b, claim_context=context_b or ""
+                ),
             )
             vectors = self._model_provider.embed(
                 request=EmbeddingRequest(
@@ -239,7 +253,10 @@ class CascadeResolver:
             mention=surface_b,
             context=context_b or "(none)",
             candidate=surface_a,
-            candidate_evidence=context_a or "(none)",
+            candidate_profile=context_a or "(none)",
+            candidate_facts=_format_candidate_facts(
+                salient_facts=(context_a,) if context_a else ()
+            ),
         )
         verdict = self._model_provider.generate(
             request=ModelRequest(
@@ -274,15 +291,33 @@ class CascadeResolver:
             .mappings()
             .all()
         )
-        return tuple(
-            ResolutionCandidate(
-                entity_id=row["entity_id"],
-                canonical_name=row["canonical_name"],
-                blocking_tier=row["blocking_tier"],
-                trigram_score=row["trigram_score"],
-            )
-            for row in rows
+        profiles = load_entity_profile_evidence_many(
+            connection=connection,
+            deployment_id=deployment_id,
+            entity_ids=tuple(row["entity_id"] for row in rows),
         )
+        candidates: list[ResolutionCandidate] = []
+        for row in rows:
+            entity_id = row["entity_id"]
+            profile = profiles.get(entity_id)
+            facts = profile.salient_facts if profile is not None else ()
+            current_summary = (
+                build_profile_summary(salient_facts=facts) if facts else None
+            )
+            cached_summary = profile.profile_summary if profile is not None else None
+            candidates.append(
+                ResolutionCandidate(
+                    entity_id=entity_id,
+                    canonical_name=row["canonical_name"],
+                    blocking_tier=row["blocking_tier"],
+                    trigram_score=row["trigram_score"],
+                    profile_summary=(
+                        cached_summary if cached_summary == current_summary else None
+                    ),
+                    salient_facts=facts,
+                )
+            )
+        return tuple(candidates)
 
     def _decide(
         self,
@@ -303,6 +338,7 @@ class CascadeResolver:
             connection=connection,
             deployment_id=deployment_id,
             reference=reference,
+            claim=claim,
             candidates=candidates,
             meter=meter,
             call_key=f"{call_key}:t3",
@@ -364,6 +400,7 @@ class CascadeResolver:
         connection: Connection,
         deployment_id: UUID,
         reference: EntityRef,
+        claim: ClaimForNormalization,
         candidates: tuple[ResolutionCandidate, ...],
         meter: CostMeterPort | None,
         call_key: str,
@@ -373,11 +410,20 @@ class CascadeResolver:
         A missing/stale profile vector is AMBIGUITY (route to T4), never a
         confident non-match (Codex review).
         """
+        if not any(
+            candidate.profile_summary and candidate.salient_facts
+            for candidate in candidates
+        ):
+            return tuple((candidate, None) for candidate in candidates)
         query_vector = self._embed(
-            surface=reference.name, meter=meter, call_key=call_key
+            surface=mention_profile_embedding_input(
+                name=reference.name, claim_context=claim.claim_text
+            ),
+            meter=meter,
+            call_key=call_key,
         )
         by_id = {
-            row["entity_id"]: float(row["score"])
+            row["entity_id"]: (float(row["score"]), str(row["embedding_text_hash"]))
             for row in connection.execute(
                 _ENTITY_VECTOR_SCORES,
                 {
@@ -389,9 +435,23 @@ class CascadeResolver:
                 },
             ).mappings()
         }
-        return tuple(
-            (candidate, by_id.get(candidate.entity_id)) for candidate in candidates
-        )
+        scored: list[tuple[ResolutionCandidate, float | None]] = []
+        for candidate in candidates:
+            stored = by_id.get(candidate.entity_id)
+            if stored is None or candidate.profile_summary is None:
+                scored.append((candidate, None))
+                continue
+            expected_hash = embedding_text_hash(
+                entity_profile_embedding_input(
+                    canonical_name=candidate.canonical_name,
+                    profile_summary=candidate.profile_summary,
+                    salient_facts=candidate.salient_facts,
+                )
+            )
+            scored.append(
+                (candidate, stored[0] if stored[1] == expected_hash else None)
+            )
+        return tuple(scored)
 
     def _t4(
         self,
@@ -407,7 +467,10 @@ class CascadeResolver:
             mention=reference.name,
             context=claim.claim_text,
             candidate=candidate.canonical_name,
-            candidate_evidence="(none)",
+            candidate_profile=candidate.profile_summary or "(none)",
+            candidate_facts=_format_candidate_facts(
+                salient_facts=candidate.salient_facts
+            ),
         )
         verdict_call = self._model_provider.generate(
             request=ModelRequest(
@@ -449,7 +512,7 @@ class CascadeResolver:
         meter: CostMeterPort | None,
         call_key: str,
     ) -> ResolvedEntity:
-        """Create the canonical entity + alias and index its T3 profile."""
+        """Create the canonical entity + alias with no unsafe name-only vector."""
         entity_id = uuid4()
         # the mint verdict records the tier that DECIDED novelty: T0 when
         # nothing blocked, else the rejecting tier's method and confidence
@@ -464,20 +527,6 @@ class CascadeResolver:
                 "deployment_id": deployment_id,
                 "canonical_name": reference.name,
                 "normalized_name": lemma,
-            },
-        )
-        vector = self._embed(
-            surface=reference.name, meter=meter, call_key=f"{call_key}:mint"
-        )
-        connection.execute(
-            _UPDATE_ENTITY_EMBEDDING,
-            {
-                "entity_id": entity_id,
-                "deployment_id": deployment_id,
-                "embedding": _vector_literal(vector),
-                "embedding_model": self._embedding_model,
-                "input_policy": ENTITY_INPUT_POLICY,
-                "text_hash": embedding_text_hash(reference.name),
             },
         )
         return self._record(
@@ -719,11 +768,11 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...] | None) -> float:
     return dot / (norm_a * norm_b)
 
 
-def _pair_embedding_input(*, surface: str, context: str | None) -> str:
-    """Build profile-like T3 evidence for one context-bearing golden surface."""
-    if context is None or not context.strip():
-        return surface
-    return f"{surface}\n{context.strip()}"
+def _format_candidate_facts(*, salient_facts: tuple[str, ...]) -> str:
+    """Render the bounded T4 evidence block without inventing facts."""
+    if not salient_facts:
+        return "(none)"
+    return "\n".join(f"- {fact}" for fact in salient_facts)
 
 
 def _vector_literal(vector: tuple[float, ...]) -> str:
@@ -792,7 +841,8 @@ _T1_T2_BLOCK = text(
 _ENTITY_VECTOR_SCORES = text(
     """
     SELECT entity_id,
-           1.0 - (embedding <=> CAST(:query_vector AS vector)) AS score
+           1.0 - (embedding <=> CAST(:query_vector AS vector)) AS score,
+           embedding_text_hash
     FROM entities
     WHERE deployment_id = :deployment_id
       AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
@@ -840,18 +890,6 @@ _UPSERT_GENERIC_GUARD = text(
         is_downweighted = EXCLUDED.is_downweighted,
         reason = EXCLUDED.reason,
         evaluated_at = EXCLUDED.evaluated_at
-    """
-)
-
-_UPDATE_ENTITY_EMBEDDING = text(
-    """
-    UPDATE entities SET
-      embedding = CAST(:embedding AS vector),
-      embedding_model = :embedding_model,
-      embedding_input_policy_version = :input_policy,
-      embedding_text_hash = :text_hash,
-      updated_at = now()
-    WHERE deployment_id = :deployment_id AND entity_id = :entity_id
     """
 )
 

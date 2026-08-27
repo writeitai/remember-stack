@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import PipelineStage
@@ -104,6 +105,7 @@ def test_claim_normalize_requires_extractor_version_pin() -> None:
         resolver=None,  # type: ignore[arg-type]
         facts=None,  # type: ignore[arg-type]
         observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=FakeModelProvider(generate_payload={}),
         settings=E3Settings(normalize_model="test"),
         chunker_version="test-chunker",
@@ -306,6 +308,7 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
         resolver=None,  # type: ignore[arg-type]
         facts=None,  # type: ignore[arg-type]
         observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=FakeModelProvider(generate_payload={}),
         settings=E3Settings(normalize_model="test"),
         chunker_version="test-chunker",
@@ -474,6 +477,7 @@ def test_handle_claim_grain_returns_barrier() -> None:
         resolver=_Resolver(),  # type: ignore[arg-type]
         facts=facts,  # type: ignore[arg-type]
         observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=provider,
         settings=E3Settings(normalize_model="test"),
         chunker_version="test-chunker",

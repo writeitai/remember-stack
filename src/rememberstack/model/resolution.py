@@ -26,6 +26,8 @@ class ResolutionCandidate(BaseModel):
     blocking_tier: _NonEmpty  # T0 | T1 | T2
     trigram_score: float | None = None
     embedding_score: _Unit | None = None
+    profile_summary: str | None = None
+    salient_facts: tuple[str, ...] = ()
 
 
 class ResolutionThresholds(BaseModel):
@@ -63,14 +65,3 @@ class AdjudicationVerdict(BaseModel):
     match: bool
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     rationale: str | None = None
-
-
-class P1EntityRow(BaseModel):
-    """One row of the P1 entities table: the T3 profile embedding home (D8)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    entity_id: UUID
-    deployment_id: UUID
-    canonical_name: _NonEmpty
-    vector: Annotated[tuple[float, ...], Field(min_length=1)]

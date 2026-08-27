@@ -92,7 +92,11 @@ resolver_versions(resolver_version, tier_config jsonb, thresholds jsonb, configu
 
 Invariants: `entity_id` is **never reused**; a merge is a **redirect** (`merged_into`), never a
 rewrite (Wikidata model) — everything downstream that stored the old ID still resolves; P2
-rebuild (D7) re-points graph edges on merge/un-merge for free.
+rebuild (D7) re-points graph edges on merge/un-merge for free. At application time the proposed
+survivor resolves through the complete live redirect closure. The absorbed target must still be
+active (or already resolve to that same survivor); otherwise the stale proposal is rejected for
+re-evaluation. This prevents a queued review from creating a redirect cycle or silently absorbing
+a newer cluster under an obsolete blast-radius calculation.
 
 ### Entity profiles — maintenance of `profile_summary` / `embedding`
 
@@ -106,18 +110,61 @@ live as private derived columns on the canonical entity row (D94); there is no
 opaque reference or `p1_entity` mirror table. **T3** compares mention embeddings
 against the ready current vector on that row.
 
-They are maintained by a dedicated **profile refresher** worker: a batched micro-LLM job
-(small model; stage `refresh_profile`, component `profile_summarizer` — schema §1), versioned
-and replayable like every non-deterministic producer (D7/D12), **debounced on evidence
-change** — an entity whose relations/observations materially changed since its last profile
-build is re-summarized and re-embedded on the next batch (new entities get a first profile as
-soon as they have any evidence to summarize; until then T3/T4 fall back to alias/mention
-signals alone). Boundaries: the refresher writes **only** these two fields — never names,
-aliases, types, or status (identity belongs to resolution) — and profile staleness degrades
-inside the cascade's existing safety envelope: one global threshold set is golden-set-measured
-(D22/D96), near-misses escalate rather than auto-reject (§3), and high-blast-radius merges route
-to review regardless (§6) — a stale profile costs match quality, never an unreviewed
-catastrophic merge.
+They are maintained by the deterministic **profile refresher** composed synchronously after
+evidence mutations. There is no profile-writing LLM and no second salient-fact authority. The
+refresher evidence-ranks supported open-ended observations and canonical relation prose. Timed
+facts are deliberately excluded even before a future `valid_until`: admitting them would make
+the exact profile input expire as wall time passes without an evidence mutation to schedule a
+refresh. This stable, conservative projection prevents capped facts from outranking replacements,
+joins a bounded prefix into
+`profile_summary`, and embeds the exact `name + summary + salient facts` input under
+`entity-profile-v2`. Hot-path identity traversal uses recursive CTEs anchored at the requested
+entity ids; it never materializes the deployment-wide survivor view. The refresher snapshots the
+entity and its complete redirect-closure evidence under the identity/evidence locks, commits that
+read transaction, and only then calls the provider. A second locked transaction reconstructs the
+exact input. If its hash changed, the paid stale vector is metered, discarded, and retried up to a
+bounded limit; it is never written. The exact input hash, model, and policy are the debounce and
+staleness attestation: unchanged inputs make no provider call. Multi-entity refresh and setup
+backfill batch provider inputs to bound policy-cut downtime while retaining per-entity locked
+revalidation and exact attestations. Salient-fact selection takes an index-backed bounded prefix
+per redirect-closure member and endpoint direction before the final entity-wide rank; no hub can
+force an unbounded OR-join or full fact-set window sort while profile locks are held. If evidence
+contention exhausts the bounded retries, worker paths leave the stale cache empty and complete
+their already-durable evidence work; the later mutation that caused the drift owns another
+refresh, avoiding a paid normalizer replay/DLQ loop. Setup and operator surfaces still surface
+exhaustion.
+
+New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
+merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same
+refresher. A survivor profile includes evidence anchored to every entity in its complete redirect
+closure. A merged row retains a separately attested member-local/subtree profile solely for joint
+neighborhood re-decision. Relation prose names an endpoint inside that subtree as the local
+profile root and preserves the raw canonical name of an endpoint outside the subtree; it never
+rewrites a sibling to their shared outer survivor. Thus a previous merge cannot self-reinforce
+the vector used to reconsider it. The row remains excluded from public entity resolution and search. Fact-
+triggered refresh repairs raw endpoints, every retained merged intermediate, and the terminal
+active survivor, so later lifecycle changes cannot strand evidence behind a redirect;
+hard-forget refreshes shared survivor ids after the
+lineage scrub and before projection rebuild/verification. When no supported fact remains, the
+summary, vector, and complete attestation clear together. The resolver independently loads the
+current salient facts and reconstructs the expected summary/hash. A mismatch makes T3 see a
+missing profile and makes T4 rely on the current facts rather than stale cached prose. Thus a
+missed or queued stale refresh can cost the cheap path but cannot authorize a merge. Clustering
+performs the same exact current-input attestation under evidence locks and reads only the active
+model/policy generation, so stale member state cannot authorize an automatic merge or split.
+The borrowed clustering transaction does not inherit the refresher-owned statement/idle timeouts
+while it performs its bounded in-process HAC decision.
+Boundaries:
+the refresher writes only the disposable profile projection and its attestation — never names,
+aliases, status, or identity.
+
+The hard policy cut vacates every legacy name-only vector. Deployment setup first finishes its
+idempotent registry and saved-query seeds, then scans active and merged entity ids in bounded keyset pages
+through this same idempotent refresher before marking the entity semantic channel ready. A
+provider failure leaves only that channel unavailable; rerunning setup resumes safely because
+already-attested profiles debounce. Setup, human-review, and hard-forget-readiness embeddings are
+attributed to the operational surface-cost ledger; worker-triggered refreshes stay on the worker
+attempt ledger.
 
 ## 3. Resolution cascade — T0–T4, block-loose / decide-tight (D17)
 
@@ -668,6 +715,17 @@ with a distance cut* — in practice dedupe's `linkage(centroid)` + `fcluster(di
 blob is only ever a *candidate pool*, never automatically one entity. (Community-detection
 algorithms like Louvain/Leiden are for topic communities — D11 — and must never be used to
 decide identity.)
+
+The starting profile-vector distance cut has no accepted calibration record. Therefore automatic
+HAC merge is fail-closed by default: deployments may only enable it with explicit measured
+configuration, while otherwise every multi-entity proposal routes to the reversible human review
+queue. Test scenarios opt in to their synthetic measured cut explicitly.
+A missing or stale member profile is ambiguity in both directions: it can neither authorize a
+merge nor automatically split an existing merge. Merged members therefore retain a current,
+member-local disposable profile for nDR; a failed refresh clears its old attestation before the
+provider call. Joint re-decision may split only when both the member and its live survivor have
+exact, generation-pinned vectors that disagree;
+otherwise it requires an explicit audited unmerge.
 
 **Cap runaway blobs (the "black-hole guard").** Occasionally a blob balloons to thousands of
 mentions because one bad link or a generic name connected everything — almost always garbage,

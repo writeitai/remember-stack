@@ -18,6 +18,7 @@ job; `DeletionService` is the operator's grain (§8) through the same
 cascade.
 """
 
+import logging
 from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid5
@@ -31,6 +32,8 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
+from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.workers.base import HandlerOutcome
@@ -41,6 +44,8 @@ from rememberstack.workers.p1 import P1Settings
 RECONCILE_VERSION = "reconcile-2026.07"
 """The reconcile stage's component version (D12 idempotency key member)."""
 
+_logger = logging.getLogger(__name__)
+
 
 class ReconcileHandler:
     """The reconcile stage: one completed version's basis change, settled."""
@@ -50,6 +55,7 @@ class ReconcileHandler:
         *,
         catalog: LifecycleCatalog,
         review_queue: ReviewQueue,
+        profile_refresher: ProfileRefresherPort,
         extractor_version: str = E2_EXTRACTOR_VERSION,
         chunker_version: str | None = None,
     ) -> None:
@@ -61,6 +67,7 @@ class ReconcileHandler:
         """
         self._catalog = catalog
         self._review_queue = review_queue
+        self._profile_refresher = profile_refresher
         self._extractor_version = extractor_version
         self._chunker_version = chunker_version or chunker_version_of(
             params=ChunkerParams()
@@ -73,7 +80,6 @@ class ReconcileHandler:
         retried attempt re-emits every ledger row, closure, flag, and
         trigger as a no-op.
         """
-        del meter
         version_id = _payload_uuid(work=work, field="version_id")
         representation_id = _payload_uuid(work=work, field="representation_id")
         context = self._catalog.reconciliation_context(version_id=version_id)
@@ -189,6 +195,20 @@ class ReconcileHandler:
                 flags_raised=flags,
             ),
         )
+        try:
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=f"profile:reconcile:{reconciliation_id}",
+            )
+        except ProfileRefreshContendedError:
+            _logger.warning(
+                "profile.refresh_contended reconciliation_id=%s; "
+                "stale cache remains empty",
+                reconciliation_id,
+            )
         doc_id = context["doc_id"]
         if not isinstance(doc_id, UUID):
             raise NonRetryableHandlerError(
@@ -379,11 +399,16 @@ class DeletionService:
     hard-forget (§13) scrubs content.
     """
 
-    def __init__(self, *, catalog: LifecycleCatalog) -> None:
-        """Bind the service to the lifecycle catalog."""
+    def __init__(
+        self, *, catalog: LifecycleCatalog, profile_refresher: ProfileRefresherPort
+    ) -> None:
+        """Bind lifecycle mutation and its evidence-derived profile projection."""
         self._catalog = catalog
+        self._profile_refresher = profile_refresher
 
-    def delete_version(self, *, version_id: UUID) -> ReconciliationDelta:
+    def delete_version(
+        self, *, version_id: UUID, meter: CostMeterPort | None = None
+    ) -> ReconciliationDelta:
         """End one version's testimony; the lineage continues (§8)."""
         info = self._catalog.delete_version(version_id=version_id)
         deployment_id: UUID = info["deployment_id"]  # type: ignore[assignment]
@@ -407,24 +432,52 @@ class DeletionService:
                     current_version_id=context["current_version_id"],  # type: ignore[arg-type]
                 ),
             )
-        return _cascade(
+        delta = _cascade(
             catalog=self._catalog,
             deployment_id=deployment_id,
             transitions=transitions,
             reconciliation_id=_derived_run_id(kind="delete-version", id_=version_id),
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
         )
+        self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
+        return delta
 
     def delete_lineage(
-        self, *, deployment_id: UUID, doc_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        meter: CostMeterPort | None = None,
+        refresh_profiles: bool = True,
     ) -> ReconciliationDelta:
         """Remove a lineage's whole contribution (operator grain, §8)."""
         self._catalog.delete_lineage(doc_id=doc_id)
-        return cascade_lineage_removal(
+        delta = cascade_lineage_removal(
             catalog=self._catalog,
             deployment_id=deployment_id,
             doc_id=doc_id,
             reconciliation_id=_derived_run_id(kind="delete-lineage", id_=doc_id),
+        )
+        if refresh_profiles:
+            self._refresh_profiles(
+                deployment_id=deployment_id, delta=delta, meter=meter
+            )
+        return delta
+
+    def _refresh_profiles(
+        self,
+        *,
+        deployment_id: UUID,
+        delta: ReconciliationDelta,
+        meter: CostMeterPort | None,
+    ) -> None:
+        """Refresh all fact endpoints whose support or validity was recomputed."""
+        self._profile_refresher.refresh_for_facts(
+            deployment_id=deployment_id,
+            relation_ids=delta.recounted_relations,
+            observation_ids=delta.recounted_observations,
+            meter=meter,
+            call_key=f"profile:delete:{delta.reconciliation_id}",
         )
 
 

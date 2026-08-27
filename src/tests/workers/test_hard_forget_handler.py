@@ -16,6 +16,7 @@ from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
 from rememberstack.ports import ProjectionPurgePort
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
@@ -66,7 +67,7 @@ class _Deletion:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
-    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID, **_: object) -> None:
         self.events.append("delete-lineage")
 
 
@@ -97,6 +98,14 @@ class _ProjectionRebuilder:
 
     def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
         self.events.append("projection-rebuild")
+
+
+class _ProfileRefresher:
+    def __init__(self, *, events: list[str]) -> None:
+        self.events = events
+
+    def refresh_many(self, **_: object) -> None:
+        self.events.append("profile-refresh")
 
 
 class _ProjectionPurger:
@@ -150,6 +159,7 @@ def _handler(*, events: list[str], fail_objects: bool = False) -> HardForgetHand
     return HardForgetHandler(
         catalog=cast(ForgetCatalog, _Catalog(events=events)),
         deletion=cast(DeletionService, _Deletion(events=events)),
+        profile_refresher=cast(ProfileRefresherPort, _ProfileRefresher(events=events)),
         object_purgers=(
             cast(
                 ObjectPurgePort, _Objects(events=events, name="raw", fail=fail_objects)
@@ -175,6 +185,7 @@ def test_handler_runs_the_single_all_store_sequence_before_reopening() -> None:
     assert events == [
         "delete-lineage",
         "scrub-postgres",
+        "profile-refresh",
         "objects-raw",
         "objects-transcripts",
         "projection-rebuild",
@@ -196,7 +207,12 @@ def test_handler_failure_leaves_admission_closed_and_preserves_exception() -> No
     with pytest.raises(RuntimeError, match="object store unavailable"):
         _handler(events=events, fail_objects=True).honor(manifest=_manifest())
 
-    assert events == ["delete-lineage", "scrub-postgres", "objects-raw"]
+    assert events == [
+        "delete-lineage",
+        "scrub-postgres",
+        "profile-refresh",
+        "objects-raw",
+    ]
 
 
 class _Graph:
@@ -298,7 +314,7 @@ class _ReadinessHandler:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
-    def honor(self, *, manifest: ForgetManifest) -> None:
+    def honor(self, *, manifest: ForgetManifest, **_: object) -> None:
         self.events.append("honor")
 
 

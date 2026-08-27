@@ -15,9 +15,13 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ReviewDecisionError
+from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ReviewQueue
@@ -26,6 +30,40 @@ from rememberstack.surfaces import cli_main
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a1000000-0000-0000-0000-000000000001")
+
+
+class _FailingProfileRefresher(RecordingProfileRefresher):
+    """Simulate a provider failure after a review verdict commits."""
+
+    def refresh_many(
+        self,
+        *,
+        deployment_id: UUID,
+        entity_ids: tuple[UUID, ...],
+        meter: CostMeterPort | None = None,
+        call_key: str = "refresh_profile",
+    ) -> None:
+        """Fail every post-commit merge projection repair."""
+        del deployment_id, entity_ids, meter, call_key
+        raise RuntimeError("provider unavailable")
+
+    def refresh_for_facts(
+        self,
+        *,
+        deployment_id: UUID,
+        relation_ids: tuple[UUID, ...],
+        observation_ids: tuple[UUID, ...],
+        meter: CostMeterPort | None = None,
+        call_key: str = "refresh_profile",
+    ) -> None:
+        """Fail every post-commit support-triage projection repair."""
+        del deployment_id, relation_ids, observation_ids, meter, call_key
+        raise RuntimeError("provider unavailable")
+
+
+def _queue(*, engine: Engine) -> ReviewQueue:
+    """Compose review behavior with an observable profile projection seam."""
+    return ReviewQueue(engine=engine, profile_refresher=RecordingProfileRefresher())
 
 
 @pytest.fixture(scope="module")
@@ -166,7 +204,7 @@ def test_open_withdrawn_guards_use_the_complete_fact_identity(
                 "subject_id": subject_id,
             },
         )
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -207,7 +245,7 @@ def test_merge_verdict_performs_a_reversible_human_merge(
     review_id = _queued_merge(
         engine=database_engine, survivor=survivor, absorbed=absorbed
     )
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     ranked = queue.pending(deployment_id=_DEPLOYMENT_ID)
     assert [item.review_id for item in ranked] == [review_id]
 
@@ -289,6 +327,284 @@ def test_merge_verdict_performs_a_reversible_human_merge(
         )
 
 
+def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
+    database_engine: Engine,
+) -> None:
+    """Survivor aggregates the closure; absorbed keeps its current local profile."""
+    survivor = _entity(engine=database_engine, name="Robert Klein")
+    absorbed = _entity(engine=database_engine, name="R. Klein")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:first, :deployment, :survivor, 'Robert lives in Prague',"
+                " 1, 'review-test'), (:second, :deployment, :absorbed,"
+                " 'R. Klein works at Acme', 1, 'review-test')"
+            ),
+            {
+                "first": uuid4(),
+                "second": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "survivor": survivor,
+                "absorbed": absorbed,
+            },
+        )
+    provider = FakeModelProvider()
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="review-profile-test",
+    )
+    refresher.refresh_many(
+        deployment_id=_DEPLOYMENT_ID, entity_ids=(survivor, absorbed)
+    )
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    queue = ReviewQueue(engine=database_engine, profile_refresher=refresher)
+
+    queue.decide_merge(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="merge",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        profiles = {
+            entity_id: (status, summary, cached)
+            for entity_id, status, summary, cached in connection.execute(
+                text(
+                    "SELECT entity_id, status::text, profile_summary,"
+                    " num_nonnulls(profile_summary, embedding, embedding_model,"
+                    " embedding_input_policy_version, embedding_text_hash)"
+                    " FROM entities WHERE entity_id = ANY(:entity_ids)"
+                ),
+                {"entity_ids": [survivor, absorbed]},
+            )
+        }
+    assert profiles[survivor][0] == "active"
+    original_summary = profiles[survivor][1]
+    assert isinstance(original_summary, str)
+    assert set(original_summary.split("; ")) == {
+        "R. Klein works at Acme",
+        "Robert lives in Prague",
+    }
+    assert profiles[absorbed] == ("merged", "R. Klein works at Acme", 5)
+
+    # A lost response after the database verdict but before profile refresh is
+    # repairable by the identical retry without minting another merge event.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET profile_summary = NULL, embedding = NULL,"
+                " embedding_model = NULL, embedding_input_policy_version = NULL,"
+                " embedding_text_hash = NULL WHERE entity_id = :entity"
+            ),
+            {"entity": survivor},
+        )
+    assert (
+        queue.decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+        == ()
+    )
+    with database_engine.connect() as connection:
+        repaired = connection.execute(
+            text("SELECT profile_summary FROM entities WHERE entity_id = :entity"),
+            {"entity": survivor},
+        ).scalar_one()
+    assert repaired == original_summary
+
+
+def test_merge_resolves_a_stale_survivor_to_its_live_terminal_root(
+    database_engine: Engine,
+) -> None:
+    """A queued survivor may move; applying its proposal must not create a cycle."""
+    from rememberstack.spine.clustering import apply_merge
+
+    queued_survivor = _entity(engine=database_engine, name="Queued Survivor")
+    absorbed = _entity(engine=database_engine, name="Queued Target")
+    live_root = _entity(engine=database_engine, name="Live Root")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity, 'Target evidence',"
+                " 1, 'review-test')"
+            ),
+            {"observation": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": absorbed},
+        )
+    review_id = _queued_merge(
+        engine=database_engine, survivor=queued_survivor, absorbed=absorbed
+    )
+    with database_engine.begin() as connection:
+        moved = apply_merge(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            survivor_id=live_root,
+            absorbed_id=queued_survivor,
+            trigger_lemmas=[],
+            evidence={},
+            blast_radius=1,
+            decided_by="auto",
+        )
+    assert moved is not None
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="review-profile-test",
+    )
+
+    ReviewQueue(engine=database_engine, profile_refresher=refresher).decide_merge(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="merge",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        roots = {
+            UUID(str(entity_id)): UUID(str(root_id))
+            for entity_id, root_id in connection.execute(
+                text(
+                    "SELECT entity_id, survivor_entity_id"
+                    " FROM v_memory_entity_survivor"
+                    " WHERE deployment_id = :deployment"
+                ),
+                {"deployment": _DEPLOYMENT_ID},
+            )
+        }
+        summary = connection.execute(
+            text("SELECT profile_summary FROM entities WHERE entity_id = :entity"),
+            {"entity": live_root},
+        ).scalar_one()
+    assert roots[queued_survivor] == live_root
+    assert roots[absorbed] == live_root
+    assert roots[live_root] == live_root
+    assert summary == "Target evidence"
+
+
+def test_merge_rejects_a_target_absorbed_by_another_cluster(
+    database_engine: Engine,
+) -> None:
+    """A stale blast radius cannot silently swallow a target's newer cluster."""
+    from rememberstack.spine.clustering import apply_merge
+
+    survivor = _entity(engine=database_engine, name="Review Survivor")
+    absorbed = _entity(engine=database_engine, name="Review Target")
+    competing_root = _entity(engine=database_engine, name="Competing Root")
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    with database_engine.begin() as connection:
+        moved = apply_merge(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            survivor_id=competing_root,
+            absorbed_id=absorbed,
+            trigger_lemmas=[],
+            evidence={},
+            blast_radius=1,
+            decided_by="auto",
+        )
+    assert moved is not None
+
+    with pytest.raises(ReviewDecisionError, match="no longer active"):
+        _queue(engine=database_engine).decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+    with database_engine.connect() as connection:
+        status = connection.execute(
+            text("SELECT status::text FROM review_queue WHERE review_id = :review"),
+            {"review": review_id},
+        ).scalar_one()
+    assert status == "pending"
+
+
+def test_merge_rejects_a_survivor_retired_after_review_was_queued(
+    database_engine: Engine,
+) -> None:
+    """A stale review cannot redirect an active entity into a retired root."""
+    survivor = _entity(engine=database_engine, name="Retired Survivor")
+    absorbed = _entity(engine=database_engine, name="Still Active Target")
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE entities SET status = 'retired' WHERE entity_id = :entity"),
+            {"entity": survivor},
+        )
+
+    with pytest.raises(ReviewDecisionError, match="no valid terminal redirect"):
+        _queue(engine=database_engine).decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+
+    with database_engine.connect() as connection:
+        state = connection.execute(
+            text(
+                "SELECT review.status::text, entity.status::text"
+                " FROM review_queue review CROSS JOIN entities entity"
+                " WHERE review.review_id = :review AND entity.entity_id = :entity"
+            ),
+            {"review": review_id, "entity": absorbed},
+        ).one()
+    assert tuple(state) == ("pending", "active")
+
+
+def test_committed_verdict_reports_profile_failure_and_repairs_on_retry(
+    database_engine: Engine,
+) -> None:
+    """The CLI-facing error says the verdict is durable and retry is repair."""
+    survivor = _entity(engine=database_engine, name="Durable Survivor")
+    absorbed = _entity(engine=database_engine, name="Durable Target")
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    failing = ReviewQueue(
+        engine=database_engine, profile_refresher=_FailingProfileRefresher()
+    )
+
+    with pytest.raises(ReviewDecisionError, match="verdict is durable"):
+        failing.decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+
+    repaired = RecordingProfileRefresher()
+    events = ReviewQueue(
+        engine=database_engine, profile_refresher=repaired
+    ).decide_merge(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="merge",
+        reviewer="jiri",
+    )
+    assert events == ()
+    assert set(repaired.entity_ids) == {survivor, absorbed}
+    with database_engine.connect() as connection:
+        event_count = connection.execute(
+            text("SELECT count(*) FROM merge_events WHERE absorbed_id = :entity"),
+            {"entity": absorbed},
+        ).scalar_one()
+    assert event_count == 1
+
+
 def test_not_merge_closes_without_touching_entities(database_engine: Engine) -> None:
     """A not_merge verdict records the rejection and merges nothing."""
     survivor = _entity(engine=database_engine, name="Jan Novak")
@@ -296,7 +612,7 @@ def test_not_merge_closes_without_touching_entities(database_engine: Engine) -> 
     review_id = _queued_merge(
         engine=database_engine, survivor=survivor, absorbed=absorbed
     )
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     events = queue.decide_merge(
         deployment_id=_DEPLOYMENT_ID,
         review_id=review_id,
@@ -322,7 +638,8 @@ def test_restore_support_writes_the_currency_event_and_recounts(
     """restore_support: the designed rows — a review_restored currency event,
     the claim current again, the fact's support recounted."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    profile_refresher = RecordingProfileRefresher()
+    queue = ReviewQueue(engine=database_engine, profile_refresher=profile_refresher)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -360,6 +677,52 @@ def test_restore_support_writes_the_currency_event_and_recounts(
     assert event["reason"] == "review_restored"
     assert current is True
     assert count == 1  # support restored (lineage-distinct, D54)
+    assert profile_refresher.fact_refreshes == [((relation,), ())]
+
+
+def test_committed_support_verdict_reports_failure_and_repairs_on_retry(
+    database_engine: Engine,
+) -> None:
+    """Support-triage retries repair projection without duplicating the verdict."""
+    relation, claim_id = _withdrawn_fact(engine=database_engine)
+    review_id = _queue(engine=database_engine).flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation,
+        claim_id=claim_id,
+        diff={},
+    )
+    failing = ReviewQueue(
+        engine=database_engine, profile_refresher=_FailingProfileRefresher()
+    )
+    with pytest.raises(ReviewDecisionError, match="verdict is durable"):
+        failing.decide_support_withdrawn(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="restore_support",
+            reviewer="jiri",
+        )
+
+    repaired = RecordingProfileRefresher()
+    ReviewQueue(
+        engine=database_engine, profile_refresher=repaired
+    ).decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="restore_support",
+        reviewer="jiri",
+    )
+
+    assert repaired.fact_refreshes == [((relation,), ())]
+    with database_engine.connect() as connection:
+        event_count = connection.execute(
+            text(
+                "SELECT count(*) FROM testimony_currency_events"
+                " WHERE claim_id = :claim AND reconciliation_id = :review"
+            ),
+            {"claim": claim_id, "review": review_id},
+        ).scalar_one()
+    assert event_count == 1
 
 
 def test_invalidate_fact_retires_it_with_a_recorded_adjudication(
@@ -367,7 +730,8 @@ def test_invalidate_fact_retires_it_with_a_recorded_adjudication(
 ) -> None:
     """invalidate_fact: the fact leaves the current layer, adjudicated."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    profile_refresher = RecordingProfileRefresher()
+    queue = ReviewQueue(engine=database_engine, profile_refresher=profile_refresher)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -403,12 +767,78 @@ def test_invalidate_fact_retires_it_with_a_recorded_adjudication(
     # the invalidation, not a noop with a side note.
     assert adjudicated["outcome"] == "invalidated"
     assert adjudicated["action"] == "invalidate_fact"
+    assert profile_refresher.fact_refreshes == [((relation,), ())]
+
+
+def test_terminal_review_verdicts_rebuild_then_clear_published_profiles(
+    database_engine: Engine,
+) -> None:
+    """Human restore/invalidate decisions synchronously repair profile caches."""
+    relation, claim_id = _withdrawn_fact(engine=database_engine)
+    provider = FakeModelProvider()
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="review-profile-test",
+    )
+    queue = ReviewQueue(engine=database_engine, profile_refresher=refresher)
+    restore_id = queue.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation,
+        claim_id=claim_id,
+        diff={},
+    )
+
+    queue.decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=restore_id,
+        verdict="restore_support",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        restored = tuple(
+            connection.execute(
+                text(
+                    "SELECT profile_summary FROM entities"
+                    " WHERE deployment_id = :deployment ORDER BY canonical_name"
+                ),
+                {"deployment": _DEPLOYMENT_ID},
+            ).scalars()
+        )
+    assert restored == ("Alice works for Acme", "Alice works for Acme")
+
+    invalidate_id = queue.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation,
+        claim_id=claim_id,
+        diff={},
+    )
+    queue.decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=invalidate_id,
+        verdict="invalidate_fact",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        remaining = connection.execute(
+            text(
+                "SELECT count(*) FROM entities WHERE deployment_id = :deployment"
+                " AND num_nonnulls(profile_summary, embedding, embedding_model,"
+                " embedding_input_policy_version, embedding_text_hash) > 0"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one()
+    assert remaining == 0
 
 
 def test_uncertain_leaves_the_marker_standing(database_engine: Engine) -> None:
     """uncertain is non-terminal: deferred, still listed, decidable later."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -446,9 +876,12 @@ def test_uncertain_leaves_the_marker_standing(database_engine: Engine) -> None:
 
 
 def test_cli_lists_and_decides_through_the_same_paths(
-    database_engine: Engine, capsys: pytest.CaptureFixture[str]
+    database_engine: Engine,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The remember CLI is a thin veneer: list ranks, decide applies the verdict."""
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
     survivor = _entity(engine=database_engine, name="CLI Survivor")
     absorbed = _entity(engine=database_engine, name="CLI Absorbed")
     review_id = _queued_merge(
@@ -458,22 +891,22 @@ def test_cli_lists_and_decides_through_the_same_paths(
     listed = capsys.readouterr().out.strip().splitlines()
     assert json.loads(listed[0])["review_id"] == str(review_id)
 
-    assert (
-        cli_main(
-            [
-                "review",
-                "decide",
-                str(review_id),
-                "--deployment",
-                str(_DEPLOYMENT_ID),
-                "--verdict",
-                "merge",
-                "--reviewer",
-                "jiri",
-            ]
-        )
-        == 0
-    )
+    decide_args = [
+        "review",
+        "decide",
+        str(review_id),
+        "--deployment",
+        str(_DEPLOYMENT_ID),
+        "--verdict",
+        "merge",
+        "--reviewer",
+        "jiri",
+    ]
+    assert cli_main(decide_args) == 1
+    assert "profile-changing review verdicts require" in capsys.readouterr().err
+
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    assert cli_main(decide_args) == 0
     decided = json.loads(capsys.readouterr().out.strip())
     assert decided["verdict"] == "merge"
     assert len(decided["merge_events"]) == 1
@@ -482,7 +915,7 @@ def test_cli_lists_and_decides_through_the_same_paths(
 def test_foreign_ids_are_refused_at_flag_and_decide(database_engine: Engine) -> None:
     """Codex review / D50: a candidate carrying ids from another deployment
     writes nothing — bound-checked at flag time."""
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     with pytest.raises(ReviewDecisionError):
         queue.flag_support_withdrawn(
             deployment_id=_DEPLOYMENT_ID,
@@ -497,7 +930,7 @@ def test_restore_retry_emits_no_second_currency_event(database_engine: Engine) -
     """Codex review: a retried restore_support verdict is a full no-op —
     one currency event, review-keyed."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",

@@ -13,9 +13,16 @@ from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
 from rememberstack.model import ForgetManifest
 from rememberstack.model import PipelineStage
+from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ProjectionCatalog
+from rememberstack.spine.surface_cost import open_surface_scope
+from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
+from rememberstack.spine.surface_cost import SurfaceCallSite
+from rememberstack.spine.surface_cost import SurfaceCostKind
+from rememberstack.spine.surface_cost import SurfaceCostMeter
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
 from rememberstack.workers import GraphRebuildWorker
@@ -34,12 +41,14 @@ class SelfHostHardForget:
     def __init__(
         self,
         *,
+        engine: Engine,
         catalog: ForgetCatalog,
         service: HardForgetService,
         handler: HardForgetHandler,
         readiness: HardForgetReadiness,
     ) -> None:
         """Retain one shared coordinator graph for every self-host surface."""
+        self._engine = engine
         self._catalog = catalog
         self._service = service
         self._handler = handler
@@ -50,6 +59,8 @@ class SelfHostHardForget:
         cls,
         *,
         engine: Engine,
+        model_provider: ModelProviderPort,
+        embedding_model: str,
         manifest_root: Path,
         object_roots: tuple[Path, ...],
         snapshot_root: Path,
@@ -78,9 +89,18 @@ class SelfHostHardForget:
         service = HardForgetService(
             catalog=catalog, manifest_store=manifest_store, k_git=k_git
         )
+        profile_refresher = EntityProfileRefresher(
+            engine=engine,
+            model_provider=model_provider,
+            embedding_model=embedding_model,
+        )
         handler = HardForgetHandler(
             catalog=catalog,
-            deletion=DeletionService(catalog=LifecycleCatalog(engine=engine)),
+            deletion=DeletionService(
+                catalog=LifecycleCatalog(engine=engine),
+                profile_refresher=profile_refresher,
+            ),
+            profile_refresher=profile_refresher,
             object_purgers=object_purgers,
             projection_rebuilder=ProjectionPairForgetRebuilder(
                 graph=GraphRebuildWorker(
@@ -107,7 +127,11 @@ class SelfHostHardForget:
             handler=handler,
         )
         return cls(
-            catalog=catalog, service=service, handler=handler, readiness=readiness
+            engine=engine,
+            catalog=catalog,
+            service=service,
+            handler=handler,
+            readiness=readiness,
         )
 
     def register(self, *, registry: HandlerRegistry) -> None:
@@ -132,7 +156,17 @@ class SelfHostHardForget:
 
     def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
         """Re-honor every portable manifest before serving begins."""
-        return self._readiness.ensure_ready(deployment_id=deployment_id)
+        meter = SurfaceCostMeter(
+            recorder=SqlSurfaceCostRecorder(
+                engine=self._engine, deployment_id=deployment_id
+            ),
+            deployment_id=deployment_id,
+            call_site=SurfaceCallSite.PROFILE_FORGET_RECOVERY,
+        )
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            return self._readiness.ensure_ready(
+                deployment_id=deployment_id, meter=meter
+            )
 
     def assert_available(self, *, deployment_id: UUID) -> None:
         """Implement the shared public/mount admission perimeter."""

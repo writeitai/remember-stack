@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EntityRef
 from rememberstack.model import ProviderCallUsage
@@ -126,6 +127,7 @@ def _handler(
         resolver=resolver,  # type: ignore[arg-type]
         facts=facts,  # type: ignore[arg-type]
         observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=provider,
         settings=E3Settings(normalize_model="test-model"),
         chunker_version="test",

@@ -56,6 +56,9 @@ class SurfaceCallSite(StrEnum):
     NOMINATE_CLAIMS = "nominate_claims"
     NOMINATE_CHUNKS = "nominate_chunks"
     OPEN_QUERY_SQL = "open_query_sql"
+    PROFILE_BACKFILL = "profile_backfill"
+    PROFILE_REVIEW = "profile_review"
+    PROFILE_FORGET_RECOVERY = "profile_forget_recovery"
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +196,55 @@ class SqlSurfaceCostRecorder:
             raise SurfaceCostUnrecordedError(
                 "surface cost could not be recorded or marked lost"
             ) from error
+
+
+class SurfaceCostMeter:
+    """Adapt one fixed operational call site to ``CostMeterPort``.
+
+    Profile refreshes can run outside a claimed worker attempt during setup,
+    human review, and hard-forget readiness replay. Those calls belong in the
+    request/operation ledger rather than disappearing or inventing a worker
+    ``processing_id``.
+    """
+
+    def __init__(
+        self,
+        *,
+        recorder: SqlSurfaceCostRecorder,
+        deployment_id: UUID,
+        call_site: SurfaceCallSite,
+    ) -> None:
+        """Bind provider receipts to one deployment and allowlisted call site."""
+        self._recorder = recorder
+        self._deployment_id = deployment_id
+        self._call_site = call_site
+
+    def record(
+        self,
+        *,
+        call_key: str,
+        tier: str | None,
+        usage: ProviderCallUsage,
+        outcome: str = "ok",
+    ) -> None:
+        """Persist one provider call through the operational surface ledger.
+
+        ``call_key`` and ``tier`` belong to worker-attempt accounting. This
+        adapter deliberately discards them: operational receipt identity is
+        the request id, allowlisted call site, and monotonically assigned
+        ordinal recorded by ``SqlSurfaceCostRecorder``.
+        """
+        del call_key, tier
+        try:
+            surface_outcome = SurfaceCostOutcome(outcome)
+        except ValueError as error:
+            raise ValueError(f"unknown surface cost outcome {outcome!r}") from error
+        self._recorder.record(
+            usage=usage,
+            outcome=surface_outcome,
+            call_site=self._call_site,
+            deployment_id=self._deployment_id,
+        )
 
 
 _INSERT_SURFACE_COST = text(

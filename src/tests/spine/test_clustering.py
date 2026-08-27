@@ -13,13 +13,16 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import P1EntityRow
 from rememberstack.model import UnmergeError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.profile_refresher import current_profile_entity_ids
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -44,10 +47,13 @@ class _ScriptedEntityIndex:
         self._vectors: dict[str, tuple[float, ...]] = {}
         self._names: dict[str, str] = {}
 
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """Register each entity's scripted vector by canonical name."""
-        for row in rows:
-            self._vectors[str(row.entity_id)] = _VECTORS[row.canonical_name]
+    def seed(self, *, entity_id: UUID, canonical_name: str) -> None:
+        """Register one scripted vector by canonical name."""
+        self._vectors[str(entity_id)] = _VECTORS[canonical_name]
+
+    def discard(self, *, entity_id: UUID) -> None:
+        """Remove one profile vector to simulate an absorbed-row cache clear."""
+        self._vectors.pop(str(entity_id), None)
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
@@ -128,16 +134,26 @@ def _arrive(*, engine: Engine, index: _ScriptedEntityIndex, name: str) -> UUID:
             ),
             {"a": uuid4(), "d": _DEPLOYMENT_ID, "e": entity_id, "n": name, "l": lemma},
         )
-    index.upsert_entities(
-        rows=(
-            P1EntityRow(
-                entity_id=entity_id,
-                deployment_id=_DEPLOYMENT_ID,
-                canonical_name=name,
-                vector=_VECTORS[name],
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity, :statement, 1,"
+                " 'cluster-test')"
             ),
+            {
+                "observation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": entity_id,
+                "statement": f"{name} profile evidence",
+            },
         )
-    )
+    EntityProfileRefresher(
+        engine=engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="cluster-profile-test",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=entity_id)
+    index.seed(entity_id=entity_id, canonical_name=name)
     return entity_id
 
 
@@ -174,7 +190,12 @@ def _clusterer(
     return EntityClusterer(
         engine=engine,
         entity_index=index,
-        config=ClusterConfig(**overrides),  # type: ignore[arg-type]
+        profile_refresher=EntityProfileRefresher(
+            engine=engine,
+            model_provider=FakeModelProvider(),
+            embedding_model="cluster-profile-test",
+        ),
+        config=ClusterConfig(auto_merge_enabled=True, **overrides),  # type: ignore[arg-type]
     )
 
 
@@ -189,7 +210,12 @@ def test_grouping_is_independent_of_arrival_order(
         ("Robert Klein", "R. Klein", "Rachel Klein"),
     ):
         with database_engine.begin() as connection:
-            for table in ("merge_events", "resolution_decisions", "aliases"):
+            for table in (
+                "merge_events",
+                "resolution_decisions",
+                "aliases",
+                "observations",
+            ):
                 connection.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
             connection.execute(
                 text("DELETE FROM entities WHERE deployment_id = :d"),
@@ -348,6 +374,158 @@ def test_high_blast_radius_routes_to_review_never_auto(
     assert review["status"] == "pending"
     assert review["expected_impact"] == pytest.approx(review["blast_radius"] * 0.5)
     assert merged == 0
+
+
+def test_uncalibrated_profile_space_routes_every_merge_to_review(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """The default cut is inert until a measured profile-space opt-in exists."""
+    index = _ScriptedEntityIndex()
+    profile_refresher = RecordingProfileRefresher()
+    clusterer = EntityClusterer(
+        engine=database_engine,
+        entity_index=index,
+        profile_refresher=profile_refresher,
+        config=ClusterConfig(distance_cut=_CUT),
+    )
+    _arrive(engine=database_engine, index=index, name="Robert Klein")
+    _arrive(engine=database_engine, index=index, name="R. Klein")
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert report.merged == ()
+    assert report.queued_for_review == 1
+    assert profile_refresher.entity_ids == []
+
+
+def test_missing_absorbed_profile_never_authorizes_an_automatic_unmerge(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A cleared absorbed-row vector is ambiguity, not split evidence."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    survivor = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    absorbed = _arrive(engine=database_engine, index=index, name="R. Klein")
+    first = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+    assert first.merged
+    index.discard(entity_id=absorbed)
+
+    second = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert second.merged == ()
+    with database_engine.connect() as connection:
+        states = {
+            entity_id: (str(status), merged_into)
+            for entity_id, status, merged_into in connection.execute(
+                text(
+                    "SELECT entity_id, status::text, merged_into FROM entities"
+                    " WHERE entity_id = ANY(:entity_ids)"
+                ),
+                {"entity_ids": [survivor, absorbed]},
+            )
+        }
+    assert states[survivor] == ("active", None)
+    assert states[absorbed] == ("merged", survivor)
+
+
+def test_missing_survivor_profile_never_authorizes_an_automatic_unmerge(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A member vector cannot split when its live root vector is unavailable."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    survivor = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    absorbed = _arrive(engine=database_engine, index=index, name="R. Klein")
+    first = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+    assert first.merged
+    index.discard(entity_id=survivor)
+
+    second = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert second.merged == ()
+    with database_engine.connect() as connection:
+        status, merged_into = connection.execute(
+            text(
+                "SELECT status::text, merged_into FROM entities"
+                " WHERE entity_id = :entity"
+            ),
+            {"entity": absorbed},
+        ).one()
+    assert (status, merged_into) == ("merged", survivor)
+
+
+def test_stale_profile_never_authorizes_clustering(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """Exact current-input attestation excludes a stale indexed vector."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    _arrive(engine=database_engine, index=index, name="Robert Klein")
+    stale = _arrive(engine=database_engine, index=index, name="R. Klein")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE observations SET statement = 'R. Klein changed profile',"
+                " updated_at = now() WHERE subject_entity_id = :entity"
+            ),
+            {"entity": stale},
+        )
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert report.merged == ()
+    assert report.queued_for_review == 0
+
+
+def test_clustering_redirect_walks_are_anchored() -> None:
+    """Hot identity paths never materialize the deployment-wide survivor view."""
+    from rememberstack.spine import clustering
+
+    for statement in (
+        clustering._GATHER_NEIGHBORHOOD,
+        clustering._SELECT_PIECE_ROOTS,
+        clustering._SELECT_SURVIVOR_ROOT,
+        clustering._SELECT_ENTITY_ROOT_AND_STATUS,
+    ):
+        sql = str(statement)
+        assert "WITH RECURSIVE" in sql
+        assert "v_memory_entity_survivor" not in sql
+
+
+def test_clustering_attestation_preserves_caller_timeouts(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """The borrowed clustering transaction keeps its own timeout policy."""
+    index = _ScriptedEntityIndex()
+    entity_id = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    with database_engine.begin() as connection:
+        connection.execute(text("SET LOCAL statement_timeout = '2min'"))
+        connection.execute(
+            text("SET LOCAL idle_in_transaction_session_timeout = '3min'")
+        )
+        assert current_profile_entity_ids(
+            connection=connection, deployment_id=_DEPLOYMENT_ID, entity_ids=(entity_id,)
+        ) == frozenset({entity_id})
+        statement_timeout = connection.execute(
+            text("SHOW statement_timeout")
+        ).scalar_one()
+        idle_timeout = connection.execute(
+            text("SHOW idle_in_transaction_session_timeout")
+        ).scalar_one()
+    assert statement_timeout == "2min"
+    assert idle_timeout == "3min"
 
 
 def test_black_hole_guard_tightens_the_cut(

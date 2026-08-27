@@ -36,13 +36,18 @@ from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
+from rememberstack.model import ReviewDecisionError
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
+from rememberstack.spine.surface_cost import SurfaceCallSite
+from rememberstack.spine.surface_cost import SurfaceCostKind
+from rememberstack.spine.surface_cost import SurfaceCostMeter
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -54,6 +59,7 @@ if TYPE_CHECKING:
         ControlPlaneSpendLease,
     )
     from rememberstack.ports.telemetry import TelemetryPort
+    from rememberstack.spine.review import ReviewQueue
     from rememberstack.workers import StageHandler
 
 _SUPPORTED_WORKER_STAGES = (
@@ -516,12 +522,10 @@ class SelfHostProfile:
             )
         )
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
+        from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415
 
-        PostgresP1Index(
-            engine=self._engine,
-            embedding_model=P1Settings.model_validate({}).embedding_model,
-        ).configure_channels(deployment_id=self._settings.deployment_id)
+        p1_settings = P1Settings.model_validate({})
         seed_canonical_operations(
             registry=AssuredOperationRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
@@ -552,6 +556,35 @@ class SelfHostProfile:
             # The bootstrap work above uses the raw psycopg connection, so its
             # transaction must be committed through that same connection.
             raw.commit()
+        p1_index = PostgresP1Index(
+            engine=self._engine, embedding_model=p1_settings.embedding_model
+        )
+        profile_meter = SurfaceCostMeter(
+            recorder=SqlSurfaceCostRecorder(
+                engine=self._engine, deployment_id=self._settings.deployment_id
+            ),
+            deployment_id=self._settings.deployment_id,
+            call_site=SurfaceCallSite.PROFILE_BACKFILL,
+        )
+        # Publish unaffected channels first. The entity semantic channel stays
+        # fail-closed until its policy-cut backfill completes successfully.
+        p1_index.configure_channels(
+            deployment_id=self._settings.deployment_id, include_entity=False
+        )
+        if p1_index.entity_profile_backfill_required(
+            deployment_id=self._settings.deployment_id
+        ):
+            with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+                EntityProfileRefresher(
+                    engine=self._engine,
+                    model_provider=self._model_provider,
+                    embedding_model=p1_settings.embedding_model,
+                ).backfill(
+                    deployment_id=self._settings.deployment_id, meter=profile_meter
+                )
+        p1_index.configure_channels(
+            deployment_id=self._settings.deployment_id, include_entity=True
+        )
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
@@ -795,6 +828,7 @@ class SelfHostProfile:
         from rememberstack.spine import ChunkCatalog
         from rememberstack.spine import ClaimCatalog
         from rememberstack.spine import DocumentCatalog
+        from rememberstack.spine import EntityProfileRefresher
         from rememberstack.spine import EntityRegistry
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
@@ -830,6 +864,11 @@ class SelfHostProfile:
         facts = FactCatalog(engine=self._engine)
 
         p1_settings = P1Settings.model_validate({})
+        profile_refresher = EntityProfileRefresher(
+            engine=self._engine,
+            model_provider=self._model_provider,
+            embedding_model=p1_settings.embedding_model,
+        )
         index = PostgresP1Index(
             engine=self._engine, embedding_model=p1_settings.embedding_model
         )
@@ -897,6 +936,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=observation_settings,
                 ),
+                profile_refresher=profile_refresher,
                 model_provider=self._model_provider,
                 settings=E3Settings.model_validate({}),
                 chunker_version=chunk_generation,
@@ -910,6 +950,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=observation_settings,
                 ),
+                profile_refresher=profile_refresher,
                 chunk_catalog=chunks,
                 claim_catalog=claims,
                 chunker_version=chunk_generation,
@@ -921,6 +962,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=SupersessionSettings.model_validate({}),
                 ),
+                profile_refresher=profile_refresher,
                 facts=facts,
                 chunk_catalog=chunks,
                 claim_catalog=claims,
@@ -938,7 +980,10 @@ class SelfHostProfile:
         if stage is PipelineStage.RECONCILE:
             return ReconcileHandler(
                 catalog=LifecycleCatalog(engine=self._engine),
-                review_queue=ReviewQueue(engine=self._engine),
+                review_queue=ReviewQueue(
+                    engine=self._engine, profile_refresher=profile_refresher
+                ),
+                profile_refresher=profile_refresher,
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.LABEL_RELATION:
@@ -949,6 +994,40 @@ class SelfHostProfile:
                 settings=p1_settings,
             )
         raise ValueError(f"the self-host profile has no handler for stage {stage}")
+
+
+def build_selfhost_review_queue(
+    *, engine: Engine, deployment_id: UUID, project_profiles: bool
+) -> ReviewQueue:
+    """Compose review reads and only load the provider for profile mutations."""
+    from rememberstack.spine import EntityProfileRefresher
+    from rememberstack.spine import ReviewQueue
+    from rememberstack.workers import P1Settings
+
+    if not project_profiles:
+        return ReviewQueue(engine=engine)
+    p1_settings = P1Settings.model_validate({})
+    try:
+        provider = OpenRouterModelProvider(
+            settings=OpenRouterSettings.model_validate({})
+        )
+    except ValueError as error:
+        raise ReviewDecisionError(
+            "profile-changing review verdicts require REMEMBERSTACK_OPENROUTER_API_KEY"
+        ) from error
+    return ReviewQueue(
+        engine=engine,
+        profile_refresher=EntityProfileRefresher(
+            engine=engine,
+            model_provider=provider,
+            embedding_model=p1_settings.embedding_model,
+        ),
+        meter=SurfaceCostMeter(
+            recorder=SqlSurfaceCostRecorder(engine=engine, deployment_id=deployment_id),
+            deployment_id=deployment_id,
+            call_site=SurfaceCallSite.PROFILE_REVIEW,
+        ),
+    )
 
 
 def create_api() -> FastAPI:

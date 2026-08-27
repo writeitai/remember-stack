@@ -16,7 +16,6 @@ from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
-from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
@@ -52,8 +51,10 @@ class PostgresP1Index:
         self._embedding_model = embedding_model
         self._chunk_input_policy = chunk_input_policy
 
-    def configure_channels(self, *, deployment_id: UUID) -> None:
-        """Publish the fixed D94 channel configuration during deployment setup."""
+    def configure_channels(
+        self, *, deployment_id: UUID, include_entity: bool = True
+    ) -> None:
+        """Publish D94 channels, optionally leaving entity semantics gated."""
         semantic = (
             ("chunks", self._chunk_input_policy),
             ("claims", CLAIM_INPUT_POLICY),
@@ -72,6 +73,7 @@ class PostgresP1Index:
                 "text_config": None,
             }
             for target, policy in semantic
+            if include_entity or target != "entities"
         ]
         rows.extend(
             {
@@ -107,6 +109,31 @@ class PostgresP1Index:
         )
         with self._engine.begin() as connection:
             connection.execute(statement, rows)
+
+    def entity_profile_backfill_required(self, *, deployment_id: UUID) -> bool:
+        """Whether setup must repair profiles before publishing entity semantics."""
+        with self._engine.connect() as connection:
+            ready = connection.execute(
+                text(
+                    """
+                    SELECT count(*) = 1
+                    FROM p1_search_channels
+                    WHERE deployment_id = :deployment_id
+                      AND target = 'entities' AND channel = 'semantic'
+                      AND ready
+                      AND embedding_model = :embedding_model
+                      AND embedding_dimension = :embedding_dimension
+                      AND embedding_input_policy_version = :input_policy
+                    """
+                ),
+                {
+                    "deployment_id": deployment_id,
+                    "embedding_model": self._embedding_model,
+                    "embedding_dimension": P1_VECTOR_DIMENSIONS,
+                    "input_policy": ENTITY_INPUT_POLICY,
+                },
+            ).scalar_one()
+        return not bool(ready)
 
     def upsert_chunks(self, *, rows: tuple[P1ChunkRow, ...]) -> None:
         """Upsert normalized chunk text, vector, and its complete attestation."""
@@ -309,41 +336,6 @@ class PostgresP1Index:
                     },
                 )
                 _require_updated(result.rowcount, target=row.kind, item_id=row.fact_id)
-
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """Write entity profile vectors directly onto natural entity rows."""
-        if not rows:
-            return
-        _require_vectors(rows=tuple(row.vector for row in rows))
-        statement = text(
-            """
-            UPDATE entities SET
-              embedding = CAST(:embedding AS vector),
-              embedding_model = :model,
-              embedding_input_policy_version = :policy,
-              embedding_text_hash = :text_hash,
-              updated_at = now()
-            WHERE deployment_id = :deployment_id AND entity_id = :entity_id
-              AND canonical_name = :canonical_name
-            """
-        )
-        with self._engine.begin() as connection:
-            for row in rows:
-                result = connection.execute(
-                    statement,
-                    {
-                        "embedding": _vector_literal(row.vector),
-                        "model": self._embedding_model,
-                        "policy": ENTITY_INPUT_POLICY,
-                        "text_hash": embedding_text_hash(row.canonical_name),
-                        "deployment_id": row.deployment_id,
-                        "entity_id": row.entity_id,
-                        "canonical_name": row.canonical_name,
-                    },
-                )
-                _require_updated(
-                    result.rowcount, target="entity", item_id=row.entity_id
-                )
 
     def claim_vectors(
         self, *, deployment_id: str, claim_ids: tuple[str, ...]
@@ -1188,6 +1180,22 @@ class PostgresP1Index:
             ("entities", "entity_id"),
         }:
             raise ValueError("unsupported natural P1 vector target")
+        generation_sql = ""
+        parameters: dict[str, object] = {
+            "deployment_id": UUID(deployment_id),
+            "ids": _uuid_strings(item_ids),
+        }
+        if table == "entities":
+            generation_sql = (
+                " AND embedding_model = :embedding_model"
+                " AND embedding_input_policy_version = :input_policy"
+            )
+            parameters.update(
+                {
+                    "embedding_model": self._embedding_model,
+                    "input_policy": ENTITY_INPUT_POLICY,
+                }
+            )
         rows = self._engine_rows(
             f"""
             SELECT {id_column}::text AS item_id, embedding::text AS embedding
@@ -1195,8 +1203,9 @@ class PostgresP1Index:
             WHERE deployment_id = :deployment_id
               AND {id_column} = ANY(CAST(:ids AS uuid[]))
               AND embedding IS NOT NULL
+              {generation_sql}
             """,
-            {"deployment_id": UUID(deployment_id), "ids": _uuid_strings(item_ids)},
+            parameters,
         )
         return {
             str(row["item_id"]): _parse_vector(str(row["embedding"])) for row in rows

@@ -32,6 +32,7 @@ from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
@@ -215,6 +216,11 @@ class _E3Rig:
         self.p1 = PostgresP1Index(
             engine=engine, embedding_model=P1Settings().embedding_model
         )
+        profile_refresher = EntityProfileRefresher(
+            engine=engine,
+            model_provider=self.provider,
+            embedding_model=P1Settings().embedding_model,
+        )
         self.normalize_handler = NormalizeRelationsHandler(
             claim_catalog=claim_catalog,
             chunk_catalog=chunk_catalog,
@@ -233,6 +239,7 @@ class _E3Rig:
                 model_provider=self.provider,
                 settings=ObservationSettings(),
             ),
+            profile_refresher=profile_refresher,
             model_provider=self.provider,
             settings=E3Settings(),
             chunker_version=chunker_version(params=_PARAMS),
@@ -295,6 +302,7 @@ class _E3Rig:
                     model_provider=self.provider,
                     settings=ObservationSettings(),
                 ),
+                profile_refresher=profile_refresher,
                 chunk_catalog=chunk_catalog,
                 claim_catalog=claim_catalog,
                 chunker_version=chunker_version(params=_PARAMS),
@@ -307,7 +315,8 @@ class _E3Rig:
                     engine=engine,
                     model_provider=self.provider,
                     settings=SupersessionSettings(),
-                )
+                ),
+                profile_refresher=profile_refresher,
             ),
         )
         registry.register(
@@ -334,7 +343,10 @@ class _E3Rig:
             stage=PipelineStage.RECONCILE,
             handler=ReconcileHandler(
                 catalog=LifecycleCatalog(engine=engine),
-                review_queue=ReviewQueue(engine=engine),
+                review_queue=ReviewQueue(
+                    engine=engine, profile_refresher=profile_refresher
+                ),
+                profile_refresher=profile_refresher,
                 chunker_version=chunker_version(params=_PARAMS),
             ),
         )

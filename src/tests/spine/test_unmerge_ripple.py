@@ -22,9 +22,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import P1EntityRow
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
 from rememberstack.spine import FactCatalog
@@ -38,9 +38,6 @@ _DEPLOYMENT_ID = UUID("b1000000-0000-0000-0000-000000000001")
 
 class _StaticIndex:
     """An EntityIndexPort double (profiles unused in these proofs)."""
-
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """No-op."""
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
@@ -141,7 +138,10 @@ def test_merged_identity_blocks_across_endpoints_and_unmerge_flags_the_ripple(
 
     # merge variant -> canonical (as the clusterer would):
     clusterer = EntityClusterer(
-        engine=database_engine, entity_index=_StaticIndex(), config=ClusterConfig()
+        engine=database_engine,
+        entity_index=_StaticIndex(),
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(),
     )
     from rememberstack.spine.clustering import apply_merge
 
@@ -248,7 +248,10 @@ def test_same_identity_closures_do_not_ripple(database_engine: Engine) -> None:
     ).adjudicate_new_relation(deployment_id=_DEPLOYMENT_ID, relation_id=second)
 
     EntityClusterer(
-        engine=database_engine, entity_index=_StaticIndex(), config=ClusterConfig()
+        engine=database_engine,
+        entity_index=_StaticIndex(),
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(),
     ).unmerge(deployment_id=_DEPLOYMENT_ID, merge_id=merge_id)
 
     with database_engine.connect() as connection:
@@ -328,7 +331,10 @@ def test_nested_split_members_are_flagged(database_engine: Engine) -> None:
     # unmerging B -> A: the A-side closure straddles into the B-subtree
     # (C included) — flagged even though neither endpoint equals B:
     EntityClusterer(
-        engine=database_engine, entity_index=_StaticIndex(), config=ClusterConfig()
+        engine=database_engine,
+        entity_index=_StaticIndex(),
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(),
     ).unmerge(deployment_id=_DEPLOYMENT_ID, merge_id=ba_merge)
     with database_engine.connect() as connection:
         flagged = connection.execute(

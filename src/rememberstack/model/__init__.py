@@ -61,6 +61,7 @@ from rememberstack.model.client import ProjectionReadiness
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.clustering import ClusterConfig
+from rememberstack.model.clustering import MergeApplicationError
 from rememberstack.model.clustering import MergeProposal
 from rememberstack.model.clustering import NeighborhoodReport
 from rememberstack.model.clustering import UnmergeError
@@ -303,7 +304,6 @@ from rememberstack.model.relations import ObservationCandidate
 from rememberstack.model.relations import RelationCandidate
 from rememberstack.model.relations import ResolvedEntity
 from rememberstack.model.resolution import AdjudicationVerdict
-from rememberstack.model.resolution import P1EntityRow
 from rememberstack.model.resolution import ResolutionCandidate
 from rememberstack.model.resolution import ResolutionThresholds
 from rememberstack.model.resolution import ResolverConfig
@@ -451,6 +451,7 @@ __all__ = (
     "IngestedVersion",
     "KRevision",
     "LaneRouteError",
+    "MergeApplicationError",
     "MergeProposal",
     "ModelRequest",
     "Negative",
@@ -476,7 +477,6 @@ __all__ = (
     "P1ChunkRow",
     "P1ChunkText",
     "P1ClaimRow",
-    "P1EntityRow",
     "P1FactRow",
     "PackedChunk",
     "PerimeterCredential",
