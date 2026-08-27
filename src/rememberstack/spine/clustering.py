@@ -363,7 +363,7 @@ class EntityClusterer:
         piece: tuple[dict[str, object], ...],
         vector_entity_ids: frozenset[str],
     ) -> tuple[UUID, ...]:
-        """Unmerge merged members only on vector-backed piece disagreement.
+        """Unmerge only on current member/root vector-backed disagreement.
 
         The joint decision is authoritative for the pocket: a member absorbed
         into an entity OUTSIDE its piece (or alone in a singleton piece) is
@@ -378,6 +378,8 @@ class EntityClusterer:
             root = member.get("current_root")
             if root is None or str(root) == str(member["entity_id"]):
                 continue  # active, or its own root
+            if str(root) not in vector_entity_ids:
+                continue  # a missing/stale survivor is ambiguity too
             if str(root) in piece_ids and len(piece) > 1:
                 continue  # its survivor is in the same piece: agreement
             event = (
@@ -667,6 +669,15 @@ _GATHER_NEIGHBORHOOD = text(
            up.entity_id AS current_root
     FROM reached
     JOIN up ON up.origin_id = reached.entity_id AND up.status = 'active'
+    UNION
+    SELECT DISTINCT root.entity_id, root.canonical_name,
+           root.created_at AS first_seen, root.entity_id AS current_root
+    FROM reached
+    JOIN up ON up.origin_id = reached.entity_id AND up.status = 'active'
+    JOIN entities root
+      ON root.deployment_id = :deployment_id
+     AND root.entity_id = up.entity_id
+    WHERE root.entity_id <> reached.entity_id
     """
 )
 

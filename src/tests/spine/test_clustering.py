@@ -434,6 +434,36 @@ def test_missing_absorbed_profile_never_authorizes_an_automatic_unmerge(
     assert states[absorbed] == ("merged", survivor)
 
 
+def test_missing_survivor_profile_never_authorizes_an_automatic_unmerge(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A member vector cannot split when its live root vector is unavailable."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    survivor = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    absorbed = _arrive(engine=database_engine, index=index, name="R. Klein")
+    first = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+    assert first.merged
+    index.discard(entity_id=survivor)
+
+    second = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert second.merged == ()
+    with database_engine.connect() as connection:
+        status, merged_into = connection.execute(
+            text(
+                "SELECT status::text, merged_into FROM entities"
+                " WHERE entity_id = :entity"
+            ),
+            {"entity": absorbed},
+        ).one()
+    assert (status, merged_into) == ("merged", survivor)
+
+
 def test_stale_profile_never_authorizes_clustering(
     database_engine: Engine, bootstrapped_deployment: None
 ) -> None:

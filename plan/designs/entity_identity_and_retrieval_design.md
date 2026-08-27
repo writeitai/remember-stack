@@ -191,7 +191,8 @@ attestation disables T3 and T4 still receives the current salient statements.
 Clustering performs the same exact current-input check under evidence locks before reading a
 generation-pinned vector, so stale or missing member state cannot authorize a merge or split.
 Merged-member relation prose keeps endpoints inside the member subtree named as that local profile
-root, rather than rewriting them to the outer survivor and self-reinforcing an earlier merge.
+root and preserves raw canonical names outside it, rather than rewriting a sibling to the shared
+outer survivor and self-reinforcing an earlier merge.
 Hot-path redirect traversal uses recursive CTEs anchored at the requested ids rather than the
 deployment-wide survivor view. No queued stale snapshot can overwrite newer evidence: the
 refresher snapshots under the identity/evidence locks, releases the transaction for the provider

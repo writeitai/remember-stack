@@ -20,6 +20,7 @@ from rememberstack.model import EmbeddingResponse
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
+from rememberstack.spine.profile_refresher import profile_refresh_targets
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -411,6 +412,105 @@ def test_merged_member_relation_profile_keeps_its_local_name(
     facts = {result.entity_id: result.salient_facts for result in results}
     assert facts[_FIRST_ENTITY] == ("Robert Klein works for Acme",)
     assert facts[_SECOND_ENTITY] == ("R. Klein works for Acme",)
+
+
+def test_merged_sibling_relation_profiles_keep_both_local_names(
+    database_engine: Engine,
+) -> None:
+    """A sibling endpoint never renders as the shared outer survivor."""
+    sibling = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET canonical_name = 'Survivor'"
+                " WHERE entity_id = :survivor"
+            ),
+            {"survivor": _FIRST_ENTITY},
+        )
+        connection.execute(
+            text(
+                "UPDATE entities SET canonical_name = 'Alice', status = 'merged',"
+                " merged_into = :survivor WHERE entity_id = :member"
+            ),
+            {"survivor": _FIRST_ENTITY, "member": _SECOND_ENTITY},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name, status, merged_into) VALUES (:sibling,"
+                " :deployment, 'Bob', 'bob', 'merged', :survivor)"
+            ),
+            {
+                "sibling": sibling,
+                "deployment": _DEPLOYMENT_ID,
+                "survivor": _FIRST_ENTITY,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id, evidence_count,"
+                " normalizer_version) VALUES (:relation, :deployment, :member,"
+                " 'works_for', :sibling, 1, 'profile-test')"
+            ),
+            {
+                "relation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "member": _SECOND_ENTITY,
+                "sibling": sibling,
+            },
+        )
+
+    results = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="profile-embed-test",
+    ).refresh_many(deployment_id=_DEPLOYMENT_ID, entity_ids=(_SECOND_ENTITY, sibling))
+
+    facts = {result.entity_id: result.salient_facts for result in results}
+    assert facts[_SECOND_ENTITY] == ("Alice works for Bob",)
+    assert facts[sibling] == ("Alice works for Bob",)
+    assert all(
+        "Survivor" not in fact
+        for member_facts in facts.values()
+        for fact in member_facts
+    )
+
+
+def test_refresh_targets_include_nested_redirect_intermediates(
+    database_engine: Engine,
+) -> None:
+    """Raw fact repair fans out through every retained merged profile to root."""
+    root = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET status = 'merged', merged_into = :middle"
+                " WHERE entity_id = :leaf"
+            ),
+            {"leaf": _FIRST_ENTITY, "middle": _SECOND_ENTITY},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:root, :deployment, 'Root', 'root')"
+            ),
+            {"root": root, "deployment": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                "UPDATE entities SET status = 'merged', merged_into = :root"
+                " WHERE entity_id = :middle"
+            ),
+            {"middle": _SECOND_ENTITY, "root": root},
+        )
+        targets = profile_refresh_targets(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            entity_ids=(_FIRST_ENTITY,),
+        )
+
+    assert set(targets) == {_FIRST_ENTITY, _SECOND_ENTITY, root}
 
 
 def test_capped_fact_cannot_outrank_the_open_current_profile(

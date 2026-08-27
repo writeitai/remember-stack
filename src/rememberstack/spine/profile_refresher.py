@@ -587,7 +587,7 @@ def _profile_input_is_current(
 def profile_refresh_targets(
     *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
 ) -> tuple[UUID, ...]:
-    """Return changed rows plus their live terminal survivors for projection repair."""
+    """Return changed rows, merged intermediates, and live terminal survivors."""
     if not entity_ids:
         return ()
     return tuple(
@@ -738,7 +738,7 @@ _SELECT_PROFILE_REFRESH_TARGETS = text(
         ON entity.deployment_id = :deployment_id
        AND entity.entity_id = nominated.entity_id
       UNION
-      SELECT up.entity_id FROM up WHERE up.status = 'active'
+      SELECT up.entity_id FROM up WHERE up.status IN ('active', 'merged')
     )
     SELECT entity_id FROM targets ORDER BY entity_id
     """
@@ -840,10 +840,14 @@ _SELECT_SALIENT_FACTS = text(
     )
     SELECT selected.profile_entity_id, selected.kind, selected.statement,
            CASE WHEN subject_member.member_entity_id IS NOT NULL
-                THEN profile.canonical_name ELSE subject.canonical_name END,
+                THEN profile.canonical_name
+                WHEN profile.status = 'merged' THEN subject_raw.canonical_name
+                ELSE subject.canonical_name END,
            selected.predicate,
            CASE WHEN object_member.member_entity_id IS NOT NULL
-                THEN profile.canonical_name ELSE object.canonical_name END
+                THEN profile.canonical_name
+                WHEN profile.status = 'merged' THEN object_raw.canonical_name
+                ELSE object.canonical_name END
     FROM selected
     JOIN entities profile
       ON profile.deployment_id = :deployment_id
@@ -856,6 +860,12 @@ _SELECT_SALIENT_FACTS = text(
       ON object_member.profile_entity_id = selected.profile_entity_id
      AND object_member.member_entity_id = selected.object_entity_id
      AND selected.kind = 'relation'
+    LEFT JOIN entities subject_raw
+      ON subject_raw.deployment_id = :deployment_id
+     AND subject_raw.entity_id = selected.subject_entity_id
+    LEFT JOIN entities object_raw
+      ON object_raw.deployment_id = :deployment_id
+     AND object_raw.entity_id = selected.object_entity_id
     LEFT JOIN LATERAL (
       WITH RECURSIVE up(entity_id, status, merged_into, path) AS (
         SELECT entity.entity_id, entity.status, entity.merged_into,

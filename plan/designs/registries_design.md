@@ -139,10 +139,11 @@ merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invo
 refresher. A survivor profile includes evidence anchored to every entity in its complete redirect
 closure. A merged row retains a separately attested member-local/subtree profile solely for joint
 neighborhood re-decision. Relation prose names an endpoint inside that subtree as the local
-profile root rather than its current outer survivor, so a previous merge cannot self-reinforce
+profile root and preserves the raw canonical name of an endpoint outside the subtree; it never
+rewrites a sibling to their shared outer survivor. Thus a previous merge cannot self-reinforce
 the vector used to reconsider it. The row remains excluded from public entity resolution and search. Fact-
-triggered refresh repairs both raw endpoints and their terminal active survivor, so later
-lifecycle changes cannot strand evidence behind a redirect;
+triggered refresh repairs raw endpoints, every retained merged intermediate, and the terminal
+active survivor, so later lifecycle changes cannot strand evidence behind a redirect;
 hard-forget refreshes shared survivor ids after the
 lineage scrub and before projection rebuild/verification. When no supported fact remains, the
 summary, vector, and complete attestation clear together. The resolver independently loads the
@@ -722,7 +723,8 @@ queue. Test scenarios opt in to their synthetic measured cut explicitly.
 A missing or stale member profile is ambiguity in both directions: it can neither authorize a
 merge nor automatically split an existing merge. Merged members therefore retain a current,
 member-local disposable profile for nDR; a failed refresh clears its old attestation before the
-provider call. Joint re-decision may split only on exact, generation-pinned vector disagreement;
+provider call. Joint re-decision may split only when both the member and its live survivor have
+exact, generation-pinned vectors that disagree;
 otherwise it requires an explicit audited unmerge.
 
 **Cap runaway blobs (the "black-hole guard").** Occasionally a blob balloons to thousands of
