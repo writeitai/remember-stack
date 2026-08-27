@@ -973,6 +973,38 @@ def test_generic_identifier_guard_downweights_shared_lemma(
     assert row["is_downweighted"] is True
     assert row["reason"] == "promiscuous-lemma"
 
+    near_lemma = normalized_lemma(surface="Jan Novakk")
+    temporary_alias_id = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO aliases ("
+                " alias_id, deployment_id, entity_id, alias_text,"
+                " normalized_lemma, provenance"
+                ") VALUES ("
+                " :alias_id, :deployment_id, :entity_id, 'Jan Novakk',"
+                " :lemma, 'source'"
+                ")"
+            ),
+            {
+                "alias_id": temporary_alias_id,
+                "deployment_id": _DEPLOYMENT_ID,
+                "entity_id": first.entity_id,
+                "lemma": near_lemma,
+            },
+        )
+        ranked = resolver._blocked_candidates(  # noqa: SLF001 - pins SQL ordering
+            connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=near_lemma
+        )
+        connection.execute(
+            text("DELETE FROM aliases WHERE alias_id = :alias_id"),
+            {"alias_id": temporary_alias_id},
+        )
+    assert tuple(candidate.entity_id for candidate in ranked) == (
+        first.entity_id,
+        second.entity_id,
+    )
+
     prompts_before = len(provider.generated_prompts)
     near_variant = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,

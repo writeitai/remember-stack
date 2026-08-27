@@ -155,8 +155,9 @@ Write-time cascade tiers:
 Write-time T0 never accepts an exact name by itself. A T4 non-match may mint a
 second active entity with the same normalized lemma; the negative pair is
 stored as a clustering exclusion. Lemmas that span multiple entity ids are
-marked promiscuous and stop driving fuzzy/phonetic blocking. The shipped
-cascade has no exact-name auto-accept flag.
+marked promiscuous and rank below unguarded fuzzy/phonetic matches without
+being dropped from the candidate set. The shipped cascade has no exact-name
+auto-accept flag.
 
 After supported open-ended observations or relations change, a deterministic refresher
 rebuilds the entity’s short summary and `entity-profile-v2` vector. Unchanged
