@@ -36,10 +36,21 @@ CREATE VIEW rememberstack_graph_internal.entities_live AS
 SELECT e.deployment_id, e.entity_id, e.canonical_name, e.profile_summary
 FROM entities AS e
 WHERE e.status = 'active'
-  AND EXISTS (
-    SELECT 1
-    FROM (
-      SELECT mention.deployment_id, survivor.survivor_entity_id AS entity_id
+  -- Separate correlated semijoins keep PG19's fixed-pattern rewriter from
+  -- flattening a provenance UNION once per vertex occurrence in GRAPH_TABLE.
+  AND (
+    EXISTS (
+      SELECT 1
+      FROM documents AS document
+      JOIN v_memory_entity_survivor AS survivor
+        ON survivor.deployment_id = document.deployment_id
+       AND survivor.entity_id = document.document_entity_id
+      WHERE document.deployment_id = e.deployment_id
+        AND survivor.survivor_entity_id = e.entity_id
+        AND document.deleted_at IS NULL
+    )
+    OR EXISTS (
+      SELECT 1
       FROM mentions AS mention
       JOIN chunks AS chunk
         ON chunk.deployment_id = mention.deployment_id
@@ -65,16 +76,9 @@ WHERE e.status = 'active'
       JOIN v_memory_entity_survivor AS survivor
         ON survivor.deployment_id = mention.deployment_id
        AND survivor.entity_id = decided.entity_id
-      UNION ALL
-      SELECT document.deployment_id, survivor.survivor_entity_id
-      FROM documents AS document
-      JOIN v_memory_entity_survivor AS survivor
-        ON survivor.deployment_id = document.deployment_id
-       AND survivor.entity_id = document.document_entity_id
-      WHERE document.deleted_at IS NULL
-    ) AS provenance
-    WHERE provenance.deployment_id = e.deployment_id
-      AND provenance.entity_id = e.entity_id
+      WHERE mention.deployment_id = e.deployment_id
+        AND survivor.survivor_entity_id = e.entity_id
+    )
   );
 
 CREATE VIEW rememberstack_graph_internal.documents_live AS
@@ -428,93 +432,97 @@ BEGIN
   <<levels>>
   FOR level IN 1..depth_cap LOOP
     next_frontier := ARRAY[]::jsonb[];
-    FOREACH current_path IN ARRAY frontier LOOP
-      head_id := (current_path ->> 'head')::uuid;
+    -- Plan one indexed adjacency statement per BFS level, not one copy of the
+    -- survivor/provenance views per frontier node.
+    FOR edge_record IN
+      SELECT path.current_path, path.path_ordinal, head.head_id, edge.*
+      FROM unnest(frontier) WITH ORDINALITY
+        AS path(current_path, path_ordinal)
+      CROSS JOIN LATERAL (
+        SELECT (path.current_path ->> 'head')::uuid AS head_id
+      ) AS head
+      CROSS JOIN LATERAL (
+        SELECT candidate.*
+        FROM (
+          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
+          FROM rememberstack_graph_internal.relations_history AS h
+          WHERE h.deployment_id = graph_neighborhood.deployment_id
+            AND h.subject_entity_id = head.head_id
+            AND (
+              (valid_at IS NULL
+               AND h.ingested_at <= clock_believed
+               AND h.invalidated_at IS NULL)
+              OR
+              (valid_at IS NOT NULL
+               AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
+               AND (h.invalidated_at IS NULL
+                    OR h.invalidated_at > clock_believed))
+            )
+            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
+            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
+            AND (predicates IS NULL OR h.predicate = ANY(predicates))
+          UNION ALL
+          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
+          FROM rememberstack_graph_internal.relations_history AS h
+          WHERE h.deployment_id = graph_neighborhood.deployment_id
+            AND h.object_entity_id = head.head_id
+            AND h.subject_entity_id <> head.head_id
+            AND (
+              (valid_at IS NULL
+               AND h.ingested_at <= clock_believed
+               AND h.invalidated_at IS NULL)
+              OR
+              (valid_at IS NOT NULL
+               AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
+               AND (h.invalidated_at IS NULL
+                    OR h.invalidated_at > clock_believed))
+            )
+            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
+            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
+            AND (predicates IS NULL OR h.predicate = ANY(predicates))
+        ) AS candidate
+        ORDER BY candidate.relation_id
+      ) AS edge
+      ORDER BY path.path_ordinal, edge.relation_id
+      LIMIT greatest(expansion_cap - examined + 1, 1)
+    LOOP
+      current_path := edge_record.current_path;
+      head_id := edge_record.head_id;
       SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
         INTO path_nodes
         FROM jsonb_array_elements_text(current_path -> 'nodes') AS value;
       SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
         INTO path_edges
         FROM jsonb_array_elements_text(current_path -> 'edges') AS value;
-
-      FOR edge_record IN
-        SELECT edge.*
-        FROM (
-          SELECT c.relation_id, c.subject_entity_id, c.object_entity_id
-          FROM rememberstack_graph_internal.relations_current AS c
-          WHERE valid_at IS NULL
-            AND c.deployment_id = graph_neighborhood.deployment_id
-            AND c.subject_entity_id = head_id
-            AND (predicates IS NULL OR c.predicate = ANY(predicates))
-          UNION ALL
-          SELECT c.relation_id, c.subject_entity_id, c.object_entity_id
-          FROM rememberstack_graph_internal.relations_current AS c
-          WHERE valid_at IS NULL
-            AND c.deployment_id = graph_neighborhood.deployment_id
-            AND c.object_entity_id = head_id
-            AND c.subject_entity_id <> head_id
-            AND (predicates IS NULL OR c.predicate = ANY(predicates))
-          UNION ALL
-          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
-          FROM rememberstack_graph_internal.relations_history AS h
-          WHERE valid_at IS NOT NULL
-            AND h.deployment_id = graph_neighborhood.deployment_id
-            AND h.subject_entity_id = head_id
-            AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
-            AND (h.invalidated_at IS NULL OR h.invalidated_at > clock_believed)
-            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
-            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
-            AND (predicates IS NULL OR h.predicate = ANY(predicates))
-          UNION ALL
-          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
-          FROM rememberstack_graph_internal.relations_history AS h
-          WHERE valid_at IS NOT NULL
-            AND h.deployment_id = graph_neighborhood.deployment_id
-            AND h.object_entity_id = head_id
-            AND h.subject_entity_id <> head_id
-            AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
-            AND (h.invalidated_at IS NULL OR h.invalidated_at > clock_believed)
-            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
-            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
-            AND (predicates IS NULL OR h.predicate = ANY(predicates))
-        ) AS edge
-        ORDER BY edge.relation_id
-        LIMIT greatest(expansion_cap - examined + 1, 1)
-      LOOP
-        IF examined >= expansion_cap THEN
-          was_truncated := true;
-          reason := 'expansion_budget';
-          EXIT;
-        END IF;
-        examined := examined + 1;
-        IF extract(epoch FROM clock_timestamp() - started_at) * 1000 > time_cap THEN
-          was_truncated := true;
-          reason := 'time_budget';
-          EXIT;
-        END IF;
-        neighbor_id := CASE
-          WHEN edge_record.subject_entity_id = head_id
-          THEN edge_record.object_entity_id
-          ELSE edge_record.subject_entity_id
-        END;
-        IF neighbor_id = ANY(path_nodes) OR neighbor_id = ANY(seen_vertices) THEN
-          CONTINUE;
-        END IF;
-        candidate := jsonb_build_object(
-          'head', neighbor_id::text,
-          'nodes', to_jsonb(path_nodes || neighbor_id),
-          'edges', to_jsonb(path_edges || edge_record.relation_id)
-        );
-        next_frontier := next_frontier || candidate;
-        IF cardinality(next_frontier) > frontier_cap THEN
-          next_frontier := next_frontier[1:frontier_cap];
-          was_truncated := true;
-          reason := 'frontier_budget';
-          EXIT;
-        END IF;
-      END LOOP;
-      IF was_truncated
-         AND reason IN ('expansion_budget', 'frontier_budget', 'time_budget') THEN
+      IF examined >= expansion_cap THEN
+        was_truncated := true;
+        reason := 'expansion_budget';
+        EXIT;
+      END IF;
+      examined := examined + 1;
+      IF extract(epoch FROM clock_timestamp() - started_at) * 1000 > time_cap THEN
+        was_truncated := true;
+        reason := 'time_budget';
+        EXIT;
+      END IF;
+      neighbor_id := CASE
+        WHEN edge_record.subject_entity_id = head_id
+        THEN edge_record.object_entity_id
+        ELSE edge_record.subject_entity_id
+      END;
+      IF neighbor_id = ANY(path_nodes) OR neighbor_id = ANY(seen_vertices) THEN
+        CONTINUE;
+      END IF;
+      candidate := jsonb_build_object(
+        'head', neighbor_id::text,
+        'nodes', to_jsonb(path_nodes || neighbor_id),
+        'edges', to_jsonb(path_edges || edge_record.relation_id)
+      );
+      next_frontier := next_frontier || candidate;
+      IF cardinality(next_frontier) > frontier_cap THEN
+        next_frontier := next_frontier[1:frontier_cap];
+        was_truncated := true;
+        reason := 'frontier_budget';
         EXIT;
       END IF;
     END LOOP;
@@ -667,98 +675,106 @@ BEGIN
   FOR level IN 1..depth_cap LOOP
     next_frontier := ARRAY[]::jsonb[];
     found_paths := ARRAY[]::jsonb[];
-    FOREACH current_path IN ARRAY frontier LOOP
-      head_id := (current_path ->> 'head')::uuid;
+    -- Equal-length alternatives share one planned adjacency statement while
+    -- path ordinality preserves the canonical deterministic expansion order.
+    FOR edge_record IN
+      SELECT path.current_path, path.path_ordinal, head.head_id, edge.*
+      FROM unnest(frontier) WITH ORDINALITY
+        AS path(current_path, path_ordinal)
+      CROSS JOIN LATERAL (
+        SELECT (path.current_path ->> 'head')::uuid AS head_id
+      ) AS head
+      CROSS JOIN LATERAL (
+        SELECT candidate.*
+        FROM (
+          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
+          FROM rememberstack_graph_internal.relations_history AS h
+          WHERE h.deployment_id = graph_path.deployment_id
+            AND h.subject_entity_id = head.head_id
+            AND (
+              (valid_at IS NULL
+               AND h.ingested_at <= clock_believed
+               AND h.invalidated_at IS NULL)
+              OR
+              (valid_at IS NOT NULL
+               AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
+               AND (h.invalidated_at IS NULL
+                    OR h.invalidated_at > clock_believed))
+            )
+            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
+            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
+            AND (predicates IS NULL OR h.predicate = ANY(predicates))
+          UNION ALL
+          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
+          FROM rememberstack_graph_internal.relations_history AS h
+          WHERE h.deployment_id = graph_path.deployment_id
+            AND h.object_entity_id = head.head_id
+            AND h.subject_entity_id <> head.head_id
+            AND (
+              (valid_at IS NULL
+               AND h.ingested_at <= clock_believed
+               AND h.invalidated_at IS NULL)
+              OR
+              (valid_at IS NOT NULL
+               AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
+               AND (h.invalidated_at IS NULL
+                    OR h.invalidated_at > clock_believed))
+            )
+            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
+            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
+            AND (predicates IS NULL OR h.predicate = ANY(predicates))
+        ) AS candidate
+        ORDER BY candidate.relation_id
+      ) AS edge
+      ORDER BY path.path_ordinal, edge.relation_id
+      LIMIT greatest(expansion_cap - examined + 1, 1)
+    LOOP
+      current_path := edge_record.current_path;
+      head_id := edge_record.head_id;
       SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
         INTO path_nodes
         FROM jsonb_array_elements_text(current_path -> 'nodes') AS value;
       SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
         INTO path_edges
         FROM jsonb_array_elements_text(current_path -> 'edges') AS value;
-
-      FOR edge_record IN
-        SELECT edge.*
-        FROM (
-          SELECT c.relation_id, c.subject_entity_id, c.object_entity_id
-          FROM rememberstack_graph_internal.relations_current AS c
-          WHERE valid_at IS NULL
-            AND c.deployment_id = graph_path.deployment_id
-            AND c.subject_entity_id = head_id
-            AND (predicates IS NULL OR c.predicate = ANY(predicates))
-          UNION ALL
-          SELECT c.relation_id, c.subject_entity_id, c.object_entity_id
-          FROM rememberstack_graph_internal.relations_current AS c
-          WHERE valid_at IS NULL
-            AND c.deployment_id = graph_path.deployment_id
-            AND c.object_entity_id = head_id
-            AND c.subject_entity_id <> head_id
-            AND (predicates IS NULL OR c.predicate = ANY(predicates))
-          UNION ALL
-          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
-          FROM rememberstack_graph_internal.relations_history AS h
-          WHERE valid_at IS NOT NULL
-            AND h.deployment_id = graph_path.deployment_id
-            AND h.subject_entity_id = head_id
-            AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
-            AND (h.invalidated_at IS NULL OR h.invalidated_at > clock_believed)
-            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
-            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
-            AND (predicates IS NULL OR h.predicate = ANY(predicates))
-          UNION ALL
-          SELECT h.relation_id, h.subject_entity_id, h.object_entity_id
-          FROM rememberstack_graph_internal.relations_history AS h
-          WHERE valid_at IS NOT NULL
-            AND h.deployment_id = graph_path.deployment_id
-            AND h.object_entity_id = head_id
-            AND h.subject_entity_id <> head_id
-            AND (h.ingested_at IS NULL OR h.ingested_at <= clock_believed)
-            AND (h.invalidated_at IS NULL OR h.invalidated_at > clock_believed)
-            AND (h.valid_from IS NULL OR h.valid_from <= clock_valid)
-            AND (h.valid_until IS NULL OR h.valid_until > clock_valid)
-            AND (predicates IS NULL OR h.predicate = ANY(predicates))
-        ) AS edge
-        ORDER BY edge.relation_id
-        LIMIT greatest(expansion_cap - examined + 1, 1)
-      LOOP
-        IF examined >= expansion_cap THEN
+      IF examined >= expansion_cap THEN
+        was_truncated := true;
+        reason := 'expansion_budget';
+        found_paths := ARRAY[]::jsonb[];
+        EXIT levels;
+      END IF;
+      examined := examined + 1;
+      IF extract(epoch FROM clock_timestamp() - started_at) * 1000 > time_cap THEN
+        was_truncated := true;
+        reason := 'time_budget';
+        found_paths := ARRAY[]::jsonb[];
+        EXIT levels;
+      END IF;
+      neighbor_id := CASE
+        WHEN edge_record.subject_entity_id = head_id
+        THEN edge_record.object_entity_id
+        ELSE edge_record.subject_entity_id
+      END;
+      IF neighbor_id = ANY(path_nodes)
+         OR edge_record.relation_id = ANY(path_edges) THEN
+        CONTINUE;
+      END IF;
+      candidate := jsonb_build_object(
+        'head', neighbor_id::text,
+        'nodes', to_jsonb(path_nodes || neighbor_id),
+        'edges', to_jsonb(path_edges || edge_record.relation_id)
+      );
+      IF neighbor_id = to_entity_id THEN
+        found_paths := found_paths || candidate;
+      ELSE
+        next_frontier := next_frontier || candidate;
+        IF cardinality(next_frontier) > frontier_cap THEN
           was_truncated := true;
-          reason := 'expansion_budget';
+          reason := 'frontier_budget';
           found_paths := ARRAY[]::jsonb[];
           EXIT levels;
         END IF;
-        examined := examined + 1;
-        IF extract(epoch FROM clock_timestamp() - started_at) * 1000 > time_cap THEN
-          was_truncated := true;
-          reason := 'time_budget';
-          found_paths := ARRAY[]::jsonb[];
-          EXIT levels;
-        END IF;
-        neighbor_id := CASE
-          WHEN edge_record.subject_entity_id = head_id
-          THEN edge_record.object_entity_id
-          ELSE edge_record.subject_entity_id
-        END;
-        IF neighbor_id = ANY(path_nodes)
-           OR edge_record.relation_id = ANY(path_edges) THEN
-          CONTINUE;
-        END IF;
-        candidate := jsonb_build_object(
-          'head', neighbor_id::text,
-          'nodes', to_jsonb(path_nodes || neighbor_id),
-          'edges', to_jsonb(path_edges || edge_record.relation_id)
-        );
-        IF neighbor_id = to_entity_id THEN
-          found_paths := found_paths || candidate;
-        ELSE
-          next_frontier := next_frontier || candidate;
-          IF cardinality(next_frontier) > frontier_cap THEN
-            was_truncated := true;
-            reason := 'frontier_budget';
-            found_paths := ARRAY[]::jsonb[];
-            EXIT levels;
-          END IF;
-        END IF;
-      END LOOP;
+      END IF;
     END LOOP;
 
     IF cardinality(found_paths) > 0 THEN

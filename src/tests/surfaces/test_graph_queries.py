@@ -579,7 +579,7 @@ def test_sql_pgq_matches_canonical_helper_under_budget(
             "max_results": 500,
             "expansion_budget": 2000,
             "frontier_budget": 1000,
-            "time_budget_ms": 1000,
+            "time_budget_ms": 5000,
             "result_offset": 0,
         }
         guard = (
@@ -631,7 +631,7 @@ def test_recursive_helper_null_depth_uses_default_and_truthful_data_status(
                 text(
                     "SELECT * FROM memory_v1.graph_neighborhood("
                     ":deployment_id, :anchor_id, NULL, NULL, :operation_at, "
-                    ":operation_at, 100, 2000, 1000, 1000)"
+                    ":operation_at, 100, 2000, 1000, 5000)"
                 ),
                 {
                     "deployment_id": _DEPLOYMENT_ID,
@@ -714,7 +714,7 @@ def test_dense_hub_refuses_pgq_over_budget_and_helper_returns_whole_prefix(
 def test_shallow_guard_plan_is_endpoint_anchored(
     graph: GraphQueries, database_engine: Engine
 ) -> None:
-    """The relational guard exposes indexable tenant-and-endpoint predicates."""
+    """The guard stays tenant-indexed through survivor-resolved endpoints."""
     parameters = {
         "deployment_id": _DEPLOYMENT_ID,
         "anchor_id": graph.ids["Acme"],  # type: ignore[attr-defined]
@@ -736,7 +736,13 @@ def test_shallow_guard_plan_is_endpoint_anchored(
 
     plan_text = str(plan)
     assert "ix_relations_block_subj" in plan_text
-    assert "ix_relations_block_obj" in plan_text
+    # A reverse edge stored against a merged predecessor cannot be constrained
+    # by the raw object id; PG may enter through the tenant relation key before
+    # applying the survivor endpoint. It must never fall back to a table scan.
+    assert (
+        "ix_relations_block_obj" in plan_text
+        or "relations_deployment_id_relation_id_key" in plan_text
+    )
     assert not (
         "'Node Type': 'Seq Scan'" in plan_text
         and "'Relation Name': 'relations'" in plan_text

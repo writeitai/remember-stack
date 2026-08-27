@@ -1480,16 +1480,16 @@ def test_two_independent_builds_deploy_the_same_schema(database_url: str) -> Non
 def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
     """Only the bound roles hold privileges, and only the bound ones.
 
-    Batch B introduces the role split (design §4.2 as amended: physical
-    routing plus grants, no row-level security), so "no grants at all" is no
-    longer the property to assert — "no grant beyond the enumerated ones" is.
-    The query role reads the public views and nothing else; PUBLIC holds
-    nothing anywhere.
+    Batch B introduces the query role and D98 adds the bounded graph role
+    (physical routing plus grants, no row-level security), so "no grants at
+    all" is no longer the property to assert — "no grant beyond the enumerated
+    ones" is. Both runtime roles hold only SELECT here; PUBLIC holds nothing.
     """
     # The query login is per deployment (Batch B): its name carries the
     # database, so the gate matches the prefix rather than a fixed name.
     allowed_grantees = {"rememberstack_view_owner"}
     query_role_prefix = "rememberstack_query"
+    graph_role_prefix = "rememberstack_graph"
     with corpus.engine.connect() as connection:
         view_grants = _rows(
             connection=connection,
@@ -1512,12 +1512,13 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
     for row in view_grants:
         grantee = row["grantee"]
         is_query_role = grantee.startswith(query_role_prefix)
-        assert grantee in allowed_grantees or is_query_role, (
+        is_graph_role = grantee.startswith(graph_role_prefix)
+        assert grantee in allowed_grantees or is_query_role or is_graph_role, (
             f"unexpected grantee {grantee}"
         )
-        if is_query_role:
+        if is_query_role or is_graph_role:
             assert row["privilege_type"] == "SELECT", (
-                "query role holds more than SELECT"
+                "query/graph role holds more than SELECT"
             )
     assert public_grants == []
 
