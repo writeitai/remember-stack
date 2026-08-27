@@ -34,7 +34,6 @@ from rememberstack.core import knowledge_citation_reference
 from rememberstack.core import knowledge_inputs_hash
 from rememberstack.core import knowledge_summary_hash
 from rememberstack.core import route_knowledge_plan
-from rememberstack.model import CommunityRuleParams
 from rememberstack.model import DocSetRuleParams
 from rememberstack.model import EnqueueWork
 from rememberstack.model import EntityRuleParams
@@ -530,11 +529,10 @@ class KnowledgeControlPlane:
         deployment_id: UUID,
         kinds: tuple[KnowledgeRuleKind, ...] = (
             KnowledgeRuleKind.ENTITY_SUBTREE,
-            KnowledgeRuleKind.COMMUNITY,
             KnowledgeRuleKind.SCOPE_INTERESTS,
         ),
     ) -> None:
-        """Refresh subtree, community, and scope expansions after their inputs move."""
+        """Refresh subtree and scope expansions after their inputs move."""
         with self._engine.begin() as connection:
             rows = connection.execute(
                 _SELECT_DERIVED_RULES, {"deployment_id": deployment_id}
@@ -695,8 +693,6 @@ class KnowledgeControlPlane:
         marking anything stale; a coarse route is never a correctness verdict.
         """
         derived_kinds: list[KnowledgeRuleKind] = []
-        if delta.community_ids:
-            derived_kinds.append(KnowledgeRuleKind.COMMUNITY)
         if delta.relation_ids and self._delta_contains_part_of(
             deployment_id=deployment_id, relation_ids=delta.relation_ids
         ):
@@ -834,7 +830,6 @@ class KnowledgeControlPlane:
                 if artifact.page_kind is KnowledgePageKind.COMPILED
                 and artifact.page_size_bytes > page_size_limit_bytes
             ),
-            community_ids=delta.community_ids,
             writer_suggestions=suggestions,
         )
 
@@ -1090,8 +1085,6 @@ class KnowledgeControlPlane:
     ) -> KnowledgeNotificationResult:
         """Route one evidence delta exactly to authored flags and subscriber batches."""
         derived_kinds: list[KnowledgeRuleKind] = []
-        if delta.community_ids:
-            derived_kinds.append(KnowledgeRuleKind.COMMUNITY)
         if delta.relation_ids and self._delta_contains_part_of(
             deployment_id=deployment_id, relation_ids=delta.relation_ids
         ):
@@ -1819,10 +1812,6 @@ class KnowledgeControlPlane:
         delta: KnowledgeEvidenceDelta,
     ) -> bool:
         """Apply the rule's full secondary filters to one narrowed evidence delta."""
-        if isinstance(params, CommunityRuleParams) and params.community_id in set(
-            delta.community_ids
-        ):
-            return True
         if isinstance(params, ManualRuleParams) and (
             set(params.relation_ids).intersection(delta.relation_ids)
             or set(params.observation_ids).intersection(delta.observation_ids)
@@ -2924,15 +2913,6 @@ class KnowledgeControlPlane:
             for entity_id in (params.subject_entity_id, params.object_entity_id):
                 if entity_id is not None:
                     keys.add((KnowledgeRuleKeyKind.ENTITY, str(entity_id)))
-        elif isinstance(params, CommunityRuleParams):
-            keys.add((KnowledgeRuleKeyKind.COMMUNITY, str(params.community_id)))
-            members = connection.execute(
-                _SELECT_COMMUNITY_MEMBERS,
-                {"deployment_id": deployment_id, "community_id": params.community_id},
-            ).scalars()
-            keys.update(
-                (KnowledgeRuleKeyKind.ENTITY, str(member)) for member in members
-            )
         elif isinstance(params, DocSetRuleParams):
             keys.add((KnowledgeRuleKeyKind.DOC_SOURCE, params.source_kind))
         elif isinstance(params, ScopeInterestsRuleParams):
@@ -3029,22 +3009,6 @@ class KnowledgeControlPlane:
                 },
             ).mappings()
             return (_fact_fingerprints(rows=rows), ())
-        if isinstance(params, CommunityRuleParams):
-            entity_ids = tuple(
-                connection.execute(
-                    _SELECT_COMMUNITY_MEMBERS,
-                    {
-                        "deployment_id": deployment_id,
-                        "community_id": params.community_id,
-                    },
-                ).scalars()
-            )
-            return self._entity_candidates(
-                connection=connection,
-                deployment_id=deployment_id,
-                entity_ids=entity_ids,
-                layers=params.layers,
-            )
         if isinstance(params, DocSetRuleParams):
             doc_ids = tuple(
                 connection.execute(
@@ -3394,10 +3358,6 @@ class KnowledgeControlPlane:
             keys.update(
                 (KnowledgeRuleKeyKind.DOC_SOURCE, str(source)) for source in sources
             )
-        keys.update(
-            (KnowledgeRuleKeyKind.COMMUNITY, str(community_id))
-            for community_id in delta.community_ids
-        )
         return tuple(
             KnowledgeRuleKey(kind=kind, value=value)
             for kind, value in sorted(keys, key=lambda item: (item[0].value, item[1]))
@@ -4473,7 +4433,7 @@ _SELECT_DERIVED_RULES = text(
     FROM knowledge_page_rules
     WHERE deployment_id = :deployment_id
       AND status = 'active'
-      AND rule_kind IN ('entity_subtree', 'community', 'scope_interests')
+      AND rule_kind IN ('entity_subtree', 'scope_interests')
     ORDER BY rule_id
     """
 )
@@ -4508,15 +4468,6 @@ _SELECT_SUBTREE_MEMBERS = text(
           AND r.valid_until IS NULL
     )
     SELECT entity_id FROM members ORDER BY entity_id
-    """
-)
-
-_SELECT_COMMUNITY_MEMBERS = text(
-    """
-    SELECT entity_id
-    FROM entity_graph_metrics
-    WHERE deployment_id = :deployment_id AND community_id = :community_id
-    ORDER BY entity_id
     """
 )
 

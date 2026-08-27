@@ -22,7 +22,6 @@ from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeadLetterReplayer
-from rememberstack.workers import GraphRebuildWorker
 
 
 class SelfHostOperations:
@@ -72,24 +71,12 @@ class SelfHostOperations:
         )
 
     def rebuild(
-        self,
-        *,
-        plane: str,
-        deployment_id: UUID,
-        snapshot_root: Path,
-        workdir: Path,
-        version: str,
+        self, *, deployment_id: UUID, snapshot_root: Path, version: str
     ) -> dict[str, object]:
-        """Invoke the existing whole-rebuild implementation for P2 or P3."""
+        """Invoke the P3 CorpusFS whole-rebuild implementation."""
         ForgetCatalog(engine=self._engine).assert_available(deployment_id=deployment_id)
         catalog = ProjectionCatalog(engine=self._engine)
         store = LocalFSObjectStore(root=snapshot_root)
-        if plane == "p2":
-            return GraphRebuildWorker(catalog=catalog, snapshot_store=store).rebuild(
-                deployment_id=deployment_id, workdir=workdir, version=version
-            )
-        if plane == "p3":
-            return CorpusFsBuilder(catalog=catalog, snapshot_store=store).build(
-                deployment_id=deployment_id, version=version
-            )
-        raise ValueError(f"unknown projection plane {plane!r}")
+        return CorpusFsBuilder(catalog=catalog, snapshot_store=store).build(
+            deployment_id=deployment_id, version=version
+        )

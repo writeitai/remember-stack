@@ -337,7 +337,6 @@ def test_executor_completes_with_full_header(migrated: str) -> None:
     assert outcome.surface_manifest_hash and outcome.query_hash
     assert outcome.columns[0].name == "n"
     assert outcome.pg_snapshot_at is not None
-    assert outcome.p2_snapshot is None
     assert outcome.negative_kind is None
 
 
@@ -531,14 +530,12 @@ def test_discovery_serves_manifest_and_headline() -> None:
         description.core_operation_descriptors == members["core_operation_descriptors"]
     )
     assert description.function_signatures == members["function_signatures"]
-    assert description.cypher_dialect == members["limits"]["cypher_dialect"]
-    assert description.p2_projection == members["limits"]["p2_projection"]
     entry_points = {
         entry["name"]
         for entry in description.function_signatures["functions"]  # type: ignore[index]
         if entry["channel"] == "cypher"  # type: ignore[index]
     }
-    assert entry_points == {"query_cypher", "explain_cypher"}
+    assert entry_points == set()
     assert description.examples == ()
 
 
@@ -692,6 +689,19 @@ def test_parameters_execute_end_to_end(migrated: str) -> None:
     )
     assert outcome.termination_reason == "completed", outcome.error_message
     assert outcome.returned_row_count == 1
+
+
+def test_pg19_accepts_pgq_but_public_executor_rejects_direct_pgq(migrated: str) -> None:
+    """The server grammar upgrade cannot bypass the PG18 public AST gate."""
+    sql = (
+        "SELECT * FROM GRAPH_TABLE (memory_v1.memory_current "
+        "MATCH (x IS entity) COLUMNS (x.entity_id AS entity_id)) AS g LIMIT 0"
+    )
+    with psycopg.connect(_psycopg_url(migrated)) as connection:
+        assert connection.execute(sql).fetchall() == []
+    outcome = _executor(migrated).query_sql(sql=sql)
+    assert outcome.termination_reason == "rejected"
+    assert outcome.error_code == QueryErrorCode.STATEMENT_NOT_ALLOWED
 
 
 def test_parameter_indices_must_be_contiguous() -> None:

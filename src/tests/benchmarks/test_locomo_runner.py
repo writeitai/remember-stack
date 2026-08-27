@@ -939,7 +939,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v13", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v14", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1373,9 +1373,9 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
 
     def incomplete_readiness(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/readiness":
-            return httpx.Response(
-                200, json={"ready": True, "versions": [], "projections": []}
-            )
+            payload = _complete_readiness_payload()
+            payload["versions"] = []
+            return httpx.Response(200, json=payload)
         return _run_transport(request)
 
     raw_client = httpx.Client(
@@ -1758,8 +1758,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v13","protocol_fingerprint":'
-        '"3abbcde8ed416b33e5961dca95a7e9d6e3409629da6834d5592f56788a4be290",'
+        '{"protocol_name":"RS-LoCoMo-Full-v14","protocol_fingerprint":'
+        '"b6a87d5107a7d01fb28b6923ba7268b42a0bdf065b2da9a4d37af1175a498231",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1977,7 +1977,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v13"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v14"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -2537,16 +2537,24 @@ def _complete_readiness_payload() -> dict[str, object]:
                 ],
             }
         ],
-        "projections": [
-            {
-                "plane": plane,
+        "capabilities": {
+            capability: {
+                "required": True,
                 "ready": True,
-                "version": "test-v1",
-                "built_at": timestamp,
-                "published_at": timestamp,
+                "checked_at": timestamp,
+                "reason": "ready",
+                **(
+                    {
+                        "version": "test-v1",
+                        "built_at": timestamp,
+                        "published_at": timestamp,
+                    }
+                    if capability == "p3"
+                    else {}
+                ),
             }
-            for plane in ("P2_graph", "P3_corpusfs")
-        ],
+            for capability in ("pipeline", "p1", "live_graph", "p3")
+        },
         "model_bindings": dict(EXPECTED_INGEST_MODEL_BINDINGS),
         # Must equal the revision the tests prepare with, or the serving-revision
         # guard rejects the run.

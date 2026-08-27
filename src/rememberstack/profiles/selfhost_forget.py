@@ -23,16 +23,15 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
+from rememberstack.workers import CorpusForgetRebuilder
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
-from rememberstack.workers import GraphRebuildWorker
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
 from rememberstack.workers import HardForgetService
 from rememberstack.workers import KnowledgeCommitDriver
 from rememberstack.workers import KnowledgeCycleForgetRebuilder
-from rememberstack.workers import ProjectionPairForgetRebuilder
 
 
 class SelfHostHardForget:
@@ -64,12 +63,10 @@ class SelfHostHardForget:
         manifest_root: Path,
         object_roots: tuple[Path, ...],
         snapshot_root: Path,
-        p2_cache_root: Path,
         mount_root: Path,
         knowledge_repository: Path,
         knowledge_author_name: str,
         knowledge_author_email: str,
-        rebuild_workdir: Path,
         knowledge_driver: KnowledgeCommitDriver,
     ) -> Self:
         """Compose only existing production workers and selected self-host stores."""
@@ -102,19 +99,14 @@ class SelfHostHardForget:
             ),
             profile_refresher=profile_refresher,
             object_purgers=object_purgers,
-            projection_rebuilder=ProjectionPairForgetRebuilder(
-                graph=GraphRebuildWorker(
-                    catalog=projection_catalog, snapshot_store=snapshot_store
-                ),
+            projection_rebuilder=CorpusForgetRebuilder(
                 corpus=CorpusFsBuilder(
                     catalog=projection_catalog, snapshot_store=snapshot_store
-                ),
-                workdir=rebuild_workdir,
+                )
             ),
             projection_purger=SelfHostProjectionPurger(
                 object_purger=snapshot_store,
                 catalog=projection_catalog,
-                p2_cache_root=p2_cache_root,
                 mount_root=mount_root,
             ),
             knowledge_rebuilder=KnowledgeCycleForgetRebuilder(driver=knowledge_driver),

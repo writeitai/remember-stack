@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from datetime import timezone
-from pathlib import Path
 from typing import cast
 from uuid import UUID
 
@@ -18,17 +17,16 @@ from rememberstack.ports import ObjectPurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine import ForgetCatalog
+from rememberstack.workers import CorpusForgetRebuilder
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
 from rememberstack.workers import ForgetKnowledgeRebuilder
 from rememberstack.workers import ForgetProjectionRebuilder
-from rememberstack.workers import GraphRebuildWorker
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
 from rememberstack.workers import HardForgetService
 from rememberstack.workers import KnowledgeCommitDriver
 from rememberstack.workers import KnowledgeCycleForgetRebuilder
-from rememberstack.workers import ProjectionPairForgetRebuilder
 
 _DEPLOYMENT_ID = UUID("75000000-0000-0000-0000-000000000001")
 _DOC_ID = UUID("75000000-0000-0000-0000-000000000002")
@@ -215,17 +213,6 @@ def test_handler_failure_leaves_admission_closed_and_preserves_exception() -> No
     ]
 
 
-class _Graph:
-    def __init__(self, *, events: list[str]) -> None:
-        self.events = events
-
-    def rebuild(
-        self, *, deployment_id: UUID, workdir: Path, version: str | None = None
-    ) -> dict[str, object]:
-        self.events.append(f"graph:{workdir.name}")
-        return {}
-
-
 class _Corpus:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
@@ -248,13 +235,11 @@ class _KnowledgeDriver:
         return object()
 
 
-def test_rebuilders_delegate_to_existing_production_cycles(tmp_path: Path) -> None:
-    """Hard-forget introduces no second P2/P3 or K compilation implementation."""
+def test_rebuilders_delegate_to_existing_production_cycles() -> None:
+    """Hard-forget introduces no second P3 or K compilation implementation."""
     events: list[str] = []
-    ProjectionPairForgetRebuilder(
-        graph=cast(GraphRebuildWorker, _Graph(events=events)),
-        corpus=cast(CorpusFsBuilder, _Corpus(events=events)),
-        workdir=tmp_path,
+    CorpusForgetRebuilder(
+        corpus=cast(CorpusFsBuilder, _Corpus(events=events))
     ).rebuild_without_lineage(deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID)
     knowledge = KnowledgeCycleForgetRebuilder(
         driver=cast(KnowledgeCommitDriver, _KnowledgeDriver(events=events))
@@ -264,7 +249,7 @@ def test_rebuilders_delegate_to_existing_production_cycles(tmp_path: Path) -> No
     )
     knowledge.recompile_without_lineage(deployment_id=_DEPLOYMENT_ID, artifact_ids=())
 
-    assert events == [f"graph:{_FORGET_ID}", "corpus", "knowledge-cycle"]
+    assert events == ["corpus", "knowledge-cycle"]
 
 
 class _ReadinessCatalog:

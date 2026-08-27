@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v13"
-DEFAULT_PROTOCOL_KEY: Final = "full-v13"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-fact-authority-v13"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v14"
+DEFAULT_PROTOCOL_KEY: Final = "full-v14"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-live-graph-v14"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -39,7 +39,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "683d1526b26ea3d081e197e2e21d9dae918d20af3c118a9e23f8c71c956d2985"
+    "a8b92da218488baf8fb156358d808121a4038a2c7228e9891d0cd1411b5b597c"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -54,7 +54,6 @@ EXPECTED_PIPELINE_STAGES: Final = (
     "reconcile",
     "label_relation",
 )
-EXPECTED_PROJECTION_PLANES: Final = ("P2_graph", "P3_corpusfs")
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "convert": "e0-convert-2026.07",
@@ -123,12 +122,12 @@ normal memory agent and choose the cheapest suitable path:
    when both authorities are useful, and resolve_entity for exact names.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into.
-3. Open query: discover schema/examples before unfamiliar SQL or Cypher; use
-   SQL for live relational/evidence composition and P1 search functions, Cypher
-   for graph work over the disclosed P2 snapshot, and saved queries for shipped
-   patterns.
+3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live
+   relational/evidence composition and P1 search functions, typed SQL/PGQ and
+   recursive helpers for bounded work over the live PostgreSQL graph, and saved
+   queries for shipped patterns.
 4. P3 mount: list, search, and read the corpus filesystem for orientation and
-   source context. P3 and P2 are snapshots; verify load-bearing current claims
+   source context. P3 is a snapshot; verify load-bearing current claims
    through a live fact/evidence path.
 
 Respect every response envelope's grain, negative, freshness, truncation, and
@@ -195,8 +194,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V13 = LoCoMoProtocol(
-    key="full-v13",
+_FULL_V14 = LoCoMoProtocol(
+    key="full-v14",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -218,7 +217,7 @@ _FULL_V13 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V13.key: _FULL_V13}
+    {_FULL_V14.key: _FULL_V14}
 )
 
 

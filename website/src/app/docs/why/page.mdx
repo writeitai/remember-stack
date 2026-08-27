@@ -63,11 +63,13 @@ Corroboration is an **external-source** property. Within-document emphasis is no
 
 ## Advantage 4 — Projections propose; the spine disposes
 
-Search indexes and the graph snapshot are fast and may lag. They **nominate** candidates. **Postgres confirms** validity, invalidation, and contradiction membership on every query-engine result.
+Search indexes may lag, so they **nominate** candidates. The live graph and
+authority views share one PostgreSQL snapshot and **confirm** validity,
+invalidation, and contradiction membership during the read.
 
 Consequence:
 
-- Stale indexes can cost **recall**, never **correctness** of a served current fact.
+- A stale search index can cost **recall**, never **correctness** of a served current fact.
 - A path with one invalidated edge is dropped **as a unit**, not returned with a hole.
 - The envelope reports `dropped_by_hydration` so ranking denominators stay honest.
 
@@ -75,7 +77,7 @@ Mounted file reads are snapshot-by-construction; the consumption skill teaches: 
 
 ## Advantage 5 — No LLM *completion* on the query path
 
-Write-time intelligence (extraction, adjudication, compilation) is recorded and replayable. **Read path does not call a chat/completion model to invent an answer.** Assured ops, open SQL/Cypher, and primitives are deterministic compositions.
+Write-time intelligence (extraction, adjudication, compilation) is recorded and replayable. **Read path does not call a chat/completion model to invent an answer.** Assured operations, open SQL, live-graph helpers, and primitives are deterministic compositions.
 
 **Footnote (honesty):** semantic channels still **embed the query string** through the configured embedder. That is not “chat with your data,” but it is a provider round-trip on semantic paths. Lexical/BM25 and pure SQL spine reads do not need it.
 

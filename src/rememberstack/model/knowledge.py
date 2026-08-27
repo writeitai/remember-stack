@@ -58,18 +58,16 @@ class KnowledgeRuleKind(StrEnum):
     ENTITY = "entity"
     ENTITY_SUBTREE = "entity_subtree"
     PREDICATE_BEAT = "predicate_beat"
-    COMMUNITY = "community"
     DOC_SET = "doc_set"
     SCOPE_INTERESTS = "scope_interests"
     MANUAL = "manual"
 
 
 class KnowledgeRuleKeyKind(StrEnum):
-    """The four coarse keys supported by the routing inverted index."""
+    """The coarse keys supported by the routing inverted index."""
 
     ENTITY = "entity"
     PREDICATE = "predicate"
-    COMMUNITY = "community"
     DOC_SOURCE = "doc_source"
 
 
@@ -127,7 +125,6 @@ class KnowledgePlanTrigger(StrEnum):
 
     ORPHAN_EVIDENCE = "orphan_evidence"
     SIZE_OVERFLOW = "size_overflow"
-    COMMUNITY_CHANGE = "community_change"
     REFLECTION = "reflection"
     WRITER_SUGGESTION = "writer_suggestion"
     HUMAN = "human"
@@ -188,20 +185,6 @@ class PredicateBeatRuleParams(BaseModel):
     predicate: str
     subject_entity_id: UUID | None = None
     object_entity_id: UUID | None = None
-
-
-class CommunityRuleParams(BaseModel):
-    """Evidence about members of one detected entity community."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    kind: Literal[KnowledgeRuleKind.COMMUNITY] = KnowledgeRuleKind.COMMUNITY
-    community_id: UUID
-    layers: CanonicalCandidateLayers = (
-        KnowledgeCandidateLayer.RELATIONS,
-        KnowledgeCandidateLayer.OBSERVATIONS,
-        KnowledgeCandidateLayer.CLAIMS,
-    )
 
 
 class DocSetRuleParams(BaseModel):
@@ -276,7 +259,6 @@ KnowledgeRuleParams = Annotated[
     EntityRuleParams
     | EntitySubtreeRuleParams
     | PredicateBeatRuleParams
-    | CommunityRuleParams
     | DocSetRuleParams
     | ScopeInterestsRuleParams
     | ManualRuleParams,
@@ -819,7 +801,7 @@ class KnowledgeCommitCycleResult(BaseModel):
 
 
 class KnowledgeEvidenceDelta(BaseModel):
-    """Fact/document/community identifiers changed since the previous K cycle."""
+    """Fact and document identifiers changed since the previous K cycle."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -827,7 +809,6 @@ class KnowledgeEvidenceDelta(BaseModel):
     observation_ids: tuple[UUID, ...] = ()
     claim_ids: tuple[UUID, ...] = ()
     doc_ids: tuple[UUID, ...] = ()
-    community_ids: tuple[UUID, ...] = ()
 
 
 class KnowledgeArtifactHash(BaseModel):

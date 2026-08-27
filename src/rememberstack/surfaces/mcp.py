@@ -1,10 +1,10 @@
 """The MCP surface (retrieval §7, D50 + open query space §3.1).
 
 Assured tools render from the operation registry. When an `OpenQueryFacade`
-is composed, the nine static infrastructure tools are listed and dispatched
+is composed, the seven static infrastructure tools are listed and dispatched
 alongside them. When both ingest and pipeline-readiness ports are composed,
 the Layer 1 write tools (`ingest`, `pipeline_readiness`) are advertised first.
-The seventeen `examples.*` identities are never top-level tools — they run only
+The eighteen `examples.*` identities are never top-level tools — they run only
 through `run_saved_query`.
 """
 
@@ -16,6 +16,7 @@ from typing import Literal
 from uuid import UUID
 
 from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.http_api import IngestPort
@@ -79,13 +80,11 @@ class _LocalMemoryWriteBackend:
         )
 
     def pipeline_readiness(
-        self, *, version_ids: tuple[UUID, ...], require_projections: bool
+        self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
         """Inspect readiness through the composed pipeline-readiness port."""
         return self._pipeline_readiness.inspect(
-            deployment_id=self._deployment_id,
-            version_ids=version_ids,
-            require_projections=require_projections,
+            deployment_id=self._deployment_id, version_ids=version_ids, require=require
         )
 
     def max_ingest_body_bytes(self) -> int | None:
@@ -136,7 +135,7 @@ class OperationMcpServer:
         """List write tools, assured operations, then open-query infrastructure.
 
         Operation schemas render from the registry. Write tools lead when both
-        ports are composed; the nine §3.1 tools follow when open query is
+        ports are composed; the seven §3.1 tools follow when open query is
         composed. `examples.*` never appear as top-level tools.
         """
         tools: list[dict[str, object]] = []

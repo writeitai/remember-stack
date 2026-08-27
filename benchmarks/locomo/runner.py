@@ -67,7 +67,6 @@ from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
-from benchmarks.locomo.protocol import EXPECTED_PROJECTION_PLANES
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
 from benchmarks.locomo.protocol import MAX_AGENT_CALLS
@@ -100,6 +99,7 @@ from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model import ReadinessRequirements
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
@@ -262,20 +262,22 @@ def _readiness_matches_protocol(
         )
         for version in readiness.versions
     )
-    projections_ready = tuple(
-        projection.plane for projection in readiness.projections
-    ) == EXPECTED_PROJECTION_PLANES and all(
-        projection.ready
-        and projection.version
-        and projection.built_at is not None
-        and projection.published_at is not None
-        for projection in readiness.projections
+    expected_capabilities = {"pipeline", "p1", "live_graph", "p3"}
+    capabilities_ready = (
+        set(readiness.capabilities) == expected_capabilities
+        and all(
+            capability.required and capability.ready
+            for capability in readiness.capabilities.values()
+        )
+        and bool(readiness.capabilities["p3"].version)
+        and readiness.capabilities["p3"].built_at is not None
+        and readiness.capabilities["p3"].published_at is not None
     )
     return bool(
         readiness.ready
         and {version.version_id for version in readiness.versions} == version_ids
         and versions_ready
-        and projections_ready
+        and capabilities_ready
         and readiness.model_bindings == dict(EXPECTED_INGEST_MODEL_BINDINGS)
         and repository_revision
         and readiness.build_revision == repository_revision
@@ -548,7 +550,8 @@ def answer_sample(
         if record.sample_id == sample_id
     )
     readiness = client.pipeline_readiness(
-        version_ids=version_ids, require_projections=True
+        version_ids=version_ids,
+        require=ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=True),
     )
     if readiness.build_revision:
         _require_serving_revision(context=context, readiness=readiness)
@@ -559,7 +562,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v13 pipeline and fresh P2/P3 projections"
+            " RS-LoCoMo-Full-v14 pipeline, live graph, and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -569,11 +572,7 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
-    p3_projection = next(
-        projection
-        for projection in readiness.projections
-        if projection.plane == "P3_corpusfs"
-    )
+    p3_capability = readiness.capabilities["p3"]
     tools = _require_current_query_surface(context=context, client=client)
     _require_exact_live_ingests(
         client=client,
@@ -611,11 +610,11 @@ def answer_sample(
     tracer = _configured_langfuse_tracer(context=context)
     p3: P3Mount | None = None
     p3_error: str | None = None
-    if p3_projection.version is None:
+    if p3_capability.version is None:
         p3_error = "P3 readiness did not identify a snapshot version"
     else:
         try:
-            p3 = P3Mount(root=p3_root, expected_version=p3_projection.version)
+            p3 = P3Mount(root=p3_root, expected_version=p3_capability.version)
         except (RetrievalToolError, RetrievalInfrastructureError) as error:
             p3_error = str(error)
     try:
@@ -1167,7 +1166,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v13")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v14")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1177,7 +1176,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v13")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v14")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1434,7 +1433,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v13: "
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v14: "
             + ", ".join(mismatches)
         )
 

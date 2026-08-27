@@ -11,20 +11,18 @@ from rememberstack.spine import ProjectionCatalog
 
 
 class SelfHostProjectionPurger:
-    """Erase old durable P2/P3 prefixes, registry rows, and local serving copies."""
+    """Erase old durable P3 prefixes, registry rows, and local serving copies."""
 
     def __init__(
         self,
         *,
         object_purger: ObjectPurgePort,
         catalog: ProjectionCatalog,
-        p2_cache_root: Path,
         mount_root: Path,
     ) -> None:
         """Bind explicit durable and local-cache roots without inventing providers."""
         self._object_purger = object_purger
         self._catalog = catalog
-        self._p2_cache_root = p2_cache_root.resolve()
         self._mount_root = mount_root.resolve()
 
     def purge_projections(
@@ -61,15 +59,10 @@ class SelfHostProjectionPurger:
                 f"projection purge verification found serving copies: {remaining!r}"
             )
 
-    def _serving_paths(
-        self, *, deployment_id: UUID, prefix: ObjectKey
-    ) -> tuple[Path, Path]:
-        """Return the exact P2 cache and P3 versioned mount for one prefix."""
+    def _serving_paths(self, *, deployment_id: UUID, prefix: ObjectKey) -> tuple[Path]:
+        """Return the exact P3 versioned mount for one prefix."""
         version = PurePosixPath(prefix.root).name
-        return (
-            self._p2_cache_root / str(deployment_id) / version,
-            self._mount_root / str(deployment_id) / f"p3-{version}",
-        )
+        return (self._mount_root / str(deployment_id) / f"p3-{version}",)
 
     @staticmethod
     def _remove(*, path: Path) -> None:

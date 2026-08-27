@@ -4,8 +4,6 @@ src/tests/eval/test_harness_skeleton.py
 src/tests/eval/test_s58_consumption.py
 src/tests/profiles/test_selfhost_profile.py
 src/tests/spikes/test_operational_scale.py
-src/tests/spikes/test_p2_engine_spikes.py
-src/tests/spikes/test_retrieval_spikes.py
 src/tests/spine/test_backfill.py
 src/tests/spine/test_clustering.py
 src/tests/spine/test_component_versions.py
@@ -32,12 +30,10 @@ src/tests/surfaces/test_open_query_batch_f.py
 src/tests/surfaces/test_ops_cli.py
 src/tests/surfaces/test_query_sandbox_batch_b.py
 src/tests/surfaces/test_query_sandbox_batch_c.py
-src/tests/surfaces/test_query_sandbox_batch_d.py
 src/tests/surfaces/test_operation_registry.py
 src/tests/surfaces/test_retrieval_api.py
 src/tests/surfaces/test_retrieval_batch_b.py
 src/tests/surfaces/test_retrieval_batch_c.py
-src/tests/surfaces/test_retrieval_batch_d.py
 src/tests/surfaces/test_retrieval_batch_e.py
 src/tests/surfaces/test_retrieval_primitives.py
 src/tests/surfaces/test_saved_queries_batch_e.py
@@ -49,8 +45,6 @@ src/tests/workers/test_e1_chain.py
 src/tests/workers/test_e2_chain.py
 src/tests/workers/test_e3_chain.py
 src/tests/workers/test_lifecycle_reconciliation.py
-src/tests/workers/test_p2_analytics.py
-src/tests/workers/test_p2_rebuild.py
 src/tests/workers/test_p3_corpusfs.py
 src/tests/workers/test_reuse_lifecycle.py
 src/tests/workers/test_watch_loop.py

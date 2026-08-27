@@ -1,11 +1,19 @@
 # Proposal: replace Ladybug P2 with PostgreSQL graph execution
 
-**Status:** open, unchosen
+**Status:** adopted by D98 on 2026-08-27; retained as proposal history
 **Date:** 2026-08-14
-**Binding baseline:** LadybugDB P2 under D13 and
+**Former binding baseline:** LadybugDB P2 under D13 and
 [`p2_graph_design.md`](../../plan/designs/p2_graph_design.md)
 **Analysis:**
 [`postgresql_p2_graph_analysis.md`](../../plan/analysis/postgresql_p2_graph_analysis.md)
+
+> **Outcome.** D98 adopted the direct PostgreSQL direction after PostgreSQL 19
+> introduced SQL/PGQ and the project deliberately removed public Cypher. The
+> final shape combines SQL/PGQ for fixed patterns with bounded recursive SQL
+> for variable/shortest traversal, and copies no graph rows. See the superseding
+> [analysis](../../plan/analysis/postgres19_sqlpgq_live_graph_analysis.md) and
+> [binding design](../../plan/designs/p2_graph_design.md). Apache AGE was not
+> adopted.
 
 ## Problem
 
@@ -63,9 +71,10 @@ remove the public Cypher surface.
 - no RLS;
 - no new external graph server.
 
-## Why this remains a proposal
+## Why this was promoted
 
-Ladybug already satisfies the source-verified temporal traversal contract and
-isolates graph load. No measured operational pain currently justifies replacing
-it, and AGE has an unresolved temporal-shortest-path proof gap. PostgreSQL
-co-location is promising, but not itself an acceptance test.
+There are no compatibility consumers, public Cypher became optional, the
+existing recursive helpers already satisfy the temporal traversal contract,
+and PostgreSQL 19 SQL/PGQ supplies the standard fixed-pattern surface. A Beta 3
+experiment proved the extension stack and live-view graph behavior. D98 accepts
+the resource-sharing cost under explicit isolation and measurement gates.

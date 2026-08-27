@@ -34,8 +34,6 @@ class PipelineStage(StrEnum):
     EMBED_OBSERVATION = "embed_observation"
     LABEL_OBSERVATION = "label_observation"
     REFRESH_PROFILE = "refresh_profile"
-    BUILD_SNAPSHOT = "build_snapshot"
-    DETECT_COMMUNITIES = "detect_communities"
     COMPILE_KNOWLEDGE = "compile_knowledge"
     REFLECT_KNOWLEDGE = "reflect_knowledge"
     LINT_KNOWLEDGE = "lint_knowledge"

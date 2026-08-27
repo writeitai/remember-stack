@@ -1,5 +1,11 @@
 # Evidence Lifecycle — Document Versions, Testimony Currency, and the Counting Rule (Design)
 
+> **Binding D98 amendment (2026-08-27).** Normal deletion updates PostgreSQL
+> authority and its live graph views in the same committed lifecycle; there is
+> no active P2 surface or snapshot purge. P1, P3, K, object/artifact, and backup
+> behavior remains governed by their own contracts. Pre-D98 P2 wording below is
+> superseded.
+
 How the system stays truthful when **the evidence basis of a document changes** — either
 because a better extractor re-processes it (re-extraction) or because the source itself was
 edited (a watched Google Drive file, ingested hourly). Binding design for decisions
@@ -387,7 +393,7 @@ the information survive its source's reorganization.)
   cross-cycle split leaves a brief, visible, self-healing gap).
 - **Hard-forget**: D74's separate fail-closed workflow spans all versions of the selected lineage.
   It first reuses this normal currency/counting transition, then scrubs source-bearing history,
-  purges active P1/P2/P3/K surfaces, and records the portable restore barrier defined in
+  purges active P1/live-graph/P3/K surfaces, and records the portable restore barrier defined in
   `hard_forget_design.md`; a soft tombstone alone is explicitly insufficient for S55.
 
 ## 9. The rejected alternative — reified evidence bases (a documented alternative)

@@ -10,7 +10,7 @@ binding architecture. Binding product design remains under `plan/designs/` and
 | [`provider-health-routing.md`](provider-health-routing.md) | Open | Shared health scores so workers demote slow/erroring OpenRouter hosts dynamically |
 | [`observation-adjudication-efficiency.md`](observation-adjudication-efficiency.md) | Open — not implemented | Algorithmic ways to cut LLM/embed cost and wall time on the E3 observation-adjudication tail |
 | [`pgvectorscale_default_index.md`](pgvectorscale_default_index.md) | Open — not implemented | Promote StreamingDiskANN over the binding HNSW baseline only after a measured memory/latency trigger |
-| [`postgresql_p2_graph.md`](postgresql_p2_graph.md) | Open — not implemented | Reconsider direct recursive SQL or Apache AGE only when P2 operations justify replacing LadybugDB |
+| [`postgresql_p2_graph.md`](postgresql_p2_graph.md) | **Accepted** → D98 | Live PostgreSQL 19 SQL/PGQ plus bounded recursive SQL replaces LadybugDB; proposal retained as history |
 | [`optional-exact-t0-accept.md`](optional-exact-t0-accept.md) | Open — not implemented | Keep pre-D95 exact-lemma T0 as a **manual, default-off** flag. Trigger is a closed unique namespace, **not** “the corpus is large.” Do not ship in WP-I.5 |
 | *(promoted)* chunk-level extract | **Accepted** → D84 + `plan/designs/chunk_level_extract_design.md` | E2 Claimify work grain is the chunk so extract workers parallelize on one doc |
 

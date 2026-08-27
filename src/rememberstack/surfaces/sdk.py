@@ -29,6 +29,7 @@ from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
 from rememberstack.model.client import DeploymentBuildInfo
 from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.envelope import ContextBundleV1
@@ -39,7 +40,6 @@ _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "saved_query_not_found": 404,
-    "p2_unavailable": 404,
     "saved_query_disabled": 409,
     "saved_query_revalidation_pending": 409,
     "saved_query_incompatible": 409,
@@ -48,6 +48,7 @@ _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "schema_version_mismatch": 409,
     "pg_unavailable": 503,
     "p1_unavailable": 503,
+    "graph_unavailable": 503,
     "corpus_body_unavailable": 503,
     "generation_unavailable": 503,
     "statement_timeout": 500,
@@ -65,8 +66,6 @@ _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "operator_not_allowed": 422,
     "invalid_parameter": 422,
     "unbounded_recursion": 422,
-    "cypher_parse_error": 422,
-    "cypher_not_allowed": 422,
 }
 
 
@@ -230,42 +229,6 @@ class MemoryClient:
             endpoint="POST /query/sql/explain",
         )
 
-    def query_cypher(
-        self,
-        *,
-        cypher: str,
-        parameters: Mapping[str, object] | None = None,
-        max_rows: int | None = None,
-        confirm: bool = False,
-    ) -> dict[str, object]:
-        """Run one read-only Cypher statement; returns QueryResult/v1 as a dict."""
-        body: dict[str, object] = {
-            "cypher": cypher,
-            "parameters": dict(parameters or {}),
-            "confirm": confirm,
-        }
-        if max_rows is not None:
-            body["max_rows"] = max_rows
-        return _validated_dict(
-            QueryResult,
-            self._json("POST", "/query/cypher", json_body=body),
-            endpoint="POST /query/cypher",
-        )
-
-    def explain_cypher(
-        self, *, cypher: str, parameters: Mapping[str, object] | None = None
-    ) -> dict[str, object]:
-        """Engine plan for one Cypher statement without executing it."""
-        return _validated_dict(
-            QueryResult,
-            self._json(
-                "POST",
-                "/query/cypher/explain",
-                json_body={"cypher": cypher, "parameters": dict(parameters or {})},
-            ),
-            endpoint="POST /query/cypher/explain",
-        )
-
     def describe_query_space(
         self, *, pattern: str | None = None, include_examples: bool = False
     ) -> dict[str, object]:
@@ -371,20 +334,6 @@ class MemoryClient:
             return self.explain_sql(
                 sql=str(args["sql"]),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
-            )
-        if name == "query_cypher":
-            params = args.get("parameters")
-            return self.query_cypher(
-                cypher=str(args["cypher"]),
-                parameters=params if isinstance(params, Mapping) else None,
-                max_rows=_optional_sdk_int(args.get("max_rows")),
-                confirm=bool(args.get("confirm", False)),
-            )
-        if name == "explain_cypher":
-            params = args.get("parameters")
-            return self.explain_cypher(
-                cypher=str(args["cypher"]),
-                parameters=params if isinstance(params, Mapping) else None,
             )
         if name == "describe_query_space":
             return self.describe_query_space(
@@ -528,6 +477,88 @@ class MemoryClient:
             endpoint=f"GET /hydrate/relation/{relation_id}",
         )
 
+    def graph_neighborhood(
+        self,
+        *,
+        entity_id: UUID,
+        hops: int = 2,
+        predicates: tuple[str, ...] = (),
+        valid_at: datetime | None = None,
+        believed_at: datetime | None = None,
+        limit: int = 500,
+        continuation: str | None = None,
+        include_paths: bool = False,
+    ) -> Envelope:
+        """Return a typed bounded current or bitemporal neighborhood."""
+        return _validated(
+            Envelope,
+            self._json(
+                "POST",
+                "/graph/neighborhood",
+                json_body={
+                    "entity_id": str(entity_id),
+                    "hops": hops,
+                    "predicates": list(predicates),
+                    "valid_at": valid_at.isoformat() if valid_at is not None else None,
+                    "believed_at": (
+                        believed_at.isoformat() if believed_at is not None else None
+                    ),
+                    "limit": limit,
+                    "continuation": continuation,
+                    "include_paths": include_paths,
+                },
+            ),
+            endpoint="POST /graph/neighborhood",
+        )
+
+    def graph_path(
+        self,
+        *,
+        from_entity_id: UUID,
+        to_entity_id: UUID,
+        max_hops: int = 4,
+        predicates: tuple[str, ...] = (),
+        valid_at: datetime | None = None,
+        believed_at: datetime | None = None,
+    ) -> Envelope:
+        """Return bounded equal-length shortest paths between two entities."""
+        return _validated(
+            Envelope,
+            self._json(
+                "POST",
+                "/graph/path",
+                json_body={
+                    "from_entity_id": str(from_entity_id),
+                    "to_entity_id": str(to_entity_id),
+                    "max_hops": max_hops,
+                    "predicates": list(predicates),
+                    "valid_at": valid_at.isoformat() if valid_at is not None else None,
+                    "believed_at": (
+                        believed_at.isoformat() if believed_at is not None else None
+                    ),
+                },
+            ),
+            endpoint="POST /graph/path",
+        )
+
+    def graph_citation_path(
+        self, *, from_doc_id: UUID, to_doc_id: UUID, max_hops: int = 6
+    ) -> Envelope:
+        """Return bounded directed citation paths between two documents."""
+        return _validated(
+            Envelope,
+            self._json(
+                "POST",
+                "/graph/citation-path",
+                json_body={
+                    "from_doc_id": str(from_doc_id),
+                    "to_doc_id": str(to_doc_id),
+                    "max_hops": max_hops,
+                },
+            ),
+            endpoint="POST /graph/citation-path",
+        )
+
     def deployment_build_info(self) -> DeploymentBuildInfo:
         """Read which code and model bindings are serving, before submitting work."""
         return _validated(
@@ -537,9 +568,9 @@ class MemoryClient:
         )
 
     def pipeline_readiness(
-        self, *, version_ids: tuple[UUID, ...], require_projections: bool = True
+        self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
-        """Inspect exact continuous-stage and aggregate-projection readiness."""
+        """Inspect exact pipeline and explicitly requested capabilities."""
         if not version_ids:
             raise ValueError("pipeline readiness requires at least one version_id")
         return _validated(
@@ -547,8 +578,10 @@ class MemoryClient:
             self._json(
                 "POST",
                 "/readiness",
-                params={"require_projections": str(require_projections).lower()},
-                json_body=[str(version_id) for version_id in version_ids],
+                json_body={
+                    "version_ids": [str(version_id) for version_id in version_ids],
+                    "require": require.model_dump(mode="json"),
+                },
             ),
             endpoint="POST /readiness",
         )

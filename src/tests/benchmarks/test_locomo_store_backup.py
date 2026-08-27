@@ -24,7 +24,7 @@ def _run_json(path: Path) -> None:
     (path / "run.json").write_text(
         json.dumps(
             {
-                "protocol_name": "RS-LoCoMo-Full-v13",
+                "protocol_name": "RS-LoCoMo-Full-v14",
                 "protocol_fingerprint": "p" * 64,
                 "repository_revision": "r" * 40,
                 "prepared_at": "2026-08-11T00:00:00Z",
@@ -660,7 +660,7 @@ def test_restore_validates_every_archive_before_running_docker(
         deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v13",
+            protocol_name="RS-LoCoMo-Full-v14",
             protocol_fingerprint="p" * 64,
             repository_revision="r" * 40,
             prepared_at="2026-08-11T00:00:00Z",
@@ -922,7 +922,7 @@ def test_runtime_validation_uses_the_image_revision_stamp(
         sample_id="conv-1",
         deployment_id=deployment_id,
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v13",
+            protocol_name="RS-LoCoMo-Full-v14",
             protocol_fingerprint="p" * 64,
             repository_revision=revision,
             prepared_at="2026-08-11T00:00:00Z",

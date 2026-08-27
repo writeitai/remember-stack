@@ -22,9 +22,6 @@ class QueryErrorCode(StrEnum):
     INVALID_PARAMETER = "invalid_parameter"
     SCHEMA_VERSION_MISMATCH = "schema_version_mismatch"
     UNBOUNDED_RECURSION = "unbounded_recursion"
-    # Cypher phase (Batch D raises these; bound here so the taxonomy is one place)
-    CYPHER_PARSE_ERROR = "cypher_parse_error"
-    CYPHER_NOT_ALLOWED = "cypher_not_allowed"
     # Admission
     QUOTA_EXCEEDED = "quota_exceeded"
     CONCURRENCY_EXCEEDED = "concurrency_exceeded"
@@ -41,7 +38,7 @@ class QueryErrorCode(StrEnum):
     # Store / confirmation
     PG_UNAVAILABLE = "pg_unavailable"
     P1_UNAVAILABLE = "p1_unavailable"
-    P2_UNAVAILABLE = "p2_unavailable"
+    GRAPH_UNAVAILABLE = "graph_unavailable"
     CORPUS_BODY_UNAVAILABLE = "corpus_body_unavailable"
     GENERATION_UNAVAILABLE = "generation_unavailable"
     CONFIRMATION_FAILED = "confirmation_failed"

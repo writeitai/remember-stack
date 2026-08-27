@@ -20,7 +20,7 @@ believes or believed the fact.
 
 (Internally these guarantees are decisions D41 and D54.)
 
-Agents that can navigate files should treat memory like a **read-only codebase**. Mounts make that cheap. Query surfaces (API / CLI / MCP) cover what files cannot: semantic search, graph, time-travel, open SQL/Cypher, hydration.
+Agents that can navigate files should treat memory like a **read-only codebase**. Mounts make that cheap. Query surfaces (API / CLI / MCP) cover what files cannot: semantic search, live graph traversal, time-travel, open SQL, and hydration.
 
 ## TL;DR for agents
 
@@ -64,7 +64,7 @@ skill_path = skill_surface.publish(directory=harness_skill_directory, rendered=r
 
 | Filesystem | Query surface |
 | --- | --- |
-| Navigate, read, grep | Open SQL (`query_sql`) and read-only Cypher (`query_cypher`) |
+| Navigate, read, grep | Open SQL (`query_sql`) and live graph SQL helpers |
 | Browse K pages | Schema discovery (`describe_query_space` / `GET /query/space`) |
 | Open artifact Markdown | Semantic/lexical nomination, graph helpers, time-travel |
 | | Fact↔evidence hydration, saved queries, decision transcripts, deltas |
@@ -78,7 +78,7 @@ Unmounted environments get the same operations over the network; the skill state
 Skill contents (high level):
 
 1. Two-layer headline (claims vs facts)  
-2. Three neutral choices — Cypher, SQL, or the four assured operations
+2. Three neutral choices — mounted files, open SQL/live-graph helpers, or the four assured operations
 3. Bound SQL examples (wrong claim-window query vs `facts_current`, predicate vocab, audit trail, divergence)  
 4. Honest empty-K behavior  
 5. Assured catalog only: `resolve_entity`, `testimony_context`, `fact_context`, `answer_context`

@@ -43,7 +43,6 @@ EXPECTED_ENUMS: Final = (
     "claim_temporal_class",
     "claim_valid_kind",
     "claim_valid_precision",
-    "community_algorithm",
     "crossref_kind",
     "currency_reason",
     "decision_actor",
@@ -110,7 +109,6 @@ EXPECTED_TABLES: Final = (
     "chunks",
     "claim_extraction_decisions",
     "claims",
-    "communities",
     "connector_sync_cycles",
     "content_objects",
     "cost_ledger",
@@ -124,7 +122,6 @@ EXPECTED_TABLES: Final = (
     "document_versions",
     "documents",
     "entities",
-    "entity_graph_metrics",
     "entity_types",
     "eval_runs",
     "extension_packs",
@@ -198,7 +195,6 @@ EXPECTED_INDEXES: Final = (
     "ix_claims_doc",
     "ix_claims_flagged",
     "ix_claims_valid_window",
-    "ix_communities_snapshot",
     "ix_cost_budget_window",
     "ix_cost_export",
     "ix_crossrefs_from",
@@ -213,8 +209,6 @@ EXPECTED_INDEXES: Final = (
     "ix_docversions_doc",
     "ix_docversions_hash",
     "ix_docversions_status",
-    "ix_egm_entity",
-    "ix_egm_snapshot",
     "ix_entities_name_trgm",
     "ix_entities_embedding_hnsw",
     "ix_entities_redirect",
@@ -290,8 +284,6 @@ EXPECTED_HASH_PARENTS: Final = ("observation_evidence", "relation_evidence")
 UNLANED_STAGES: Final = frozenset(
     {
         "refresh_profile",
-        "build_snapshot",
-        "detect_communities",
         "compile_knowledge",
         "reflect_knowledge",
         "lint_knowledge",
@@ -318,12 +310,6 @@ def lane_is_valid(*, stage: str, lane: str | None) -> bool:
 
 EXPECTED_VIEWS: Final = (
     "v_cost_receipts",
-    "v_graph_crossref",
-    "v_graph_documents",
-    "v_graph_entities",
-    "v_graph_is_document",
-    "v_graph_mentioned_in",
-    "v_graph_relates",
     "v_graph_survivor",
     "v_memory_entity_survivor",
     "v_memory_evidence_lineage_live",
@@ -341,15 +327,15 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
-# PostgreSQL 18 represents NOT NULL declarations as first-class `n` rows in
+# PostgreSQL 19 represents NOT NULL declarations as first-class `n` rows in
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 68,
-    "f": 127,
-    "n": 547,
-    "p": 72,
-    "u": 36,
+    "f": 121,
+    "n": 537,
+    "p": 70,
+    "u": 35,
     "x": 1,
 }
 DECISION_OBJECTS: Final = {
@@ -370,7 +356,7 @@ DECISION_OBJECTS: Final = {
     "D65": ("documents", "document_versions", "document_representations"),
     "D67": ("processing_state", "cost_ledger", "ix_procstate_due"),
     "D68": ("deployments", "ix_entities_name_trgm"),
-    "D69": ("v_graph_relates",),
+    "D69": ("relations", "v_memory_entity_survivor"),
     "D74": ("forget_manifests", "ix_forget_content_guard"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
     "D91": (
@@ -665,26 +651,27 @@ def verify_schema(connection: Connection) -> CatalogInventory:
     relates_definition = str(
         connection.execute(
             statement=text(
-                "SELECT pg_get_viewdef('public.v_graph_relates'::regclass, true)"
+                "SELECT pg_get_viewdef("
+                "'rememberstack_graph_internal.relations_history'::regclass, true)"
             )
         ).scalar_one()
     ).lower()
     if (
-        " where " in " ".join(relates_definition.split())
+        "r.invalidated_at is null" in relates_definition
         or "invalidated_at >" in relates_definition
     ):
         problems.append(
-            "v_graph_relates contains a forbidden invalidation/retention filter"
+            "relations_history contains a forbidden current/invalidation filter"
         )
     for required_view_fragment in (
         "r.invalidated_at",
-        "v_graph_survivor s1",
-        "v_graph_survivor s2",
-        "e1.status = 'active'",
-        "e2.status = 'active'",
+        "v_memory_entity_survivor subject",
+        "v_memory_entity_survivor object",
+        "relations r",
+        "relation_evidence",
     ):
         if required_view_fragment not in relates_definition:
-            problems.append(f"v_graph_relates missing {required_view_fragment}")
+            problems.append(f"relations_history missing {required_view_fragment}")
 
     empty_tables: list[str] = []
     for table_name in EMPTY_AT_HEAD:

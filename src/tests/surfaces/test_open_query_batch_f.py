@@ -12,6 +12,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 import psycopg
+from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
@@ -22,8 +23,9 @@ from rememberstack.core import render_consumption_skill
 from rememberstack.core.open_query_prose import CORRECT_FACTS_CURRENT_SQL
 from rememberstack.core.open_query_prose import FULL_AUDIT_TRAIL_SQL
 from rememberstack.core.open_query_prose import LATEST_CONTRADICTING_TESTIMONY_SQL
+from rememberstack.core.open_query_prose import LIVE_GRAPH_NEIGHBORHOOD_SQL
+from rememberstack.core.open_query_prose import LIVE_GRAPH_PATH_SQL
 from rememberstack.core.open_query_prose import PREDICATE_VOCABULARY_SQL
-from rememberstack.core.open_query_prose import SNAPSHOT_ID_TO_LIVE_SQL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_FULL
 from rememberstack.core.open_query_prose import TWO_LAYER_HEADLINE_NOTE
 from rememberstack.core.open_query_prose import WRONG_CLAIM_WINDOW_CURRENT_TRUTH_SQL
@@ -67,7 +69,10 @@ def _psycopg_url(url: str) -> str:
 @pytest.fixture(scope="module")
 def migrated() -> Iterator[str]:
     """Fresh module-scoped DB for Batch F focused proofs."""
-    database_url = load_database_settings().sqlalchemy_url()
+    try:
+        database_url = load_database_settings().sqlalchemy_url()
+    except ValidationError:
+        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for Batch F proofs")
     engine = create_engine(database_url)
     with engine.begin() as connection:
         connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
@@ -168,29 +173,26 @@ def test_facade_query_sql_and_discovery(migrated: str) -> None:
     assert len(space.worked_examples) >= 8
     keys = {str(item["key"]) for item in space.worked_examples}
     assert "wrong_claim_window_current_truth" in keys
-    assert "native_cypher_traversal_aggregation" in keys
+    assert "live_graph_neighborhood" in keys
+    assert "live_graph_path" in keys
     assert "semantic_to_relational" in keys
     assert space.core_operation_descriptors
     assert space.function_signatures
     assert space.sql_grammar
-    assert space.cypher_dialect
-    assert space.p2_projection
-    assert len(space.examples) == 17
+    assert len(space.examples) == 18
     assert len(space.worked_examples) == 8
-    cypher_example = next(
+    graph_example = next(
         item
         for item in space.worked_examples
-        if item["key"] == "native_cypher_traversal_aggregation"
+        if item["key"] == "live_graph_neighborhood"
     )
-    body = str(cypher_example["body"])
-    assert "MATCH" in body and "RELATES" in body and "count(" in body.lower()
+    body = str(graph_example["body"])
+    assert "graph_neighborhood" in body and "ORDER BY" in body
     payload = query_space_description_payload(space)
     for field in (
         "core_operation_descriptors",
         "function_signatures",
         "sql_grammar",
-        "cypher_dialect",
-        "p2_projection",
         "limits",
         "retrieval_choices",
         "honesty_warnings",
@@ -215,7 +217,7 @@ def test_facade_rejects_mismatched_sql_deployment(migrated: str) -> None:
 def test_run_saved_query_stamps_and_uses_sql_executor(migrated: str) -> None:
     facade = _facade(migrated)
     listed = facade.list_saved_queries(namespace="examples")
-    assert len(listed) == 17
+    assert len(listed) == 18
     sample = next(row for row in listed if row.name == "relation_current")
     outcome = facade.run_saved_query(
         namespace="examples",
@@ -452,8 +454,7 @@ def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
     assert "`fact_claim_evidence`" in space_body["headline"]
     assert "core_operation_descriptors" in space_body
     assert "function_signatures" in space_body
-    assert "cypher_dialect" in space_body
-    assert "p2_projection" in space_body
+    assert "sql_grammar" in space_body
     assert "worked_examples" in space_body
     assert "retrieval_choices" in space_body
     assert "honesty_warnings" in space_body
@@ -502,7 +503,7 @@ class _NullSearch:
         return {}
 
 
-def test_mcp_lists_nine_open_tools_not_examples(migrated: str) -> None:
+def test_mcp_lists_seven_open_tools_not_examples(migrated: str) -> None:
     from rememberstack.adapters.testing import FakeModelProvider
     from rememberstack.spine import AssuredOperationRegistry
     from rememberstack.spine import seed_canonical_operations
@@ -533,7 +534,7 @@ def test_mcp_lists_nine_open_tools_not_examples(migrated: str) -> None:
         assert name in names
     assert not any(str(name).startswith("examples.") for name in names)
     assert "resolve_entity" in names
-    # descriptors are exactly the nine static infrastructure tools
+    # descriptors are exactly the seven static infrastructure tools
     assert {d["name"] for d in open_query_tool_descriptors()} == set(
         OPEN_QUERY_TOOL_NAMES
     )
@@ -575,13 +576,6 @@ def test_local_mcp_strict_argument_validation(migrated: str) -> None:
     )
     server = OperationMcpServer(surface=surface, open_query=_facade(migrated))
 
-    false_string = server.call_tool(
-        name="query_cypher",
-        arguments={"cypher": "MATCH (n) RETURN n LIMIT 1", "confirm": "false"},
-    )
-    assert false_string["isError"] is True
-    assert "boolean" in str(false_string["content"]).lower()
-
     wrong_sql_type = server.call_tool(
         name="query_sql", arguments={"sql": 123, "parameters": []}
     )
@@ -593,13 +587,6 @@ def test_local_mcp_strict_argument_validation(migrated: str) -> None:
     )
     assert wrong_sql_params["isError"] is True
     assert "array" in str(wrong_sql_params["content"]).lower()
-
-    wrong_cypher_params = server.call_tool(
-        name="query_cypher",
-        arguments={"cypher": "MATCH (n) RETURN n", "parameters": ["x"]},
-    )
-    assert wrong_cypher_params["isError"] is True
-    assert "object" in str(wrong_cypher_params["content"]).lower()
 
     unknown_key = server.call_tool(
         name="describe_query_space", arguments={"extra": True}
@@ -703,7 +690,7 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
             mounts=None,
         )
     )
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.2.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "3.0.0"
     assert skill.content.startswith("---\n")
     # first prose after the skill title block is the bound headline
     assert TWO_LAYER_HEADLINE in skill.content
@@ -714,8 +701,9 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
     assert PREDICATE_VOCABULARY_SQL in skill.content
     assert FULL_AUDIT_TRAIL_SQL in skill.content
     assert LATEST_CONTRADICTING_TESTIMONY_SQL in skill.content
-    assert SNAPSHOT_ID_TO_LIVE_SQL in skill.content
-    # Same worked-example set as discovery (Cypher + semantic-to-relational too).
+    assert LIVE_GRAPH_NEIGHBORHOOD_SQL in skill.content
+    assert LIVE_GRAPH_PATH_SQL in skill.content
+    # Same worked-example set as discovery, including live graph and composition.
     from rememberstack.core.open_query_prose import bound_worked_examples
 
     for example in bound_worked_examples():
@@ -733,7 +721,26 @@ def test_bound_sql_examples_match_design_strings() -> None:
     assert "GROUP BY 1" in PREDICATE_VOCABULARY_SQL
     assert "fact_claim_evidence_live" in FULL_AUDIT_TRAIL_SQL
     assert "stance = 'contradicts'" in LATEST_CONTRADICTING_TESTIMONY_SQL
-    assert "entities_current" in SNAPSHOT_ID_TO_LIVE_SQL
+    assert "graph_neighborhood" in LIVE_GRAPH_NEIGHBORHOOD_SQL
+    assert "graph_path" in LIVE_GRAPH_PATH_SQL
+    for example in (LIVE_GRAPH_NEIGHBORHOOD_SQL, LIVE_GRAPH_PATH_SQL):
+        assert "row_kind" not in example
+        assert "truncation_reason" not in example
+        assert "examined_edges" in example
+        assert "returned_paths" in example
+
+    from rememberstack.core.open_query_prose import bound_worked_examples
+
+    graph_examples = tuple(
+        item
+        for item in bound_worked_examples()
+        if str(item["key"]).startswith("live_graph_")
+    )
+    assert len(graph_examples) == 2
+    for example in graph_examples:
+        assert "QueryResult" in str(example["purpose"])
+        assert "graph_invocations" in str(example["purpose"])
+        assert "not from result rows" in str(example["purpose"])
 
 
 def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -> None:
@@ -928,44 +935,33 @@ def test_cli_open_query_parse_and_dispatch(
     assert saved_out["saved_query"]["name"] == "relation_current"
 
 
-def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
-    """Discovery/skill and examples reuse core constants; manifest stays Batch E."""
+def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
+    """Discovery, skill, and examples reuse the live PostgreSQL constants."""
     from rememberstack.core.open_query_prose import bound_worked_examples
     from rememberstack.core.open_query_prose import CLAIMS_VERBATIM_PURPOSE
     from rememberstack.core.open_query_prose import CLAIMS_VERBATIM_SQL
-    from rememberstack.core.open_query_prose import NATIVE_CYPHER_TRAVERSAL_AGGREGATION
     from rememberstack.spine.query_space.manifest import load_manifest
     from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
 
-    assert "RELATES" in NATIVE_CYPHER_TRAVERSAL_AGGREGATION
-    assert "count(" in NATIVE_CYPHER_TRAVERSAL_AGGREGATION.lower()
     examples = {str(item["key"]): item for item in bound_worked_examples()}
     assert len(examples) == 8
-    assert examples["native_cypher_traversal_aggregation"]["body"] == (
-        NATIVE_CYPHER_TRAVERSAL_AGGREGATION
-    )
+    assert examples["live_graph_neighborhood"]["body"] == LIVE_GRAPH_NEIGHBORHOOD_SQL
+    assert examples["live_graph_path"]["body"] == LIVE_GRAPH_PATH_SQL
     assert examples["semantic_to_relational"]["body"] == CLAIMS_VERBATIM_SQL
     assert examples["semantic_to_relational"]["purpose"] == CLAIMS_VERBATIM_PURPOSE
     assert EXAMPLE_QUERIES["claims_verbatim"] == (
         CLAIMS_VERBATIM_PURPOSE,
         CLAIMS_VERBATIM_SQL,
     )
-    # The hashed manifest keeps the node-list example (not the discovery
-    # traversal body). D87 rolled the surface for the clean assured-operation
-    # cut; first-call prose still is not a hash input.
-    cypher_entry = next(
+    graph_entry = next(
         entry
         for entry in load_manifest()["hash_members"]["function_signatures"]["functions"]
-        if entry["name"] == "query_cypher"
+        if entry["name"] == "graph_neighborhood"
     )
-    assert (
-        cypher_entry["example"]
-        == "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20"
-    )
-    assert cypher_entry["example"] != NATIVE_CYPHER_TRAVERSAL_AGGREGATION
+    assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "683d1526b26ea3d081e197e2e21d9dae918d20af3c118a9e23f8c71c956d2985"
+        == "a8b92da218488baf8fb156358d808121a4038a2c7228e9891d0cd1411b5b597c"
     )
 
 
@@ -973,7 +969,7 @@ def test_core_prose_is_authority_for_cypher_and_claims_verbatim() -> None:
 
 
 def test_sql_max_rows_zero_means_zero_rows(migrated: str) -> None:
-    """SQL max_rows=0 returns no rows and discloses row_cap=0 (matches Cypher)."""
+    """SQL max_rows=0 returns no rows and discloses row_cap=0."""
     facade = _facade(migrated)
     outcome = facade.query_sql(sql="SELECT 1 AS n", max_rows=0)
     assert outcome.termination_reason == "completed", outcome.error_message
@@ -1115,7 +1111,7 @@ def test_mcp_rejects_explicit_null_for_string_and_integer_fields() -> None:
 
 
 def test_http_explain_rejects_execution_only_fields(migrated: str) -> None:
-    """SQL/Cypher explain routes 422 on max_rows/confirm; query routes still accept them."""
+    """SQL explain rejects max_rows while the execution route accepts it."""
     app = _open_api(migrated)
     client = TestClient(app)
 
@@ -1134,18 +1130,6 @@ def test_http_explain_rejects_execution_only_fields(migrated: str) -> None:
     )
     assert query_ok.status_code == 200
     assert query_ok.json()["limits"]["row_cap"] == 1
-
-    cypher_extra = client.post(
-        "/query/cypher/explain",
-        json={"cypher": "RETURN 1", "parameters": {}, "max_rows": 1, "confirm": True},
-    )
-    assert cypher_extra.status_code == 422
-
-    cypher_confirm_only = client.post(
-        "/query/cypher/explain",
-        json={"cypher": "RETURN 1", "parameters": {}, "confirm": False},
-    )
-    assert cypher_confirm_only.status_code == 422
 
 
 def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) -> None:
@@ -1182,20 +1166,6 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
             """Record principal then explain sandboxed SQL."""
             seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
             return self._inner.explain_sql(**kwargs)  # type: ignore[arg-type]
-
-        def query_cypher(self, **kwargs: object) -> object:
-            """Record principal then refuse Cypher (unavailable in this fixture)."""
-            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
-            raise SandboxRejection(
-                code=QueryErrorCode.P2_UNAVAILABLE, message="no cypher in this proof"
-            )
-
-        def explain_cypher(self, **kwargs: object) -> object:
-            """Record principal then refuse Cypher explain (unavailable here)."""
-            seen.append(kwargs.get("principal"))  # type: ignore[arg-type]
-            raise SandboxRejection(
-                code=QueryErrorCode.P2_UNAVAILABLE, message="no cypher in this proof"
-            )
 
         def describe_query_space(self, **kwargs: object) -> object:
             """Content-only discovery; do not invent a principal."""
@@ -1285,23 +1255,6 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
         ).status_code
         == 200
     )
-    # Cypher is unavailable in this fixture; principal must still be forwarded.
-    assert (
-        client.post(
-            "/query/cypher",
-            headers=headers,
-            json={"cypher": "RETURN 1", "parameters": {}},
-        ).status_code
-        == 404
-    )
-    assert (
-        client.post(
-            "/query/cypher/explain",
-            headers=headers,
-            json={"cypher": "RETURN 1", "parameters": {}},
-        ).status_code
-        == 404
-    )
     assert (
         client.post(
             "/query/saved/examples/relation_current/run",
@@ -1312,9 +1265,9 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
     )
     # Discovery stays content-free: no principal recorded for space.
     assert client.get("/query/space", headers=headers).status_code == 200
-    # Five execution routes + one discovery request, one auth each.
-    assert auth.authenticate_calls == 6
-    assert seen == ["alice-agent"] * 5
+    # Three execution routes + one discovery request, one auth each.
+    assert auth.authenticate_calls == 4
+    assert seen == ["alice-agent"] * 3
 
 
 def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
@@ -1331,15 +1284,9 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
 
     projection_work_root = tmp_path / "projection-work"
-    graph_cache_root = tmp_path / "graph-cache"
     forget_manifest_root = tmp_path / "forget-manifests"
     objects_root = tmp_path / "objects"
-    for path in (
-        projection_work_root,
-        graph_cache_root,
-        forget_manifest_root,
-        objects_root,
-    ):
+    for path in (projection_work_root, forget_manifest_root, objects_root):
         path.mkdir(parents=True, exist_ok=True)
 
     store = LocalFSObjectStore(root=objects_root)
@@ -1348,7 +1295,6 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
         settings=SelfHostSettings(
             deployment_id=_DEPLOYMENT,
             projection_work_root=projection_work_root,
-            graph_cache_root=graph_cache_root,
             forget_manifest_root=forget_manifest_root,
             migration_config=_ROOT / "alembic.ini",
         ),
@@ -1356,7 +1302,6 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
         raw_store=store,  # type: ignore[arg-type]
         artifact_store=store,  # type: ignore[arg-type]
         corpusfs_store=store,  # type: ignore[arg-type]
-        snapshot_store=store,  # type: ignore[arg-type]
         model_provider=FakeModelProvider(),  # type: ignore[arg-type]
     )
 
@@ -1377,10 +1322,7 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     assert app.title == "RememberStack query API"
     assert len(captured) == 1
     facade = captured[0]
-    assert facade._cypher is not None  # noqa: SLF001
-    # Production composition: one KillSwitches and one enabled AuditTrail for both.
-    assert facade._sql._kills is facade._cypher._kills  # noqa: SLF001
-    assert facade._sql._audit is facade._cypher._audit  # noqa: SLF001
+    # Production composition enables one audit trail for the SQL sandbox.
     assert facade._sql._audit._enabled is True  # noqa: SLF001
     # Production-bound E1 embed partial rejects a foreign/pinned generation.
     embed = facade._sql._embed  # noqa: SLF001

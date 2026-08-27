@@ -208,21 +208,21 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
     "multi_hop_context": (
         "Evidence along a route between two entities, with semantic nominations",
         "WITH route AS ("
-        "  SELECT path_id, path_position, relation_id, fact_label, predicate"
-        "  FROM graph_path($1::uuid, $2::uuid, 4)"
+        "  SELECT hops, relation_ids, node_ids"
+        "  FROM graph_path($1::uuid, $2::uuid, $3::uuid, 4)"
         "),"
         " nominated AS ("
-        "  SELECT claim_id, rank FROM semantic_claims($3, 20)"
+        "  SELECT claim_id, rank FROM semantic_claims($4, 20)"
         " )"
-        " SELECT r.path_id, r.path_position, r.fact_label, r.predicate,"
+        " SELECT r.hops, r.node_ids, e.fact_id AS relation_id,"
         "        e.claim_id, e.stance, c.claim_text, c.source_handle, n.rank"
         " FROM route AS r"
         " JOIN fact_claim_evidence_live AS e"
-        "   ON e.fact_id = r.relation_id AND e.fact_kind = 'relation'"
+        "   ON e.fact_id = ANY(r.relation_ids) AND e.fact_kind = 'relation'"
         " JOIN claims_live AS c"
         "   ON c.deployment_id = e.deployment_id AND c.claim_id = e.claim_id"
         " JOIN nominated AS n ON n.claim_id = c.claim_id"
-        " ORDER BY r.path_id, r.path_position, n.rank, e.claim_id"
+        " ORDER BY r.hops, r.node_ids, n.rank, e.claim_id"
         " LIMIT 100",
     ),
     "changed_since": (
@@ -235,15 +235,21 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
     ),
     "graph_neighborhood": (
         "Relations within N hops of an entity",
-        "SELECT path_id, hop, from_entity_id, to_entity_id, predicate, fact_label"
-        " FROM graph_neighborhood($1::uuid, 2)"
-        " ORDER BY path_id",
+        "SELECT hops, relation_ids, node_ids"
+        " FROM graph_neighborhood($1::uuid, $2::uuid, 2)"
+        " ORDER BY hops, relation_ids",
     ),
     "graph_path": (
         "Routes between two entities, each returned whole",
-        "SELECT path_id, path_length, path_position, predicate, fact_label"
-        " FROM graph_path($1::uuid, $2::uuid, 4)"
-        " ORDER BY path_id, path_position",
+        "SELECT hops, relation_ids, node_ids"
+        " FROM graph_path($1::uuid, $2::uuid, $3::uuid, 4)"
+        " ORDER BY hops, relation_ids",
+    ),
+    "graph_citation_path": (
+        "Directed citation routes between two live documents",
+        "SELECT hops, crossref_ids, document_ids"
+        " FROM graph_citation_path($1::uuid, $2::uuid, $3::uuid, 6)"
+        " ORDER BY hops, crossref_ids",
     ),
 }
 
@@ -266,6 +272,7 @@ class ExampleFixtureHandles:
     not surface; cap reuses positive parameters under a tight row bound.
     """
 
+    deployment_id: UUID
     live_entity: UUID
     other_entity: UUID
     empty_entity: UUID
@@ -276,6 +283,10 @@ class ExampleFixtureHandles:
     live_fact: UUID
     empty_fact: UUID
     tombstone_fact: UUID
+    live_from_doc: UUID
+    live_to_doc: UUID
+    empty_doc: UUID
+    tombstone_doc: UUID
     live_from: datetime
     live_to: datetime
     empty_from: datetime
@@ -390,10 +401,30 @@ def example_fixture_parameters(
             "cap_max_rows": 1,
         },
         "multi_hop_context": {
-            "positive": (h.live_entity, h.other_entity, SEARCH_POSITIVE_QUERY),
-            "empty": (h.empty_entity, h.other_entity, SEARCH_EMPTY_QUERY),
-            "tombstone": (h.tombstone_entity, h.other_entity, SEARCH_TOMBSTONE_QUERY),
-            "cap": (h.live_entity, h.other_entity, SEARCH_POSITIVE_QUERY),
+            "positive": (
+                h.deployment_id,
+                h.live_entity,
+                h.other_entity,
+                SEARCH_POSITIVE_QUERY,
+            ),
+            "empty": (
+                h.deployment_id,
+                h.empty_entity,
+                h.other_entity,
+                SEARCH_EMPTY_QUERY,
+            ),
+            "tombstone": (
+                h.deployment_id,
+                h.tombstone_entity,
+                h.other_entity,
+                SEARCH_TOMBSTONE_QUERY,
+            ),
+            "cap": (
+                h.deployment_id,
+                h.live_entity,
+                h.other_entity,
+                SEARCH_POSITIVE_QUERY,
+            ),
             "cap_max_rows": 1,
         },
         "changed_since": {
@@ -404,17 +435,24 @@ def example_fixture_parameters(
             "cap_max_rows": 1,
         },
         "graph_neighborhood": {
-            "positive": (h.live_entity,),
-            "empty": (h.empty_entity,),
-            "tombstone": (h.tombstone_entity,),
-            "cap": (h.live_entity,),
+            "positive": (h.deployment_id, h.live_entity),
+            "empty": (h.deployment_id, h.empty_entity),
+            "tombstone": (h.deployment_id, h.tombstone_entity),
+            "cap": (h.deployment_id, h.live_entity),
             "cap_max_rows": 1,
         },
         "graph_path": {
-            "positive": (h.live_entity, h.other_entity),
-            "empty": (h.empty_entity, h.other_entity),
-            "tombstone": (h.tombstone_entity, h.other_entity),
-            "cap": (h.live_entity, h.other_entity),
+            "positive": (h.deployment_id, h.live_entity, h.other_entity),
+            "empty": (h.deployment_id, h.empty_entity, h.other_entity),
+            "tombstone": (h.deployment_id, h.tombstone_entity, h.other_entity),
+            "cap": (h.deployment_id, h.live_entity, h.other_entity),
+            "cap_max_rows": 1,
+        },
+        "graph_citation_path": {
+            "positive": (h.deployment_id, h.live_from_doc, h.live_to_doc),
+            "empty": (h.deployment_id, h.empty_doc, h.live_to_doc),
+            "tombstone": (h.deployment_id, h.tombstone_doc, h.live_to_doc),
+            "cap": (h.deployment_id, h.live_from_doc, h.live_to_doc),
             "cap_max_rows": 1,
         },
     }

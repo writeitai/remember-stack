@@ -26,7 +26,7 @@ class ObjectPurgePort(Protocol):
 
 @runtime_checkable
 class ProjectionPurgePort(Protocol):
-    """Erase old P2/P3 durable prefixes and local serving copies."""
+    """Erase old P3 durable prefixes and local serving copies."""
 
     def purge_projections(
         self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]

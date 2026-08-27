@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.4.3`](https://github.com/writeitai/remember-stack/releases/tag/v0.4.3) on [PyPI](https://pypi.org/project/rememberstack/0.4.3/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.5.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.5.0) on [PyPI](https://pypi.org/project/rememberstack/0.5.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -19,9 +19,9 @@ Current public release: [`v0.4.3`](https://github.com/writeitai/remember-stack/r
 
 ### Retrieval and agent surfaces
 
-- Search indexes, knowledge-graph snapshots, and a browsable corpus filesystem
+- PostgreSQL-native search indexes, a live SQL/PGQ graph, and a browsable corpus filesystem
 - Four assured operations: `resolve_entity`, `testimony_context`, `fact_context`, `answer_context`
-- Open query: sandboxed SQL, read-only Cypher, saved examples, schema discovery
+- Open query: sandboxed SQL, typed live-graph helpers, saved examples, schema discovery
 - MCP assured-operation and open-query tools (stdio client transport)
 - Self-accounting response envelopes (grain, freshness, contradictions, typed negatives)
 - API, CLI, and MCP in lockstep; optional filesystem mounts and a deployment-rendered consumption skill
@@ -34,7 +34,7 @@ Current public release: [`v0.4.3`](https://github.com/writeitai/remember-stack/r
 
 ### Operations
 
-- Docker Compose single-deployment self-host (Postgres, object storage, API, continuous workers)
+- Docker Compose single-deployment self-host (PostgreSQL 19 prerelease, object storage, API, continuous workers)
 - Optional API Bearer BIND (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND`); default Compose stays open
 - PostgreSQL-native P1 search indexes; no separate search-store maintenance process
 - Work ledger with retries, dead-letter queue, optional spend ceilings
@@ -80,6 +80,19 @@ Current public release: [`v0.4.3`](https://github.com/writeitai/remember-stack/r
   `{issued_deployment_uuid}:{sha256hex}`
   ([#305](https://github.com/writeitai/remember-stack/pull/305)). Unset keeps
   the open quickstart. `GET /healthz` stays unauthenticated.
+
+## What landed after v0.4.3 (in v0.5.0)
+
+- PostgreSQL 19 SQL/PGQ now serves fixed one- and two-hop live graph patterns;
+  bounded recursive SQL serves deeper neighborhood, shortest-path, and citation
+  traversal with explicit expansion, frontier, result, time, memory, and
+  connection limits.
+- PostgreSQL is the single graph authority. The legacy embedded graph store,
+  public Cypher, graph-build workers, and snapshot serving were removed in this
+  pre-1.0 clean cut.
+- Typed graph HTTP and Python SDK operations expose current and bi-temporal
+  as-of traversal. The release also publishes a multi-architecture PostgreSQL
+  19 Beta 3 foundation with pinned pgvector, pg_textsearch, and pg_partman.
 
 ## Intentionally not in the library
 

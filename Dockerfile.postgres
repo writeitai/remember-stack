@@ -1,22 +1,80 @@
-FROM pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd3876e9be48afda16c1e331af1c75ceb2ff
+FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572 AS pg_textsearch_builder
 
-ARG TARGETARCH
-ARG PG_TEXTSEARCH_VERSION=1.3.1
+ARG PG_TEXTSEARCH_REVISION=578ff529894992fb9e67cae4c69424e65c84868e
+ARG PG_TEXTSEARCH_SOURCE_SHA256=8632f91231251dc3e19395ef6a0d4d158d5f5920ba420691471771418e2a7cc7
+ARG PG_TEXTSEARCH_PATCH_SHA256=a8c97f39714ab0193c82fcda3709d3e4df54bcc7f2804fde8f970710484dbdc6
+ARG PG_TEXTSEARCH_LICENSE_SHA256=d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5
+ARG PG_TEXTSEARCH_NOTICE_SHA256=ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d
 
 RUN set -eux; \
+    for pgdg_source_file in \
+      /etc/apt/sources.list.d/pgdg.list \
+      /etc/apt/sources.list.d/pgdg.sources; do \
+      if [ -f "${pgdg_source_file}" ]; then \
+        sed -i \
+          -e 's|https://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g' \
+          -e 's|trixie-pgdg|trixie-pgdg-archive|g' \
+          "${pgdg_source_file}"; \
+      fi; \
+    done; \
+    grep -R 'apt-archive.postgresql.org/pub/repos/apt' \
+      /etc/apt/sources.list.d/pgdg.*; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl \
-      postgresql-18-partman=5.5.0-1.pgdg13+1 unzip; \
-    case "${TARGETARCH}" in \
-      amd64) pg_textsearch_sha256="9f256dc7f082235d8fead7df361427e0a0344a9ee64662f3b50449eeb90bbc7c" ;; \
-      arm64) pg_textsearch_sha256="62b6351a320c82dcf802d15704b6c282f2eb03df29ed9906d5c56fafc6c21b83" ;; \
-      *) echo "unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    archive="/tmp/pg-textsearch.zip"; \
-    curl --fail --location --silent --show-error \
-      "https://github.com/timescale/pg_textsearch/releases/download/v${PG_TEXTSEARCH_VERSION}/pg-textsearch-v${PG_TEXTSEARCH_VERSION}-pg18-${TARGETARCH}.zip" \
-      --output "${archive}"; \
-    echo "${pg_textsearch_sha256}  ${archive}" | sha256sum --check; \
-    unzip -q "${archive}" -d /tmp/pg-textsearch; \
-    apt-get install -y --no-install-recommends /tmp/pg-textsearch/*.deb; \
-    rm -rf /tmp/pg-textsearch "${archive}" /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl patch postgresql-server-dev-19; \
+    curl --fail --location --show-error \
+      --output /tmp/pg_textsearch.tar.gz \
+      "https://github.com/timescale/pg_textsearch/archive/${PG_TEXTSEARCH_REVISION}.tar.gz"; \
+    echo "${PG_TEXTSEARCH_SOURCE_SHA256}  /tmp/pg_textsearch.tar.gz" | sha256sum --check --strict; \
+    mkdir -p /src/pg_textsearch; \
+    tar --extract --gzip --file /tmp/pg_textsearch.tar.gz \
+      --directory /src/pg_textsearch --strip-components=1; \
+    test -s /src/pg_textsearch/LICENSE; \
+    test -s /src/pg_textsearch/NOTICE; \
+    echo "${PG_TEXTSEARCH_LICENSE_SHA256}  /src/pg_textsearch/LICENSE" | sha256sum --check --strict; \
+    echo "${PG_TEXTSEARCH_NOTICE_SHA256}  /src/pg_textsearch/NOTICE" | sha256sum --check --strict; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY docker/pg_textsearch-pg19.patch /tmp/pg_textsearch-pg19.patch
+
+RUN set -eux; \
+    echo "${PG_TEXTSEARCH_PATCH_SHA256}  /tmp/pg_textsearch-pg19.patch" | sha256sum --check --strict; \
+    cd /src/pg_textsearch; \
+    patch --batch --forward --strip=1 < /tmp/pg_textsearch-pg19.patch; \
+    make -j"$(nproc)"; \
+    make install; \
+    { \
+      sha256sum /usr/lib/postgresql/19/lib/pg_textsearch.so; \
+      find /usr/share/postgresql/19/extension -maxdepth 1 \
+        -type f -name 'pg_textsearch*' -print0 | sort -z | xargs -0 sha256sum; \
+    } > /tmp/pg_textsearch-artifacts.sha256
+
+FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572
+
+# pg_textsearch uses the PostgreSQL License at the source revision pinned above. The local
+# compatibility delta follows upstream PR 460 while PostgreSQL 19 support is
+# unmerged: https://github.com/timescale/pg_textsearch/pull/460
+COPY --from=pg_textsearch_builder /usr/lib/postgresql/19/lib/pg_textsearch.so /usr/lib/postgresql/19/lib/pg_textsearch.so
+COPY --from=pg_textsearch_builder /usr/share/postgresql/19/extension/pg_textsearch* /usr/share/postgresql/19/extension/
+COPY --from=pg_textsearch_builder /src/pg_textsearch/LICENSE /usr/share/doc/pg_textsearch/LICENSE
+COPY --from=pg_textsearch_builder /src/pg_textsearch/NOTICE /usr/share/doc/pg_textsearch/NOTICE
+COPY --from=pg_textsearch_builder /tmp/pg_textsearch-artifacts.sha256 /usr/share/doc/pg_textsearch/artifacts.sha256
+
+RUN set -eux; \
+    for pgdg_source_file in \
+      /etc/apt/sources.list.d/pgdg.list \
+      /etc/apt/sources.list.d/pgdg.sources; do \
+      if [ -f "${pgdg_source_file}" ]; then \
+        sed -i \
+          -e 's|https://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g' \
+          -e 's|trixie-pgdg|trixie-pgdg-archive|g' \
+          "${pgdg_source_file}"; \
+      fi; \
+    done; \
+    grep -R 'apt-archive.postgresql.org/pub/repos/apt' \
+      /etc/apt/sources.list.d/pgdg.*; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      postgresql-19-partman=5.5.0-1.pgdg13+1 \
+      postgresql-19-pgvector=0.8.6-1.pgdg13+1; \
+    rm -rf /var/lib/apt/lists/*

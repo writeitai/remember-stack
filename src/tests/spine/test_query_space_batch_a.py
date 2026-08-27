@@ -1681,7 +1681,7 @@ def _forbidden_identifiers(*, corpus: _Corpus, target_id: str) -> set[str]:
         ),
         "claim": (corpus.claim["a"],),
         "fact_provenance": (corpus.fact["current"],),
-        "p2_edge": (corpus.fact["current"],),
+        "graph_edge": (corpus.fact["current"],),
         "k_target": (
             corpus.doc["kcited"],
             corpus.version["kcited.v1"],
@@ -1776,7 +1776,7 @@ def _apply_deletion(*, connection: Connection, corpus: _Corpus, target_id: str) 
             {"claim": corpus.claim["a"]},
         )
         return
-    if target_id in {"fact_provenance", "p2_edge"}:
+    if target_id in {"fact_provenance", "graph_edge"}:
         connection.execute(
             text("DELETE FROM relation_evidence WHERE relation_id = :relation"),
             {"relation": corpus.fact["current"]},

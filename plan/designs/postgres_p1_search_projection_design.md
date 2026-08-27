@@ -6,7 +6,8 @@
 **Analysis:**
 [postgres_p1_search_projection_analysis.md](../analysis/postgres_p1_search_projection_analysis.md)
 **Supersedes:** D8's LanceDB placement, D93, and the removed D93 maintenance design
-**Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94
+**Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94;
+PostgreSQL version/runtime amended by D98
 
 ## 1. Problem
 
@@ -23,7 +24,7 @@ and functional proof that the existing retrieval contracts still hold.
 
 ## 2. Decision
 
-P1 SHALL be implemented in PostgreSQL 18 using:
+P1 SHALL be implemented in PostgreSQL 19 using:
 
 - `pgvector` for semantic vectors and HNSW indexes;
 - `pg_textsearch` for the admitted BM25 channels;
@@ -55,7 +56,8 @@ confirmation, rebuild behavior, and LanceDB removal boundary.
 It does not:
 
 - change the claims/facts distinction or either temporal axis;
-- move P2 graph snapshots or P3 source artifacts into PostgreSQL;
+- move P3 source artifacts into PostgreSQL (D98 separately removes P2 graph
+  snapshots by serving the live graph from PostgreSQL authority views);
 - add a generic search-engine abstraction;
 - add in-database embedding generation or an LLM to the query path;
 - add lexical fact/entity/media APIs that are not already admitted;
@@ -153,11 +155,15 @@ normalized searchable copy per live chunk, not another full source document.
 
 ## 6. Extensions and supported PostgreSQL
 
-Reference and self-host images SHALL run PostgreSQL 18, patched to the current
-18.x minor, with pinned and tested builds of:
+Reference and self-host images SHALL run PostgreSQL 19. Before GA, they pin the
+latest proven beta/RC image digest and replay from disposable storage; after
+GA, they track the current patched 19.x minor. The image carries pinned and
+tested builds of:
 
 - `vector`; and
-- `pg_textsearch`, including its required preload configuration.
+- `pg_textsearch`, including its required preload configuration. Until an
+  upstream PostgreSQL 19 artifact exists, build pinned 1.3.1 source plus the
+  reviewed D98 compatibility patch that passed 71/71 upstream SQL tests.
 
 Startup/readiness verifies PostgreSQL major version, extension availability,
 and the configured **1,536** embedding dimension. Missing requirements fail readiness;
@@ -306,7 +312,8 @@ Expected failures are:
 
 Every P1 statement carries the authenticated deployment predicate and the D68
 transaction binding. Private search state is absent from the public
-`memory_v1`, open SQL, Cypher, and raw-primitives schemas. RLS remains forbidden
+`memory_v1`, open SQL, and raw-primitives schemas. Public Cypher is absent; server-owned
+SQL/PGQ sees P1 data only through invariant views. RLS remains forbidden
 because it would add a second implicit authorization system and undermine the
 explicit, reviewable deployment-predicate contract.
 
@@ -319,7 +326,7 @@ operator-only.
 
 Implementation is a direct replacement on latest `main`:
 
-1. build and pin PostgreSQL 18, pgvector, and pg_textsearch in the reference and
+1. build and pin PostgreSQL 19, pgvector, and pg_textsearch in the reference and
    test images;
 2. add `chunk_search`, in-row embedding columns, indexes, readiness checks, and
    migrations;

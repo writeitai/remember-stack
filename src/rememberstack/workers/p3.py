@@ -1,7 +1,7 @@
 """The P3 corpus filesystem builder (e0 §6, D40/D49): the navigable tree.
 
 A real directory tree, rebuilt whole and published as an immutable snapshot
-with a pointer swap — the same rebuild-first discipline as P2 (D7). It holds
+with a pointer swap — P3's own rebuild-first discipline (D7). It holds
 no truth: every file is generated from Postgres plus the artifacts, and the
 tree is discardable.
 
@@ -356,8 +356,7 @@ def _entity_index(
         "",
         f"# {_one_line(str(entity['canonical_name']))}",
         "",
-        f"{entity.get('mention_count') or 0} mention(s)"
-        f" · graph degree {entity.get('graph_degree') or 0}",
+        f"{entity.get('mention_count') or 0} mention(s)",
         "",
     ]
     profile = _one_line(str(entity.get("profile_summary") or ""))

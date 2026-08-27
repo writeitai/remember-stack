@@ -201,10 +201,9 @@ class Freshness(BaseModel):
 
     Each contributing channel also exposes its **`believed_at` horizon**: the
     oldest system-time a query can reach before the channel can no longer
-    answer. `None` means unbounded — under D69 the hot P2 relation view keeps
-    every relation whose endpoints stay emitted, so P2's horizon is null.
-    Whenever a horizon is finite, a `believed_at` before it must return a
-    `boundary` (retrieval §3), never a silent truncation.
+    answer. Whenever a horizon is finite, a `believed_at` before it must return
+    a `boundary` (retrieval §3), never a silent truncation. The live graph has
+    no separate freshness stamp because it reads the same PostgreSQL snapshot.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -213,9 +212,6 @@ class Freshness(BaseModel):
     p1_written_inline: bool = True  # the skeleton writes P1 inline; a real
     # write-lag horizon replaces this constant with measurement (retrieval §5)
     p1_believed_at_horizon: UTCDateTime | None = None  # None = unbounded
-    p2_snapshot_version: str | None = None  # which graph snapshot answered
-    p2_snapshot_ts: UTCDateTime | None = None
-    p2_believed_at_horizon: UTCDateTime | None = None  # None = unbounded (D69)
     k: KFreshness | None = None  # present only when the answer consumed a K page
 
 
@@ -535,6 +531,8 @@ class Truncation(BaseModel):
     estimated_total: int = Field(ge=0)
     total_is_exact: bool = True  # false when the count itself hit its cap
     continuation: str | None = None
+    reason: str | None = None
+    """Machine-readable cap reason when the producer can distinguish it."""
 
 
 class Envelope(BaseModel):

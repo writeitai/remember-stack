@@ -1,5 +1,11 @@
 # Request-path metering, content-free cost export, and device-grant login
 
+> **Binding D98 amendment (2026-08-27).** Public Cypher and Cypher explain are
+> deleted surfaces. They therefore produce neither request paths nor permanent
+> zero-cost rows. Plain SQL explain remains zero-provider-call; typed live-graph
+> requests use the normal surface-metering outcome contract but make zero model
+> calls. Pre-D98 Cypher rows in matrices below are superseded.
+
 **Status:** accepted for implementation after dual review (Claude
 APPROVE_WITH_NITS r5–r6; Codex r6 REQUEST_CHANGES was the off-by-one
 forward-poll test, closed here).  
@@ -333,7 +339,7 @@ scope.
 | `GET /resolve` | — | 0 |
 | In-process `claims_about` / `claims_as_of` | `library` | 1 when ranking embeds |
 | In-process `nominate_claims` / `nominate_chunks` | `library` | 1 semantic |
-| In-process `multi_hop_context` | `library` | the two testimony embeds, **one** scope |
+| `examples.multi_hop_context` through `POST /query/sql` | `open_query` | 0; graph and text retrieval remain provider-free SQL |
 
 ### 4.3 Closed `call_site` vocabulary
 
@@ -808,7 +814,8 @@ read if the platform reports a world-readable mode.
   `request_id`.
 - Force insert **and** `persist_failures` upsert to fail → query
   raises `SurfaceCostUnrecordedError` / HTTP 503.
-- `multi_hop_context` in-process: two testimony rows, one `request_id`.
+- `examples.multi_hop_context` through SQL execute writes no model-cost rows and
+  carries the sandbox `request_id` through its ordinary query audit record.
 - Empty page → `NC1`; insert; wait `> safety_lag`; poll `NC1` still
   empty; poll returned `NC2` → row appears.
 - Same cursor twice with an insert between → identical receipt ids.

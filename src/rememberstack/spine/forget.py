@@ -973,7 +973,7 @@ _PROJECTION_PREFIXES = text(
     SELECT DISTINCT gcs_uri
     FROM projection_snapshots
     WHERE deployment_id = :deployment_id
-      AND plane IN ('P2_graph', 'P3_corpusfs')
+      AND plane = 'P3_corpusfs'
     ORDER BY gcs_uri
     """
 )

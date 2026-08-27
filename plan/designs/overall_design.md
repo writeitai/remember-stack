@@ -1,5 +1,13 @@
 # Overall System Design
 
+> **Binding D98 amendment (2026-08-27).** The architecture has no LadybugDB or
+> physical P2 graph projection. PostgreSQL 19 serves a live property graph over
+> authority views: SQL/PGQ handles fixed one/two-hop patterns and bounded
+> recursive SQL handles variable/shortest traversal. P1 remains PostgreSQL
+> search and P3 remains the corpus filesystem projection. The implementation
+> contract is [`p2_graph_design.md`](p2_graph_design.md). The three **product planes** E/K/P
+> remain; “P2” is no longer a physical store within plane P.
+
 The architecture that satisfies `plan/requirements/requirements_v3.md`. This document is the
 map; per-layer designs (this directory) are the territory. Decision rationale lives in
 `decisions.md` (root, cited as D1–D78); supporting research in `plan/analysis/`.
@@ -22,22 +30,23 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
                  │          │            ▼   ▼
                  │          │        K1 general / K2 purpose scopes
                  │          │            │   │
-                 ▼          ▼            ▼   ▼      PLANE P — PROJECTIONS (scheduled
-            ┌─────────────────────────────────────┐  rebuild; derived, no authority)
+                 ▼          ▼            ▼   ▼      PLANE P — DERIVED READS
+            ┌─────────────────────────────────────┐  (no authority)
             │ P1 search indexes (Postgres:        │
             │    pgvector + pg_textsearch BM25)   │
-            │ P2 graph snapshot (LadybugDB)       │
+            │ live graph (Postgres SQL/PGQ +      │
+            │    bounded frontier traversal)      │
             │ P3 corpus filesystem (GCS tree,     │
             │    mounted read-only to agents)     │
             └─────────────────────────────────────┘
                               │
                               ▼
                  RETRIEVAL: API / CLI / MCP / mounted FS
-            entry (Postgres P1) → expand (P2) → hydrate (PG → GCS); browse (P3)
+            entry (Postgres P1) → expand (live PG graph) → hydrate (PG → GCS); browse (P3)
 ```
 
 *(Diagram note: the arrows descending into plane P come from the E columns (E0 artifacts → P3;
-E1/E2/E3 → P1/P2) — plane P derives from the E spine only. K sits beside that flow: K pages
+E1/E2/E3 → P1/live graph) — plane P derives from the E spine only. K sits beside that flow: K pages
 and P3 cross-link as consumers of each other, but K is never a structural input to any
 projection — D40 refined; `e0_files_design.md` §6.)*
 
@@ -45,23 +54,21 @@ projection — D40 refined; `e0_files_design.md` §6.)*
 |---|---|---|---|---|
 | **E** | per-document chain | Postgres | append-only, windows close | n/a — it *is* the truth |
 | **K** | debounced/windowed | git repo | agent- and human-edited | re-compile (semantic) |
-| **P** | scheduled cycle | none | immutable snapshots | from Postgres, every cycle |
+| **P** | inline/current for P1 and graph; scheduled for P3 | none | current PostgreSQL derived state plus immutable P3 generations | reindex P1 or rebuild P3; graph catalog DDL is replayable |
 
 ## 2. Stores and sources of truth (D1, D6)
 
 | Store | Role | Authority | Rebuildable from |
 |---|---|---|---|
-| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94) | **source of truth** for plane E; P1 state remains derived | authority is PITR-backed; P1 rebuilds from authority + artifacts |
+| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94); live graph views, SQL/PGQ catalog, and bounded traversal (D98) | **source of truth** for plane E; P1/graph query structures remain derived | authority is PITR-backed; P1 rebuilds from authority + artifacts; graph metadata/functions replay from migrations |
 | **GCS — raw** | immutable original files | source of truth for file bytes | — |
 | **GCS — artifacts** | per-document markdown + `pageindex.json` + conversion sidecars, one immutable **representation** per conversion run (E0, D37/D65: `…/<content_hash>/<representation_id>/…`) | source of truth for converted bodies (nondeterministic converter output is **replayed from storage**, D7 — a toolchain bump creates a new representation beside the old, never regenerates in place) | — (like raw: backed up, not regenerated) |
 | **GCS — corpus fs** | **P3**: corpus organized as a mounted directory tree (D40) | derived | Postgres + artifacts (every cycle) |
 | **git repo** | plane K: compiled + authored knowledge (K1 plus K2 purpose scopes, D47/D73) | **source of truth** — irreducibly the human-authored content; compiled pages are semantically regenerable from the spine + recorded inputs (D45/D46) | — (own backups) |
-| **LadybugDB** | **P2**: graph projection of entities + relations | derived | Postgres (every cycle) |
-
 Two hard rules: validity/invalidation state exists **only** in authoritative Postgres
-columns — derived P1 state and Ladybug never independently decide
-truth (D6/D94); and every derived store must be
-reproducible by a tested batch path, exercised routinely (D7).
+columns — P1 and live graph queries never independently decide truth
+(D6/D94/D98); and every derived structure is replayable from its declared
+authority (D7).
 
 ## 3. Core data model (D2, D3, D5)
 
@@ -143,7 +150,7 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
 
 - **K1/K2** (git): a manifest-driven compile system (D45–D47, refined by D73; design: `k_layers_design.md`).
   A **planner** LLM maintains which pages exist and each page's mechanical **routing rule**
-  (entity / subtree / predicate / community / doc-set keys); **writer** LLMs (Codex/OpenCode)
+  (entity / subtree / predicate / doc-set keys); **writer** LLMs (Codex/OpenCode)
   compile one page each from the rule's evidence + the page's human curation + child-page
   summaries; a deterministic **driver** computes staleness by SQL (rule diff + cited-evidence
   changes), schedules writers children-before-parents, and is the repo's only automated
@@ -158,9 +165,10 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
   supported by compiled cross-project pattern summaries. Only an accountable author promotes
   or changes a principle; citations, watches, review flags, and dispatch keep it connected to
   changing evidence without rewriting it. E3 remains the system's current fact state.
-- **P2**: full rebuild from Postgres → Parquet → LadybugDB → validated immutable GCS
-  snapshot; readers serve read-only copies and hot-swap (D7). Full design:
-  `p2_graph_design.md`.
+- **Live graph**: PostgreSQL 19 property graphs over normalized authority views
+  serve fixed one/two-hop SQL/PGQ; deployment-scoped, work-bounded frontier
+  traversal serves variable/shortest paths. There is no copied graph data,
+  generation, build, or reader swap (D98). Full design: `p2_graph_design.md`.
 - **P1**: written inline by plane E (see §4); batch rebuild path exercised for embedding
   migrations and drills.
 - **P3 — corpus filesystem** (D40): a rebuildable GCS directory tree organizing the corpus for
@@ -173,20 +181,20 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
 ## 6. Retrieval architecture (D9, D48, D94)
 
 ```
-entry                          expand                    hydrate
-PostgreSQL P1: fact-label       LadybugDB snapshot:       Postgres authority:
-  semantics; claim/chunk        neighborhood, paths,      relation → evidence
-  semantic + BM25; scalars      as-of traversal           claims → documents
-PG entity registry             (D10/D44)                 → GCS bytes
+entry                          expand                     hydrate
+PostgreSQL P1: fact-label      PostgreSQL live graph:     Postgres authority:
+  semantics; claim/chunk        fixed PGQ + bounded       relation → evidence
+  semantic + BM25; scalars      frontier/as-of paths      claims → documents
+PG entity registry             (D98)                      → GCS bytes
         └──── RRF fusion ──── graph-distance + evidence-count rerank ────┘
 ```
 
 - Channels run in parallel; **RRF** fuses; rerankers: graph distance from focal entities,
   evidence count; optional cross-encoder. **Zero LLM calls** on the core path.
-- **Projections propose, the spine disposes (D48):** P1 rank and authority
-  confirmation run in one PostgreSQL statement/MVCC snapshot. P2 still
-  nominates IDs that are re-verified against live Postgres; staleness can cost
-  recall, never correctness.
+- **Derived reads propose, the spine disposes (D48):** P1 rank, graph
+  expansion, and authority confirmation use PostgreSQL authority views and a
+  shared MVCC snapshot for assured compound reads. Projection lag can affect
+  P1/P3 recall/navigation; graph generation lag no longer exists.
 - **The response contract (D49/D87):** each single-authority answer carries a
   grain-labeled envelope (fact / evidence / compiled), inline contradiction
   co-members, per-source freshness stamps (including K page staleness + open
@@ -210,12 +218,12 @@ PG entity registry             (D10/D44)                 → GCS bytes
 
 - **Postgres on Hetzner**: pgBouncer pooling, TLS for cross-cloud access, PITR backups.
 - **Workers on GCP**: Cloud Run jobs, Cloud Tasks queues (rate-limited, 2 retries + DLQ).
-- **GCS**: input files, markdown, Parquet exports, graph snapshots.
+- **GCS**: input files, conversion artifacts, and P3 corpus generations.
 - **git repo** (plane K): hosted remote + independent backup; written only by the aggregate
   workers and humans.
-- Retrieval API holds the local LadybugDB snapshot; semantic/BM25 entry and
-  authority filtering run in PostgreSQL. Source-byte hydration continues from
-  PostgreSQL coordinates to GCS.
+- Retrieval API runs semantic/BM25 entry, live graph expansion, and authority
+  filtering against the deployment PostgreSQL. Source-byte hydration continues
+  from PostgreSQL coordinates to GCS.
 
 ## 8. Cross-cutting concerns
 
@@ -225,7 +233,7 @@ PG entity registry             (D10/D44)                 → GCS bytes
   a planned batch path (re-embed by version filter).
 - **Deletion cascade**: normal input removal propagates through currency/counting and reaches K
   mechanically via citations (D45/D46). D74 hard-forget additionally scrubs PostgreSQL, explicitly
-  purges object/P1/old P2/P3/local-serving copies, erases affected K history after owner redaction,
+  purges object/P1/P3/local-serving copies, erases affected K history after owner redaction,
   and re-honors one portable manifest before every serving readiness
   (`hard_forget_design.md`).
 - **Maintenance**: PostgreSQL autovacuum/index telemetry and evidence-driven
@@ -248,7 +256,7 @@ PG entity registry             (D10/D44)                 → GCS bytes
 | `entity_identity_and_retrieval_design.md` | referent identity, no entity types, profile from observations, default retrieval (D95–D97) | **current** |
 | `k_layers_design.md` | plane K: planner/writer/driver compile system, compiled + authored pages, K1 plus K2 purpose scopes (D45–D47, D73) | **current** |
 | `k3_beliefs_design.md` | *(withdrawn — D73; principles are authored K2 content)* | — |
-| `p2_graph_design.md` | graph projection, rebuild, snapshots, search | **current** |
+| `p2_graph_design.md` | PostgreSQL 19 live graph, SQL/PGQ, bounded traversal, limits, recovery | **current** |
 | `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
 | `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
 | `postgres_p1_search_projection_design.md` | PostgreSQL-native P1 storage, retrieval indexes, readiness, rebuild, and Lance removal (D94) | **current** |
@@ -258,7 +266,7 @@ PG entity registry             (D10/D44)                 → GCS bytes
 | `media_design.md` | media (images/audio/video): converter routes, source locators, derivation disclosure, media search (D65) | **current** |
 | `docs_site_design.md` | public docs site: in-repo Next.js/MDX static module + same-PR truthfulness contract (D66) | **current** |
 | `hard_forget_design.md` | lineage hard-forget, active-store purge, and restore non-resurrection (D74) | **current** |
-| `locomo_benchmark_design.md` | pinned `RS-LoCoMo-Full-v13` complete-retrieval benchmark adapter and guarded run protocol (D78/D85/D87/D89) | **current** |
+| `locomo_benchmark_design.md` | pinned `RS-LoCoMo-Full-v14` live-graph complete-retrieval benchmark adapter and guarded run protocol (D78/D85/D87/D89/D98) | **current** |
 
 ## 10. Open questions
 

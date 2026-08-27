@@ -1,5 +1,10 @@
 # Entity identity and retrieval — design (binding)
 
+> **Binding D98 amendment (2026-08-27).** Merge and identity changes are visible
+> through survivor-normalized PostgreSQL graph views after commit; there is no
+> P2 rebuild. The D95–D97 identity, profile, and retrieval behavior is otherwise
+> unchanged.
+
 **Status:** accepted as operator-directed 2026-08-26 (D95–D97). Dual
 implementation review still applies before code lands; this document is
 the *how*, not a phased MVP.
@@ -487,7 +492,8 @@ Schema: drop `entities.type` NOT NULL (column dropped or unused). Drop
 or stop writing `mentions.emitted_type`. `predicate_signatures` unused.
 `entity_types` unused for identity (may remain as dead registry until
 migration removes it). Migrations amend `postgres_schema_design.md` in
-the same implementation PR. P2 rebuild (D7). Existing type values are
+the same implementation PR. Re-ensure the live property-graph catalog and
+rebuild P3. Existing type values are
 **not** migrated into hats; they are discarded as identity. If a fact
 “X is a bank” exists, it is already an observation.
 

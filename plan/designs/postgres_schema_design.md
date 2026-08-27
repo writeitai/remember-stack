@@ -1,11 +1,23 @@
 # Postgres Schema Design — the Plane-E Spine
 
+> **Binding D98 amendment (2026-08-27).** PostgreSQL 19 is also the live graph
+> execution host. SQL/PGQ property graphs are catalog metadata over normalized
+> `memory_v1` views; bounded recursive functions perform variable/shortest
+> traversal. `projection_plane.P1_search`/`P2_graph`, P1/P2 projection-snapshot rows,
+> `communities`, `entity_graph_metrics`, the `v_graph_*` Ladybug COPY boundary,
+> and latest-P2 analytics writeback are removed by the D98 migration. Current
+> graph degree is derived from PostgreSQL relation adjacency. Section 10 below
+> records the resulting P3-only snapshot registry and live-graph schema
+> boundary; [`p2_graph_design.md`](p2_graph_design.md) owns executable graph
+> DDL. P1 remains a logical rebuildable search plane but, under D94, has one
+> current in-database generation and no snapshot-registry row.
+
 This document specifies the **complete Postgres schema** for `rememberstack`: every table, column,
 primary key, foreign key, index, enum, and the partitioning / deletion / versioning rules that
 tie them together. Postgres is the **single source of truth for plane E** (evidence) and the
 **only home of validity/invalidation state** (D6). PostgreSQL-native P1 vectors
-and indexes are rebuildable derived state, not authority (D94); LadybugDB and the GCS
-corpus filesystem are rebuildable projections, while the K-plane git repo is
+and indexes are rebuildable derived state, not authority (D94); the GCS corpus
+filesystem is a rebuildable projection, while the K-plane git repo is
 an independently-backed source of truth whose *provenance and triggers* live here.
 
 It is the binding companion to `overall_design.md` (§3 core data model, §9 lists this doc),
@@ -144,8 +156,10 @@ CREATE EXTENSION IF NOT EXISTS vector;        -- D94 PostgreSQL-native semantic 
 CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- D94 chunk/claim BM25; also required in shared_preload_libraries
 ```
 
-PostgreSQL **18**, kept on the current patched 18.x minor, is the binding
-baseline. The selected pg_textsearch release must support PostgreSQL 18.
+PostgreSQL **19** is the binding baseline under D98. Before GA the image pins
+the latest proven beta/RC digest and databases are replayable; after GA it
+tracks the current patched 19.x minor. The selected pg_textsearch source plus
+reviewed compatibility patch must pass its upstream SQL suite on PostgreSQL 19.
 `vectorscale` is absent from the baseline. Pgvectorscale remains an unchosen
 open proposal; promoting it would require a later binding decision. Composite-FK
 column-list `ON DELETE SET NULL` requires 15+; this is
@@ -168,10 +182,10 @@ CREATE TYPE pipeline_component     AS ENUM (
   'ingester','converter','blockizer','structurer','crossreferencer','chunker','context_prefixer',  -- context_prefixer: legacy LLM location; D80 uses embedding_input_policy + embedder generations
   'embedding_input_policy',
   'extractor','grounder','resolver','normalizer','adjudicator','embedder','fact_labeler',
-  'profile_summarizer','community_detector','snapshot_builder','knowledge_planner',
+  'profile_summarizer','snapshot_builder','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
 CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','snapshot','knowledge_artifact','document_version','knowledge_dispatch');
-CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','build_snapshot','detect_communities','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget');
+CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','build_snapshot','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget');
 CREATE TYPE processing_status      AS ENUM ('pending','running','succeeded','failed','dead_letter','skipped');
 -- D67: only plane-E routes use operational lanes. K/P (and other scheduled aggregate) jobs
 -- represent their single unlaned route with SQL NULL, never a synthetic third enum value.
@@ -235,9 +249,8 @@ CREATE TYPE adjudication_outcome   AS ENUM ('add','noop','supersede','contradict
 -- exclusively the RE-EXTRACTION zero-support flag, D54 — never removal, never deletion.)
 CREATE TYPE adjudication_method    AS ENUM ('novelty_gate','exact','fuzzy','embedding','small_model','frontier_llm');
 
-CREATE TYPE projection_plane       AS ENUM ('P1_search','P2_graph','P3_corpusfs');
+CREATE TYPE projection_plane       AS ENUM ('P3_corpusfs'); -- D94/D98: only P3 has immutable snapshot generations
 CREATE TYPE snapshot_status        AS ENUM ('building','validating','published','superseded','failed');
-CREATE TYPE community_algorithm    AS ENUM ('leiden','louvain');  -- external detection pass (D11)
 
 CREATE TYPE knowledge_layer        AS ENUM ('K1','K2','K3');  -- K1/K2 are shipped scope labels; legacy K3 is inert compatibility only (D73)
 CREATE TYPE knowledge_page_kind    AS ENUM ('compiled','authored');  -- D46: machine-owned body vs human/agent-owned body
@@ -247,17 +260,17 @@ CREATE TYPE knowledge_page_kind    AS ENUM ('compiled','authored');  -- D46: mac
 CREATE TYPE knowledge_artifact_status AS ENUM ('active','stale','quarantined','tombstoned');
 CREATE TYPE knowledge_evidence_role AS ENUM ('supports','contradicts','cites');
 -- D45 routing rules — the closed, mechanically-evaluable kind set (k_layers_design.md §5):
-CREATE TYPE knowledge_rule_kind    AS ENUM ('entity','entity_subtree','predicate_beat','community','doc_set','scope_interests','manual');
-CREATE TYPE rule_key_kind          AS ENUM ('entity','predicate','community','doc_source');
+CREATE TYPE knowledge_rule_kind    AS ENUM ('entity','entity_subtree','predicate_beat','doc_set','scope_interests','manual');
+CREATE TYPE rule_key_kind          AS ENUM ('entity','predicate','doc_source');
 -- convert_kind = D46 adoption (compiled→authored, via quarantine triage) / handover
 -- (authored→compiled — the one action that NEVER auto-applies; requires author confirmation):
 CREATE TYPE plan_action            AS ENUM ('create_page','split_page','merge_pages','move_page','retire_page','adjust_rule','convert_kind');
-CREATE TYPE plan_trigger           AS ENUM ('orphan_evidence','size_overflow','community_change','reflection','writer_suggestion','human');
+CREATE TYPE plan_trigger           AS ENUM ('orphan_evidence','size_overflow','reflection','writer_suggestion','human');
 CREATE TYPE plan_decision_status   AS ENUM ('proposed','applied','rejected');
 CREATE TYPE subscription_status    AS ENUM ('active','paused','retired');  -- dispatch consumers (k_layers §5)
 -- 'authored_review' = cited/watched evidence changed under an AUTHORED page → review flag for
 -- the page's author (human or agent), never an auto-recompile (D46):
-CREATE TYPE knowledge_trigger      AS ENUM ('evidence_changed','community_changed','debounce_timer','manual','tombstone','authored_review');
+CREATE TYPE knowledge_trigger      AS ENUM ('evidence_changed','debounce_timer','manual','tombstone','authored_review');
 CREATE TYPE refresh_status         AS ENUM ('pending','running','done','failed');
 
 -- D50/D87 closed assured-operation registry (§11.A):
@@ -691,7 +704,7 @@ CREATE TABLE scope_interests (
   FOREIGN KEY (deployment_id, scope_id) REFERENCES scopes (deployment_id, scope_id) ON DELETE CASCADE
 );
 COMMENT ON TABLE scope_interests IS
-  'Per-scope interest list (D16): predicate, metadata, and keyword interests define the scope''s PROJECT_GRAPH_CYPHER view and K2 compilation selection. The legacy entity_type enum value is rejected after D96; scopes do not filter entities by class.';
+  'Per-scope interest list (D16): predicate, metadata, and keyword interests select live PostgreSQL graph/fact rows and K2 compilation inputs. The legacy entity_type enum value is rejected after D96; scopes do not filter entities by class. Selection applies at query/compile time over fully extracted facts and is never a promotion trigger (D28 withdrawn).';
 ```
 
 The deployment bootstrap creates or verifies eight dormant entity-type seed
@@ -716,7 +729,7 @@ defined in `concepts.md` §6.
 -- composite-FK target that keeps every entity reference inside one deployment (§0).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE entities (
-  entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to P1/Ladybug
+  entity_id       uuid PRIMARY KEY,            -- canonical identity; never reused (D17); flows downstream to P1/live graph
   deployment_id   uuid NOT NULL REFERENCES deployments,
   canonical_name  text NOT NULL,               -- preferred display/blocking name; mirrored as an alias row (invariant below)
   normalized_name text NOT NULL,               -- unaccent+lower(canonical_name)
@@ -727,8 +740,7 @@ CREATE TABLE entities (
   embedding_model text,                        -- configured model that produced embedding
   embedding_input_policy_version text,         -- exact profile-input rendering policy
   embedding_text_hash text,                    -- hash of the exact profile input
-  mention_count   integer NOT NULL DEFAULT 0,  -- cached |mentions|; half of blast_radius (registries §6) and a health metric
-  graph_degree    integer NOT NULL DEFAULT 0,  -- cached relation degree from the LATEST PUBLISHED P2 snapshot (§9); other half of blast_radius
+  mention_count   integer NOT NULL DEFAULT 0,  -- cached |mentions| and a blast-radius/health input; graph degree is queried live when needed
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (deployment_id, entity_id),           -- composite-FK target (tenancy isolation, §0)
@@ -737,7 +749,7 @@ CREATE TABLE entities (
   CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4))
 );
 COMMENT ON TABLE entities IS
-  'Canonical entity registry (D17/D21/D95/D96). entity_id identifies the real-world referent and is never reused; merges are redirects via merged_into, not rewrites. profile_summary caches observation prose for resolution evidence, while mention_count and graph_degree cache blast-radius inputs.';
+  'Canonical entity registry (D17/D21/D95/D96/D98). entity_id identifies the real-world referent and is never reused; merges are redirects via merged_into, not rewrites. profile_summary caches observation prose for resolution evidence; mention_count is cached; graph_degree is a compatibility scalar fixed at zero because current adjacency is computed from live PostgreSQL relations.';
 CREATE INDEX ix_entities_redirect ON entities (merged_into) WHERE merged_into IS NOT NULL;
 -- entities is searchable by name but the PRIMARY blocking index lives on aliases (below). D68
 -- gives each deployment its own instance/schema, so the blocking GIN contains only the match key:
@@ -903,7 +915,7 @@ CREATE TABLE merge_events (
   FOREIGN KEY (deployment_id, absorbed_id) REFERENCES entities (deployment_id, entity_id)
 );
 COMMENT ON TABLE merge_events IS
-  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas lets the generic-identifier guard re-evaluate affected merges; P2 rebuild re-points the graph for free.';
+  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas lets the generic-identifier guard re-evaluate affected merges; live graph views resolve redirects without a graph rebuild.';
 CREATE INDEX ix_merge_survivor ON merge_events (survivor_id);
 CREATE INDEX ix_merge_absorbed ON merge_events (absorbed_id);
 CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- guard re-evaluation by lemma
@@ -1746,7 +1758,7 @@ CREATE TABLE relation_adjudications (
   FOREIGN KEY (deployment_id, related_relation_id) REFERENCES relations (deployment_id, relation_id)
 );
 COMMENT ON TABLE relation_adjudications IS
-  'Append-only supersession/contradiction decision log (D3/D4). Explains every window closure / contradiction flag / merge proposal, by cascade rung + evidence; replayed on P2 rebuild and used for "what did we believe at T / why" audits.';
+  'Append-only supersession/contradiction decision log (D3/D4). Explains every window closure / contradiction flag / merge proposal, by cascade rung + evidence; read directly by live history/graph views for "what did we believe at T / why" audits.';
 CREATE INDEX ix_adjud_relation ON relation_adjudications (relation_id);
 CREATE INDEX ix_adjud_live     ON relation_adjudications (relation_id) WHERE superseded_by IS NULL;
 ```
@@ -1901,194 +1913,56 @@ CREATE INDEX ix_obsadjud_live        ON observation_adjudications (observation_i
 
 ---
 
-## 10. Graph analytics writeback (D11) & projection snapshots (D7, D40)
+## 10. P3 snapshot registry and live graph catalog (D40, D94, D98)
 
-P1/P2/P3 are **derived projections**; two things flow *back into* Postgres because the rest of the
-system reads them: (1) **community detection + centrality** (D11 — Louvain/Leiden run externally;
-PageRank/K-Core/WCC natively), serving K1 refresh triggers and salience priors; and (2) a
-**snapshot registry** for P1/P2/P3 (D7/D40) — observability, validation gating, reader
-coordination. Per-entity analytics are **regenerated each rebuild** and **garbage-collected** when
-their snapshot is superseded — without GC these tables grow by ~entities-per-cycle forever at the
-6-hourly cadence, which contradicts their disposable intent.
+P1 search is live derived state in PostgreSQL under D94 and has no immutable
+snapshot-registry row. The live graph is a read-only property-graph definition
+over authority views under D98 and likewise has no data snapshot, generation,
+object URI, or analytics writeback. P3 is therefore the only remaining
+immutable projection generation registered here.
 
 ```sql
--- ─────────────────────────────────────────────────────────────────────────
--- projection_snapshots — registry of P1/P2/P3 rebuilds (D7/D40). Immutable versioned snapshots;
--- a validation gate must pass before is_latest flips (failure ⇒ previous snapshot keeps serving).
--- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE projection_snapshots (
   snapshot_id     uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  plane           projection_plane NOT NULL,   -- P1_search | P2_graph | P3_corpusfs
-  version         text NOT NULL,               -- monotonic/timestamped snapshot version (also the GCS path segment)
-  gcs_uri         text NOT NULL,               -- gs://…/snapshots/<version>/
-  status          snapshot_status NOT NULL DEFAULT 'building', -- building | validating | published | superseded | failed
-  is_latest       boolean NOT NULL DEFAULT false, -- the pointer readers follow; exactly one per (deployment,plane)
-  row_counts      jsonb,                       -- per-table counts validated against Postgres (D7 validation gate)
-  validation      jsonb,                       -- validation report (pass/fail per check)
-  built_from_watermark timestamptz,            -- max ingested_at included — bounds projection staleness (freshness SLA = cadence, D7)
+  plane           projection_plane NOT NULL DEFAULT 'P3_corpusfs',
+  version         text NOT NULL,
+  gcs_uri         text NOT NULL,
+  status          snapshot_status NOT NULL DEFAULT 'building',
+  is_latest       boolean NOT NULL DEFAULT false,
+  row_counts      jsonb,
+  validation      jsonb,
+  built_from_watermark timestamptz,
   built_at        timestamptz NOT NULL DEFAULT now(),
   published_at    timestamptz,
   UNIQUE (deployment_id, plane, version),
-  UNIQUE (deployment_id, snapshot_id)           -- composite-FK target (tenancy isolation, §0)
+  UNIQUE (deployment_id, snapshot_id),
+  CHECK (plane = 'P3_corpusfs')
 );
 COMMENT ON TABLE projection_snapshots IS
-  'Registry of immutable P1/P2/P3 snapshots (D7/D40). Validation gates is_latest; old snapshots are free point-in-time debugging artifacts. Mirrors the GCS latest pointer for operators/workers.';
-CREATE UNIQUE INDEX ux_snapshot_latest ON projection_snapshots (deployment_id, plane) WHERE is_latest;
-
--- ─────────────────────────────────────────────────────────────────────────
--- communities — detected entity communities per P2 snapshot (D11). Recomputed each rebuild.
--- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE communities (
-  community_id    uuid PRIMARY KEY,
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  snapshot_id     uuid NOT NULL,               -- which (P2_graph) rebuild produced this partition (composite FK below)
-  label           text,                        -- optional human/LLM topic label (K1 hint)
-  size            integer NOT NULL,            -- member count; an emerging giant community can signal over-merge (health metric, registries §10)
-  algorithm       community_algorithm NOT NULL,-- leiden | louvain (external pass) — D11
-  detected_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (deployment_id, community_id),         -- composite-FK target
-  FOREIGN KEY (deployment_id, snapshot_id) REFERENCES projection_snapshots (deployment_id, snapshot_id) ON DELETE CASCADE
-);
-COMMENT ON TABLE communities IS
-  'Externally-detected communities per P2 graph snapshot (D11). Feed K1 refresh triggers ("claims in community C changed") and salience; recomputed each rebuild and GC''d with their snapshot (graph stays a projection). FK references must be a plane=P2_graph snapshot (invariant; the writer only inserts P2 snapshots here).';
-CREATE INDEX ix_communities_snapshot ON communities (snapshot_id);
-
--- ─────────────────────────────────────────────────────────────────────────
--- entity_graph_metrics — per-entity centrality + community membership per snapshot (D11). PageRank
--- = salience prior; degree feeds entities.graph_degree (blast-radius) — refreshed ONLY from the
--- currently-published is_latest P2 snapshot, after the validation gate passes, so the auto-merge
--- gate is never computed from a stale/unvalidated projection. component_id is a synthetic
--- per-snapshot WCC grouping label (NOT an FK).
--- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE entity_graph_metrics (
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  entity_id       uuid NOT NULL,               -- composite FK below
-  snapshot_id     uuid NOT NULL,               -- composite FK below (a P2_graph snapshot)
-  community_id    uuid,                        -- this entity's community in this snapshot (composite FK below)
-  pagerank        double precision,            -- salience prior for retrieval rank and K topic prioritization
-  degree          integer,                     -- relation degree — copied into entities.graph_degree from the latest published snapshot only
-  k_core          integer,                     -- k-core number (hub-ness)
-  component_id    uuid,                        -- synthetic per-snapshot weakly-connected-component label (NOT an FK; scoped to snapshot_id)
-  computed_at     timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, entity_id, snapshot_id),
-  FOREIGN KEY (deployment_id, entity_id)    REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE,
-  FOREIGN KEY (deployment_id, snapshot_id)  REFERENCES projection_snapshots (deployment_id, snapshot_id) ON DELETE CASCADE,
-  FOREIGN KEY (deployment_id, community_id) REFERENCES communities (deployment_id, community_id) ON DELETE SET NULL (community_id)
-);
-COMMENT ON TABLE entity_graph_metrics IS
-  'Per-entity graph analytics written back from each P2 rebuild (D11): PageRank salience, degree (blast-radius), k-core, community, WCC. Read by retrieval ranking, K topic prioritization, and ER health checks. GC''d when its snapshot is superseded. entities.graph_degree is refreshed only from the published is_latest snapshot.';
-CREATE INDEX ix_egm_entity   ON entity_graph_metrics (entity_id);
-CREATE INDEX ix_egm_snapshot ON entity_graph_metrics (snapshot_id);
+  'Registry of immutable P3 corpus-filesystem generations only (D40). P1 is current PostgreSQL derived state; D98 live graph catalog metadata has no snapshot row.';
+CREATE UNIQUE INDEX ux_snapshot_latest
+  ON projection_snapshots (deployment_id, plane)
+  WHERE is_latest;
 ```
 
-**Retention/GC (D7 disposability).** On a successful publish (the `is_latest` flip), the rebuild's
-finalize step **deletes `communities` and `entity_graph_metrics` rows of superseded snapshots**
-(keeping the latest, or latest-N for debugging) — the `ON DELETE CASCADE` from
-`projection_snapshots` does this when a superseded snapshot row is pruned, or the finalize step
-deletes them directly. The lightweight `projection_snapshots` registry rows and the GCS snapshot
-objects are retained as point-in-time debugging artifacts independently of this per-entity GC.
+The graph schema consists of normalized `memory_v1` current/history views, two
+non-materialized property graphs (`memory_current`, `memory_history`), and
+deployment-scoped work-bounded traversal functions. Composite graph keys and
+all source/destination references include `deployment_id`. Current views capture
+one `statement_timestamp()` per statement; history views expose both half-open
+time windows for explicit as-of filtering. The complete view shapes, graph DDL,
+privileges, indexes, function signatures, limits, failure behavior, and catalog
+repair contract are binding in
+[`p2_graph_design.md`](p2_graph_design.md) §§3–9.
 
----
-
-## 10.A P2 projection views — the LadybugDB COPY contract (D7, D43, D44)
-
-The P2 graph is a dumb projection (D6) rebuilt from Postgres (D7). To keep that projection **mechanical
-and auditable**, the entire Postgres→LadybugDB boundary is a set of read-only **views** — one per graph
-node/rel table — that pre-cast, pre-filter, survivor-redirect, and pre-aggregate, so the LadybugDB side is
-a trivial `COPY <T> FROM SQL_QUERY('pg', 'SELECT * FROM v_graph_<t>')` (or the Parquet equivalent — same
-views). Full analysis + LadybugDB-side DDL: `plan/analysis/ladybug_translation_research/SYNTHESIS.md`;
-decision **D44**. The three transforms (timestamptz→naive-UTC, enum→text, drop graph-irrelevant columns)
-and two correctness rules (merge-redirect, keep-retracted) live here, **not** in the graph worker.
-
-The graph consumes a thin slice: `entities`→`Entity`, `documents`→`Document`, `relations`→`RELATES`,
-`mentions⋈resolution_decisions`→`MENTIONED_IN`, `document_crossrefs`→`DOC_CROSSREF`,
-`documents.document_entity_id`→`IS_DOCUMENT`. **Observations and claims never project** (D43/D18 — a value
-is not a graph node). One snapshot = one deployment (D16: separate Postgres per deployment), so the views
-take no `deployment_id` parameter.
-
-```sql
--- Resolve every entity id to its final merge SURVIVOR. A merge is a REDIRECT, not a rewrite
--- (entities.merged_into; entity_id never reused) and relations are NOT re-pointed in PG — so endpoints
--- MUST be redirected here, or the rebuild silently drops every edge touching a merged entity. Cycle-safe
--- (merged_into acyclicity is not schema-enforced); the rebuild's validation gate (below) aborts the
--- snapshot if any retained endpoint fails to resolve to exactly one emitted survivor.
-CREATE VIEW v_graph_survivor AS
-WITH RECURSIVE chain(entity_id, cur, depth) AS (
-  SELECT entity_id, entity_id, 0 FROM entities
-  UNION ALL
-  SELECT c.entity_id, e.merged_into, c.depth + 1
-  FROM chain c JOIN entities e ON e.entity_id = c.cur
-  WHERE e.merged_into IS NOT NULL AND c.depth < 64          -- cycle / runaway guard
-)
-SELECT entity_id,
-       (SELECT cur FROM chain x WHERE x.entity_id = chain.entity_id ORDER BY depth DESC LIMIT 1) AS survivor
-FROM chain GROUP BY entity_id;   -- survivor = the terminal (merged_into IS NULL) node of each chain
-
--- Nodes: survivors only; cast timestamps. Graph-derived metrics (pagerank/graph_degree) are NOT loaded —
--- they are computed POST-load (D11); reprojecting a stored value is circular. entity_id stays native UUID
--- (PK verified in LadybugDB source/tests; STRING fallback = entity_id::text, applied uniformly to the PK
--- AND every endpoint).
-CREATE VIEW v_graph_entities AS
-SELECT entity_id AS id, type, canonical_name AS name, normalized_name,
-       profile_summary AS summary, (created_at AT TIME ZONE 'UTC') AS created_at
-FROM   entities WHERE status = 'active';                    -- merged/retired entities are not nodes
-
-CREATE VIEW v_graph_documents AS
-SELECT d.doc_id AS id, d.title, d.source_uri,
-       (dv.published_at AT TIME ZONE 'UTC')::date AS published_at  -- the CURRENT version's date (D55); NULL when unset
-FROM   documents d
-LEFT JOIN document_versions dv
-       ON dv.deployment_id = d.deployment_id AND dv.version_id = d.current_version_id
-WHERE  d.deleted_at IS NULL;   -- lineages project; a lineage mid-ingest (no current version yet) projects with NULL date (F2)
-
--- Edges: endpoints are the FIRST TWO columns (FROM, TO), survivor-redirected and guarded so both
--- endpoints exist as emitted nodes (else COPY-REL throws). Keep EVERY invalidated edge by default for
--- transaction-time as-of (D69): there is no invalidation-age filter and a closed valid-time fact is
--- unaffected. Endpoint joins are the retention boundary. Parallel edges with distinct relation_id are
--- PRESERVED (no blind DISTINCT — same-(s,p,o) collapse is E3's job, D43).
-CREATE VIEW v_graph_relates AS
-SELECT s1.survivor AS "from", s2.survivor AS "to",
-       r.relation_id, r.predicate, r.fact_label AS fact,
-       r.evidence_count::bigint AS evidence_count, r.contradict_count::bigint AS contradict_count,
-       r.confidence::float8 AS confidence, r.contradiction_group,
-       (r.valid_from AT TIME ZONE 'UTC') AS valid_from, (r.valid_until AT TIME ZONE 'UTC') AS valid_until,
-       (r.ingested_at AT TIME ZONE 'UTC') AS ingested_at, (r.invalidated_at AT TIME ZONE 'UTC') AS invalidated_at
-FROM   relations r
-JOIN   v_graph_survivor s1 ON s1.entity_id = r.subject_entity_id
-JOIN   v_graph_survivor s2 ON s2.entity_id = r.object_entity_id
-JOIN   entities e1 ON e1.entity_id = s1.survivor AND e1.status = 'active'   -- endpoint emitted as a node
-JOIN   entities e2 ON e2.entity_id = s2.survivor AND e2.status = 'active';
--- relations.status (GENERATED) is DROPPED — liveness is derived in Cypher (invalidated_at IS NULL), D6.
-
-CREATE VIEW v_graph_mentioned_in AS                          -- aggregate: no (entity,doc) base table
-SELECT s.survivor AS "from", m.doc_id AS "to",
-       COUNT(*)::bigint AS mention_count, (MIN(m.created_at) AT TIME ZONE 'UTC') AS first_seen
-FROM   mentions m
-JOIN   resolution_decisions rd ON rd.mention_id = m.mention_id AND rd.superseded_by IS NULL   -- live verdict
-JOIN   v_graph_survivor s ON s.entity_id = rd.entity_id
-JOIN   entities e ON e.entity_id = s.survivor AND e.status = 'active'
-WHERE  EXISTS (SELECT 1 FROM documents d WHERE d.doc_id = m.doc_id AND d.deleted_at IS NULL)
-GROUP  BY s.survivor, m.doc_id;
-
-CREATE VIEW v_graph_crossref AS
-SELECT from_doc_id AS "from", to_doc_id AS "to", kind::text AS kind, context
-FROM   document_crossrefs WHERE to_doc_id IS NOT NULL;       -- nullable = cited-but-not-ingested → no edge
-
-CREATE VIEW v_graph_is_document AS                           -- bridge: Document-typed Entity ↔ its E0 doc
-SELECT s.survivor AS "from", d.doc_id AS "to"
-FROM   documents d
-JOIN   v_graph_survivor s ON s.entity_id = d.document_entity_id
-JOIN   entities e ON e.entity_id = s.survivor AND e.status = 'active'
-WHERE  d.document_entity_id IS NOT NULL AND d.deleted_at IS NULL;
-```
-
-**Rebuild gate (D44).** Before the snapshot pointer-swap (D7), the worker asserts: (1) every retained edge
-endpoint resolved to exactly one emitted survivor (no merge cycle, no dangling endpoint); (2) per-table
-graph row-count vs. view row-count match. A failure **aborts** the snapshot rather than publishing a
-corrupt graph. `COPY <Node|Rel> FROM SQL_QUERY('pg', …)` is verified; the committed transport stays the
-**Parquet hop** (D7) until cross-DB attach throughput at 10⁷–10⁸ is measured — both transports consume
-these same views.
+There are no `communities` or `entity_graph_metrics` tables, community enums,
+P2 rows in `projection_snapshots`, `v_graph_*` export views, Ladybug COPY
+contract, graph Parquet, or graph snapshot GC. Current entity degree is
+computed only in the clustering query from indexed live relation adjacency;
+PageRank, k-core, WCC, and Louvain/Leiden have no shipped consumer and are not
+persisted. Reintroducing any such analytic state requires a new accepted
+design, concrete consumer, freshness contract, and resource/retention plan.
 
 ---
 
@@ -2180,7 +2054,7 @@ CREATE TABLE knowledge_plan_decisions (
   scope_id        uuid,                        -- composite FK below
   action          plan_action NOT NULL,        -- create_page | split_page | merge_pages | move_page | retire_page | adjust_rule | convert_kind
   payload         jsonb NOT NULL,              -- paths, rule diffs, rationale text
-  trigger         plan_trigger NOT NULL,       -- orphan_evidence | size_overflow | community_change | reflection | writer_suggestion | human
+  trigger         plan_trigger NOT NULL,       -- orphan_evidence | size_overflow | reflection | writer_suggestion | human
   planner_version text NOT NULL,               -- LOGICAL FK → pipeline_component_versions (knowledge_planner)
   status          plan_decision_status NOT NULL DEFAULT 'proposed', -- proposed | applied | rejected
   plan_run_id     uuid REFERENCES knowledge_plan_runs (run_id), -- NULL only for explicit human/quarantine decisions
@@ -2283,19 +2157,19 @@ COMMENT ON TABLE knowledge_page_rules IS
 -- knowledge_rule_keys — the routing INVERTED INDEX (D45): rule match keys materialized so that
 -- routing a batch of new evidence is one indexed lookup (the D4 block-first philosophy — exact
 -- keys narrow; nothing expensive runs corpus-wide). Derived-membership rules (entity_subtree
--- via the part_of closure; community via the D11 writeback) get their keys RE-MATERIALIZED by
--- the driver when their inputs change — both arrive as ordinary evidence events.
+-- via the part_of closure) get their keys RE-MATERIALIZED by the driver when their inputs
+-- change; both arrive as ordinary evidence events.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE knowledge_rule_keys (
   deployment_id   uuid NOT NULL,               -- LOGICAL FK → deployments (tenancy-leading lookup index below)
   rule_id         uuid NOT NULL REFERENCES knowledge_page_rules (rule_id) ON DELETE CASCADE,
-  key_kind        rule_key_kind NOT NULL,      -- entity | predicate | community | doc_source
-  key_value       text NOT NULL,               -- uuid-as-text for entity/community; predicate name; doc source
+  key_kind        rule_key_kind NOT NULL,      -- entity | predicate | doc_source
+  key_value       text NOT NULL,               -- uuid-as-text for entity; predicate name; doc source
   PRIMARY KEY (rule_id, key_kind, key_value)
 );
 CREATE INDEX ix_krule_keys_lookup ON knowledge_rule_keys (deployment_id, key_kind, key_value);
 COMMENT ON TABLE knowledge_rule_keys IS
-  'Inverted index over rule match keys (D45): new evidence → its E-plane labels (entities, predicate, community, doc source) → the rules (page- or subscription-owned) it affects, in one lookup. The key set of a derived-membership rule is re-materialized when its inputs change.';
+  'Inverted index over rule match keys (D45): new evidence → its E-plane labels (entities, predicate, doc source) → the rules (page- or subscription-owned) it affects, in one lookup. The key set of a derived-membership rule is re-materialized when its inputs change.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- knowledge_page_watches — PAGE-LEVEL watch targets (k_layers §5): subscribe to another page's
@@ -2421,8 +2295,8 @@ CREATE TABLE knowledge_refresh_queue (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   artifact_id     uuid,                        -- composite FK below (nullable); NULL on evidence batches — routing via rule keys (D45)
   scope_id        uuid,                        -- composite FK below
-  trigger         knowledge_trigger NOT NULL,  -- evidence_changed | community_changed | debounce_timer | manual | tombstone | authored_review
-  payload         jsonb,                       -- e.g. {changed_relation_ids:[…]} | {changed_claim_ids:[…]} | {community_id:…} | {deleted_doc_id:…}
+  trigger         knowledge_trigger NOT NULL,  -- evidence_changed | debounce_timer | manual | tombstone | authored_review
+  payload         jsonb,                       -- e.g. {changed_relation_ids:[…]} | {changed_claim_ids:[…]} | {deleted_doc_id:…}
   not_before      timestamptz,                 -- debounce delay — don't process before this
   status          refresh_status NOT NULL DEFAULT 'pending', -- pending | running | done | failed
   enqueued_at     timestamptz NOT NULL DEFAULT now(),
@@ -2605,10 +2479,11 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
    supersession in audit.
 7. **`entities`**: not deleted; a separate GC **retires** (`status='retired'`) entities with zero
    surviving mentions. They are **not physically deleted**, because `merge_events`,
-   `resolution_exclusions`, `relation_adjudications`, and `entity_graph_metrics` reference them and
-   D21 mandates retaining merge history for un-merge. Retired entities are not emitted on rebuild.
-8. **P1/P2/P3**: cascade "for free" — projections don't materialize removed/retired data on the next
-   rebuild (D40).
+   `resolution_exclusions` and `relation_adjudications` reference them and D21 mandates retaining
+   merge history for un-merge. Retired entities disappear from later live-graph statements.
+8. **Derived reads**: PostgreSQL P1 indexes and live-graph views reflect the committed authority
+   change without a projection generation. P3 stops materializing the record on its next rebuild
+   (D40).
 
 ### 13.2 Hard forget (GDPR — erase the bytes *and* the derived text)
 
@@ -2671,9 +2546,9 @@ Labs."*
    `relation_adjudications` row records why, and the relation's `valid_until`/`invalidated_at` close
    (the GiST EXCLUDE permits this — the closed window no longer overlaps a live one; `c1`,`c2` claims
    untouched, D3). `status` flips to `invalidated` automatically (generated column).
-6. **Projections**: next P2 rebuild re-points edges; `entity_graph_metrics`/`communities` write back
-   (old snapshot's rows GC'd); `projection_snapshots` records the new version and flips `is_latest`
-   after validation. `knowledge_refresh_queue` gets an `evidence_changed` event with the changed
+6. **Derived reads**: the commit is visible immediately through P1 and the live graph; survivor
+   endpoint resolution happens in the normalized graph views and no P2 rebuild or analytics
+   writeback exists. `knowledge_refresh_queue` gets an `evidence_changed` event with the changed
    relation/claim IDs; the K driver routes it (rule keys + citation reverse lookup, D45) — Alice's
    and Acme's compiled pages go stale, and any authored page citing the employment fact gets an
    `authored_review` flag (D46).
@@ -2682,8 +2557,8 @@ Labs."*
 
 ## 15. Non-goals (scope boundaries, not deferrals)
 
-- **No `graph_events` outbox / incremental-sync state.** P2 is rebuild-first (D7); incremental is a
-  *documented alternative* (`p2_graph_design.md` §5), not built.
+- **No `graph_events` outbox / synchronization state.** The live graph reads normalized
+  PostgreSQL views in the statement snapshot; there is no graph copy to synchronize (D98).
 - **No value/salience-gate state** (`gate_decisions` / `document_extraction_state` /
   `salience_gate_versions`) — D25–D30 withdrawn. Junk-control is in-call E2 Selection
   (`claim_extraction_decisions`) + D2 redundancy-collapse + content-hash idempotency.
@@ -2725,11 +2600,11 @@ Labs."*
 | D3 supersession at relation level, bi-temporal | `relations` 4 temporal columns + GiST EXCLUDE; `relation_adjudications`; claims immutable (incl. their D41 asserted-validity interval) |
 | D4 supersession blocking + cheap-first cascade | `ix_relations_block_subj/obj`; `relation_adjudications.method` (incl. `novelty_gate`) |
 | D5 governed predicate registry + `other:` | `predicates` (`synonyms`, `tier='other'` upsert, `usage_count` funnel) |
-| D6 graph is a projection; validity has one home | adjudicated validity only on `relations`; generated `status`; claim-validity is evidence, not a second home (D41); analytics writeback §10 |
-| D7 rebuild-first; immutable snapshots | `projection_snapshots`; replay via `*_version` + decision ledgers; snapshot GC |
+| D6/D98 graph is a read-only view; validity has one home | adjudicated validity only on `relations`; generated `status`; claim-validity is evidence, not a second home (D41); live views/property graphs/functions in `p2_graph_design.md` |
+| D7/D94/D98 projection amendment | `projection_snapshots` is P3-only; P1 is current PostgreSQL derived state and live graph metadata has no generation |
 | D94 PostgreSQL-native P1 | one `chunk_search` sidecar; one current embedding on natural claim/relation/observation/entity rows; current-only `p1_search_channels` readiness; normalized joins for filters; no opaque cross-store refs or generalized mirror tables |
-| D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; `entity_graph_metrics.pagerank/degree` |
-| D11 communities external → write back to PG | `communities`, `entity_graph_metrics` (+ GC) |
+| D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; bounded live-graph frontier distance; degree is computed from indexed live adjacency only where consumed |
+| D11 graph analytics/community writeback | superseded by D98; no analytics/community tables or producer |
 | D12 idempotency, retries, DLQ, debounced K triggers | `processing_state` identity/status/`attempts`/`max_attempts`; `cost_ledger`; `knowledge_refresh_queue` (retry ownership refined by D67) |
 | D5/D15/D96 predicate vocabulary; no entity-class gate | `predicates`, `extension_packs`; dormant `entity_types` inventory is not identity authority; `predicate_signatures` is absent |
 | D16 one graph, scope views | `scopes`, `scope_interests` |
@@ -2764,7 +2639,7 @@ Labs."*
 | D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
-| D69 unbounded graph-edge retention + post-head deployment bootstrap | §10.A `v_graph_relates` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
+| D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 
 ---
 
@@ -2789,7 +2664,7 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
    FKs. The evidence joins' pair duplicates are not part of this spike because their primary keys
    enforce evidence-once in the database.
 5. **K-provenance granularity**: whether `knowledge_artifact_evidence` at claim grain is affordable,
-   or should coarsen to relation/community grain for the largest K1 summaries.
+   or should coarsen to relation grain for the largest K1 summaries.
 6. **Un-merge ↔ supersession ripple** (registries §11 spike 3): verify replaying
    `merge_events.pre_merge_membership_snapshot` correctly re-adjudicates relation windows closed
    under a merged identity (`relation_adjudications.superseded_by` supports it; the procedure needs a
@@ -2798,8 +2673,8 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
    everywhere (D40 refinement note; `requirements_v3.md` §Plane P, `overall_design.md` §5,
    README updated; `questions.md` #25 closed). This schema already followed the binding design;
    no schema change was needed.
-8. **Snapshot retention depth** (latest-only vs latest-N for `communities`/`entity_graph_metrics`):
-   pick the debugging-history depth against storage cost.
+8. **P3 snapshot retention depth** (latest-only vs latest-N): pick the
+   debugging-history depth against storage cost.
 9. **Claim asserted-validity (D41) — measure before locking.** (a) Precision/recall of the extracted
    `claim_valid_*` interval on a golden slice + a per-fact canary for window false-extraction (D35).
    (b) Fiscal-calendar expansion ("FY2023" ≠ calendar 2023 for off-calendar years) — `precision` + the
@@ -2808,11 +2683,11 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
    needed beyond the admitted query plan; add it only for a demonstrated filter path. (d) If
    recurrence / un-datable anchor-events prove load-bearing, the expressivity child table (btree-only,
    D23-restamped) is the documented upgrade — a named alternative, not a deferral.
-10. **Invalidated relation retention in P2 (D69).** The executable default is unbounded by age:
-    `v_graph_relates` retains every relation whose survivor-redirected endpoints are emitted active
-    nodes. Measure snapshot size, rebuild duration, and transaction-time query demand at target scale.
-    Only a subsequent binding P2 design revision may introduce a finite hot-snapshot horizon and its
-    truthful fallback contract; this spike supplies evidence, not a hidden Phase-0 value.
+10. **Invalidated relation retention in live graph history (D69).** The executable default is
+    unbounded by age: `memory_v1.graph_edges_visible_history` retains every relation whose
+    survivor-redirected endpoints remain visible. Measure table/index size, vacuum behavior, and
+    as-of query demand at target scale. Only a subsequent binding design may introduce a finite
+    hot horizon and truthful fallback contract; this spike supplies evidence, not a hidden value.
 
 ## References
 

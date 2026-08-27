@@ -1,5 +1,12 @@
 # Phase 4 — Projections
 
+> **Historical completion record; graph portion superseded by D98
+> (2026-08-27).** WP-4.1–WP-4.4 record what the former Ladybug/P2 implementation
+> delivered and are not current architecture or work instructions. The binding
+> replacement is [`postgres19_sqlpgq_live_graph.md`](postgres19_sqlpgq_live_graph.md):
+> PostgreSQL 19 live graph views, SQL/PGQ, and bounded recursive SQL. WP-4.5 and
+> WP-4.6 remain the P3 history and current P3 boundary.
+
 **Goal:** the derived, rebuildable read surfaces: the graph, the corpus filesystem,
 communities.
 

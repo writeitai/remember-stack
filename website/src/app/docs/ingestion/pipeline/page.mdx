@@ -21,7 +21,7 @@ ingest → convert → structure → chunk → embed(chunks)
                                       ↓
                               reconcile (currency, evidence counts)
                                       ↓
-                         P1 updates · (scheduled) P2/P3 · K triggers
+                         P1 updates · live graph · (scheduled) P3 · K triggers
 ```
 
 All stages are **idempotent** with respect to their versioned inputs. Workers use the deployment work ledger: retry, then dead-letter for **systemic** failures (provider outage, database errors, unrecoverable handler bugs). That is not the same as a **re-derivable soft drop** inside a successful stage: a predicate outside the governed vocabulary is preserved through the `other:` escape when possible, otherwise it is dropped with structured telemetry and does not dead-letter the document version. Entity types and domain/range signature gates are not part of E3.
@@ -179,7 +179,7 @@ Relations use a **governed predicate vocabulary** with escape values and promoti
 
 ### Relations vs observations
 
-| Kind | Shape | Graph (P2)? |
+| Kind | Shape | Live graph? |
 | --- | --- | --- |
 | **Relation** | Entity–predicate–entity | Yes |
 | **Observation** | Untyped value/statement about one entity | No (P1 labels only) |
@@ -222,7 +222,7 @@ Runs when basis or version changes:
 | Projection | When | Notes |
 | --- | --- | --- |
 | **P1** | Inline with embeddings / labels | Nominate-only at read time |
-| **P2** | Whole rebuild publish | Snapshot swap after validation |
+| **Graph** | Same authority transaction | PostgreSQL 19 SQL/PGQ views; no rebuild |
 | **P3** | Whole rebuild publish | Stable paths; raw off nav tree |
 | **K** | Debounced | Compile driver, not per-claim chat |
 

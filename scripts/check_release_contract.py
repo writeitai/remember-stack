@@ -9,6 +9,9 @@ import tomllib
 
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _IMAGE = "ghcr.io/writeitai/remember-stack"
+_POSTGRES_SOURCE_MARKER = re.compile(
+    r"^FROM postgres:(19(?:beta\d+|rc\d+|(?:\.\d+)*))-"
+)
 
 
 def main() -> None:
@@ -18,6 +21,7 @@ def main() -> None:
     version = _package_version(root=root)
     _validate_semver(version=version)
     _validate_compose_pin(root=root, version=version)
+    _validate_postgres_release(root=root)
     if arguments.tag is not None:
         _validate_tag(tag=arguments.tag, version=version)
     print(f"release contract valid for RememberStack {version}")
@@ -72,6 +76,39 @@ def _validate_tag(*, tag: str, version: str) -> None:
     expected = f"v{version}"
     if tag != expected:
         raise ValueError(f"release tag must be {expected!r}, found {tag!r}")
+
+
+def _validate_postgres_release(*, root: Path) -> None:
+    """Bind Compose to the multi-architecture immutable image publisher."""
+    dockerfile = (root / "Dockerfile.postgres").read_text(encoding="utf-8")
+    base = next(
+        (
+            match.group(1)
+            for line in dockerfile.splitlines()
+            if (match := _POSTGRES_SOURCE_MARKER.match(line)) is not None
+        ),
+        None,
+    )
+    if base is None:
+        raise ValueError("Dockerfile.postgres must pin a PostgreSQL 19 source marker")
+    compose = (root / "compose.yaml").read_text(encoding="utf-8")
+    if f"image: rememberstack-postgres:{base}" not in compose:
+        raise ValueError(
+            "Compose PostgreSQL source marker must match Dockerfile.postgres"
+        )
+    workflow = (root / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        "file: Dockerfile.postgres",
+        "platforms: linux/amd64,linux/arm64",
+        f"pattern={base}-{{{{version}}}}",
+        "postgres-image-digests.json",
+    ):
+        if required not in workflow:
+            raise ValueError(
+                f"release workflow is missing PostgreSQL image contract {required!r}"
+            )
 
 
 if __name__ == "__main__":

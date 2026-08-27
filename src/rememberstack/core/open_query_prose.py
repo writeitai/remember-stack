@@ -1,18 +1,12 @@
 """Shared product prose for open-query discovery, skill, and OSS docs (§6).
 
 One authority owns the bound two-layer headline, the three neutral retrieval
-choices, the four bound SQL examples, honesty warnings, the native Cypher
-worked example, the semantic-to-relational purpose/SQL, and the structured
-worked-example set. Discovery, the consumption skill, and
+choices, the bound SQL and live-graph examples, honesty warnings, the
+semantic-to-relational purpose/SQL, and the structured worked-example set.
+Discovery, the consumption skill, and
 ``examples.claims_verbatim`` import from here so those strings cannot drift
 between surfaces. Public docs copy the bound text and tests pin equality;
 they do not import this module.
-
-The checked-in limits manifest keeps its own valid ``query_cypher`` node-list
-example (Batch D/E surface). First-call discovery and the skill use
-``NATIVE_CYPHER_TRAVERSAL_AGGREGATION`` as the traversal/aggregation worked
-example — that constant is not a manifest hash input and must not be imported
-into the hashed surface solely to improve prose.
 
 This module stays pure: core may depend only on model (import-linter).
 """
@@ -49,9 +43,9 @@ TWO_LAYER_HEADLINE_FULL: Final = f"{TWO_LAYER_HEADLINE}\n\n{TWO_LAYER_HEADLINE_N
 
 #: The three neutral first-call choices (§6); no language is preferred.
 RETRIEVAL_CHOICES: Final[tuple[str, ...]] = (
-    "Cypher gives native graph power over a complete, point-in-time P2"
-    " snapshot with mandatory built_at and age.",
     "SQL gives live PostgreSQL state and direct evidence composition.",
+    "Bounded graph helpers give live neighborhood, shortest-tier entity-path,"
+    " and directed citation-path traversal over the same PostgreSQL snapshot.",
     "The four assured operations (resolve_entity, testimony_context,"
     " fact_context, answer_context) give one-call typed answers with explicit"
     " Envelope or ContextBundle/v1 guarantees.",
@@ -119,24 +113,19 @@ WHERE r.testimony_rank = 1
   AND r.stance = 'contradicts';\
 """
 
-#: Snapshot-ID-to-live-SQL composition: Cypher returns entity ids; live SQL
-#: re-grounds them without claiming the graph row is current.
-SNAPSHOT_ID_TO_LIVE_SQL: Final = """\
--- After query_cypher returns entity ids as of built_at, re-ground live:
-SELECT e.entity_id, e.canonical_name, e.profile_summary
-FROM entities_current AS e
-WHERE e.entity_id = ANY($1::uuid[]);\
+LIVE_GRAPH_NEIGHBORHOOD_SQL: Final = """\
+SELECT g.hops, g.relation_ids, g.node_ids,
+       g.examined_edges, g.returned_paths
+FROM graph_neighborhood($1::uuid, $2::uuid, 2) AS g
+ORDER BY g.hops, g.relation_ids;\
 """
 
-#: Native Cypher worked example: hop traversal plus aggregation (not a node list).
-#: Single authority for first-call discovery/skill worked examples (§6).
-#: Not imported by the hashed limits manifest (see module docstring).
-NATIVE_CYPHER_TRAVERSAL_AGGREGATION: Final = (
-    "MATCH (a:Entity)-[r:RELATES]->(b:Entity) "
-    "RETURN a.name AS subject, r.predicate AS predicate, count(*) AS n "
-    "ORDER BY n DESC, subject, predicate "
-    "LIMIT 20"
-)
+LIVE_GRAPH_PATH_SQL: Final = """\
+SELECT g.hops, g.relation_ids, g.node_ids,
+       g.examined_edges, g.returned_paths
+FROM graph_path($1::uuid, $2::uuid, $3::uuid, 6) AS g
+ORDER BY g.hops, g.relation_ids;\
+"""
 
 #: Purpose string for the shipped ``examples.claims_verbatim`` identity.
 CLAIMS_VERBATIM_PURPOSE: Final = (
@@ -158,8 +147,9 @@ HONESTY_WARNINGS: Final[tuple[str, ...]] = (
     " questions.",
     "Empty SQL is untyped exploratory_tabular: a view's source grain is never"
     " a claim about an arbitrary outer query's result grain.",
-    "Cypher absence and aggregates are snapshot-scoped: correct as of"
-    " built_at, not a claim about state after that cut.",
+    "Graph helper absence is bounded by the disclosed traversal budgets; inspect"
+    " QueryResult.truncated, truncation_reason, and graph_invocations before"
+    " treating an empty result as exhaustive.",
     "Outer queries can erase grain and evidence context; inspect joins and"
     " projections before treating rows as adjudicated facts.",
     "Every cap and drop is part of the contract; inspect truncation_reason,"
@@ -171,8 +161,8 @@ def bound_worked_examples() -> tuple[dict[str, object], ...]:
     """Structured first-call worked examples shared by discovery and the skill.
 
     Eight examples: the four design-bound SQL bodies, two-layer divergence,
-    native Cypher traversal/aggregation, snapshot-ID re-ground, and
-    semantic-to-relational (``examples.claims_verbatim`` purpose/SQL). All
+    live neighborhood and path traversal, and semantic-to-relational
+    (``examples.claims_verbatim`` purpose/SQL). All
     string bodies live in this module so core stays pure.
     """
     return (
@@ -239,27 +229,30 @@ def bound_worked_examples() -> tuple[dict[str, object], ...]:
             "source": "open_query_prose",
         },
         {
-            "key": "native_cypher_traversal_aggregation",
-            "title": "Native Cypher traversal/aggregation",
+            "key": "live_graph_neighborhood",
+            "title": "Live graph neighborhood",
             "purpose": (
-                "Native graph power over the disclosed P2 snapshot; absence"
-                " and aggregates are correct as of built_at only."
+                "Expand one entity through bounded PostgreSQL live-graph"
+                " traversal in the query's own database snapshot. Read"
+                " truncation and work status from the QueryResult envelope's"
+                " graph_invocations, not from result rows."
             ),
-            "language": "cypher",
-            "body": NATIVE_CYPHER_TRAVERSAL_AGGREGATION,
+            "language": "sql",
+            "body": LIVE_GRAPH_NEIGHBORHOOD_SQL,
             "role": None,
             "source": "open_query_prose",
         },
         {
-            "key": "snapshot_id_to_live_sql",
-            "title": "Snapshot-ID-to-live-SQL composition",
+            "key": "live_graph_path",
+            "title": "Live graph shortest-tier path",
             "purpose": (
-                "After query_cypher returns entity ids as of built_at,"
-                " re-ground them in live SQL without treating the graph row"
-                " as current."
+                "Find bounded equal-length shortest-tier paths in the eligible"
+                " PostgreSQL graph rather than filtering an ineligible short"
+                " path. Read truncation and work status from the QueryResult"
+                " envelope's graph_invocations, not from result rows."
             ),
             "language": "sql",
-            "body": SNAPSHOT_ID_TO_LIVE_SQL,
+            "body": LIVE_GRAPH_PATH_SQL,
             "role": None,
             "source": "open_query_prose",
         },

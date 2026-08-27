@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rememberstack"
-version = "0.4.3"
+version = "0.5.0"
 description = "Open memory infrastructure for AI agents."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -44,14 +44,14 @@ server = [
     "alembic>=1.16",
     "boto3>=1.42",
     "fastapi>=0.139.2",
-    "ladybug==0.18.2",
     "markdown-it-py>=4.2.0",
     "markitdown>=0.1.6",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     # PostgreSQL's own SQL parser, used to canonicalize the memory_v1 view
     # definitions into the hashed AST. The major is pinned because the parse
-    # tree is a hash input: pglast 8.x embeds the PostgreSQL 18 grammar, which
-    # is the major the query-space manifest declares.
+    # tree is a hash input: pglast 8.x embeds the PostgreSQL 18 grammar. It is
+    # intentionally retained as the deny-by-default public SQL parser while
+    # server-owned SQL/PGQ executes only through static PostgreSQL 19 SQL.
     "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
     "pyarrow>=25.0.0",
@@ -92,7 +92,6 @@ dev = [
     "google-cloud-storage>=3.4,<4",
     "import-linter>=2.13",
     "jsonschema>=4.23",
-    "ladybug==0.18.2",
     "markdown-it-py>=4.2.0",
     "markitdown>=0.1.6",
     "nltk>=3.9",

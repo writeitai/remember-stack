@@ -108,13 +108,18 @@ promotes/maps frequent `other:` values. Start strict (high precision, smaller gr
 **Context.** Free-text predicates fragment ("works_at"/"employed_by"/"is employee of"),
 silently breaking both `(entity_id, predicate)` blocking and graph queries.
 
-**Consequences.** Ontology evolves by review, not accretion. Because the graph rebuilds (D7),
-vocabulary cleanups apply retroactively for free. Loosening later is cheap; tightening a noisy
+**Consequences.** Ontology evolves by review, not accretion. Because live graph views read the
+registry-backed PostgreSQL facts (D98), vocabulary cleanups apply on the next statement.
+Loosening later is cheap; tightening a noisy
 vocabulary later is not — hence strict-first.
 
 ---
 
 ## D6. The graph (L6) is a derived projection, never an authority
+
+**Status:** graph-projection placement superseded by D98. PostgreSQL remains
+the sole authority, and the live graph is now a query surface over normalized
+authority views rather than copied data.
 
 **Decision.** LadybugDB holds a read-optimized projection of Postgres facts. It makes no
 decisions, stores no unique state, holds **no embeddings**, and can be deleted and rebuilt at
@@ -136,6 +141,9 @@ answering current-fact — so validity-as-current-fact still has exactly one hom
 ---
 
 ## D7. Rebuild-first sync; immutable GCS snapshots; read-only readers
+
+**Status:** superseded by D98 for graph data. P3 keeps its independently
+specified rebuild/publish lifecycle; there is no P2 generation.
 
 **Decision.** The L6 worker periodically rebuilds the entire graph from a Postgres → Parquet
 export (`COPY FROM` bulk load), validates, and publishes an immutable versioned snapshot to
@@ -195,13 +203,19 @@ adjudication changes).
 
 ## D9. Search architecture: Graphiti-inspired, zero LLM calls on the query path
 
+> **D98 amendment (2026-08-27).** Any Ladybug/P2 snapshot, generation,
+> Cypher, or community statement in this decision is superseded. Independent
+> semantic/BM25 channels, RRF, and zero-LLM query execution survive; graph
+> distance/expansion now uses the bounded live PostgreSQL graph contract.
+
 **Status:** channel/RRF/no-LLM decision remains binding; Lance-specific
 placement is superseded by D94.
 
 **Decision.** Parallel retrieval channels (semantic over PostgreSQL P1 fact
 labels + claims/chunks, pg_textsearch BM25 over claims/chunks, structured
 scalar lookups, registry entity resolution) fused with **RRF**;
-reranked by **graph distance from focal entities** (native SHORTEST/BFS in the snapshot) and
+reranked by **graph distance from focal entities** (bounded live PostgreSQL
+frontier traversal) and
 **evidence count**; optional cross-encoder as a flagged final stage. Composable primitives
 plus named **search recipes** (`relation_hybrid_rrf`, `relation_near_entity`,
 `claims_verbatim`, …). Hard rule: no LLM calls in the core search path.
@@ -236,6 +250,9 @@ and rationale:
 
 ## D10. As-of traversal via projected graphs
 
+**Status:** superseded by D98. As-of traversal uses deployment-scoped,
+work-bounded PostgreSQL traversal with both clocks filtered during expansion.
+
 **Decision.** Bi-temporal filtering during graph traversal is implemented with
 `PROJECT_GRAPH_CYPHER` relationship predicates over the four temporal columns (project the
 graph down to edges valid at `$as_of`, then traverse), since LadybugDB has no native temporal
@@ -247,6 +264,11 @@ the engine understands time.
 ---
 
 ## D11. Community detection runs externally
+
+**Status:** superseded by D98. The system does not compute or persist graph
+communities, PageRank, k-core, or WCC. D98 also removes the K `community` scope
+and `community_changed` trigger; K retains entity, subtree, predicate, document,
+and manual routing.
 
 **Decision.** LadybugDB's algo extension ships PageRank, K-Core, and connected components but
 **no Louvain/Leiden** (verified in `src/extension/extension_entries.cpp`). Community detection
@@ -288,6 +310,9 @@ on the Postgres row.
 ---
 
 ## D13. LadybugDB accepted as the L6 engine (P2 after D14)
+
+**Status:** superseded by D98. Retained only as the historical engine-selection
+record; LadybugDB is not a runtime dependency or fallback.
 
 **Decision.** LadybugDB (maintained community successor of Kuzu after Kuzu Inc. was acquired
 by Apple and open-source development stopped, October 2025) is the L6 base: embedded,
@@ -382,41 +407,45 @@ Three speeds, one registry: core (slow, each element a commitment) → scope ext
 each an experiment) → `other:` (ungoverned, monitored). Analysis:
 `plan/analysis/entity_registry.md`.
 
-**Consequences.** Adding types/predicates = inserting rows. Retyping is retroactively clean
-in P2 thanks to rebuilds (D7). Only splitting heavily-used types/predicates is expensive —
+**Consequences.** Adding types/predicates = inserting rows. Retyping is visible
+through the live PostgreSQL graph views without a graph rebuild (D98). Only splitting heavily-used types/predicates is expensive —
 hence the small core. Seed lists and constraint tables go to `registries_design.md`.
 
 ---
 
 ## D16. One graph, many lenses: scopes never get their own graph
 
-**Decision.** Multiple K2 scopes (projects, team profiling, …) share one P2 graph and one
-entity space. Scopes get, in increasing order of weight: (1) **ontology extensions** (D15) —
-their vocabulary as a footprint in the shared graph; (2) **query-time scope views** via
-`PROJECT_GRAPH_CYPHER` (verified LadybugDB capability), declared in the registry as
-scope → predicate/type lists; (3) **materialized filtered snapshots** only if performance or
-access isolation ever demands — emitted by the same P2 rebuild from the same Postgres export,
-a second projection of the same truth, never a second graph.
+> **D98 amendment (2026-08-27).** Scopes share the live PostgreSQL graph and
+> entity space. `PROJECT_GRAPH_CYPHER`, Ladybug/P2 rebuilds, and materialized
+> filtered graph snapshots are removed; `scope_interests` is a query/compile-
+> time predicate and metadata footprint over live graph/fact views.
+
+**Decision.** Multiple K2 scopes (projects, team profiling, …) share one live
+PostgreSQL graph and one entity space. Scopes get ontology extensions (D15)
+and query/compile-time lenses declared through `scope_interests`; the lens
+selects predicates and metadata from shared live graph/fact views. It never
+creates another graph or materialized graph-data snapshot. A future
+performance accelerator requires a separate measured decision and cannot
+become truth or weaken deployment isolation.
 
 **Context.** Separate per-domain graphs would re-fragment identity — the exact disease the
 registry cures — and kill cross-scope queries ("which team members worked on projects
 connected to X?"), which are the point of having a graph. Plane discipline: K2 scopes are
 consumers of plane E, not owners; a scope owns its compiled markdown, never facts.
 
-**Consequences.** New scope = git directory + registry rows (types/predicates + scope-view
-definition) + extraction interests; never a new database. Rule of thumb: **scopes multiply;
-truth doesn't.** Access-sensitive scopes (e.g. people profiles) are handled by filtered
-snapshots + API-level authorization, not by forking storage. Scope-sharing applies *within*
-one deployment only — separate deployments (assistant, agency, client projects, …) are fully
+**Consequences.** New scope = git directory + registry rows (predicates/metadata
+lens) + extraction interests; never a new database. Rule of thumb: **scopes multiply;
+truth doesn't.** Scope-sharing applies *within* one deployment only — separate
+deployments (assistant, agency, client projects, …) are fully
 independent instances with separate entity spaces (`registries_design.md` §1, deployment
 model).
 
-**Refined by D50 (trust model).** The access-isolation arm ("filtered snapshots + API-level
-authorization" for sensitive scopes) is withdrawn as *access control*: content-level
+**Refined by D50 (trust model).** The former access-isolation arm (filtered
+snapshots plus API-level authorization) is withdrawn: content-level
 authorization inside a deployment is a library non-goal — a deployment is one trust domain,
 and data with a different trust boundary belongs in a **separate deployment** (this decision's
-own last sentence, promoted to the isolation mechanism). Filtered snapshots remain as the
-scope-view / performance tool of arm (3).
+own last sentence, promoted to the isolation mechanism). D98 also removes the
+filtered graph-snapshot performance arm.
 
 ---
 
@@ -1170,6 +1199,15 @@ question; the enforcement dial) tracked in `questions.md`.
 
 ## D44. The P2 projection contract — Postgres `v_graph_*` views are the LadybugDB COPY boundary; merge-redirect + keep-retracted + casts live in Postgres
 
+**Status:** Ladybug/COPY/Parquet/generation portions superseded by D98. The
+surviving semantic requirement is redirect-safe, deployment-keyed, temporal
+graph views over PostgreSQL authority data. D98 drops the six snapshot-export
+`v_graph_*` views named below and replaces them with no-row private live source
+views plus SQL/PGQ metadata. Only `v_graph_survivor` remains as the private
+merge-resolution authority behind `v_memory_entity_survivor`; it is not a graph
+export or public query surface. The D98 graph design owns the current schema
+and contracts.
+
 **Decision.** The Postgres→LadybugDB (P2) projection is defined by a set of read-only **Postgres views**
 (`v_graph_entities`, `v_graph_documents`, `v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`,
 `v_graph_is_document`, + the shared `v_graph_survivor`) — `postgres_schema_design.md` §10.A. The LadybugDB
@@ -1223,6 +1261,11 @@ graph-irrelevant columns) — which belong in the **views**, the single auditabl
 
 ## D45. Plane K compilation is planned and manifest-driven — planner / writer / driver replace free agent sessions
 
+> **D98 amendment.** The planner/writer/driver, mechanical routing, citations,
+> and staleness contracts stand. Remove `community` from the closed rule set,
+> remove D11 community keys/writeback, and remove `community_changed`; entity,
+> subtree, predicate, document, scope-interest, and manual rules remain.
+
 **Decision.** The K plane is produced by a compile system with three roles: a **planner** (LLM)
 that owns *structure* — which pages exist and each page's **routing rules**, recorded as
 append-only `knowledge_plan_decisions`; **writers** (LLM — Codex/OpenCode, optionally full agent
@@ -1230,9 +1273,9 @@ sessions with retrieval tools) that own *content* — one writer per page per cy
 latitude; and a deterministic **driver** that computes staleness, schedules writers in dependency
 order (a scope's shared model page first, children before parents, the root index last), validates
 outputs, and is the repo's **only automated committer**. Routing rules are **mechanical** — a
-closed kind set (`entity`, `entity_subtree`, `predicate_beat`, `community`, `doc_set`,
+closed kind set (`entity`, `entity_subtree`, `predicate_beat`, `doc_set`,
 `scope_interests`, `manual`) evaluated by SQL over keys plane E already produces (canonical
-entities, governed predicates, D11 communities, document metadata) via an inverted key index; an
+entities, governed predicates, document metadata) via an inverted key index; an
 LLM never decides routing at evidence-arrival time. **Citations are a binding writer output**
 (recorded in `knowledge_artifact_evidence`, uncited candidates counted). **Staleness is
 mechanical**: a page is stale iff its recorded `inputs_hash` (candidate evidence IDs + validity
@@ -1292,8 +1335,11 @@ are surfaced, never silently resolved" extended to the knowledge plane.
 > principles and stances are authored K2 content. The Decision/Context/Consequences below
 > record D47 at adoption time; D73 is the current policy.
 
+> **D98 amendment.** K1 no longer contains topic/community pages. Entity pages,
+> source digests, and the root index remain the default layout.
+
 **Decision.** Plane K runs **one mechanism**; K1/K2/K3 survive as *content tiers*, not separate
-machinery. **K1** = the default scope (entity pages, topic/community pages, source digests, the
+machinery. **K1** = the default scope (entity pages, source digests, the
 root index). **K2** = additional purpose scopes — each a git subtree + registry rows (D16),
 each with a **shared model page** (vocabulary + domain shape) that is a declared compile input of
 every page in the scope (cross-page coherence). **K3** = the belief tier: compiled pages under
@@ -1330,14 +1376,15 @@ the D15 principle one plane up; `k_layers_design.md` §2).
 
 ## D48. Projections propose, the spine disposes — hydration re-verifies against live Postgres
 
-**D94 amendment:** for PostgreSQL-native P1, nomination and authority
-confirmation execute in one statement/MVCC snapshot; separate by-ID hydration
-remains for P2 and progressive evidence/source deepening.
+**D94/D98 amendment:** for PostgreSQL-native P1, nomination and authority
+confirmation execute in one statement/MVCC snapshot. Live graph expansion can
+share that snapshot and needs no P2 nomination/confirmation round trip;
+progressive evidence/source deepening still uses by-ID hydration.
 
 **Decision.** Every **query-engine result** (API / CLI / MCP) is confirmed
 against live PostgreSQL authority before reaching a caller. PostgreSQL-native
 P1 ranking joins its authority view in the same statement and MVCC snapshot;
-P2 nominations still pass through by-ID hydration. Confirmation re-reads validity
+live graph expansion reads invariant views directly in the same database snapshot. Confirmation re-reads validity
 windows, invalidation state, and contradiction membership; ineligible candidates
 are dropped, and relevant drop/candidate counts are reported. **Compound results
 revalidate as units** (a graph path with one invalidated edge drops whole — never returned
@@ -1369,6 +1416,11 @@ bodies deliberately do not live in Postgres.
 
 ## D49. The response envelope: grain type-discipline, inline contradictions, typed negatives, freshness stamps
 
+> **D98 amendment (2026-08-27).** P2 snapshot freshness and generation
+> provenance are removed. The envelope's grain, contradiction, negative,
+> truncation, and per-source honesty rules survive; graph freshness is the
+> applied live PostgreSQL statement/transaction instant and temporal scope.
+
 **Decision.** Every retrieval response is an **envelope** carrying, besides results: the
 **grain** (`fact` / `evidence` / `compiled` / `composite` — declared by every primitive and
 recipe, enforced at composition: current-fact answers may be assembled only from
@@ -1377,11 +1429,12 @@ mechanical; a `composite` answer is `parts[]`, each part strictly single-grain, 
 answers like S47's said-vs-believe pair never dilute the discipline); **contradiction
 co-members never silently absent** (inline up to a guaranteed cap; beyond it the block always
 carries `group_id` + returned/total + a continuation — one-sided answers are a **contract
-violation**, not a ranking choice); **per-source freshness stamps** (PG live; P1 write lag; P2
-snapshot timestamp; K `compiled_at` + staleness + open-flag count — the K block is the
+violation**, not a ranking choice); **per-source freshness stamps** (PG live;
+P1 write lag; live graph applied statement/transaction instant; K `compiled_at`
++ staleness + open-flag count — the K block is the
 reader-facing flag surface `k_layers_design.md` §11 spike 9 called for, and P3's `_index.md`
 mirrors it for the browse path) **including each channel's `believed_at` horizon** (`null` means
-that the channel is not age-bounded). Under D69 the hot P2 relation view has no retention-age
+that the channel is not age-bounded). Under D69 the live history relation view has no retention-age
 horizon: it keeps all invalidated relations whose survivor-redirected endpoints remain emitted
 active nodes. A channel with a real age boundary still returns a typed `boundary` naming its
 fallback rather than silently truncating history;
@@ -1432,6 +1485,10 @@ absence, never design absence. `plan/designs/media_design.md` §4/§5/§7.
 > unchanged.
 
 ## D50. Query capability = composable zero-LLM primitives; recipes are registry data
+
+> **D98 amendment (2026-08-27).** The zero-LLM compositional model survives,
+> but its graph primitive is the typed live PostgreSQL graph plus the three
+> bounded helpers. Ladybug/Cypher/P2 generation wording below is superseded.
 
 **Decision.** The query machine is **primitives + recipes + surfaces**. Primitives are typed,
 orthogonal, side-effect-free, zero-LLM operations: `resolve` (the registry's non-LLM tiers
@@ -1880,7 +1937,7 @@ around it** — the Sentry-shaped split: fully self-deployable OSS, with the clo
 infrastructure hardship and adding the human layer. This repo delivers the **complete memory system
 for one deployment**: every stage that determines what the memory believes and whether it can be
 trusted — E0–E3, the registries + resolution cascade (D17), supersession/contradiction (D3/D4/D43),
-grounding (D32), the K compile machine (D45–D47), P1/P2/P3, the retrieval primitives/recipes/envelope
+grounding (D32), the K compile machine (D45–D47), P1/live graph/P3, the retrieval primitives/recipes/envelope
 + MCP server + CLI + mounts + consumption skill (D48–D51), the review CLI (D24), the eval harness +
 canaries (D22/D35), cost metering with enforced budgets, DLQ, and the deletion cascade — plus a
 runnable self-host stack (D61). Two **binding constraints on all future design work**:
@@ -1937,6 +1994,10 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
+> **D98 amendment (2026-08-27).** D61's no-engine-abstraction principle
+> survives, but LadybugDB is removed from the fixed engine identity. The graph
+> implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions.
+
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
 and the **reference adapter** (which is also what the cloud offering runs):
@@ -1952,7 +2013,8 @@ and the **reference adapter** (which is also what the cloud offering runs):
 | Auth perimeter | API keys (the D50 trust model) | swappable middleware (SSO lives outside the library) |
 | Hard-forget manifest + store purge capabilities (D74/D94) | dedicated append-only manifest root + LocalFS/local-Git erasure; PostgreSQL transaction scrubs P1 state | separately durable manifest store + reference object/mount/K erasure; PostgreSQL transaction scrubs P1 state |
 
-**Anti-goal — the engine is not abstracted.** PostgreSQL with pgvector/pg_textsearch, LadybugDB, the E/K/P data model,
+**Anti-goal — the engine is not abstracted.** PostgreSQL 19 with
+pgvector/pg_textsearch and the live SQL/PGQ/bounded-frontier graph, the E/K/P data model,
 PageIndex/semchunk/Claimify, and the K compile machine are the system's *identity*, not substrate; no
 port wraps them, and no design should hedge on them. The requirements' former "Imposed constraints"
 section is re-titled the **reference deployment**: the fixed production profile (Postgres on Hetzner;
@@ -1991,7 +2053,7 @@ attempts and self-host wake-ups cannot consume an application attempt.
 
 **Refined by D74/D94 (portable hard-forget).** `ForgetManifestPort` is the sole
 durable source of lineage-forget intent outside the ordinary restore set.
-`ObjectPurgePort`, `ProjectionPurgePort`, and `KGitPurgePort` are narrow erasure
+`ObjectPurgePort`, `CorpusFsPurgePort`, and `KGitPurgePort` are narrow erasure
 capabilities implemented by the same two maintained store adapters above, not
 new engine abstractions or provider families. PostgreSQL P1 state is scrubbed
 inside the PostgreSQL transaction, not through a separate adapter. Every
@@ -2434,6 +2496,13 @@ partition estate.
 
 ## D69. Unbounded graph-edge retention and post-head deployment bootstrap
 
+> **D98 amendment (2026-08-27).** The no-age-cut retention semantics survive
+> in `memory_v1.memory_history` and the eligible live/history edge views.
+> The six snapshot-export `v_graph_*` views, Ladybug COPY, P2
+> snapshots/generations, and their rebuild/spike procedure below are superseded
+> by the live PostgreSQL graph contract. The separately named
+> `v_graph_survivor` merge helper remains identity infrastructure only.
+
 **Decision.** This refinement closes three executable-contract gaps found while preparing the
 WP-0.2 migration (`postgres_schema_design.md` former §10.A retention predicate and former §3 seed
 ownership; `registries_design.md` former §4 `Document⊂CreativeWork` shorthand):
@@ -2507,6 +2576,10 @@ else in D69 changes.
 
 ## D70. Per-stage model defaults are port configuration; the extraction default is `gpt-5.6-luna`
 
+> **D98 amendment (2026-08-27).** Per-stage model configuration remains
+> binding. Any model seat or generation work attributed below specifically to
+> Ladybug/P2/community building is removed; live graph reads add no LLM stage.
+
 **Decision.** Per-stage LLM choices are per-deployment **model-provider port configuration**
 (D61), never architecture — every stage's calls resolve through
 `pipeline_component_versions` (model + prompt hash), so changing a model is a version bump
@@ -2560,6 +2633,9 @@ document, or a failed call all land the synthetic root — a document never fail
 
 ## D72. Community detection runs natively — Louvain ships on the deployed engine (refines D11)
 
+**Status:** superseded by D98. Retained as the historical WP-4.4 result; the
+runtime no longer computes, stores, or exposes communities or centrality.
+
 **Decision.** Community detection runs **inside the graph engine** on the freshly built
 snapshot: `LOUVAIN` over a projected graph, alongside `PAGE_RANK`, `K_CORE_DECOMPOSITION`,
 and `WEAKLY_CONNECTED_COMPONENTS`. Assignments and centralities are still written back to
@@ -2595,6 +2671,10 @@ rulebooks: **vendored capability surveys go stale — verify on the deployed bui
 exactly what the WP-4.1 battery exists to do.
 
 ## D73. Core principles are authored K2 content; the shipped K3 belief tier is removed (refines D47)
+
+> **D98 amendment (2026-08-27).** Authored K2 principles and the removal of K3
+> remain binding. Community-derived K routing/topic pages and P2 community
+> change inputs are removed; entity/source/root/manual scope inputs survive.
 
 **Decision.** Plane K ships with **K1 general knowledge plus any number of K2 purpose
 scopes**. It does not ship a K3 belief tier. Personal or organizational core principles — for
@@ -2634,16 +2714,20 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
+> **D98 amendment.** The graph is removed from the external purge inventory.
+> PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
+> only P3 has graph-adjacent snapshot prefixes, builders, caches, and pointers.
+
 **Decision.** Hard-forget targets one document lineage and runs one straight, resumable path
-across the existing lifecycle cascade, PostgreSQL scrubbing, object/P1 deletion, clean P2/P3
-rebuilds plus old-snapshot removal, and K history erasure. Before the request is accepted, a
+across the existing lifecycle cascade, PostgreSQL authority/P1/live-graph scrubbing, object
+deletion, clean P3 rebuild plus old-snapshot removal, and K history erasure. Before the request is accepted, a
 content-free, versioned manifest is appended through a narrow `ForgetManifestPort`; that manifest
 is the durable source of intent outside the ordinary restore set. PostgreSQL materializes it and
 tracks the ordinary worker's progress. While a request is `preparing` or an accepted manifest is
 incomplete, every serving surface for the deployment fails closed. Completion requires mechanical
 store verification and the S55 contract; failures remain visible and never reopen admission.
 
-The manifest carries only stable IDs, hashes, exact object/snapshot targets, P1 row IDs, and K
+The manifest carries only stable IDs, hashes, exact object/P3-snapshot targets, P1 row IDs, and K
 artifact IDs needed to replay after any one store has already been scrubbed. A readiness step
 enumerates manifests before traffic, rematerializes missing work, and re-honors the external purge
 for **every** manifest even when PostgreSQL still says `complete`; an old database, index, snapshot,
@@ -2661,13 +2745,14 @@ shape, adapter responsibilities, restore gate, and acceptance canary live in
 `plan/designs/hard_forget_design.md`.
 
 **Context.** Question #24 was the remaining gap between normal, audit-preserving deletion and the
-S55 promise. Rebuilding projections only changes the latest pointer: it does not erase immutable
-P1/P2/P3 bytes, local serving copies, K history, or data restored from an older backup. A database-
-only tombstone also cannot survive restoration of a database from before the request. Conversely,
+S55 promise. Rebuilding derived surfaces only changes their current state: it does not erase
+immutable P3 bytes, local serving copies, K history, or data restored from an older backup.
+PostgreSQL backups may contain prior authority/P1/live-graph-visible state. A database-only
+tombstone also cannot survive restoration of a database from before the request. Conversely,
 putting backup topology, lifecycle schedules, or a hosted deletion controller in the OSS library
 would cross D60 and violate the simplicity rule.
 
-**Rejected alternatives.** Distributed rollback/transactions across five stores; a second deletion
+**Rejected alternatives.** Distributed rollback/transactions across the active stores; a second deletion
 scheduler or control plane; provider-specific backup policy in the library; semantic similarity
 erasure; treating hard-forget as normal soft deletion; silently rewriting authored prose; and
 claiming projections purge "for free." Durable preparation followed by append-first acceptance,
@@ -2687,16 +2772,16 @@ restore order; it does not implement `remember export` / `remember import`, a un
 format, or a
 backup coordinator. Portable state is the PostgreSQL database, raw and artifact objects, the K Git
 repository, and the separately durable D74 hard-forget manifest root. Operators transfer those
-stores with their native tools while preserving the deployment id. P1, P2, and P3 are derived state
+stores with their native tools while preserving the deployment id. P1 and P3 are derived state
 and are rebuilt through their normal production paths after restore rather than copied as portable
-state.
+state. The live graph is PostgreSQL schema metadata and authority views restored with the database.
 
 The manifest root is transferred and verified first. Preserving the deployment id is an operator
 precondition; changing deployment identity is outside this portability contract. After the other
 authoritative stores are restored and ordinary schema migrations run, the existing hard-forget
 readiness pass must
 rematerialize and re-honor every manifest before any public or ordinary-work admission opens. Only
-then do the ordinary P1/P2/P3 builders run and the S55/control canaries gate traffic. Omission or loss
+then do the ordinary P1/P3 builders and live-graph catalog/helper ensure run and the S55/control canaries gate traffic. Omission or loss
 of the manifest root is an unsafe restore. An unavailable or unprovisioned root fails readiness;
 a reachable empty replacement cannot disclose lost manifests, so transfer verification remains an
 operator obligation. Snapshot consistency, credentials, provider-specific copy commands, progress,
@@ -2711,15 +2796,15 @@ tools already own those jobs. D74 supplies the only extra correctness mechanism 
 itself must own: portable forget intent that survives an older data restore.
 
 **Rejected alternatives.** A library-managed multi-store archive; a backup scheduler or migration
-control plane; exporting P1/P2/P3 bytes; embedding provider credentials; and treating a
+control plane; exporting P1/P3 bytes; embedding provider credentials; and treating a
 database-only dump as complete portable state. Each either duplicates operator tooling, crosses the
 D60 boundary, or can resurrect forgotten content.
 
 **Consequences.** WP-7.7 becomes a contract-and-drill work package, not a runtime feature. Its
 acceptance adds a real PostgreSQL old-state restore/rematerialization proof and composes it with the
 logical whole-store and real self-host independent-external-store canaries from WP-7.5. The
-already-shipped WP-7.4/WP-7.5 contracts separately prove delegation to the production P2/P3
-builders; they are dependencies rather than a claimed composed restore test. The result proves
+already-shipped WP-7.4/WP-7.5 contracts, as amended by D98, separately prove delegation to the production P3
+builder and live-graph readiness; they are dependencies rather than a claimed composed restore test. The result proves
 preserved control data, manifest-first replay, and forgotten-data non-resurrection without new
 ports, schema, settings, services, or public CLI commands. Deployment-id preservation and
 manifest-root transfer verification remain explicit operator preconditions.
@@ -2818,6 +2903,10 @@ the container package; making that package public is the only post-publish owner
 may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
+
+> **D98 amendment.** The current protocol is `RS-LoCoMo-Full-v14`: it does not
+> build or expose P2/Cypher, verifies live PostgreSQL graph readiness and P3,
+> and fingerprints the 21-tool catalog. Earlier protocol text is historical.
 
 > **Refined by D85 and D87.** V10 and v11 remain historical protocol records.
 > The D87 assured catalog requires the separately fingerprinted v12 contract in
@@ -3007,6 +3096,11 @@ fingerprint. Any changed tool inventory, call budget, model, prompt, schema, jud
 ingestion mapping, or K mode is a separately named protocol.
 
 ## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and orientation-only
+
+> **D98 amendment (2026-08-27).** The deterministic structure and summary
+> contract survives. Any downstream P2 graph generation/community consequence
+> is superseded; document structure reaches live graph views directly through
+> PostgreSQL authority and reaches P3 through its remaining explicit build.
 
 **Decision (2026-07-27, owner-directed: the system must scale; revised after Grok + Codex
 review of PR #164). Refines D71.** The E0 structure stage stops asking one LLM call to draw the
@@ -3221,6 +3315,10 @@ roll `surface_manifest_hash` through the existing manifest generator.
 
 ## D82. The Cypher boundary stays lexical/read-only; unavailable graph metadata is null; question context v4 reuses existing authorities
 
+**Status:** public-Cypher and P2 portions superseded by D98. The surviving
+default-deny public-query principle applies to SQL; server-owned SQL/PGQ is not
+a parser bypass or a public arbitrary-language endpoint.
+
 **Context-operation portion superseded by D87.** The Cypher, graph, and
 authority decisions below remain binding. D87 removes `question_context` v4,
 its optional channels, and `current_context` from the target public catalog.
@@ -3284,6 +3382,10 @@ implicit P2 neighbors in context operations with no caller-visible graph request
 
 ## D83. Open query makes a clean pre-release cut; retained operations consume `memory_v1`
 
+> **Refined by D98.** The clean-cut/no-compatibility principle remains. The two
+> Cypher entry points are removed, leaving seven open-query infrastructure
+> operations; graph access is live SQL helpers and typed operations.
+
 **Refined by D87.** The clean-cut/no-compatibility decision remains binding;
 the retained operation set is replaced by the four authority-aligned
 operations in D87. D87 also supersedes the legacy transport-name exception:
@@ -3309,7 +3411,8 @@ three operations; renaming every recipe transport is not part of this cut.
 
 Before SQL or saved-query execution, the runtime verifies the live `memory_v1`
 shape against the checked-in manifest and fails `schema_version_mismatch` on
-drift. Cypher separately verifies the P2 snapshot's pinned surface contract. P1-backed
+drift. Server-owned SQL/PGQ separately verifies the pinned live property-graph
+contract. P1-backed
 SQL functions are executor-resolved query-embedding + ranked-statement bridges. Body
 fetch verifies the reproducible embedding-text hash and source/prefix
 separation; the source-content hash remains a coordinate until the body store
@@ -3366,6 +3469,10 @@ that bypass `processing_state` (D67); making normalize chunk-scoped in the
 same change; automatic skip of dead-lettered chunks for the barrier in v1.
 
 ## D85. The full-system LoCoMo answer seat gets the complete shipped read plane
+
+> **Refined by D98.** The current successor is v14 with four assured, seven
+> primitive, seven open-query, and three P3 tools (21 total). P2/Cypher and its
+> readiness fields are absent; earlier version counts remain historical.
 
 **Refined for the next current-system protocol by D87.** V11 remains
 self-describing evidence for the surface it measured. Implementing D87 changes
@@ -3436,6 +3543,10 @@ version normalize completes so later stages and scoring can run. Bumps
 Unknown **predicates** remain D5.
 
 ## D87. Context operations mirror identity, testimony, and fact authorities
+
+> **D98 amendment (2026-08-27).** The four context operations and their grain
+> boundaries survive. Cypher/P2 snapshot confirmation is removed; graph
+> context uses typed live PostgreSQL operations and bounded helpers.
 
 **Decision (2026-08-10).** The assured retrieval catalog contains exactly four
 operations:
@@ -3577,6 +3688,10 @@ D86 “per-claim fan-out deferred” is superseded by this decision for work gra
 only — D86 drop/retry rules remain binding inside each claim job.
 
 ## D89. Fact retrieval shares one PostgreSQL authority and one operation deadline
+
+> **D98 amendment.** The fact-authority/deadline decision remains binding. Its
+> v13 benchmark identity is historical; D98 rolls the current protocol to v14
+> and the 21-tool live-graph catalog without changing these fact SQL contracts.
 
 **Decision (2026-08-11).** The unchanged 24-relation `memory_v1` surface factors
 current fact evidence into two ungranted private authorities:
@@ -3786,7 +3901,13 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
-**Decision (2026-08-14).** P1 moves from LanceDB into PostgreSQL 18. Pgvector
+> **D98 amendment (2026-08-27).** PostgreSQL 19 replaces the PostgreSQL 18
+> image baseline. P1 remains pgvector/pg_textsearch PostgreSQL state, while the
+> former P2/deep-hydration split is replaced by live graph traversal in the
+> same database; Ladybug is absent.
+
+**Decision (2026-08-14; D98 image amendment 2026-08-27).** P1 moves from
+LanceDB into PostgreSQL 19. Pgvector
 with HNSW is the required semantic implementation, and pg_textsearch is the
 required BM25 implementation for admitted claims/chunks lexical channels.
 Built-in `ts_rank`/`ts_rank_cd` are not relabelled as BM25. Semantic and BM25
@@ -3827,8 +3948,9 @@ independent consistency, maintenance, backup, and recovery boundary—not SQL
 ergonomics or a benchmark claim.
 
 **Consequences.** Ordinary DML maintains HNSW/BM25 entries; autovacuum and
-standard PostgreSQL telemetry own routine cleanup. PostgreSQL 18, continuously
-patched to the current 18.x minor, plus pinned pgvector and pg_textsearch builds
+standard PostgreSQL telemetry own routine cleanup. PostgreSQL 19, advanced
+through the reviewed beta/RC/GA replace-and-restore gates, plus pinned pgvector
+and pg_textsearch builds
 becomes a reference/self-host image requirement. Search shares PostgreSQL CPU,
 WAL, storage, backup volume, and failure blast radius. P1 stays derived and
 private, outside `memory_v1`, and can be rebuilt from authority and immutable
@@ -3856,7 +3978,8 @@ index builds; RLS.
 **Supersedes/amends.** Supersedes D8's Lance placement and D93. Amends D9's
 physical channels while preserving independent semantic/BM25 lists, RRF and
 zero LLM calls. Amends D48 so P1 confirmation is an authority join in the same
-PostgreSQL statement; P2/deep hydration rules remain. Amends D37 narrowly so
+PostgreSQL statement; live graph expansion shares PostgreSQL authority while
+progressive evidence/source hydration remains. Amends D37 narrowly so
 normalized current chunk search text may live in private `chunk_search` while
 exact source documents/bodies remain in object storage. Amends D61's fixed
 engine inventory by replacing LanceDB with pgvector and pg_textsearch. Amends
@@ -3923,6 +4046,10 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
+> **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
+> remain binding. The consequence below applies to live property-graph
+> vertices, not P2 snapshot nodes; no graph generation is implied.
+
 **Decision (2026-08-26; revised same day).** There are **no** entity
 type classes. E3 emits **names** only. Mentions are a naming transcript
 (string, claim, span) with no `emitted_type`. `entities.type`, hats,
@@ -3951,7 +4078,7 @@ law/judgments still get “list banks” via observations, not a Bank type.
 
 **Consequences.** Extract prompt has no type list. Resolver thresholds
 are not per-type (one measured curve, D22). Signature-reject paths
-disappear; predicate vocabulary (D5) remains. P2/graph nodes lose a
+disappear; predicate vocabulary (D5) remains. Live property-graph vertices have no
 type property. Extension packs that only shipped types are unused;
 packs may still add predicates.
 
@@ -3997,3 +4124,93 @@ union of all types named X; collapse every edge to unlabeled
 
 **Amends.** Clarifies D9/D50/D87 defaults. Does not change zero-LLM
 query path, envelope grain, or hydration (D48–D49).
+
+## D98. The graph is live PostgreSQL 19 SQL/PGQ plus work-bounded frontier traversal
+
+**Decision (2026-08-27).** Move the reference runtime directly to the latest
+PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
+experiment, and replace LadybugDB P2 with a live PostgreSQL graph in one cut.
+`memory_v1.memory_current` and `memory_v1.memory_history` are SQL/PGQ property
+graphs over the existing normalized authority views; they copy no graph rows.
+Server-owned fixed one- and two-hop patterns use `GRAPH_TABLE` in the cutover.
+Each fixed operation first runs a static deployment/anchor-first relational
+`budget + 1` guard in the same repeatable-read transaction; application control
+flow sends `GRAPH_TABLE` only after admission, so dense-hub refusal never
+depends on planner short-circuit behavior.
+Variable-depth neighborhoods and shortest paths use replacement
+deployment-scoped, level-at-a-time frontier functions with hard expansion,
+frontier, result, depth, temp, and time budgets. Predicate, valid-time, and
+belief-time filters apply during every expansion.
+
+Remove LadybugDB, Parquet graph export, graph objects/generations/manifests,
+local downloads and reader swaps, P2 rebuild/readiness, public Cypher, and the
+unproved global PageRank/k-core/WCC/Louvain/community products. Current graph
+degree is computed from PostgreSQL relation adjacency. P1 search remains the
+semantic/BM25 entry point; graph expansion starts from resolved ids and can
+share the same MVCC snapshot with search and authority hydration. There is no
+backward-compatible or dual-run path because there are no consumers.
+
+Public arbitrary SQL/PGQ is not part of this cut. The current exhaustive
+`pglast` 8.4 gate embeds PostgreSQL 18 grammar and rejects PGQ syntax.
+Server-owned parameterized PGQ begins now; public PGQ waits for a PG19-capable
+AST gate and a separate admission review. The documented PG19 subset is fixed
+path concatenation, element patterns/predicates, label disjunction, property
+references, `GRAPH_TABLE`, view-backed element tables, and property-graph
+DDL/catalog/ACL support. It lacks quantified paths/edges, path variables,
+TRAIL/SIMPLE/ACYCLIC and shortest/any-path modes, graph identity/topology
+functions, and within-match aggregates, so SQL/PGQ alone is not the traversal
+engine. Its repeatable-elements match mode also requires explicit UUID-based
+cycle/repeated-edge exclusion in the shipped two-hop statements.
+
+**Context.** PostgreSQL already owns entities, relations, both temporal clocks,
+merge redirects, evidence, and documents. Ladybug added a second operational
+estate and recall lag mainly to serve shallow, entity-anchored queries. A
+PostgreSQL 19 Beta 3 arm64 experiment proved property graphs over views, fixed-hop
+temporal predicates, recursive eligible-subgraph shortest path, pgvector 0.8.6
+HNSW, pg_partman 5.5.0, and pg_textsearch 1.3.1 BM25. pg_textsearch required a
+small pinned PG19 compatibility patch and then passed all 71 upstream SQL
+regression tests. Release still requires the same complete linux/amd64 and
+linux/arm64 matrix, with amd64 blocking managed deployment. Pre-GA storage is
+disposable/replayable; every beta/RC/GA image bump reruns the full capability,
+migration, backup, and restore gates.
+
+**Consequences.** Relation commits are visible to later graph statements
+without build/publish lag, and graph metadata restores with PostgreSQL. Graph
+reads now share authority/P1 CPU, memory, I/O, vacuum, and fault boundaries, so
+the design requires a bounded graph pool/role, short statement/transaction
+timeouts, read-only transactions, hard depth/result/byte clamps, cancellation,
+tenant-first predicates, supporting indexes, and representative plan/concurrent
+load gates. There is no graph-generation rollback; recovery is database
+recovery plus replayable property-graph DDL. Hard forget has no graph artifact
+inventory beyond PostgreSQL backups and bounded in-flight MVCC snapshots.
+The obsolete six snapshot-export views are removed. SQL/PGQ element properties
+carry only identities and traversal filters; fact labels, support/contradiction
+counts, confidence, and provenance are hydrated from the public authority
+views in the same repeatable-read transaction.
+
+**Design.** `plan/designs/p2_graph_design.md`.
+
+**Analysis.** `plan/analysis/postgres19_sqlpgq_live_graph_analysis.md`.
+
+**Sequencing.** `plan/plans/postgres19_sqlpgq_live_graph.md`.
+
+**Design review.** Round-one Claude Opus and Antigravity findings and their
+dispositions are recorded in
+`design/reviews/postgres19_live_graph_design_review_round1.md`; final approval
+and the subsequent behavior-level dispositions are recorded in
+`design/reviews/postgres19_live_graph_design_review_round2.md`.
+
+**Rejected.** Retain Ladybug for Cypher/analytics; SQL/PGQ alone; recursive SQL
+alone; Apache AGE label-table duplication; pgGraph CSR generations; closure
+tables; unbounded generated joins; parser bypass; permanent dual run; waiting
+for PostgreSQL 19 GA despite having no irreplaceable user database.
+
+**Supersedes/amends.** Supersedes D6, D7's graph-specific rebuild contract,
+D10, D11, D13, D16, D72, and the Ladybug-specific parts of D44, D69, D70, D73,
+D79, and D82. Amends the community-specific parts of D45/D47; the graph/restore
+parts of D74; the benchmark/query-surface parts of D78/D83/D85/D89; and
+D9/D48/D49/D50/D61/D87/D94/D96 so graph
+expansion is live PostgreSQL execution rather than P2 hydration while
+preserving zero-LLM retrieval, authority confirmation, evidence hydration,
+bounded and truncation-honest results, and PostgreSQL-native P1. D82's default-deny public
+query principle remains; only its public Cypher surface is removed.

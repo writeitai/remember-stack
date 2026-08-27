@@ -275,7 +275,7 @@ _LATEST_PROJECTIONS = text(
            built_at, published_at
     FROM projection_snapshots
     WHERE deployment_id = :deployment_id
-      AND plane IN ('P2_graph', 'P3_corpusfs')
+      AND plane = 'P3_corpusfs'
       AND is_latest
     ORDER BY plane
     """

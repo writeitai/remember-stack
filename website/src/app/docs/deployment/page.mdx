@@ -43,14 +43,14 @@ cp .env.example .env
 docker compose up --build --detach --wait
 ```
 
-The PostgreSQL 18 container mounts its named volume at `/var/lib/postgresql`.
+The pinned PostgreSQL 19 prerelease container mounts its named volume at `/var/lib/postgresql`.
 Pre-release volumes created by the older PostgreSQL image are not migrated. For
 this disposable quickstart, remove the old stack with
-`docker compose down --volumes` before starting the PostgreSQL 18 checkout.
+`docker compose down --volumes` before starting a different PostgreSQL 19 prerelease checkout.
 
-`--build` deliberately tests the checked-out source. The public `v0.4.3` release
+`--build` deliberately tests the checked-out source. The public `v0.5.0` release
 also ships this Compose file pinned to
-`ghcr.io/writeitai/remember-stack:0.4.3`; release consumers use
+`ghcr.io/writeitai/remember-stack:0.5.0`; release consumers use
 `--no-build --pull always` so Compose cannot fall back to a local source build.
 
 Do **not** put cost export on the public query port. When you want HTTP export,
@@ -129,18 +129,18 @@ The original bytes and derived Markdown/sidecars are in the MinIO buckets. The
 MinIO console is available at `http://localhost:9001` with the credentials from
 `.env`.
 
-## Publish aggregate projections
+## Publish P3
 
-P2 and P3 are whole-corpus rebuilds, not per-document workers. After the selected
-ingestion set has settled, publish both once:
+The graph reads live PostgreSQL rows and has no build. P3 is a whole-corpus
+build; after the selected ingestion set has settled, publish it once:
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-The API reads the same MinIO snapshot stores. `POST /readiness` can then verify a
-bounded list of document version IDs: all ten exact component generations must
-be terminal, and both projection builds must begin after the latest terminal stage.
+The API reads the same MinIO P3 snapshot store. `POST /readiness` can verify a
+bounded list of document version IDs plus requested pipeline, P1, live-graph,
+and P3 capabilities. P3 must begin after the latest requested terminal stage.
 The response also records the API process's current non-secret model bindings for
 configuration review; these are not processing-time provenance.
 

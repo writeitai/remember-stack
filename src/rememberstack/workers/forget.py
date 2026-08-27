@@ -1,7 +1,6 @@
 """Straight-line D74 request admission and portable-manifest acceptance."""
 
 from datetime import datetime
-from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -20,16 +19,15 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.knowledge_driver import KnowledgeCommitDriver
-from rememberstack.workers.p2 import GraphRebuildWorker
 from rememberstack.workers.p3 import CorpusFsBuilder
 from rememberstack.workers.reconcile import DeletionService
 
 
 class ForgetProjectionRebuilder(Protocol):
-    """Publish clean P2/P3 snapshots from the scrubbed authoritative spine."""
+    """Publish clean P3 bytes from the scrubbed authoritative spine."""
 
     def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
-        """Build and publish both clean projections idempotently."""
+        """Build and publish clean CorpusFS idempotently."""
         ...
 
 
@@ -43,22 +41,16 @@ class ForgetKnowledgeRebuilder(Protocol):
         ...
 
 
-class ProjectionPairForgetRebuilder:
-    """Publish clean P2 and P3 through the existing whole-rebuild workers."""
+class CorpusForgetRebuilder:
+    """Publish clean P3 through the existing CorpusFS builder."""
 
-    def __init__(
-        self, *, graph: GraphRebuildWorker, corpus: CorpusFsBuilder, workdir: Path
-    ) -> None:
-        """Bind the two production builders and one explicit scratch root."""
-        self._graph = graph
+    def __init__(self, *, corpus: CorpusFsBuilder) -> None:
+        """Bind the production CorpusFS builder."""
         self._corpus = corpus
-        self._workdir = workdir
 
     def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
-        """Publish both clean pointers; retries may safely publish a newer pair."""
-        self._graph.rebuild(
-            deployment_id=deployment_id, workdir=self._workdir / str(forget_id)
-        )
+        """Publish clean CorpusFS; retries may safely publish a newer version."""
+        del forget_id
         self._corpus.build(deployment_id=deployment_id)
 
 

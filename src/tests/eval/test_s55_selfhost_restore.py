@@ -151,9 +151,7 @@ def _seed_git(*, repository: Path) -> Path:
     return backup
 
 
-def _seed_projections(
-    *, snapshot_store: LocalFSObjectStore, p2_root: Path, mount_root: Path
-) -> None:
+def _seed_projections(*, snapshot_store: LocalFSObjectStore, mount_root: Path) -> None:
     for prefix, content in ((_PROJECTION_PREFIX, _TOKEN), (_CONTROL_PREFIX, _CONTROL)):
         try:
             snapshot_store.write_bytes(
@@ -164,8 +162,6 @@ def _seed_projections(
     forgotten_version = Path(_PROJECTION_PREFIX.root).name
     control_version = Path(_CONTROL_PREFIX.root).name
     for root, version, content in (
-        (p2_root / str(_DEPLOYMENT_ID), forgotten_version, _TOKEN),
-        (p2_root / str(_DEPLOYMENT_ID), control_version, _CONTROL),
         (mount_root / str(_DEPLOYMENT_ID), f"p3-{forgotten_version}", _TOKEN),
         (mount_root / str(_DEPLOYMENT_ID), f"p3-{control_version}", _CONTROL),
     ):
@@ -198,13 +194,12 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
     """Restore whole and independent stores; readiness must purge them again."""
     objects = LocalFSObjectStore(root=tmp_path / "objects")
     snapshots = LocalFSObjectStore(root=tmp_path / "snapshots")
-    p2_root = tmp_path / "p2"
     mount_root = tmp_path / "mount"
     repository = tmp_path / "knowledge"
     backup = _seed_git(repository=repository)
     objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode())
     objects.write_bytes(key=_CONTROL_KEY, content=_CONTROL.encode())
-    _seed_projections(snapshot_store=snapshots, p2_root=p2_root, mount_root=mount_root)
+    _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
     projection_catalog = _ProjectionCatalog()
     git = LocalGitRepository(
         repository=repository,
@@ -222,7 +217,6 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         projection_purger=SelfHostProjectionPurger(
             object_purger=snapshots,
             catalog=cast(ProjectionCatalog, projection_catalog),
-            p2_cache_root=p2_root,
             mount_root=mount_root,
         ),
         knowledge_rebuilder=cast(ForgetKnowledgeRebuilder, _KnowledgeRebuilder()),
@@ -243,9 +237,7 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         with pytest.raises(FileNotFoundError):
             objects.read_bytes(key=_OBJECT_KEY)
         assert objects.read_bytes(key=_CONTROL_KEY) == _CONTROL.encode()
-        assert not _contains(root=p2_root, token=_TOKEN)
         assert not _contains(root=mount_root, token=_TOKEN)
-        assert _contains(root=p2_root, token=_CONTROL)
         assert _contains(root=mount_root, token=_CONTROL)
         assert (
             _output("-C", str(repository), "log", "--all", "-S", _TOKEN, "--format=%H")
@@ -263,9 +255,7 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
 
     def restore_projections() -> None:
         projection_catalog.prefixes.add(_PROJECTION_PREFIX.root)
-        _seed_projections(
-            snapshot_store=snapshots, p2_root=p2_root, mount_root=mount_root
-        )
+        _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
 
     def restore_git() -> None:
         _git(

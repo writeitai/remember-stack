@@ -1,4 +1,4 @@
-"""Public readiness is derived from exact work and projection rows."""
+"""Public readiness is derived from exact work and capability state."""
 
 from collections.abc import Iterator
 from datetime import datetime
@@ -20,7 +20,9 @@ from rememberstack.core import chunker_version as packing_generation
 from rememberstack.core import ChunkerParams
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import PipelineStage
+from rememberstack.model import ReadinessRequirements
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import ensure_graph_catalog
 from rememberstack.spine import PipelineReadinessCatalog
 from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine.settings import load_database_settings
@@ -34,6 +36,17 @@ _EMBEDDER_VERSION = "embed-v1"
 # what exposes the false-empty extract status (issue #251).
 _DEFAULT_CHUNKER_VERSION = packing_generation(params=ChunkerParams())
 _OTHER_CHUNKER_VERSION = packing_generation(params=ChunkerParams(token_budget=999))
+
+
+def _requirements(
+    *,
+    pipeline: bool = True,
+    p1: bool = False,
+    live_graph: bool = False,
+    p3: bool = False,
+) -> ReadinessRequirements:
+    """Build the exhaustive clean-cut readiness request used by these proofs."""
+    return ReadinessRequirements(pipeline=pipeline, p1=p1, live_graph=live_graph, p3=p3)
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +69,7 @@ def database_engine() -> Iterator[Engine]:
 
 @pytest.fixture()
 def ready_rows(database_engine: Engine) -> tuple[Engine, UUID]:
-    """One version with two exact succeeded generations and fresh P2/P3."""
+    """One version with two exact succeeded generations and a fresh P3."""
     with database_engine.begin() as connection:
         connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
@@ -92,16 +105,15 @@ def ready_rows(database_engine: Engine) -> tuple[Engine, UUID]:
                     "finished": finished,
                 },
             )
-        for plane in ("P2_graph", "P3_corpusfs"):
-            connection.execute(
-                text(
-                    "INSERT INTO projection_snapshots (snapshot_id, deployment_id,"
-                    " plane, version, gcs_uri, status, is_latest, published_at)"
-                    " VALUES (:p, :d, CAST(:plane AS projection_plane), 'v1',"
-                    " 'mem://snapshot', 'published', true, now())"
-                ),
-                {"p": uuid4(), "d": _DEPLOYMENT_ID, "plane": plane},
-            )
+        connection.execute(
+            text(
+                "INSERT INTO projection_snapshots (snapshot_id, deployment_id,"
+                " plane, version, gcs_uri, status, is_latest, published_at)"
+                " VALUES (:p, :d, 'P3_corpusfs', 'v1',"
+                " 'mem://snapshot', 'published', true, now())"
+            ),
+            {"p": uuid4(), "d": _DEPLOYMENT_ID},
+        )
     return database_engine, version_id
 
 
@@ -120,13 +132,103 @@ def test_exact_terminal_stages_and_fresh_projections_are_ready(
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
-        require_projections=True,
+        require=_requirements(p3=True),
     )
 
     assert report.ready is True
     assert report.versions[0].ready is True
-    assert all(projection.ready for projection in report.projections)
+    assert report.capabilities["pipeline"].ready is True
+    assert report.capabilities["p3"].ready is True
+    assert report.capabilities["p3"].version == "v1"
     assert report.model_bindings == {"claim_extraction": "model-v1"}
+
+
+def test_live_graph_readiness_executes_exact_catalog_as_query_role(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """The live capability is semantic catalog plus real bounded execution."""
+    engine, version_id = ready_rows
+    report = PipelineReadinessCatalog(
+        engine=engine,
+        expected_components={
+            PipelineStage.CONVERT: "convert-v1",
+            PipelineStage.STRUCTURE: "struct-v1",
+        },
+        projections=ProjectionCatalog(engine=engine),
+    ).inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(version_id,),
+        require=_requirements(live_graph=True),
+    )
+
+    assert report.capabilities["live_graph"].required is True
+    assert report.capabilities["live_graph"].ready is True
+    assert report.ready is True
+
+
+def test_graph_catalog_ensure_repairs_missing_replayable_metadata(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Repair recreates catalog metadata without a graph-data rebuild."""
+    engine, _version_id = ready_rows
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current"
+        )
+
+    result = ensure_graph_catalog(engine=engine)
+
+    assert result.ready is True
+    assert result.changed is True
+    assert result.problems_before
+    assert result.problems_after == ()
+    assert set(result.definitions) == {"memory_current", "memory_history"}
+
+
+def test_graph_catalog_ensure_repairs_graph_role_limits_and_helper_acl(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Repair restores graph-role resource limits and helper execution grants."""
+    engine, _version_id = ready_rows
+    with engine.begin() as connection:
+        graph_role = str(
+            connection.execute(
+                text("SELECT quote_ident('rememberstack_graph_' || current_database())")
+            ).scalar_one()
+        )
+        connection.exec_driver_sql(f"ALTER ROLE {graph_role} SET work_mem = '32768kB'")
+        connection.exec_driver_sql(
+            "REVOKE EXECUTE ON FUNCTION memory_v1.graph_neighborhood("
+            "uuid, uuid, integer, text[], timestamptz, timestamptz, integer, "
+            f"integer, integer, integer) FROM {graph_role}"
+        )
+        connection.exec_driver_sql(
+            "GRANT EXECUTE ON FUNCTION memory_v1.graph_path("
+            "uuid, uuid, uuid, integer, text[], timestamptz, timestamptz, "
+            "integer, integer, integer, integer) TO PUBLIC"
+        )
+
+    result = ensure_graph_catalog(engine=engine)
+
+    assert result.ready is True
+    assert result.changed is True
+    assert any("graph role config" in problem for problem in result.problems_before)
+    assert any("helper contract" in problem for problem in result.problems_before)
+    assert result.problems_after == ()
+    with engine.connect() as connection:
+        public_execute = connection.execute(
+            text(
+                "SELECT count(*) FROM pg_proc AS p "
+                "JOIN pg_namespace AS n ON n.oid = p.pronamespace "
+                "CROSS JOIN LATERAL aclexplode(COALESCE("
+                "p.proacl, acldefault('f', p.proowner))) AS helper_acl "
+                "WHERE n.nspname = 'memory_v1' "
+                "AND p.proname IN ('graph_neighborhood', 'graph_path', "
+                "'graph_citation_path') AND helper_acl.grantee = 0 "
+                "AND helper_acl.privilege_type = 'EXECUTE'"
+            )
+        ).scalar_one()
+    assert public_execute == 0
 
 
 def test_a_missing_exact_generation_is_not_ready(
@@ -143,14 +245,14 @@ def test_a_missing_exact_generation_is_not_ready(
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
-        require_projections=True,
+        require=_requirements(p3=True),
     )
 
     assert report.ready is False
     assert report.versions[0].stages[1].status == "missing"
 
 
-def test_a_projection_started_before_terminal_work_is_not_fresh(
+def test_p3_started_before_terminal_work_is_not_fresh(
     ready_rows: tuple[Engine, UUID],
 ) -> None:
     engine, version_id = ready_rows
@@ -166,7 +268,7 @@ def test_a_projection_started_before_terminal_work_is_not_fresh(
             text(
                 "UPDATE projection_snapshots SET built_at = :built_at,"
                 " published_at = now()"
-                " WHERE deployment_id = :deployment_id AND plane = 'P2_graph'"
+                " WHERE deployment_id = :deployment_id AND plane = 'P3_corpusfs'"
             ),
             {
                 "built_at": terminal_at - timedelta(seconds=1),
@@ -184,12 +286,11 @@ def test_a_projection_started_before_terminal_work_is_not_fresh(
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
-        require_projections=True,
+        require=_requirements(p3=True),
     )
 
     assert report.ready is False
-    assert report.projections[0].plane == "P2_graph"
-    assert report.projections[0].ready is False
+    assert report.capabilities["p3"].ready is False
 
 
 def test_terminal_status_without_a_completion_timestamp_fails_closed(
@@ -217,7 +318,7 @@ def test_terminal_status_without_a_completion_timestamp_fails_closed(
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
-        require_projections=True,
+        require=_requirements(p3=True),
     )
 
     assert report.ready is False
@@ -409,9 +510,7 @@ def _extract_stage_status(
         expected_components={PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION},
         projections=ProjectionCatalog(engine=engine),
     ).inspect(
-        deployment_id=_DEPLOYMENT_ID,
-        version_ids=(version_id,),
-        require_projections=False,
+        deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
     )
     stages = report.versions[0].stages
     assert len(stages) == 1

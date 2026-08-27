@@ -47,8 +47,6 @@ adapters:
   - 'src/tests/adapters/**'
   - 'src/tests/profiles/**'
   - 'src/tests/spikes/**'
-  - 'src/tests/test_*.py'
-
 compose:
   - 'compose.yaml'
   - 'Dockerfile'

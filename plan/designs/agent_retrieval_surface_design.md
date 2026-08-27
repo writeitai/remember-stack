@@ -283,7 +283,7 @@ in §3.2. Entity-free v2 stays deferred (§6).
 | --- | --- | --- |
 | Media-segment retrieval recipe (D65 spine) | binding elsewhere; needs its own surface design | first media-bearing corpus in production use |
 | `citation_path` recipe (primitive exists, unexposed) | document-citation questions unmeasured | first corpus with DOC_CROSSREF density |
-| K pages by predicate/community/doc-source + page bodies | primitive supports it; entity key covers current need | agent demand or product surface for browsing pages |
+| K pages by predicate/doc-source + page bodies | primitive supports it; entity key covers current need | agent demand or product surface for browsing pages |
 | Semantic/profile entity discovery (name unknown) | needs entity-vector nomination design | after T-ladder upgrade below |
 | Resolve ladder T1–T3 (fuzzy/semantic aliasing) | separate design; current tools inherit T0 | recall failures attributable to aliasing in production traces |
 | Negative-testimony polarity ("X does not…") | relations lack polarity; boundary recorded — such content is reachable only as claims/observations today | polarity modeling design |

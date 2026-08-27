@@ -24,7 +24,6 @@ Parent: [Retrieval](/docs/retrieval). Shipped HTTP: [API reference](/docs/refere
 | --- | --- |
 | Assured ops | `POST /operations/resolve_entity`, `testimony_context`, `fact_context`, `answer_context` |
 | Open SQL | `POST /query/sql` (+ explain, space discovery, saved queries) |
-| Open Cypher | `POST /query/cypher` (+ explain) |
 | Direct primitives (subset) | See API reference: resolve / lookup / search claims & chunks / hydrate / transcript endpoints as composed |
 
 Do **not** invent `/fuse`, `/rerank`, `/scan`, etc. unless the API reference lists them.
@@ -72,8 +71,8 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 
 | | |
 | --- | --- |
-| **Surface** | **Public** primarily via **Cypher** + live SQL helpers; typed `graph` primitive in engine |
-| **Job** | Traverse **P2 snapshot**. Invalidated edges drop **paths as units** after hydration. |
+| **Surface** | **Public** via typed graph methods + live SQL helpers |
+| **Job** | SQL/PGQ for fixed shallow patterns and bounded recursive SQL for deeper/shortest traversal; authority hydration drops incomplete paths as units. |
 
 ### `fuse` / `rerank` / `combine_evidence`
 
@@ -149,7 +148,7 @@ Typed veneer over `resolve` with envelope packaging.
 | Channel | Typical horizon behavior |
 | --- | --- |
 | Postgres | Full belief history |
-| P2 | Snapshot; horizon disclosed on envelope |
+| Live graph | Same PostgreSQL belief history and transaction snapshot |
 | P1 | May have finite horizon |
 
 Querying past a finite horizon → `boundary` negative with workaround.

@@ -89,17 +89,13 @@ def test_projection_purge_removes_durable_registry_and_local_copies(
     object_store.write_bytes(
         key=ObjectKey(f"{prefix.root}/MANIFEST.json"), content=b"old"
     )
-    p2_copy = tmp_path / "p2-cache" / str(_DEPLOYMENT_ID) / "old-version"
     p3_copy = tmp_path / "mounts" / str(_DEPLOYMENT_ID) / "p3-old-version"
-    p2_copy.mkdir(parents=True)
     p3_copy.mkdir(parents=True)
-    (p2_copy / "graph.lbdb").write_bytes(b"old")
     (p3_copy / "index.md").write_bytes(b"old")
     catalog = RecordingProjectionCatalog()
     adapter: ProjectionPurgePort = SelfHostProjectionPurger(
         object_purger=object_store,
         catalog=cast(ProjectionCatalog, catalog),
-        p2_cache_root=tmp_path / "p2-cache",
         mount_root=tmp_path / "mounts",
     )
 
@@ -108,6 +104,5 @@ def test_projection_purge_removes_durable_registry_and_local_copies(
     adapter.verify_projections_purged(deployment_id=_DEPLOYMENT_ID, prefixes=(prefix,))
 
     assert not (tmp_path / "snapshots" / prefix.root).exists()
-    assert not p2_copy.exists()
     assert not p3_copy.exists()
     assert catalog.purged == (_DEPLOYMENT_ID, (prefix.root,))

@@ -100,7 +100,7 @@ built to maintain synthesis — never to bolt one onto the projection.
 
 1. **The top level is configured, not emergent.** Placement hints reconcile *within* a
    skeleton the deployment declares (registry-style config): e.g. `by-type/` (emails, papers,
-   contracts, notes…), `by-source/`, `by-topic/` (community-derived), `entities/`,
+   contracts, notes…), `by-source/`, `by-topic/` (placement-hint/registry-derived), `entities/`,
    `by-time/`. Emergent top levels reshuffle as the corpus grows — precisely what agents (and
    F6) cannot tolerate. Facets are stable; their *interiors* reorganize freely.
 2. **One document, many views — by stub duplication.** An email about Project Atlas belongs

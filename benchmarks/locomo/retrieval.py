@@ -1,4 +1,4 @@
-"""Complete public-read catalog and bounded P3 adapter for LoCoMo v13."""
+"""Complete public-read catalog and bounded P3 adapter for LoCoMo v14."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ PRIMITIVE_TOOL_NAMES: Final = (
 )
 P3_TOOL_NAMES: Final = ("p3_list", "p3_search", "p3_read")
 QUERY_RESULT_TOOL_NAMES: Final = frozenset(
-    {"query_sql", "explain_sql", "query_cypher", "explain_cypher", "run_saved_query"}
+    {"query_sql", "explain_sql", "run_saved_query"}
 )
 P3_LIST_LIMIT: Final = 200
 P3_LIST_MAX_VISITED: Final = 2_000
@@ -62,8 +62,6 @@ CORRECTABLE_QUERY_ERROR_CODES: Final = frozenset(
         QueryErrorCode.OPERATOR_NOT_ALLOWED,
         QueryErrorCode.INVALID_PARAMETER,
         QueryErrorCode.UNBOUNDED_RECURSION,
-        QueryErrorCode.CYPHER_PARSE_ERROR,
-        QueryErrorCode.CYPHER_NOT_ALLOWED,
         QueryErrorCode.SAVED_QUERY_NOT_FOUND,
         QueryErrorCode.SAVED_QUERY_DISABLED,
         QueryErrorCode.SAVED_QUERY_INCOMPATIBLE,
@@ -97,7 +95,7 @@ def assured_tool_catalog() -> tuple[ToolDescriptor, ...]:
 
 
 def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact 23-tool read catalog exposed to the v13 answer seat."""
+    """Return the exact 21-tool read catalog exposed to the v14 answer seat."""
     tools = (
         *assured_tool_catalog(),
         *_primitive_tool_descriptors(),

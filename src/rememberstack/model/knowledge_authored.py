@@ -304,9 +304,6 @@ def merge_knowledge_deltas(
         ),
         claim_ids=tuple(sorted(set(left.claim_ids).union(right.claim_ids), key=str)),
         doc_ids=tuple(sorted(set(left.doc_ids).union(right.doc_ids), key=str)),
-        community_ids=tuple(
-            sorted(set(left.community_ids).union(right.community_ids), key=str)
-        ),
     )
 
 

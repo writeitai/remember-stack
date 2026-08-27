@@ -1,5 +1,11 @@
 # The Observation Layer — Non-Graph Facts with Temporal Validity (Design)
 
+> **Binding D98 amendment (2026-08-27).** Relations are the only fact kind
+> mapped as live graph edges over PostgreSQL views. Observations remain
+> PostgreSQL facts and P1 search targets but are not graph elements. There is no
+> P2 projection/generation; pre-D98 “projects to P2” wording means only this
+> live relation-edge mapping.
+
 How the system records and time-travels facts that are **about one entity but not links between two
 entities** — a headcount, a balance, a fiscal revenue, a founding date, a status — *without* forcing
 them into the typed graph and *without* a governed attribute vocabulary. Binding design for decision

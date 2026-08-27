@@ -60,6 +60,7 @@ PUBLIC_SRF_NAMES: Final = frozenset(
         "fetch_chunk_bodies",
         "graph_neighborhood",
         "graph_path",
+        "graph_citation_path",
     }
 )
 SRF_INVOCATIONS_MAX: Final = 3
@@ -79,6 +80,7 @@ SRF_CATEGORIES: Final[dict[str, str]] = {
     "facts_as_of": "bitemporal",
     "graph_neighborhood": "graph",
     "graph_path": "graph",
+    "graph_citation_path": "graph",
 }
 
 FUNCTION_ALLOWLIST: Final = frozenset(
@@ -486,6 +488,47 @@ def _assert_single_readonly_statement(sql: str) -> SelectStmt:
 
 
 _SRF_CTE_PREFIX: Final = "__srf_"
+_INTERNAL_PREFIX: Final = "__rememberstack_"
+
+
+def _assert_no_reserved_identifiers(statement: SelectStmt) -> None:
+    """Keep every executor carrier name outside caller-controlled SQL."""
+
+    def reject(value: object, *, kind: str) -> None:
+        if isinstance(value, str) and value.lower().startswith(_INTERNAL_PREFIX):
+            raise _reject(
+                QueryErrorCode.STATEMENT_NOT_ALLOWED,
+                f"{kind} names beginning with {_INTERNAL_PREFIX} are reserved",
+            )
+
+    class _ReservedScan(Visitor):
+        def visit_CommonTableExpr(  # noqa: ANN001, ANN201
+            self, ancestors, node: CommonTableExpr
+        ):
+            reject(node.ctename, kind="CTE")
+            return None
+
+        def visit_RangeVar(self, ancestors, node: RangeVar):  # noqa: ANN001, ANN201
+            reject(getattr(node, "relname", None), kind="relation")
+            reject(getattr(node.alias, "aliasname", None), kind="relation alias")
+            return None
+
+        def visit_RangeFunction(  # noqa: ANN001, ANN201
+            self, ancestors, node: RangeFunction
+        ):
+            reject(getattr(node.alias, "aliasname", None), kind="function alias")
+            return None
+
+        def visit_ResTarget(self, ancestors, node):  # noqa: ANN001, ANN201
+            reject(getattr(node, "name", None), kind="result column")
+            return None
+
+        def visit_ColumnRef(self, ancestors, node: ColumnRef):  # noqa: ANN001, ANN201
+            for field in node.fields or ():
+                reject(_sval(field), kind="column")
+            return None
+
+    _ReservedScan()(statement)
 
 
 def _collect_ctes(statement: SelectStmt) -> tuple[frozenset[str], bool]:
@@ -1074,7 +1117,7 @@ def _end_of_quoted(sql: str, start: int) -> int:
 
 def _rewrite_srf_invocations(
     statement: SelectStmt, srf_calls: list[FuncCall]
-) -> SelectStmt:
+) -> tuple[SelectStmt, tuple[tuple[str, str, tuple[object, ...]], ...]]:
     """The §4.1 normative rewrite: each accepted SRF invocation becomes its own
     `MATERIALIZED` CTE, and its original FROM position becomes a reference.
 
@@ -1088,6 +1131,7 @@ def _rewrite_srf_invocations(
     counter = 0
     new_ctes: list[CommonTableExpr] = []
     bindings: list[tuple[str, str, tuple[object, ...]]] = []
+    graph_all_names: list[str] = []
 
     class _Rewriter(Visitor):
         def visit_RangeFunction(self, ancestors, node: RangeFunction):  # noqa: ANN001, ANN201
@@ -1106,9 +1150,20 @@ def _rewrite_srf_invocations(
                             "WITH ORDINALITY is not available on public"
                             " functions; number the rows in the outer query",
                         )
-                    name = f"__srf_{counter}"
+                    function_name = _func_name(call)
+                    ordinal = counter
                     counter += 1
-                    bindings.append((name, _func_name(call), _literal_arguments(call)))
+                    is_graph = function_name in {
+                        "graph_neighborhood",
+                        "graph_path",
+                        "graph_citation_path",
+                    }
+                    name = (
+                        f"{_INTERNAL_PREFIX}graph_all_{ordinal}"
+                        if is_graph
+                        else f"{_SRF_CTE_PREFIX}{ordinal}"
+                    )
+                    bindings.append((name, function_name, _literal_arguments(call)))
                     body = SelectStmt(
                         targetList=(_star_target(),),
                         fromClause=(node,),
@@ -1121,6 +1176,19 @@ def _rewrite_srf_invocations(
                             ctematerialized=CTEMaterialize.CTEMaterializeAlways,
                         )
                     )
+                    if is_graph:
+                        graph_all_names.append(name)
+                        data_name = f"{_INTERNAL_PREFIX}graph_data_{ordinal}"
+                        new_ctes.append(
+                            CommonTableExpr(
+                                ctename=data_name,
+                                ctequery=_parsed_select(
+                                    f"SELECT * FROM {name} WHERE row_kind = 'data'"
+                                ),
+                                ctematerialized=CTEMaterialize.CTEMaterializeAlways,
+                            )
+                        )
+                        name = data_name
                     alias = node.alias
                     return RangeVar(
                         relname=name, inh=True, relpersistence="p", alias=alias
@@ -1129,14 +1197,64 @@ def _rewrite_srf_invocations(
 
     rewritten = _Rewriter()(statement)
     assert isinstance(rewritten, SelectStmt)
-    _rewrite_srf_invocations.bindings = tuple(bindings)  # type: ignore[attr-defined]
-    if new_ctes:
+    if graph_all_names:
+        status_terms = ", ".join(
+            "(SELECT to_jsonb(status_row)"
+            f" FROM {name} AS status_row WHERE row_kind = 'status')"
+            for name in graph_all_names
+        )
+        status_name = f"{_INTERNAL_PREFIX}graph_status"
+        raw_name = f"{_INTERNAL_PREFIX}user_raw"
+        user_name = f"{_INTERNAL_PREFIX}user_result"
+        status_column = f"{_INTERNAL_PREFIX}graph_statuses"
+        marker_column = f"{_INTERNAL_PREFIX}present"
+        ordinal_column = f"{_INTERNAL_PREFIX}order_ordinal"
+        status_cte = CommonTableExpr(
+            ctename=status_name,
+            ctequery=_parsed_select(
+                f"SELECT jsonb_build_array({status_terms}) AS {status_column}"
+            ),
+            ctematerialized=CTEMaterialize.CTEMaterializeAlways,
+        )
+        raw_cte = CommonTableExpr(
+            ctename=raw_name,
+            ctequery=rewritten,
+            ctematerialized=CTEMaterialize.CTEMaterializeAlways,
+        )
+        user_cte = CommonTableExpr(
+            ctename=user_name,
+            ctequery=_parsed_select(
+                f"SELECT user_raw.*, true AS {marker_column},"
+                f" row_number() OVER () AS {ordinal_column}"
+                f" FROM {raw_name} AS user_raw"
+            ),
+            ctematerialized=CTEMaterialize.CTEMaterializeAlways,
+        )
+        outer = _parsed_select(
+            f"SELECT user_result.*, graph_status.{status_column}"
+            f" FROM {user_name} AS user_result"
+            f" RIGHT JOIN {status_name} AS graph_status ON true"
+            f" ORDER BY user_result.{ordinal_column} NULLS LAST"
+        )
+        outer.withClause = WithClause(
+            ctes=tuple(new_ctes + [status_cte, raw_cte, user_cte]), recursive=False
+        )
+        rewritten = outer
+    elif new_ctes:
         existing = list(rewritten.withClause.ctes or ()) if rewritten.withClause else []
         recursive = bool(rewritten.withClause and rewritten.withClause.recursive)
         rewritten.withClause = WithClause(
             ctes=tuple(new_ctes + existing), recursive=recursive
         )
-    return rewritten
+    return rewritten, tuple(bindings)
+
+
+def _parsed_select(sql: str) -> SelectStmt:
+    """Parse one server-owned rewrite template into an AST node."""
+    raw = parse_sql(sql)[0]
+    assert isinstance(raw, RawStmt)
+    assert isinstance(raw.stmt, SelectStmt)
+    return raw.stmt
 
 
 class _Unrepresentable:
@@ -1262,6 +1380,7 @@ def validate_sql(
     runtime manifest — a mismatch is rejected before parsing anything.
     """
     statement = _assert_single_readonly_statement(sql)
+    _assert_no_reserved_identifiers(statement)
     cte_names, is_recursive = _collect_ctes(statement)
     # Every recursive WITH is validated, wherever it sits: a recursive CTE
     # nested inside another CTE body or a subquery is exactly as capable of
@@ -1311,8 +1430,7 @@ def validate_sql(
     rewritten = False
     srf_bindings: tuple[tuple[str, str, tuple[object, ...]], ...] = ()
     if gate.srf_calls:
-        statement = _rewrite_srf_invocations(statement, gate.srf_calls)
-        srf_bindings = getattr(_rewrite_srf_invocations, "bindings", ())
+        statement, srf_bindings = _rewrite_srf_invocations(statement, gate.srf_calls)
         rewritten = True
 
     deparsed = RawStream()(statement)

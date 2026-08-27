@@ -118,7 +118,7 @@ Removes the document’s **current contribution** uniformly:
 
 ### Hard-forget
 
-Stronger operational purge: every active library-controlled surface is scrubbed; a durable content-free **forget manifest** is replayed before serve-after-restore so forgotten content cannot resurrect from backups of derived stores. Portability still uses native Postgres/object/git tools; the library defines fail-closed restore order and rebuilds P1/P2/P3.
+Stronger operational purge: every active library-controlled surface is scrubbed; a durable content-free **forget manifest** is replayed before serve-after-restore so forgotten content cannot resurrect from backups of derived stores. Portability still uses native Postgres/object/git tools; the library defines fail-closed restore order, repairs P1, and rebuilds P3. The graph follows the restored PostgreSQL authority directly.
 
 Forgotten content is **indistinguishable from never-existed** on read (`unknown_entity` / `known_empty`) — there is no special “denied” grain for forgotten rows.
 

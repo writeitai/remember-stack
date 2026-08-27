@@ -1,10 +1,18 @@
 # K Plane — Compiled and Authored Knowledge (Design)
 
+> **Binding D98 amendment (2026-08-27).** D98 supersedes D11 and removes the
+> unproved global community analytics product. The shipped K layout has entity
+> pages, source digests, root indexes, and purpose-scope pages; it has no
+> community/topic pages, `community` routing rule, `community_changed` event,
+> or `entity_graph_metrics` dependency. Entity-subtree, predicate, document-set,
+> and manual routing remain. Pre-D98 community wording below is superseded where
+> not rewritten in place.
+
 How the system turns the evidence spine into the high-level, browsable knowledge layer agents
 read *first* — per-purpose curated summaries, entity profiles, and authored documents — while
 keeping every page mechanically traceable to the evidence it rests on. Binding design for
 decisions **D45–D47, refined by D73** (which also accept objections **O2** and **O4**); builds on D1 (split
-source of truth), D11 (communities), D12 (debounced aggregate triggers), D24 (blast-radius
+source of truth), D12 (debounced aggregate triggers), D24 (blast-radius
 review), D33 (decision ledgers for non-deterministic stages), D42 (document origin), D43
 (observations). This one document covers the whole plane; D73 withdraws the previously proposed
 K3 belief tier because core principles are authored K2 content. Schema:
@@ -30,9 +38,9 @@ constants (CLAUDE.md).
 The design splits plane K's work along one line: **an LLM decides what pages exist and what
 each page is *about*; SQL decides which pages a new piece of evidence affects.** This works
 because of something plane E already guarantees — by the time evidence lands, it has been
-through entity resolution, relation normalization, and community assignment (D11), so every
+through entity resolution and relation normalization, so every
 new claim/relation/observation arrives *pre-labeled* with the keys rules match on (canonical
-entity IDs, governed predicates, community IDs, document metadata). The expensive semantic
+entity IDs, governed predicates, document metadata). The expensive semantic
 understanding happened upstream, once; K routing reuses it for free.
 
 The alternative — free agent sessions browsing the repo each cycle to *discover* what to
@@ -59,7 +67,7 @@ separate machinery:
 
 | Tier | What it is under this design |
 |---|---|
-| **K1 — general knowledge** | the **default scope**: entity pages, topic (community) pages, source digests, the root index |
+| **K1 — general knowledge** | the **default scope**: entity pages, source digests, the root index |
 | **K2 — purpose scopes** | additional scopes (people profiles, business planning, as-is/to-be migration tracking, a personal operating doctrine, …) — each a git subtree + registry rows (`scopes`, `scope_interests`, D16), sharing the one entity space; each may mix compiled support material with authored principles and decisions (§8) |
 
 A scope is: a subtree of the repo, its registry rows, its pages (compiled and authored), and
@@ -165,7 +173,7 @@ The system never *classifies* a page's kind — kind is fixed by **which door th
 through**, and enforced by ownership:
 
 - **Planner-created pages are compiled, always.** The planner creates a page *because* evidence
-  needs a home (orphan facts, a splitting page, a new community) — so its content is by
+  needs a home (orphan facts, a splitting page, a new entity or source grouping) — so its content is by
   construction derivable from the spine, and it gets routing rules and a writer. The planner
   cannot create authored pages; there is nobody to write them.
 - **Committed pages are authored, always.** An authored page comes into existence when a person
@@ -219,7 +227,6 @@ rules (their union). The closed kind set:
 | `entity` | entity_id; optional predicate filter; which fact layers (relations / observations / claims-via-mentions) | everything about one entity |
 | `entity_subtree` | root entity_id | the entity plus its `part_of` closure (e.g. a subsystem and its modules), then as `entity` per member |
 | `predicate_beat` | predicate; optional subject/object | e.g. `works_for → acme`: who works at Acme |
-| `community` | community_id (D11 writeback) | evidence on the community's member entities |
 | `doc_set` | document metadata filter (source, mime, `origin` D42, time range) | evidence from a document family (e.g. board minutes) |
 | `scope_interests` | scope_id | delegates to the registry's `scope_interests` rows (entity types, predicates, metadata, keywords) |
 | `manual` | explicit entity/evidence ID list | the editorial escape hatch (§ below) |
@@ -233,7 +240,7 @@ on `entity: acme`"; SQL *evaluates* "these 12 new rows match `entity: acme`". Ze
 on the routing path — the same rule the query path already obeys (D9).
 
 **Routing granularity vs. editorial granularity.** Mechanical keys route at the granularity
-plane E produces: entity, predicate, community, document set. Finer subdivision ("Acme
+plane E produces: entity, predicate, and document set. Finer subdivision ("Acme
 pricing" vs "Acme hiring" as separate pages) is *editorial*, not routing: the rule delivers
 everything-Acme to one page, whose writer organizes it into sections. The planner splits at
 the routing level only where a mechanical key exists to split on (a predicate set, a doc-set,
@@ -244,14 +251,13 @@ the *record* of the split is mechanical.
 **The inverted key index.** Every rule's match keys are materialized to `knowledge_rule_keys`
 (`(key_kind, key_value) → rule`). Routing a batch of new evidence is then one indexed lookup —
 the same block-first philosophy as supersession (D4): exact keys narrow, expensive work runs
-only on the narrowed set. `entity_subtree` and `community` rules have *derived* membership, so
-the driver re-materializes their keys when their inputs change (a `part_of` relation touching
-the subtree; a community-detection writeback) — both are ordinary evidence events the driver
-already sees.
+only on the narrowed set. `entity_subtree` rules have *derived* membership, so
+the driver re-materializes their keys when a `part_of` relation touches the
+subtree — an ordinary evidence event the driver already sees.
 
 **Orphan evidence — the planner's inbox.** Evidence matching *no* rule in a scope is counted
-per entity ("Bob has 14 unhoused facts"). Aggregated orphans, page-size overflows, community
-changes, writer suggestions, and reflection findings (§7) are the planner's triggers; its
+per entity ("Bob has 14 unhoused facts"). Aggregated orphans, page-size overflows,
+writer suggestions, and reflection findings (§7) are the planner's triggers; its
 outputs are append-only `knowledge_plan_decisions` (create/split/merge/move/retire/adjust-rule)
 with a rationale. Low-blast-radius decisions auto-apply; restructures above a threshold queue
 for review by an **accountable reviewer outside the proposing context** — a human or a
@@ -422,20 +428,20 @@ trigger handling from this subsection alone.
 1. **Events.** Plane-E workers *push*; plane K never polls. As adjudication and writes
    complete, workers emit `knowledge_refresh_queue` rows: `evidence_changed` (new
    relations/observations/claims; windows capped by supersession; invalidations;
-   contradiction groups opened — changed IDs in the payload), `community_changed` (after a
-   D11 writeback), `tombstone` (deletions, §10).
+   contradiction groups opened — changed IDs in the payload), and `tombstone`
+   (deletions, §10).
 2. **Debounce.** Events accumulate; the driver runs on the D12 window ("N items or T
    minutes"), never per event. Each cycle *also* begins with a git pull — the **second
    trigger source**: human/agent commits (sidecar edits, authored-page updates, new authored
    pages) enter the system here, and quarantines (§4) are detected here.
 3. **Route (all SQL, zero LLM).** Changed evidence already carries its labels — plane E
-   resolved entities, predicates, communities, and document metadata before anything reached
+   resolved entities, predicates, and document metadata before anything reached
    this queue — so routing is two indexed lookups: the **rule-key index**
    (`knowledge_rule_keys`), which catches *new* evidence matching a declared interest, and the
    **citation reverse-lookup** (`knowledge_artifact_evidence`), which catches state changes to
    evidence a page already *used* (this second path matters: a page must learn its ground
    moved even if the planner has since changed its rules). Derived-membership rules
-   (`entity_subtree`, `community`) get their key sets re-materialized when their inputs change.
+   (`entity_subtree`) get their key sets re-materialized when their inputs change.
    Routing's output is a set of *(owner, matched delta)* pairs; from here the two kinds
    diverge.
 
@@ -811,8 +817,8 @@ structurally (one committer, disjoint writes, DAG order).
 
 ## References
 
-Decisions: **D45–D47, D73** (this design), D1, D11, D12, D16, D24, D33, D42, D43 (`decisions.md`).
+Decisions: **D45–D47, D73, D98** (this design), D1, D12, D16, D24, D33, D42, D43 (`decisions.md`).
 Objections resolved: O2, O4 (`plan/analysis/objections.md`). Review that motivated it:
 `plan/analysis/design_review_2026_07.md` (F1). Schema: `postgres_schema_design.md` §11.
 Adjacent designs: `overall_design.md` §5, `registries_design.md` (scopes, extension packs),
-`e0_files_design.md` §2 (deletion), `p2_graph_design.md` §7 (community → refresh hints).
+`e0_files_design.md` §2 (deletion), `p2_graph_design.md` §6 (global analytics removed).

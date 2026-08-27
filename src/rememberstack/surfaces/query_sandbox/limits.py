@@ -98,8 +98,8 @@ TIER_LIMITS: Final = {
 def clamp_rows(*, tier: TierLimits, requested: int | None) -> int:
     """The effective row cap: the default, raised at most to the hard cap.
 
-    ``requested=0`` means zero rows and is disclosed as ``row_cap=0`` (same
-    public contract as Cypher and HTTP/MCP ``max_rows`` minimum 0). An absent
+    ``requested=0`` means zero rows and is disclosed as ``row_cap=0`` (the
+    HTTP/MCP ``max_rows`` minimum is also 0). An absent
     bound takes the tier default. Negative values are rejected at transport or
     facade boundaries before this clamp; if one arrives, it is treated as zero
     rather than as an open bound.

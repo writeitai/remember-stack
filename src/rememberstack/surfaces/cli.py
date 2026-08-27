@@ -142,6 +142,8 @@ def _run_budget(args: argparse.Namespace) -> int:
 
 def _run_ops(args: argparse.Namespace) -> int:
     """Compose bounded local inspection, one-row replay, or an existing rebuild."""
+    if args.ops_command == "graph-catalog":
+        return _run_graph_catalog_ensure()
     try:
         from rememberstack.model import ProcessingLane
         from rememberstack.model import WorkLedgerError
@@ -176,10 +178,8 @@ def _run_ops(args: argparse.Namespace) -> int:
             print(replayed.model_dump_json())
             return 0
         result = operations.rebuild(
-            plane=args.plane,
             deployment_id=args.deployment,
             snapshot_root=args.snapshot_root,
-            workdir=args.workdir,
             version=args.version,
         )
         print(json.dumps(result, default=str, sort_keys=True))
@@ -189,6 +189,43 @@ def _run_ops(args: argparse.Namespace) -> int:
         return 1
     finally:
         operations.close()
+
+
+def _run_graph_catalog_ensure() -> int:
+    """Inspect and, when needed, replay the PostgreSQL live-graph metadata."""
+    try:
+        from sqlalchemy import create_engine
+
+        from rememberstack.spine.graph_catalog import ensure_graph_catalog
+        from rememberstack.spine.settings import load_database_settings
+    except ModuleNotFoundError:
+        print(
+            "error: ops commands require the 'rememberstack[server]' extra",
+            file=sys.stderr,
+        )
+        return 1
+
+    engine = create_engine(load_database_settings().sqlalchemy_url())
+    try:
+        result = ensure_graph_catalog(engine=engine)
+        print(
+            json.dumps(
+                {
+                    "ready": result.ready,
+                    "changed": result.changed,
+                    "problems_before": result.problems_before,
+                    "problems_after": result.problems_after,
+                    "definitions": result.definitions,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    except RuntimeError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
 
 
 def _run_cost_export(*, deployment_id: UUID, args: argparse.Namespace) -> int:
@@ -289,29 +326,6 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
                 )
             )
             return 0
-        if command == "cypher":
-            print(
-                json.dumps(
-                    client.query_cypher(
-                        cypher=args.statement,
-                        parameters=_json_object(args.parameters),
-                        max_rows=args.max_rows,
-                        confirm=bool(args.confirm),
-                    ),
-                    default=str,
-                )
-            )
-            return 0
-        if command == "explain-cypher":
-            print(
-                json.dumps(
-                    client.explain_cypher(
-                        cypher=args.statement, parameters=_json_object(args.parameters)
-                    ),
-                    default=str,
-                )
-            )
-            return 0
         if command == "space":
             print(
                 json.dumps(
@@ -378,16 +392,6 @@ def _json_list(raw: str | None) -> list[object]:
     value = json.loads(raw)
     if not isinstance(value, list):
         raise ValueError("parameters must be a JSON array")
-    return value
-
-
-def _json_object(raw: str | None) -> dict[str, object]:
-    """Parse an optional JSON object of named Cypher parameters."""
-    if not raw:
-        return {}
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError("parameters must be a JSON object")
     return value
 
 
@@ -791,14 +795,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     replay.add_argument("--lane", choices=("steady", "backfill"))
     replay.add_argument("--not-before", type=datetime.fromisoformat)
-    rebuild = ops_commands.add_parser(
-        "rebuild", help="invoke the existing P2 or P3 full-rebuild path"
-    )
-    rebuild.add_argument("--plane", choices=("p2", "p3"), required=True)
+    rebuild = ops_commands.add_parser("rebuild", help="rebuild P3 CorpusFS")
     rebuild.add_argument("--deployment", type=UUID, required=True)
     rebuild.add_argument("--snapshot-root", type=Path, required=True)
-    rebuild.add_argument("--workdir", type=Path, required=True)
     rebuild.add_argument("--version", required=True)
+    graph_catalog = ops_commands.add_parser(
+        "graph-catalog", help="inspect or repair PostgreSQL live-graph metadata"
+    )
+    graph_catalog_commands = graph_catalog.add_subparsers(
+        dest="graph_catalog_command", required=True
+    )
+    graph_catalog_commands.add_parser(
+        "ensure", help="semantically verify and replay graph metadata if needed"
+    )
 
     operations = commands.add_parser(
         "operations", help="list or run assured operations"
@@ -834,24 +843,6 @@ def _build_parser() -> argparse.ArgumentParser:
     explain_sql.add_argument(
         "--parameters", help="JSON array of positional bound parameters"
     )
-    cypher = query_commands.add_parser(
-        "cypher", parents=[client_flags], help="run one read-only Cypher statement"
-    )
-    cypher.add_argument("statement", help="Cypher text")
-    cypher.add_argument("--parameters", help="JSON object of named parameters")
-    cypher.add_argument("--max-rows", type=int)
-    cypher.add_argument(
-        "--confirm",
-        action="store_true",
-        help="confirm projected Entity/RELATES ids against live PostgreSQL",
-    )
-    explain_cypher = query_commands.add_parser(
-        "explain-cypher",
-        parents=[client_flags],
-        help="plan one Cypher statement without executing it",
-    )
-    explain_cypher.add_argument("statement", help="Cypher text")
-    explain_cypher.add_argument("--parameters", help="JSON object of named parameters")
     space = query_commands.add_parser(
         "space",
         parents=[client_flags],

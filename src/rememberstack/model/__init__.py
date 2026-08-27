@@ -51,13 +51,14 @@ from rememberstack.model.claims import SelectionDropReason
 from rememberstack.model.claims import SelectionOutcome
 from rememberstack.model.claims import SelectionResponse
 from rememberstack.model.claims import SelectionVerdict
+from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
 from rememberstack.model.client import ConnectorNotFoundError
 from rememberstack.model.client import DeploymentBuildInfo
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import PipelineStageReadiness
-from rememberstack.model.client import ProjectionReadiness
+from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.clustering import ClusterConfig
@@ -148,7 +149,6 @@ from rememberstack.model.forget import ForgetRedactionRequiredError
 from rememberstack.model.forget import ForgetTargetNotFoundError
 from rememberstack.model.forget import ForgottenSourceError
 from rememberstack.model.git import KRevision
-from rememberstack.model.knowledge import CommunityRuleParams
 from rememberstack.model.knowledge import DocSetRuleParams
 from rememberstack.model.knowledge import EntityRuleParams
 from rememberstack.model.knowledge import EntitySubtreeRuleParams
@@ -351,6 +351,7 @@ __all__ = (
     "BlockType",
     "CanaryCase",
     "CandidateClaim",
+    "CapabilityReadiness",
     "CaseFailure",
     "CarryForwardSource",
     "ChangeRecord",
@@ -491,7 +492,7 @@ __all__ = (
     "ProcessingStatus",
     "ProcessingTarget",
     "ProjectionSnapshotState",
-    "ProjectionReadiness",
+    "ReadinessRequirements",
     "PrimitiveChainPlan",
     "ProviderAccountingError",
     "ProviderCallError",
@@ -531,7 +532,6 @@ __all__ = (
     "SelectionVerdict",
     "LifecycleReport",
     "CurrencyTransition",
-    "CommunityRuleParams",
     "DocSetRuleParams",
     "EntityRuleParams",
     "EntitySubtreeRuleParams",

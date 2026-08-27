@@ -1,5 +1,10 @@
 # Phase 7 — Operational Correctness + Portability
 
+> **D98 amendment (2026-08-27).** This completed phase remains historical
+> delivery evidence, but its active drills now mean live PostgreSQL graph
+> catalog/helper readiness plus P3 rebuild. There is no P2 builder, snapshot,
+> cache, or hard-forget prefix. The D98 cutover plan owns implementation.
+
 > The filename is retained as a stable historical path; this title and D60 define the current
 > scope. "Scale + Ops" is no longer the phase contract.
 
@@ -45,8 +50,8 @@ the published GHCR manifest is anonymously readable.
 | WP-7.1 | Backfill lanes + seeding + reprocessing orchestration (version bumps) | orchestration §3–4 | Phase 6 | lane machinery | steady-state unaffected during backfill test | done |
 | WP-7.2 | Reproducible scale battery: D23 partitions/indexes, hub entities/lineages, recount cost, and provider-neutral read/write batching | schema §12; D23; lifecycle §11.5; orchestration §5; retrieval §13.7 | WP-7.1 | fixed synthetic profiles + report | shapes and batching invariants recorded; timings remain measurements, not hosted SLAs | done |
 | WP-7.3 | Cost metering + configurable budget enforcement | orchestration §4; schema §2 `cost_ledger` | WP-7.1 | enforcement + admin inspection | explicit fixture ceiling parks and resumes an over-budget lane; attribution is visible | done |
-| WP-7.4 | Operational correctness surfaces + drills: typed telemetry, pipeline/DLQ inspection and replay, P2/P3 rebuild, currency-ledger audit | orchestration §6–7; D7, D60–D61 | WP-7.1 | telemetry/admin surfaces + deterministic drills | failures remain visible and drills pass without a dashboard or hosted control plane | done |
-| WP-7.5 | **Hard-delete end-to-end**: purge active P1/P2/P3/K surfaces and prevent restore resurrection through the D74 portable manifest/adapter contract | hard-forget design; lifecycle §8; k_layers §10; S55 | D74 (gate #24 resolved) | forget pipeline | **S55 CI gate ON and green** across library-controlled surfaces + restore canary | done |
+| WP-7.4 | Operational correctness surfaces + drills: typed telemetry, pipeline/DLQ inspection and replay, live-graph catalog/helpers, P3 rebuild, currency-ledger audit | orchestration §6–7; D7, D60–D61, D98 | WP-7.1 | telemetry/admin surfaces + deterministic drills | failures remain visible and drills pass without a dashboard or hosted control plane | done; graph portion replaced by D98 train |
+| WP-7.5 | **Hard-delete end-to-end**: purge active P1/live-graph/P3/K surfaces and prevent restore resurrection through the D74 portable manifest/adapter contract | hard-forget design; lifecycle §8; k_layers §10; S55 | D74 (gate #24 resolved) | forget pipeline | **S55 CI gate ON and green** across library-controlled surfaces + restore canary | done; graph portion replaced by D98 train |
 | WP-7.6 | **Release engineering**: semver across PyPI + the shared GHCR image + pinned compose; migrations-before-workers upgrade drill; quickstart cold-start release gate | packaging §1, §5–6; D62, D76–D77 | WP-7.1, owner release gates | release pipeline | tagged release produces all artifacts; upgrade drill green; quickstart under target | done |
 | WP-7.7 | **Portable state + restore round-trip**: define the authoritative store set and fail-closed restore order; operators move bytes with native tools and projections rebuild normally | packaging §6; D7, D60, D74–D75 | WP-7.1, WP-7.5 | portability contract + deterministic drill | real PostgreSQL restore plus whole/independent external-store canaries → no resurrection + control green | done |
 
@@ -132,8 +137,9 @@ The existing worker exception boundary emits one provider-neutral `worker.run` e
 committed success, failure, or budget park and emits nothing for `NO_WORK`. Exception export receives
 the original exception object and exporter failures propagate. Self-hosting can write one JSON line
 per event with the full exception cause chain; tests use an in-memory recorder. `remember ops inspect`,
-`replay`, and `rebuild` are thin local admin commands. Rebuild selects the existing production
-`GraphRebuildWorker` or `CorpusFsBuilder`, so the drill cannot diverge into a recovery-only path.
+`replay`, and `rebuild` are thin local admin commands. Rebuild selects the production
+`CorpusFsBuilder`; live-graph repair re-ensures the exact property-graph catalog and
+helper/grant contract, so neither drill diverges into a recovery-only path.
 
 ## WP-7.5 design gate (D74)
 
@@ -144,7 +150,8 @@ existing work ledger tracks execution. A durable `preparing` row blocks public/o
 leaving the authorized forget coordinator's internal calls available; pre-append failures are
 resumed or safely reopen admission before any append attempt. The worker reuses the normal currency
 cascade, scrubs PostgreSQL including its co-located P1 state, purges objects,
-publishes clean P2/P3 snapshots and deletes old ones, then erases affected K paths
+publishes a clean P3 snapshot and deletes old ones, verifies that live graph
+queries no longer reach the scrubbed lineage, then erases affected K paths
 from history. Every serving readiness pass re-honors every portable
 manifest—including locally complete ones—so independently restoring an old external store cannot
 resurrect forgotten content.
@@ -186,8 +193,8 @@ supplies the artifact proof, and the versioned GHCR package is public for anonym
 Portability is a contract over the existing sources of truth, not a new archive format or CLI.
 The operator transfers Postgres, raw/artifact objects, and the K repository with their native
 tools while carrying the separately durable D74 manifest root first. The deployment id is
-preserved; migrations and the ordinary hard-forget readiness pass run before serving; P1/P2/P3
-are rebuilt through their production paths. Backup schedules, consistency policy, credentials,
+preserved; migrations and the ordinary hard-forget readiness pass run before serving; P1 and P3
+are rebuilt through their production paths and live-graph metadata/helpers are re-ensured. Backup schedules, consistency policy, credentials,
 progress reporting, retries, and provider-specific transfer mechanics remain operator/cloud scope.
 
 The deterministic drill reuses the WP-7.5 machinery rather than adding a backup engine.
@@ -198,7 +205,7 @@ rematerialization against real SQL while preserving independent control evidence
 `test_s55_selfhost_restore.py` performs the external-store proof over real LocalFS
 object/manifest stores, projection caches, and Git history. PostgreSQL hard-forget
 tests cover the co-located P1 state. WP-7.4/WP-7.5 separately prove
-that the forget rebuilder delegates to the production P2/P3 builders; that is an existing
+that the forget rebuilder delegates to the production P3 builder and live-graph readiness; that is an existing
 dependency, not claimed as one composed restore test. Together the drills fail if portable intent
 is omitted, readiness trusts a local completion bit, restored PostgreSQL or an external store
 retains forgotten content, or unrelated memory is damaged. Preserving the deployment id and

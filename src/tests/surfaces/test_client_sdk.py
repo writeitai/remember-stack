@@ -15,13 +15,19 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
+from rememberstack.client import CapabilityReadiness
 from rememberstack.client import ConnectorCreate
 from rememberstack.client import ConnectorDescriptor
 from rememberstack.client import ConnectorNotFoundError
 from rememberstack.client import MemoryApiError
 from rememberstack.client import MemoryClient
 from rememberstack.client import PipelineReadinessReport
+from rememberstack.client import ReadinessRequirements
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import DocumentUpload
+from rememberstack.model import Envelope
+from rememberstack.model import Freshness
+from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
@@ -49,15 +55,23 @@ class _OpenBoundary:
         *,
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
-        require_projections: bool,
+        require: ReadinessRequirements,
     ) -> PipelineReadinessReport:
         assert deployment_id == _DEPLOYMENT_ID
         assert version_ids == (_VERSION_ID,)
-        assert require_projections is True
+        assert require == ReadinessRequirements(
+            pipeline=True, p1=True, live_graph=True, p3=True
+        )
+        checked_at = datetime.now(tz=timezone.utc)
         return PipelineReadinessReport(
             ready=True,
             versions=(),
-            projections=(),
+            capabilities={
+                name: CapabilityReadiness(
+                    required=True, ready=True, checked_at=checked_at, reason="ready"
+                )
+                for name in ("pipeline", "p1", "live_graph", "p3")
+            },
             model_bindings={"claim_extraction": "model-v1"},
         )
 
@@ -207,10 +221,52 @@ def test_sdk_reads_machine_verifiable_pipeline_readiness(
 ) -> None:
     client, _, _ = client_surface
 
-    report = client.pipeline_readiness(version_ids=(_VERSION_ID,))
+    report = client.pipeline_readiness(
+        version_ids=(_VERSION_ID,),
+        require=ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=True),
+    )
 
     assert report.ready is True
     assert report.model_bindings == {"claim_extraction": "model-v1"}
+
+
+def test_sdk_posts_typed_graph_requests() -> None:
+    """The dependency-light client exposes all bounded graph operations."""
+    requests: list[httpx.Request] = []
+    now = datetime.now(UTC)
+    answer = Envelope(
+        grain=Grain.FACT,
+        temporal_scope=current_temporal_scope(evaluated_at=now),
+        freshness=Freshness(pg_live_ts=now),
+    ).model_dump(mode="json")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=answer)
+
+    raw = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    client = MemoryClient(client=raw)
+    entity_a = uuid4()
+    entity_b = uuid4()
+    doc_a = uuid4()
+    doc_b = uuid4()
+    try:
+        client.graph_neighborhood(entity_id=entity_a, hops=2, limit=25)
+        client.graph_path(from_entity_id=entity_a, to_entity_id=entity_b, max_hops=5)
+        client.graph_citation_path(from_doc_id=doc_a, to_doc_id=doc_b, max_hops=6)
+    finally:
+        raw.close()
+
+    assert [request.url.path for request in requests] == [
+        "/graph/neighborhood",
+        "/graph/path",
+        "/graph/citation-path",
+    ]
+    assert json.loads(requests[0].content)["hops"] == 2
+    assert json.loads(requests[1].content)["max_hops"] == 5
+    assert json.loads(requests[2].content)["to_doc_id"] == str(doc_b)
 
 
 def test_sdk_validates_lineage_pair_and_maps_api_failures(
@@ -431,8 +487,6 @@ def test_sdk_rejects_a_partially_malformed_discovery_list(endpoint: str) -> None
     (
         ("query_sql", {"sql": "SELECT 1"}),
         ("explain_sql", {"sql": "SELECT 1"}),
-        ("query_cypher", {"cypher": "MATCH (n) RETURN n"}),
-        ("explain_cypher", {"cypher": "MATCH (n) RETURN n"}),
         ("run_saved_query", {"namespace": "team", "name": "recent_claims"}),
     ),
 )
@@ -594,7 +648,7 @@ def test_remote_mcp_tools_list_still_fails_on_operations_transport_error() -> No
 
 
 def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
-    """Remote tools/list advertises the nine open-query tools only when composed."""
+    """Remote tools/list advertises the seven open-query tools only when composed."""
     from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 
     # Synthetic valid identity: schema/major match catalog; hash shape only

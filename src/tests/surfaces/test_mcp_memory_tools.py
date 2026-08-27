@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime
+from datetime import UTC
 import json
 import logging
 from pathlib import Path
@@ -16,7 +17,9 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
@@ -32,6 +35,22 @@ from rememberstack.surfaces.sdk import MemoryClient
 _DEPLOYMENT = UUID("57000000-0000-0000-0000-000000000001")
 _DOC = UUID("57000000-0000-0000-0000-000000000002")
 _VERSION = UUID("57000000-0000-0000-0000-000000000003")
+
+
+def _requirements(*, p3: bool = False) -> ReadinessRequirements:
+    """Return the exhaustive ordinary-recall readiness request."""
+    return ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=p3)
+
+
+def _capabilities(*, require: ReadinessRequirements) -> dict[str, CapabilityReadiness]:
+    """Return a compact ready capability payload for surface fixtures."""
+    checked_at = datetime(2026, 8, 27, tzinfo=UTC)
+    return {
+        name: CapabilityReadiness(
+            required=required, ready=True, checked_at=checked_at, reason="ready"
+        )
+        for name, required in require.model_dump().items()
+    }
 
 
 class _RecordingWriteBackend:
@@ -85,14 +104,11 @@ class _RecordingWriteBackend:
         )
 
     def pipeline_readiness(
-        self, *, version_ids: tuple[UUID, ...], require_projections: bool
+        self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
         if self.fail is not None:
             raise self.fail
-        self.last_readiness = {
-            "version_ids": version_ids,
-            "require_projections": require_projections,
-        }
+        self.last_readiness = {"version_ids": version_ids, "require": require}
         return PipelineReadinessReport(
             ready=True,
             versions=(
@@ -100,7 +116,7 @@ class _RecordingWriteBackend:
                     version_id=version_ids[0], ready=True, stages=()
                 ),
             ),
-            projections=(),
+            capabilities=_capabilities(require=require),  # type: ignore[arg-type]
         )
 
     def max_ingest_body_bytes(self) -> int | None:
@@ -179,7 +195,7 @@ class _StubReadinessPort:
         *,
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
-        require_projections: bool,
+        require: ReadinessRequirements,
     ) -> PipelineReadinessReport:
         return PipelineReadinessReport(
             ready=True,
@@ -187,7 +203,7 @@ class _StubReadinessPort:
                 VersionPipelineReadiness(version_id=version_id, ready=True, stages=())
                 for version_id in version_ids
             ),
-            projections=(),
+            capabilities=_capabilities(require=require),  # type: ignore[arg-type]
         )
 
 
@@ -232,8 +248,8 @@ def test_memory_write_descriptors_are_stable() -> None:
     assert isinstance(readiness["description"], str)
     assert "failed" in readiness["description"]
     assert "dead_letter" in readiness["description"]
-    assert "require_projections=false" in readiness["description"]
-    assert "operations profile" in readiness["description"]
+    assert "live_graph" in readiness["description"]
+    assert "p3=false" in readiness["description"]
     assert (
         "20–30 minutes" in readiness["description"]
         or "20-30" in readiness["description"]
@@ -244,7 +260,7 @@ def test_memory_write_descriptors_are_stable() -> None:
     assert "oneOf" in ingest_schema
     readiness_schema = readiness["inputSchema"]
     assert isinstance(readiness_schema, dict)
-    assert readiness_schema["required"] == ["version_ids"]
+    assert readiness_schema["required"] == ["version_ids", "require"]
 
 
 @pytest.mark.parametrize(
@@ -306,11 +322,11 @@ def test_ingest_text_happy_path_points_at_pipeline_readiness() -> None:
     assert payload["pipeline"]["next_tool"] == "pipeline_readiness"
     assert payload["pipeline"]["poll_with"] == {
         "version_ids": [str(_VERSION)],
-        "require_projections": False,
+        "require": {"pipeline": True, "p1": True, "live_graph": True, "p3": False},
     }
     guidance = payload["pipeline"]["guidance"].lower()
     assert "failed" in guidance or "dead_letter" in guidance
-    assert "require_projections=false" in guidance or "require_projections" in guidance
+    assert "live_graph" in guidance and "p3=false" in guidance
     assert backend.last_ingest is not None
     assert backend.last_ingest["content"] == b"remember this"
     assert backend.last_ingest["mime"] == "text/plain"
@@ -642,7 +658,10 @@ def test_pipeline_readiness_happy_path() -> None:
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
         name="pipeline_readiness",
-        arguments={"version_ids": [str(_VERSION)], "require_projections": True},
+        arguments={
+            "version_ids": [str(_VERSION)],
+            "require": _requirements(p3=True).model_dump(),
+        },
         backend=backend,
     )
     payload = _success_payload(result)
@@ -650,12 +669,12 @@ def test_pipeline_readiness_happy_path() -> None:
     assert payload["versions"][0]["version_id"] == str(_VERSION)
     assert backend.last_readiness == {
         "version_ids": (_VERSION,),
-        "require_projections": True,
+        "require": _requirements(p3=True),
     }
 
 
 def test_pipeline_readiness_rejects_bad_args() -> None:
-    """version_ids required; require_projections must be a real boolean."""
+    """Version ids and all four strict Boolean capability keys are required."""
     backend = _RecordingWriteBackend()
     missing = handle_memory_write_tool(
         name="pipeline_readiness", arguments={}, backend=backend
@@ -664,7 +683,7 @@ def test_pipeline_readiness_rejects_bad_args() -> None:
 
     as_int = handle_memory_write_tool(
         name="pipeline_readiness",
-        arguments={"version_ids": [str(_VERSION)], "require_projections": 1},
+        arguments={"version_ids": [str(_VERSION)], "require": {"pipeline": True}},
         backend=backend,
     )
     assert _error_payload(as_int)["code"] == "invalid_arguments"
@@ -827,7 +846,7 @@ def test_local_mcp_wires_write_tools_when_ports_composed() -> None:
     )
     payload = _success_payload(result)
     assert payload["version_id"] == str(_VERSION)
-    assert payload["pipeline"]["poll_with"]["require_projections"] is False
+    assert payload["pipeline"]["poll_with"]["require"] == _requirements().model_dump()
     assert len(ingest.calls) == 1
     assert ingest.calls[0]["mode"] == "observed"
     upload = ingest.calls[0]["upload"]
@@ -835,7 +854,11 @@ def test_local_mcp_wires_write_tools_when_ports_composed() -> None:
     assert upload.content == b"local note"
 
     ready = server.call_tool(
-        name="pipeline_readiness", arguments={"version_ids": [str(_VERSION)]}
+        name="pipeline_readiness",
+        arguments={
+            "version_ids": [str(_VERSION)],
+            "require": _requirements().model_dump(),
+        },
     )
     assert _success_payload(ready)["ready"] is True
 
@@ -879,7 +902,15 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
                             ],
                         }
                     ],
-                    "projections": [],
+                    "capabilities": {
+                        name: {
+                            "required": required,
+                            "ready": False,
+                            "checked_at": "2026-08-27T00:00:00Z",
+                            "reason": "stage_incomplete",
+                        }
+                        for name, required in _requirements().model_dump().items()
+                    },
                 },
             )
         return httpx.Response(404, json={"detail": "Not Found"})
@@ -896,12 +927,15 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
     )
     payload = _success_payload(result)
     assert payload["pipeline"]["status"] == "accepted_not_ready"
-    assert payload["pipeline"]["poll_with"]["require_projections"] is False
+    assert payload["pipeline"]["poll_with"]["require"] == _requirements().model_dump()
     assert ingested == [b"remote body"]
 
     readiness = server.call_tool(
         name="pipeline_readiness",
-        arguments={"version_ids": [str(_VERSION)], "require_projections": False},
+        arguments={
+            "version_ids": [str(_VERSION)],
+            "require": _requirements().model_dump(),
+        },
     )
     ready_payload = _success_payload(readiness)
     assert ready_payload["ready"] is False

@@ -70,13 +70,26 @@ class VersionPipelineReadiness(BaseModel):
     stages: tuple[PipelineStageReadiness, ...]
 
 
-class ProjectionReadiness(BaseModel):
-    """Whether one aggregate projection began after the requested E work."""
+class ReadinessRequirements(BaseModel):
+    """The exhaustive capability set a readiness caller may require."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    plane: Literal["P2_graph", "P3_corpusfs"]
+    pipeline: bool
+    p1: bool
+    live_graph: bool
+    p3: bool
+
+
+class CapabilityReadiness(BaseModel):
+    """One live capability's required/readiness state and safe reason."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    required: bool
     ready: bool
+    checked_at: datetime
+    reason: str
     version: str | None = None
     built_at: datetime | None = None
     published_at: datetime | None = None
@@ -89,7 +102,9 @@ class PipelineReadinessReport(BaseModel):
 
     ready: bool
     versions: tuple[VersionPipelineReadiness, ...]
-    projections: tuple[ProjectionReadiness, ...]
+    capabilities: dict[
+        Literal["pipeline", "p1", "live_graph", "p3"], CapabilityReadiness
+    ]
     model_bindings: dict[str, str] = Field(
         default_factory=dict,
         description=(

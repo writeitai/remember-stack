@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v13 setup
+# RS-LoCoMo-Full-v14 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,17 +16,17 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v13 \
+  --protocol full-v14 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v13` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v14` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
-V13 must ingest into a fresh store built from the repository revision recorded
+V14 must ingest into a fresh store built from the repository revision recorded
 in `run.json`. Store backups protect interrupted work and allow restoration of
 that exact run; they are not a license to carry ingestion across a changed
 pipeline contract.
@@ -37,7 +37,7 @@ as UTC in this adapter only, records `source_timezone_basis=assumed_utc` in
 forwards the aware timestamp to ingestion. RememberStack's general SDK and API
 remain strict: arbitrary naive or non-UTC source timestamps are rejected.
 
-V13 uses the ordinary public `testimony_context` operation as its first-recall path:
+V14 uses the ordinary public `testimony_context` operation as its first-recall path:
 independent semantic and BM25 claim search plus live-confirmed semantic and
 BM25 source-chunk search. The durable trace keeps each complete envelope. The
 repeated answer-agent prompt removes rank-score bookkeeping and empty
@@ -45,7 +45,7 @@ containers so retrieved evidence does not get crowded out by audit metadata.
 Freshness, hydration-drop counts, and meaningful default-valued fields remain
 visible.
 
-V13 requires the shortest phrase that fully names the requested entities or
+V14 requires the shortest phrase that fully names the requested entities or
 values and forbids explanations or reasoning. Its `answer_word_cap` is a
 persisted, fingerprinted protocol field, but the protocol leaves it unset: the
 prompt renders no word-count sentence and the runner applies no
@@ -74,8 +74,8 @@ docker compose --profile operations run --rm projections
 ```
 
 The `answer` command then calls the public readiness endpoint. It refuses to run unless every
-requested version completed the exact composed stage generations and both P2/P3 builds began
-after that work completed. It also requires the deployment's exact prepared
+requested version completed the exact composed stages, live-graph readiness passes, and the P3
+publication began after that work completed. It also requires the deployment's exact prepared
 `surface_manifest_hash`, the canonical four public operation descriptors, and the
 fingerprinted complete answer catalog. Before each
 upload, the exact public `documents_live` to `document_versions_visible` join
@@ -91,7 +91,7 @@ review. Those values are not processing-time provenance; freeze one Compose envi
 run and retain the provider/cost artifacts.
 
 The primary protocol uses a bounded answer agent over the complete public read
-plane: four assured operations, seven direct primitives, nine open-query
+plane: four assured operations, seven direct primitives, seven open-query
 operations, and list/search/read over the ordinary P3 mount. It does not read
 Postgres, MinIO, graph files, or internal handlers directly. Limits are
 run-absolute: allow up to nine agent calls per selected question and one judge
@@ -139,4 +139,4 @@ recomputes one full-manifest score from disjoint item records. See the
 collection, and merge validation.
 
 Historical runs used earlier protocol identities. They are not executable
-compatibility modes and are not comparable to v13.
+compatibility modes and are not comparable to the current protocol.

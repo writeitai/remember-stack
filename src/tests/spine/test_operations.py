@@ -197,7 +197,7 @@ def test_bounded_inspection_replay_and_original_exception(
                     "version": f"{plane}-drill",
                     "uri": f"mem://{plane}",
                 }
-                for plane in ("P2_graph", "P3_corpusfs")
+                for plane in ("P3_corpusfs",)
             ],
         )
 
@@ -217,7 +217,6 @@ def test_bounded_inspection_replay_and_original_exception(
     assert report.poison_targets.items[0].component_version_total == 2
     assert sum(route.count for route in report.routes) == 2
     assert tuple(snapshot.plane for snapshot in report.latest_projections) == (
-        "P2_graph",
         "P3_corpusfs",
     )
 
@@ -294,20 +293,20 @@ def test_bounded_inspection_replay_and_original_exception(
     unlaned_id = ledger.enqueue(
         work=EnqueueWork(
             deployment_id=_DEPLOYMENT_ID,
-            target_kind=ProcessingTarget.SNAPSHOT,
+            target_kind=ProcessingTarget.ENTITY,
             target_id=uuid4(),
-            stage=PipelineStage.BUILD_SNAPSHOT,
-            component_version="snapshot-broken",
-            content_hash="snapshot-hash",
+            stage=PipelineStage.REFRESH_PROFILE,
+            component_version="profile-broken",
+            content_hash="profile-hash",
             lane=None,
         )
     ).processing_id
     unlaned_registry = HandlerRegistry()
     unlaned_registry.register(
-        stage=PipelineStage.BUILD_SNAPSHOT, handler=_PermanentFailure()
+        stage=PipelineStage.REFRESH_PROFILE, handler=_PermanentFailure()
     )
     Worker(ledger=ledger, registry=unlaned_registry).run_one(
-        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.BUILD_SNAPSHOT, lane=None
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.REFRESH_PROFILE, lane=None
     )
     with pytest.raises(LaneRouteError):
         ledger.replay_dead_letter(

@@ -9,7 +9,7 @@ export const metadata = {
 > **Query contract.** RememberStack exposes exactly four top-level assured
 > operations: `resolve_entity`, `testimony_context`, `fact_context`, and
 > `answer_context`. The
-> 17 former stock query patterns are discoverable `examples.*` saved queries
+> 18 former stock query patterns are discoverable `examples.*` saved queries
 > only. There is no legacy compatibility layer or deprecation window.
 
 RememberStack has two deliberately separate truth layers. Claims are
@@ -27,8 +27,8 @@ why the system believes or believed the fact.
 
 (Internally these guarantees are decisions D41 and D54.)
 
-The HTTP API is a thin, typed veneer over one deployment. Open SQL and
-Cypher return **`QueryResult/v1`**. The first three assured operations return a
+The HTTP API is a thin, typed veneer over one deployment. Open SQL returns
+**`QueryResult/v1`**. The first three assured operations return a
 typed **response envelope**; `answer_context` returns `ContextBundle/v1` with
 the complete testimony and fact envelopes kept separate. No query endpoint
 calls an LLM completion, and
@@ -37,7 +37,7 @@ sole client write path and always enters E0.
 
 Four things are true of every deployment's API:
 
-- **The shipping query surface is deliberate.** Nine open-query entry points
+- **The shipping query surface is deliberate.** Seven open-query entry points
   mount under `/query/…`; `/operations` and `/operations/{name}` expose exactly
   `resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`.
 - **The operation endpoints render from the registry.** `GET /operations` _is_ the
@@ -69,17 +69,14 @@ page with `remember ops cost-export`. See [Deployment](/docs/deployment).
 
 ## Open query space
 
-Choose among three neutral surfaces: native snapshot Cypher with
-`built_at`/age, live/evidence-composable SQL, and the four assured typed
-operations (`resolve_entity`, `testimony_context`, `fact_context`,
-`answer_context`).
+Choose among live/evidence-composable SQL, typed live graph methods, and the
+four assured operations (`resolve_entity`, `testimony_context`,
+`fact_context`, `answer_context`).
 
 | Method | Path | Contract |
 | --- | --- | --- |
 | `POST` | `/query/sql` | One sandboxed statement; `QueryResult/v1` |
 | `POST` | `/query/sql/explain` | `EXPLAIN` without execution |
-| `POST` | `/query/cypher` | Read-only Cypher over the published P2 snapshot |
-| `POST` | `/query/cypher/explain` | Engine plan without execution |
 | `GET` | `/query/space` | Manifest-backed schema discovery (full first-call payload) |
 | `GET` | `/query/space/search` | Search checked-in manifest text only |
 | `GET` | `/query/saved` | Saved-query registry metadata |
@@ -88,11 +85,11 @@ operations (`resolve_entity`, `testimony_context`, `fact_context`,
 
 `GET /query/space` opens with the two-layer headline, the three retrieval
 choices, honesty warnings, and worked examples (contrast pair, predicate
-vocabulary, full audit trail, two-layer divergence, native Cypher
-traversal/aggregation, snapshot-ID-to-live SQL, semantic-to-relational). It
+vocabulary, full audit trail, two-layer divergence, live graph helpers, and
+semantic-to-relational joins). It
 also exposes the full authoritative discovery members (views, function
-signatures, core operation descriptors, SQL grammar, Cypher dialect, P2
-projection, and tier limits). Docs copy the bound example text; they do not
+signatures, core operation descriptors, SQL grammar, and tier limits). Docs
+copy the bound example text; they do not
 import Python modules.
 
 The four design-bound facts-layer examples ship verbatim:
@@ -241,7 +238,7 @@ belief; the separate two-axis `facts_as_of`/open-SQL path answers what the
 system believed at a past instant. Every fact envelope echoes the applied mode
 in its required `temporal_scope`.
 
-The 17 former stock query patterns are shipped only as discoverable
+The 18 former stock query patterns are shipped only as discoverable
 `examples.*` saved queries. They are not operation tools and have no deprecation
 or migration surface.
 
@@ -265,12 +262,14 @@ be timezone-aware UTC; omitting it preserves an unknown source time.
 
 ### `POST /readiness`
 
-When composed, accepts a JSON list of document-version UUIDs and returns the
-exact expected stage generations and their states. With
-`require_projections=true` (the default), readiness also requires both P2 and
-P3 builds to have begun after the latest requested terminal stage. The response
-includes non-secret model IDs, making writer/query configuration auditable.
-This endpoint inspects work; it does not wait, retry, or trigger a rebuild.
+When composed, accepts document-version UUIDs plus an exhaustive `require`
+object with the Boolean keys `pipeline`, `p1`, `live_graph`, and `p3`. The
+response reports each capability's requested/readiness state and safe reason.
+`live_graph` proves PostgreSQL 19 catalog and bounded query health; it has no
+generation. `p3` separately requires a fresh published CorpusFS snapshot and
+includes its version/publication evidence. The response also includes
+non-secret model IDs. This endpoint inspects work; it does not wait, retry, or
+trigger a build.
 
 ### Connector management
 
@@ -294,7 +293,7 @@ worker, projection, or adapter dependencies:
 ```python
 from pathlib import Path
 
-from rememberstack.client import MemoryClient
+from rememberstack.client import MemoryClient, ReadinessRequirements
 
 with MemoryClient.from_settings() as memory:
     tools = memory.list_operations()
@@ -308,7 +307,12 @@ with MemoryClient.from_settings() as memory:
         source_ref="workspace/project",
         source_version_ref="revision-17",
     )
-    ready = memory.pipeline_readiness(version_ids=(landed.version_id,))
+    ready = memory.pipeline_readiness(
+        version_ids=(landed.version_id,),
+        require=ReadinessRequirements(
+            pipeline=True, p1=True, live_graph=True, p3=False
+        ),
+    )
 ```
 
 The SDK also exposes typed `resolve`, `lookup_relations`,
@@ -354,7 +358,7 @@ withdrawn; a fact with no qualifying provenance is never returned.
 Choose the authority explicitly: `testimony_context` for what sources said,
 `fact_context` for what the system holds or held true, and `answer_context` when
 the answer-producing agent needs both complete views. None silently adds graph
-neighbors; use `query_cypher`, live SQL graph helpers, or the saved
+neighbors; use the live SQL graph helpers or the saved
 `examples.multi_hop_context` pattern for explicit graph expansion.
 
 The default question channel independently fuses semantic and BM25 claim nominations and source-chunk
@@ -384,48 +388,36 @@ contradiction group always carries the other sides with it — a contradiction
 is surfaced, never silently resolved. A fact whose supporting testimony was
 withdrawn is returned flagged, not hidden.
 
-## Open Cypher surface
+## Live graph surface
 
-The SQL helpers `memory_v1.graph_neighborhood` and `memory_v1.graph_path` use
-both time axes (world validity and system belief). Omit both `valid_at` and
-`believed_at` for the statement instant, or supply both for a historical
-traversal; supplying exactly one fails
-with PostgreSQL `invalid_parameter_value`. Both intervals are half-open.
+PostgreSQL 19 serves graph reads directly from the same authority database.
+Server-owned one- and two-hop neighborhoods execute fixed SQL/PGQ patterns;
+deeper neighborhoods and shortest-tier paths execute bounded recursive SQL
+helpers. There is no graph export, generation, local database, or Cypher API.
 
-Deployments that compose the open query gateway publish these exact graph
-entry points:
+The public SQL helpers are `memory_v1.graph_neighborhood`,
+`memory_v1.graph_path`, and `memory_v1.graph_citation_path`. Entity helpers
+apply both half-open time axes during expansion. Every helper clamps depth,
+results, frontier, expansion, and time budgets and emits one terminal status
+row that reports truncation and effective bounds.
 
-```text
-query_cypher(cypher, parameters, max_rows?, confirm=false)
-explain_cypher(cypher, parameters)
-```
+Typed `GraphQueries` methods hydrate the returned node and edge identifiers
+from evidence-rich `memory_v1` authority views inside the same read-only
+repeatable-read transaction. A committed relation is therefore immediately
+eligible for graph reads; no publication step or snapshot-age warning exists.
 
-One statement may open with `MATCH`, `OPTIONAL`, `WITH`, `UNWIND`, or `RETURN`.
-Parameters are typed and bound, never interpolated. File, attachment,
-extension, session, maintenance, and plan-control constructs are rejected by
-the gateway. `CREATE`, `DELETE`, `MERGE`, and `SET` are refused by the pinned
-LadybugDB engine opened read-only. The pinned physical-address function family
-(`id`, `rowid`, `internal_id`, `offset`, `hash`, `cast`, `string`, and
-`to_string`) is also refused because those calls can expose or derive an engine
-address, including after coercion; query the public `e.id` property instead.
-Cypher text is capped at 32 KiB; the selected
-tier also supplies the statement timeout and returned row, byte, parameter, and
-concurrency limits. If the engine timeout cannot be installed, the statement is
-not executed. `explain_cypher` returns the engine plan and does not execute the
-statement.
+The typed HTTP/SDK surface is:
 
-Every result has grade `snapshot_graph` and names the exact P2 snapshot ID,
-version, `built_at`, and age that served it. A snapshot older than one hour
-remains usable with a warning. Results and absence are correct for that
-disclosed cut only; they do not describe changes after `built_at`, and a query
-never triggers or waits for a rebuild.
+| HTTP | `MemoryClient` | Bound |
+| --- | --- | --- |
+| `POST /graph/neighborhood` | `graph_neighborhood(...)` | 1–4 hops, at most 500 returned neighbors |
+| `POST /graph/path` | `graph_path(...)` | shortest tier within 1–6 hops, at most 10 equal-length paths |
+| `POST /graph/citation-path` | `graph_citation_path(...)` | directed citation chain within 1–6 hops |
 
-`confirm=true` checks live PostgreSQL membership only for top-level engine-typed
-`Entity` nodes and `RELATES` relationships, then drops a row if any such ID is
-stale. Scalar IDs, aggregates, collections, paths, documents, and other graph
-types remain snapshot-scoped. Confirmation reports nominated, confirmed, and
-dropped counts; if nothing was confirmable, the result warns instead of
-claiming the rest of the row became live.
+Neighborhood and entity-path requests accept `valid_at` and `believed_at`
+only as a pair. Callers provide identifiers, filters, clocks, and bounds—not
+SQL or PGQ text. Invalid bounds and partial clock coordinates fail validation
+before traversal.
 
 ## The auth perimeter
 

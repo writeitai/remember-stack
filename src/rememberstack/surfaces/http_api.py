@@ -19,6 +19,7 @@ from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Protocol
+from typing import Self
 from uuid import UUID
 
 from fastapi import Body
@@ -32,6 +33,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 from pydantic import SecretBytes
 
 from rememberstack.model import AuthenticatedContext
@@ -46,10 +48,13 @@ from rememberstack.model import IngestedVersion
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ReadinessRequirements
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.surfaces.graph_queries import GraphBusyError
+from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
@@ -63,6 +68,8 @@ from rememberstack.surfaces.query_sandbox.result import QueryResult
 
 PIPELINE_READINESS_VERSION_LIMIT: Final = 1_000
 """Maximum document versions in one read-only readiness inspection."""
+
+GraphPredicate = Annotated[str, Field(min_length=1, max_length=200)]
 
 
 class IngestPort(Protocol):
@@ -139,15 +146,110 @@ class ReadinessPort(Protocol):
 
 
 class PipelineReadinessPort(Protocol):
-    """Inspect ordinary per-version and aggregate projection completion."""
+    """Inspect requested pipeline and serving-capability readiness."""
 
     def inspect(
         self,
         *,
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
-        require_projections: bool,
+        require: ReadinessRequirements,
     ) -> PipelineReadinessReport: ...
+
+
+class GraphQueryPort(Protocol):
+    """Typed bounded graph operations exposed by the data plane."""
+
+    def neighborhood(
+        self,
+        *,
+        entity_id: UUID,
+        hops: int = 2,
+        predicates: tuple[str, ...] = (),
+        valid_at: datetime | None = None,
+        believed_at: datetime | None = None,
+        limit: int = 500,
+        continuation: str | None = None,
+        include_paths: bool = False,
+    ) -> Envelope: ...
+
+    def path(
+        self,
+        *,
+        from_entity_id: UUID,
+        to_entity_id: UUID,
+        max_hops: int = 4,
+        valid_at: datetime | None = None,
+        believed_at: datetime | None = None,
+        predicates: tuple[str, ...] = (),
+    ) -> Envelope: ...
+
+    def citation_path(
+        self, *, from_doc_id: UUID, to_doc_id: UUID, max_hops: int = 6
+    ) -> Envelope: ...
+
+
+class PipelineReadinessRequest(BaseModel):
+    """Exhaustive readiness capabilities for a bounded version set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version_ids: list[UUID] = Field(
+        min_length=1, max_length=PIPELINE_READINESS_VERSION_LIMIT
+    )
+    require: ReadinessRequirements
+
+
+class GraphNeighborhoodRequest(BaseModel):
+    """Bounded entity-neighborhood request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: UUID
+    hops: int = Field(default=2, ge=1, le=4)
+    predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
+    valid_at: datetime | None = None
+    believed_at: datetime | None = None
+    limit: int = Field(default=500, ge=1, le=500)
+    continuation: str | None = Field(default=None, max_length=200)
+    include_paths: bool = False
+
+    @model_validator(mode="after")
+    def require_complete_bitemporal_coordinate(self) -> Self:
+        """Require both graph clocks or neither at the HTTP boundary."""
+        if (self.valid_at is None) != (self.believed_at is None):
+            raise ValueError("valid_at and believed_at must be supplied together")
+        return self
+
+
+class GraphPathRequest(BaseModel):
+    """Bounded shortest entity-path request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_entity_id: UUID
+    to_entity_id: UUID
+    max_hops: int = Field(default=4, ge=1, le=6)
+    predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
+    valid_at: datetime | None = None
+    believed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def require_complete_bitemporal_coordinate(self) -> Self:
+        """Require both graph clocks or neither at the HTTP boundary."""
+        if (self.valid_at is None) != (self.believed_at is None):
+            raise ValueError("valid_at and believed_at must be supplied together")
+        return self
+
+
+class GraphCitationPathRequest(BaseModel):
+    """Bounded directed document-citation path request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_doc_id: UUID
+    to_doc_id: UUID
+    max_hops: int = Field(default=6, ge=1, le=6)
 
 
 class SqlQueryRequest(BaseModel):
@@ -167,26 +269,6 @@ class SqlExplainRequest(BaseModel):
 
     sql: str
     parameters: list[Any] = Field(default_factory=list)
-
-
-class CypherQueryRequest(BaseModel):
-    """Body for `POST /query/cypher` (execution fields allowed)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    cypher: str
-    parameters: dict[str, Any] = Field(default_factory=dict)
-    max_rows: int | None = Field(default=None, ge=0)
-    confirm: bool = False
-
-
-class CypherExplainRequest(BaseModel):
-    """Body for `POST /query/cypher/explain` — cypher and parameters only."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    cypher: str
-    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunSavedQueryRequest(BaseModel):
@@ -212,6 +294,7 @@ def build_api(
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
+    graph: GraphQueryPort | None = None,
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
@@ -340,6 +423,8 @@ def build_api(
         _mount_pipeline_readiness(
             app=app, readiness=pipeline_readiness, deployment_id=deployment_id
         )
+    if graph is not None:
+        _mount_graph(app=app, graph=graph)
 
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
@@ -347,10 +432,73 @@ def build_api(
     return app
 
 
+def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
+    """Mount the three server-owned graph operations."""
+
+    @app.post("/graph/neighborhood", response_model=Envelope)
+    def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
+        """Return a current or bitemporal bounded entity neighborhood."""
+        try:
+            return graph.neighborhood(
+                entity_id=body.entity_id,
+                hops=body.hops,
+                predicates=body.predicates,
+                valid_at=body.valid_at,
+                believed_at=body.believed_at,
+                limit=body.limit,
+                continuation=body.continuation,
+                include_paths=body.include_paths,
+            )
+        except (GraphBusyError, GraphHydrationError) as error:
+            detail = (
+                "live graph is busy"
+                if isinstance(error, GraphBusyError)
+                else "live graph result unavailable"
+            )
+            raise HTTPException(status_code=503, detail=detail) from error
+
+    @app.post("/graph/path", response_model=Envelope)
+    def graph_path(body: GraphPathRequest) -> Envelope:
+        """Return bounded equal-length shortest paths between two entities."""
+        try:
+            return graph.path(
+                from_entity_id=body.from_entity_id,
+                to_entity_id=body.to_entity_id,
+                max_hops=body.max_hops,
+                predicates=body.predicates,
+                valid_at=body.valid_at,
+                believed_at=body.believed_at,
+            )
+        except (GraphBusyError, GraphHydrationError) as error:
+            detail = (
+                "live graph is busy"
+                if isinstance(error, GraphBusyError)
+                else "live graph result unavailable"
+            )
+            raise HTTPException(status_code=503, detail=detail) from error
+
+    @app.post("/graph/citation-path", response_model=Envelope)
+    def graph_citation_path(body: GraphCitationPathRequest) -> Envelope:
+        """Return bounded directed citation paths between two documents."""
+        try:
+            return graph.citation_path(
+                from_doc_id=body.from_doc_id,
+                to_doc_id=body.to_doc_id,
+                max_hops=body.max_hops,
+            )
+        except (GraphBusyError, GraphHydrationError) as error:
+            detail = (
+                "live graph is busy"
+                if isinstance(error, GraphBusyError)
+                else "live graph result unavailable"
+            )
+            raise HTTPException(status_code=503, detail=detail) from error
+
+
 def _mount_open_query(
     *, app: FastAPI, open_query: OpenQueryFacade, perimeter: Any | None = None
 ) -> None:
-    """Add the nine §3.1 open-query routes when the facade is composed.
+    """Add the seven §3.1 open-query routes when the facade is composed.
 
     Paths are short and consistent under `/query/…`. Sandbox and registry failures map to typed
     HTTP status + public error code without private engine detail.
@@ -386,34 +534,6 @@ def _mount_open_query(
         return _open_call(
             lambda: open_query.explain_sql(
                 sql=body.sql, parameters=body.parameters, principal=principal
-            )
-        )
-
-    @app.post("/query/cypher", response_model=QueryResult)
-    def query_cypher(
-        body: CypherQueryRequest,
-        principal: Annotated[str | None, Depends(principal_dep)] = None,
-    ) -> QueryResult:
-        """One read-only Cypher statement over the published snapshot."""
-        return _open_call(
-            lambda: open_query.query_cypher(
-                cypher=body.cypher,
-                parameters=body.parameters,
-                max_rows=body.max_rows,
-                confirm=body.confirm,
-                principal=principal,
-            )
-        )
-
-    @app.post("/query/cypher/explain", response_model=QueryResult)
-    def explain_cypher(
-        body: CypherExplainRequest,
-        principal: Annotated[str | None, Depends(principal_dep)] = None,
-    ) -> QueryResult:
-        """Engine plan for one Cypher statement without executing it."""
-        return _open_call(
-            lambda: open_query.explain_cypher(
-                cypher=body.cypher, parameters=body.parameters, principal=principal
             )
         )
 
@@ -568,7 +688,7 @@ def _open_call(action):  # noqa: ANN001, ANN202
 
 def _sandbox_status(code: QueryErrorCode) -> int:
     """Map public sandbox codes to stable HTTP statuses without private detail."""
-    if code in (QueryErrorCode.SAVED_QUERY_NOT_FOUND, QueryErrorCode.P2_UNAVAILABLE):
+    if code is QueryErrorCode.SAVED_QUERY_NOT_FOUND:
         return 404
     if code in (
         QueryErrorCode.SAVED_QUERY_DISABLED,
@@ -582,6 +702,7 @@ def _sandbox_status(code: QueryErrorCode) -> int:
     if code in (
         QueryErrorCode.PG_UNAVAILABLE,
         QueryErrorCode.P1_UNAVAILABLE,
+        QueryErrorCode.GRAPH_UNAVAILABLE,
         QueryErrorCode.CORPUS_BODY_UNAVAILABLE,
         QueryErrorCode.GENERATION_UNAVAILABLE,
     ):
@@ -605,16 +726,13 @@ def _mount_pipeline_readiness(
 
     @app.post("/readiness", response_model=PipelineReadinessReport)
     def pipeline_readiness(
-        version_ids: Annotated[
-            list[UUID], Body(min_length=1, max_length=PIPELINE_READINESS_VERSION_LIMIT)
-        ],
-        require_projections: bool = True,
+        request: Annotated[PipelineReadinessRequest, Body()],
     ) -> PipelineReadinessReport:
-        """Inspect exact E generations and optionally fresh P2/P3 snapshots."""
+        """Inspect exact pipeline and explicitly requested capabilities."""
         return readiness.inspect(
             deployment_id=deployment_id,
-            version_ids=tuple(version_ids),
-            require_projections=require_projections,
+            version_ids=tuple(request.version_ids),
+            require=request.require,
         )
 
 

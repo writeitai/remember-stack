@@ -794,38 +794,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ladybug"
-version = "0.18.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a5/e8/60c59b2f816822f8edac1b65359722104c6c5e9143b6dc487a805ab719e4/ladybug-0.18.2.tar.gz", hash = "sha256:0ff83e699b54cdb5c684f8d679bced7c51ca40f136b8e01fe11ce23d60acfd31", size = 10275006 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/09/3ab7de0f4574687d814e402507fd4e265df437e1f1a5e76b1bb25d220a80/ladybug-0.18.2-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:fbabddb8e1156486c1e2822ece85ff06fa82df2dbad5113275b83f5a7740a72f", size = 7198412 },
-    { url = "https://files.pythonhosted.org/packages/de/14/6d4fdc2cd6f8a7bc415ec99d2d2bfbd79e0f9763c81dd84caa50e7b1d80c/ladybug-0.18.2-cp312-cp312-macosx_15_0_x86_64.whl", hash = "sha256:fb64c893b8195e5134de9d79a7a2588de9f555739c88e474a0bd1d13753ea208", size = 7396169 },
-    { url = "https://files.pythonhosted.org/packages/37/06/40cd2a6ca0e1a2800f2bf1c10cf0c38588f9cc6a85784b3ce9d9664977a4/ladybug-0.18.2-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:91d3e23aed822568c539f4a79c88d4558e554c1419d20b7590df5562680f7176", size = 9865720 },
-    { url = "https://files.pythonhosted.org/packages/8a/4f/cd9ad663257982b2aae27c3329d450af5d6626e2d29e0616b1f974174e14/ladybug-0.18.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a257bdf8e48cd7cf21a5dbc94ac3fef1132838f04a47198d74527f04fe7963e8", size = 10925971 },
-    { url = "https://files.pythonhosted.org/packages/c2/c9/033dce825fb19fca8edcd428cce66b2ce1563ecb13f9f5a2395457d51716/ladybug-0.18.2-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:4a955bbddfc679f29caa3079c9cf835031f56cfe777bf356d3c872dd5aef82ce", size = 10723435 },
-    { url = "https://files.pythonhosted.org/packages/38/0a/4eef1a6673cb8c16ae75e94ad4c57005eb58601df23e660b5edd297d5a07/ladybug-0.18.2-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:3c66654a39b37983f3a8e3578d009370205af1a5bd05c4ae385411c805863dc7", size = 11342321 },
-    { url = "https://files.pythonhosted.org/packages/a0/e6/c6c9eb16b59aa9992513a198012f1e076ac806662263d168e1da13d050ca/ladybug-0.18.2-cp312-cp312-win_amd64.whl", hash = "sha256:6f82e94b683311af74609e57b42af23e185bfbc2dc335f8a7c8b1b0028538891", size = 8394163 },
-    { url = "https://files.pythonhosted.org/packages/2c/c7/aa894eba8e7dc618325d40ae63edd827987f091324334fe42c2790fe4c6b/ladybug-0.18.2-cp312-cp312-win_arm64.whl", hash = "sha256:f468a6c45515e6c76137b9686e5a31a03c65c236b2f1d3eacd63cb6c456beaef", size = 8147003 },
-    { url = "https://files.pythonhosted.org/packages/ec/82/496d32ea4ebfc7cb59c8a31a856046b970ceccc208a4c5763b278f7b7eb3/ladybug-0.18.2-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:dba91c939b9ec0b058214841e5e7c0e3a67da4c1114912788ec6a1a23ca032e6", size = 7198584 },
-    { url = "https://files.pythonhosted.org/packages/6d/d4/775a788fadf329ffbcfd05a168d1dadbc8532b4377393336c51fa0e0d8f4/ladybug-0.18.2-cp313-cp313-macosx_15_0_x86_64.whl", hash = "sha256:e47931e90570ff8a72f04faa4200aa85a662bebaf4f4cf4dac3f91dae7cd55c7", size = 7396442 },
-    { url = "https://files.pythonhosted.org/packages/c8/35/445e9ee681de02aea88d42319ff1e26da159ae08744719281275f5589244/ladybug-0.18.2-cp313-cp313-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2db15bf2a9e5166cc365c377e9e6b20b7e002e752cb0a8aed964db40a37fbff9", size = 9864592 },
-    { url = "https://files.pythonhosted.org/packages/a9/46/dbbe9723da89166e6938502c1820ec67b9e7f9c1c4fb6c368753794768b1/ladybug-0.18.2-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a58587123ad7e05df05dcf540b88cc114b1d044db49921827bb4803e66d86b7c", size = 10925943 },
-    { url = "https://files.pythonhosted.org/packages/94/03/ea55f8768299c05d8960ff90b64229d21ce9a5daebe996c398009b63b1a0/ladybug-0.18.2-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:e8e2484764b3467407381e37f2d37c2131e8a6487a7c0704e5d1cf7fc2d5fb67", size = 10723563 },
-    { url = "https://files.pythonhosted.org/packages/74/5b/b7c73447bcabc16f30f3891da0bf148fc840d2525785859b23ed0917dea2/ladybug-0.18.2-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:d436b11cfb3373f56b7527506409799ec3a57ce6fe8fd818aba518e72c4e473f", size = 11342735 },
-    { url = "https://files.pythonhosted.org/packages/1b/48/372c342840e3f8c432e12c00821a0dfde3f9a41257a50350b604cba5f37d/ladybug-0.18.2-cp313-cp313-win_amd64.whl", hash = "sha256:54239e02f7fe740642c72e18bf9e4e80220ee7bacef544c79fe500d46cc6ed23", size = 8394153 },
-    { url = "https://files.pythonhosted.org/packages/4e/66/ac4c7aff5da335c0f55bded8c053ead087f62d780777dbd68d0a6895101c/ladybug-0.18.2-cp313-cp313-win_arm64.whl", hash = "sha256:35a237845086bdcbf7a5f8c20701dcd6703faefe200bb7c9e859416e21a48096", size = 8146788 },
-    { url = "https://files.pythonhosted.org/packages/0b/80/565cff74cd05444f6c809299bf96b2840760468a9a899cf19f6a4c2c41e6/ladybug-0.18.2-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:17af43a997d4faad7605038f0ba9787f23239333d11d43995662d1ce5550d3f7", size = 7199656 },
-    { url = "https://files.pythonhosted.org/packages/c9/ca/f96f2e9574e362b44c363f138cc491a3f860514521be53063ab75f3ea441/ladybug-0.18.2-cp314-cp314-macosx_15_0_x86_64.whl", hash = "sha256:64e73149976d2e353993d330471cb34cb988212e21f321f552e0bbf304bd7f0e", size = 7396707 },
-    { url = "https://files.pythonhosted.org/packages/b9/04/8a56547475725dfbe7f5c292c1ee8c7670d3e694716547c5ab37b143d319/ladybug-0.18.2-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f846e2d4438a6b17fcdec7dd90cb7b96b32c36687990864ec95f7cb70f314b67", size = 9866030 },
-    { url = "https://files.pythonhosted.org/packages/3d/ef/f37b8560f3a7ae934b97f8327529373e9ac9a91f8c0ef86021d6391b20b8/ladybug-0.18.2-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:07e796a947adb357debf3c250b2fa0a33fa02f7bd6d88ac4b88bf5cf99134944", size = 10926184 },
-    { url = "https://files.pythonhosted.org/packages/f0/26/07487f9487794bb56cdfb1acdea5cb3e841aff00f30021f2b746ccc4bcdb/ladybug-0.18.2-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:a07482bb5596e5fcc57efe561d573392cfca8f93b049a5e27a339de1a55ecdce", size = 10724611 },
-    { url = "https://files.pythonhosted.org/packages/1c/54/83a5237972d44d2a8f62ee6261939e6851fd397cfe87d4a0920366866e00/ladybug-0.18.2-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:2dc29ccce8f41c24f3dc4589b0e3c869bbf7a26624aa8d01024686a86d6281da", size = 11342168 },
-    { url = "https://files.pythonhosted.org/packages/c6/bc/97c18e798f73285197bbca6f6f65e01ce03dfdff804b1fe5dc14313b547e/ladybug-0.18.2-cp314-cp314-win_amd64.whl", hash = "sha256:d0e8e895ac1dbe6658784d71388fa64c1a010f4c3bfbd5ee3445927b7cc38546", size = 8664267 },
-    { url = "https://files.pythonhosted.org/packages/4c/51/6924a39de2f3cd66cac6f63d153e16b81ab4ef9751b1bee9b1a3c24b1b43/ladybug-0.18.2-cp314-cp314-win_arm64.whl", hash = "sha256:1f626b4d0708979e4f75e8b9ef92fe6671eeab4a27408b82e528e9a71103cab5", size = 8403284 },
-]
-
-[[package]]
 name = "langfuse"
 version = "4.14.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1749,7 +1717,6 @@ server = [
     { name = "alembic" },
     { name = "boto3" },
     { name = "fastapi" },
-    { name = "ladybug" },
     { name = "markdown-it-py" },
     { name = "markitdown" },
     { name = "onnxruntime", marker = "python_full_version >= '3.14'" },
@@ -1769,7 +1736,6 @@ dev = [
     { name = "google-cloud-storage" },
     { name = "import-linter" },
     { name = "jsonschema" },
-    { name = "ladybug" },
     { name = "markdown-it-py" },
     { name = "markitdown" },
     { name = "nltk" },
@@ -1795,7 +1761,6 @@ requires-dist = [
     { name = "google-auth", marker = "extra == 'benchmark'", specifier = ">=2.39" },
     { name = "google-cloud-storage", marker = "extra == 'benchmark'", specifier = ">=3.4,<4" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ladybug", marker = "extra == 'server'", specifier = "==0.18.2" },
     { name = "langfuse", marker = "extra == 'observability'", specifier = ">=4.14.1,<5" },
     { name = "markdown-it-py", marker = "extra == 'server'", specifier = ">=4.2.0" },
     { name = "markitdown", marker = "extra == 'server'", specifier = ">=0.1.6" },
@@ -1821,7 +1786,6 @@ dev = [
     { name = "google-cloud-storage", specifier = ">=3.4,<4" },
     { name = "import-linter", specifier = ">=2.13" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "ladybug", specifier = "==0.18.2" },
     { name = "markdown-it-py", specifier = ">=4.2.0" },
     { name = "markitdown", specifier = ">=0.1.6" },
     { name = "nltk", specifier = ">=3.9" },

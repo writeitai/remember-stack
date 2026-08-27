@@ -1563,9 +1563,9 @@ def test_validate_version_does_not_block_publish_surface_hash(
 # --- examples / seed ---------------------------------------------------------
 
 
-def test_the_shipped_examples_are_the_seventeen_the_design_maps() -> None:
+def test_the_shipped_examples_are_the_eighteen_the_design_maps() -> None:
     names = {name for name, _ in declared_examples()}
-    assert len(names) == 17
+    assert len(names) == 18
     assert names == set(EXAMPLE_QUERIES)
     assert "claims_hybrid_rrf" in names
     assert all(purpose for _, purpose in declared_examples())
@@ -1602,6 +1602,7 @@ _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
     "changed_since": ("changes_visible",),
     "graph_neighborhood": ("graph_neighborhood",),
     "graph_path": ("graph_path",),
+    "graph_citation_path": ("graph_citation_path",),
 }
 
 
@@ -1654,14 +1655,14 @@ def test_always_empty_substitution_fails_positive(registry_url: str) -> None:
     assert report.fixtures["cap"] is False
 
 
-def test_seed_installs_exactly_seventeen_examples_idempotently(
+def test_seed_installs_exactly_eighteen_examples_idempotently(
     registry_url: str,
 ) -> None:
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
         first = seed_shipped_examples(
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
-        assert first == 17
+        assert first == 18
         second = seed_shipped_examples(
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
@@ -1672,7 +1673,7 @@ def test_seed_installs_exactly_seventeen_examples_idempotently(
             b"   AND origin = 'shipped_example'",
             (str(_DEPLOYMENT),),
         ).fetchone()
-        assert rows is not None and rows[0] == 17
+        assert rows is not None and rows[0] == 18
         active = connection.execute(
             b"SELECT count(*) FROM saved_queries AS q"
             b" JOIN saved_query_versions AS v"
@@ -1681,7 +1682,7 @@ def test_seed_installs_exactly_seventeen_examples_idempotently(
             b"   AND v.status = 'active' AND v.assurance = 'shipped_example'",
             (str(_DEPLOYMENT),),
         ).fetchone()
-        assert active is not None and active[0] == 17
+        assert active is not None and active[0] == 18
         reg = _registry(connection, actor="reader")
         for name in ("claims_about", "relation_current", "graph_path"):
             resolved = reg.resolve(namespace="examples", name=name)
@@ -1689,7 +1690,7 @@ def test_seed_installs_exactly_seventeen_examples_idempotently(
             assert resolved.assurance == "shipped_example"
             assert resolved.sql == EXAMPLE_QUERIES[name][1]
         listed = reg.list_saved_queries(namespace="examples")
-        assert len(listed) == 17
+        assert len(listed) == 18
         assert all(item.origin == "shipped_example" for item in listed)
         connection.rollback()
 
@@ -1744,7 +1745,7 @@ def test_customer_cannot_disable_or_purge_shipped_examples(registry_url: str) ->
         installed = seed_shipped_examples(
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
-        assert installed == 17
+        assert installed == 18
         query_id = connection.execute(
             b"SELECT query_id FROM saved_queries"
             b" WHERE deployment_id = %s AND namespace = 'examples'"
@@ -1792,7 +1793,7 @@ def test_describe_query_space_includes_shipped_examples_when_asked() -> None:
     bare = describe_query_space()
     assert bare.examples == ()
     full = describe_query_space(include_examples=True)
-    assert len(full.examples) == 17
+    assert len(full.examples) == 18
     assert "examples.claims_hybrid_rrf" in full.examples
 
 
@@ -1882,6 +1883,21 @@ def example_corpus(
                 text(
                     "SELECT fact_id FROM memory_v1.facts_current"
                     " WHERE deployment_id = :d AND fact_kind = 'relation' LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).scalar()
+            citation = connection.execute(
+                text(
+                    "SELECT from_doc_id, to_doc_id"
+                    " FROM memory_v1.document_crossrefs_live"
+                    " WHERE deployment_id = :d ORDER BY crossref_id LIMIT 1"
+                ),
+                {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
+            ).one_or_none()
+            tombstone_doc = connection.execute(
+                text(
+                    "SELECT doc_id FROM documents"
+                    " WHERE deployment_id = :d AND deleted_at IS NOT NULL LIMIT 1"
                 ),
                 {"d": _EXAMPLE_CORPUS_DEPLOYMENT},
             ).scalar()
@@ -1994,6 +2010,8 @@ def example_corpus(
         assert tombstone_fact is not None, "corpus must expose a surface-excluded fact"
         assert tombstone_claims, "corpus must expose surface-excluded claims"
         assert tombstone_chunks, "corpus must expose surface-excluded chunks"
+        assert citation is not None, "corpus must expose a directed live citation"
+        assert tombstone_doc is not None, "corpus must expose a deleted document"
         # Stamp embedding hashes so chunk channels can confirm fixture bodies.
         chunk_bodies: dict[str, str] = {}
         with engine.begin() as connection:
@@ -2018,6 +2036,7 @@ def example_corpus(
         empty_entity = UUID("00000000-0000-4000-8000-0000000000e1")
         empty_chunk = UUID("00000000-0000-4000-8000-0000000000c1")
         empty_fact = UUID("00000000-0000-4000-8000-0000000000f1")
+        empty_doc = UUID("00000000-0000-4000-8000-0000000000d1")
         far_past = datetime(1970, 1, 1, tzinfo=timezone.utc)
         far_future = datetime(2099, 6, 1, tzinfo=timezone.utc)
         # Distinct time windows that stay empty without overlapping live claim
@@ -2028,6 +2047,7 @@ def example_corpus(
         tombstone_to = datetime(2010, 6, 1, tzinfo=timezone.utc)
         tombstone_since = datetime(2099, 12, 1, tzinfo=timezone.utc)
         handles = ExampleFixtureHandles(
+            deployment_id=_EXAMPLE_CORPUS_DEPLOYMENT,
             live_entity=alice,
             other_entity=acme,
             empty_entity=empty_entity,
@@ -2038,6 +2058,10 @@ def example_corpus(
             live_fact=live_fact,
             empty_fact=empty_fact,
             tombstone_fact=tombstone_fact,
+            live_from_doc=citation[0],
+            live_to_doc=citation[1],
+            empty_doc=empty_doc,
+            tombstone_doc=tombstone_doc,
             live_from=batch_a._PAST,
             live_to=far_future,
             empty_from=far_past,
@@ -2176,7 +2200,7 @@ def test_every_example_runs_four_validation_classes_on_corpus(
         tuple[UUID, ...],
     ],
 ) -> None:
-    """Positive mapping, empty, tombstone absence, and real cap on all 17 bodies."""
+    """Positive mapping, empty, tombstone absence, and real cap on all 18 bodies."""
     (
         url,
         deployment_id,
@@ -2202,7 +2226,7 @@ def test_every_example_runs_four_validation_classes_on_corpus(
         assert meta["positive"]["parameters"] != meta["tombstone"]["parameters"]
         # Cap may reuse positive parameters under a tight row bound; empty and
         # tombstone must stay distinct where the body accepts distinguishing
-        # parameters (all 17 operators do).
+        # parameters (all 18 operators do).
         assert meta["empty"]["parameters"] != meta["tombstone"]["parameters"], name
 
     failures: list[str] = []

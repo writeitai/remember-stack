@@ -8,7 +8,6 @@ from uuid import UUID
 from pydantic import TypeAdapter
 from pydantic import ValidationError
 
-from rememberstack.model import CommunityRuleParams
 from rememberstack.model import DocSetRuleParams
 from rememberstack.model import EntityRuleParams
 from rememberstack.model import KnowledgeAuthoredDeclaration
@@ -243,8 +242,6 @@ def _watch(*, item: _FrontmatterItem) -> tuple[KnowledgeRuleParams | None, str |
     try:
         if prefix == "entity":
             return EntityRuleParams(entity_id=UUID(raw_value)), None
-        if prefix == "community":
-            return CommunityRuleParams(community_id=UUID(raw_value)), None
     except ValueError as error:
         raise KnowledgeAuthoredDeclarationError(
             "watch shorthand contains an invalid UUID"

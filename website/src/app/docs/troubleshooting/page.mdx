@@ -16,7 +16,7 @@ Operator runbook for a single self-host deployment. Prefer **machine-verifiable*
 | Ingest accepted, nothing searchable | `POST /readiness` for `version_id` · `remember ops inspect` · model key present |
 | Empty / wrong answers | Grain misuse · readiness · projections · operation args (`name`/`query`) |
 | Work stuck | Ledger stage status · DLQ · budget parked · poison target |
-| Graph / P3 missing | `docker compose --profile operations run --rm projections` then readiness with projections |
+| Graph / P3 missing | Check `live_graph` readiness; build P3 separately with the operations profile if needed |
 
 ## Health and readiness
 
@@ -31,13 +31,11 @@ curl --fail http://localhost:8000/operations
 ```bash
 curl --fail -X POST http://localhost:8000/readiness \
   -H 'content-type: application/json' \
-  -d '{"version_ids":["VERSION_UUID"],"require_projections":false}'
+  -d '{"version_ids":["VERSION_UUID"],"require":{"pipeline":true,"p1":true,"live_graph":true,"p3":false}}'
 ```
 
-| Flag | Use when |
-| --- | --- |
-| `require_projections=false` | Smoke after E/P1 chain only |
-| `require_projections=true` (default) | Graph/corpus FS must exist after projections publish |
+The four capability keys are exhaustive. Use `p3=false` for ordinary live
+recall and `p3=true` only when the published CorpusFS tree is required.
 
 Readiness also echoes **non-secret model bindings** for the API process (configuration review, not per-document provenance).
 
@@ -75,7 +73,7 @@ Needs `rememberstack[server]` + `REMEMBERSTACK_DATABASE_URL`.
 | Route/status counts | Where work is piled |
 | DLQ totals/groups | Exhausted retries |
 | Poison-target summary | Repeating bad inputs |
-| P2/P3 pointers | Projection freshness |
+| P3 pointer | CorpusFS snapshot freshness |
 | Currency-ledger audit | Testimony currency drift signals |
 
 Replay **one** DLQ row:
@@ -108,7 +106,7 @@ Parked work resumes when the window rolls — it is not a poison DLQ.
 | `resolve_entity` misspelling | Query resolve is **T0 exact** — use evidence search for fuzzy recall |
 | High `dropped_by_hydration` | Nominations lagging or invalidated — re-query / check freshness |
 | `negative.kind` | `unknown_entity` vs `known_empty` vs `boundary` demand different moves |
-| Projections never published | Cypher / P3 empty while facts may exist |
+| Live graph readiness false / P3 not published | Graph catalog or PostgreSQL query health failed; P3 is a separate optional build |
 
 Wrong SQL pattern (claim windows as truth) is documented in [Open query](/docs/retrieval/open-query) — start from `facts_current`.
 
@@ -116,22 +114,29 @@ Wrong SQL pattern (claim windows as truth) is documented in [Open query](/docs/r
 
 If you change `REMEMBERSTACK_SELFHOST_API_PORT`, also set `REMEMBERSTACK_API_URL`. Clients default to `http://127.0.0.1:8000` independently of the listen port.
 
-## Projections (P2/P3)
+## P3 publication and live graph health
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-Then readiness with `require_projections=true`.
+Then request readiness with `p3=true`. This job builds P3 only; graph reads do
+not wait for it.
 
 Drill rebuilds (server extra):
 
 ```bash
-remember ops rebuild --plane p2 --deployment <uuid> --snapshot-root ./snapshots --workdir ./rebuild-work --version drill-…
-remember ops rebuild --plane p3 --deployment <uuid> --snapshot-root ./snapshots --workdir ./rebuild-work --version drill-…
+remember ops rebuild --deployment <uuid> --snapshot-root ./snapshots --version drill-…
 ```
 
 Same production builders and validation path — not a second recovery stack.
+
+If only the live-graph catalog/readiness check fails after a logical restore,
+inspect and replay metadata without touching tenant rows:
+
+```bash
+remember ops graph-catalog ensure
+```
 
 ## Observability not appearing
 

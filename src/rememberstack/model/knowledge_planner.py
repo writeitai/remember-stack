@@ -351,7 +351,6 @@ class KnowledgePlanningSnapshot(BaseModel):
     artifacts: tuple[KnowledgePlannerArtifactState, ...]
     orphan_aggregates: tuple[KnowledgeOrphanAggregate, ...] = ()
     overflow_artifact_ids: CanonicalUUIDs = ()
-    community_ids: CanonicalUUIDs = ()
     writer_suggestions: tuple[KnowledgeWriterSuggestion, ...] = ()
 
 

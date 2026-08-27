@@ -2,7 +2,7 @@
 
 A full publication run must isolate every conversation in its own deployment. Before answering,
 the harness proves that the deployment contains exactly that sample's documents, that all pipeline
-stages completed, and that P2/P3 projections are fresh. Reusing one deployment across samples
+stages completed, the live graph is ready, and P3 is fresh. Reusing one deployment across samples
 would invalidate that guard. On one host, wiping the Compose volumes between ten conversations
 makes the approximately two-hour conversations a roughly twenty-hour serial run.
 
@@ -155,7 +155,7 @@ only missing answers and judgments.
 
 The following environment variables tune the driver without changing its arguments:
 
-The driver itself freezes the complete non-secret V13 ingest identity before
+The driver itself freezes the complete non-secret V14 ingest identity before
 Compose starts: Luna generation seats, Qwen3-Embedding-8B vector seats, Nebius
 embedding host, unset provider-order fallback, and the protocol's reasoning and
 completion-token settings. Ambient values for those bindings are deliberately
@@ -178,7 +178,7 @@ as source-derived data.
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v13` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v14` | prepare-time protocol key |
 | `LOCOMO_MOUNT_ROOT` | `$RUN_DIR/.mounts` | host/container-identical P3 mount root |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
 | `LOCOMO_MAX_QUESTIONS` | `1540` | run-absolute answer item authorization |
