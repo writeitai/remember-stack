@@ -186,8 +186,11 @@ entity semantic channel only after that resumable pass completes. The exact
 text hash debounces unchanged evidence. Resolution
 reconstructs the expected summary/hash from current facts; stale or missing
 attestation disables T3 and T4 still receives the current salient statements.
-No queued stale snapshot can overwrite newer evidence because selection and
-write share the entity evidence lock.
+Hot-path redirect traversal uses recursive CTEs anchored at the requested ids rather than the
+deployment-wide survivor view. No queued stale snapshot can overwrite newer evidence: the
+refresher snapshots under the identity/evidence locks, releases the transaction for the provider
+call, then reacquires the locks and rebuilds the exact input. A changed hash discards and meters
+the stale vector and triggers a bounded retry rather than writing it.
 
 Merge application also resolves a queued survivor to its live terminal root and requires the
 absorbed target to remain active. A target that joined another cluster after proposal creation is

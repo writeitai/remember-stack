@@ -15,6 +15,8 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import EmbeddingRequest
+from rememberstack.model import EmbeddingResponse
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
@@ -24,6 +26,36 @@ _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b1000000-0000-0000-0000-000000000001")
 _FIRST_ENTITY = UUID("b1000000-0000-0000-0000-000000000002")
 _SECOND_ENTITY = UUID("b1000000-0000-0000-0000-000000000003")
+
+
+class _EvidenceMutatingProvider(FakeModelProvider):
+    """Add evidence during the first unlocked provider call."""
+
+    def __init__(self, *, engine: Engine) -> None:
+        """Bind the separate transaction used to simulate concurrent ingest."""
+        super().__init__()
+        self._engine = engine
+        self._mutated = False
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Mutate once, after snapshot, before delegating the paid call."""
+        if not self._mutated:
+            self._mutated = True
+            with self._engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO observations (observation_id, deployment_id,"
+                        " subject_entity_id, statement, evidence_count,"
+                        " normalizer_version) VALUES (:observation, :deployment,"
+                        " :entity, 'Jan now lives in Brno', 9, 'profile-test')"
+                    ),
+                    {
+                        "observation": uuid4(),
+                        "deployment": _DEPLOYMENT_ID,
+                        "entity": _FIRST_ENTITY,
+                    },
+                )
+        return super().embed(request=request)
 
 
 @pytest.fixture(scope="module")
@@ -140,6 +172,45 @@ def test_profiles_debounce_and_separate_same_name_entities(
     again = refresher.refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
     assert not again.updated
     assert len(provider.embedded_texts) == 2
+
+
+def test_refresh_discards_a_vector_when_evidence_changes_during_provider_call(
+    database_engine: Engine,
+) -> None:
+    """Optimistic revalidation retries instead of committing a stale vector."""
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity,"
+                " 'Jan lives in Prague', 1, 'profile-test')"
+            ),
+            {
+                "observation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": _FIRST_ENTITY,
+            },
+        )
+    provider = _EvidenceMutatingProvider(engine=database_engine)
+
+    result = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="profile-embed-test",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
+
+    assert result.updated
+    assert result.salient_facts == ("Jan now lives in Brno", "Jan lives in Prague")
+    assert len(provider.embedded_texts) == 2
+    assert "Jan now lives in Brno" not in provider.embedded_texts[0]
+    assert "Jan now lives in Brno" in provider.embedded_texts[1]
+    with database_engine.connect() as connection:
+        summary = connection.execute(
+            text("SELECT profile_summary FROM entities WHERE entity_id = :entity"),
+            {"entity": _FIRST_ENTITY},
+        ).scalar_one()
+    assert summary == "Jan now lives in Brno; Jan lives in Prague"
 
 
 def test_empty_profile_clears_name_only_vector_without_embedding(

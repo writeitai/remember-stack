@@ -227,7 +227,13 @@ class SurfaceCostMeter:
         usage: ProviderCallUsage,
         outcome: str = "ok",
     ) -> None:
-        """Persist one provider call through the operational surface ledger."""
+        """Persist one provider call through the operational surface ledger.
+
+        ``call_key`` and ``tier`` belong to worker-attempt accounting. This
+        adapter deliberately discards them: operational receipt identity is
+        the request id, allowlisted call site, and monotonically assigned
+        ordinal recorded by ``SqlSurfaceCostRecorder``.
+        """
         del call_key, tier
         try:
             surface_outcome = SurfaceCostOutcome(outcome)

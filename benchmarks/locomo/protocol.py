@@ -79,7 +79,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "embed_claim": "p1-embed-claims-2026.07",
         "reconcile": "reconcile-2026.07",
         "label_relation": (
-            "p1-fact-label-2026.08:deterministic-s5+qwen/qwen3-embedding-8b"
+            "p1-fact-label-2026.08:deterministic-s4+qwen/qwen3-embedding-8b"
         ),
     }
 )

@@ -25,6 +25,6 @@ _PREDICATE_SURFACE: Final[dict[str, str]] = {
 
 def deterministic_fact_label(*, subject: str, predicate: str, object_name: str) -> str:
     """Build canonical relation prose without an LLM or label-cache dependency."""
-    fallback = predicate.removeprefix("other:").replace("_", " ")
+    fallback = predicate.replace("_", " ")
     surface = _PREDICATE_SURFACE.get(predicate, fallback)
     return f"{subject} {surface} {object_name}"

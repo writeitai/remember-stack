@@ -62,6 +62,7 @@ _FORGET_ID = UUID("75000000-0000-0000-0000-000000000023")
 _EXCLUSIVE_MENTION_ID = UUID("75000000-0000-0000-0000-000000000026")
 _TARGET_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000027")
 _CONTROL_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000028")
+_MERGED_SURVIVOR_ID = UUID("75000000-0000-0000-0000-000000000029")
 
 
 @pytest.fixture(scope="module")
@@ -225,9 +226,30 @@ def test_inventory_scrub_and_verification_preserve_independent_evidence(
 def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
     seeded_engine: Engine,
 ) -> None:
-    """WP-I.4/D74: shared identity keeps remaining facts, never stale prose."""
+    """WP-I.4/D74: a raw forgotten id repairs its later merge survivor."""
+    from rememberstack.spine.clustering import apply_merge
+
     old_input = f"Shared\n{_TOKEN}\nshared observation"
     with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:entity, :deployment,"
+                " 'Shared Survivor', 'shared survivor')"
+            ),
+            {"entity": _MERGED_SURVIVOR_ID, "deployment": _DEPLOYMENT_ID},
+        )
+        merge_id = apply_merge(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            survivor_id=_MERGED_SURVIVOR_ID,
+            absorbed_id=_SHARED_ENTITY_ID,
+            trigger_lemmas=["shared"],
+            evidence={"proof": "forget redirect"},
+            blast_radius=2,
+            decided_by="test",
+        )
+        assert merge_id is not None
         connection.execute(
             text(
                 "UPDATE entities SET profile_summary = :summary,"
@@ -235,13 +257,14 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
                 " embedding_model = 'profile-test',"
                 " embedding_input_policy_version = 'entity-profile-v2',"
                 " embedding_text_hash = :hash"
-                " WHERE deployment_id = :deployment AND entity_id = :entity"
+                " WHERE deployment_id = :deployment"
+                " AND entity_id = ANY(CAST(:entities AS uuid[]))"
             ),
             {
                 "summary": f"{_TOKEN}; shared observation",
                 "hash": embedding_text_hash(old_input),
                 "deployment": _DEPLOYMENT_ID,
-                "entity": _SHARED_ENTITY_ID,
+                "entities": [_SHARED_ENTITY_ID, _MERGED_SURVIVOR_ID],
             },
         )
     catalog = ForgetCatalog(engine=seeded_engine)
@@ -254,6 +277,8 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
         forget_id=_FORGET_ID,
         requested_at=_NOW,
     )
+    assert _SHARED_ENTITY_ID in manifest.resolved_entity_ids
+    assert _MERGED_SURVIVOR_ID not in manifest.resolved_entity_ids
     catalog.accept_and_enqueue(manifest=manifest)
     catalog.scrub_postgres(manifest=manifest)
     provider = FakeModelProvider()
@@ -266,26 +291,40 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
     )
     catalog.verify_postgres_scrubbed(manifest=manifest)
 
-    shared = next(item for item in refresh if item.entity_id == _SHARED_ENTITY_ID)
+    assert {item.entity_id for item in refresh} >= {
+        _SHARED_ENTITY_ID,
+        _MERGED_SURVIVOR_ID,
+    }
+    shared = next(item for item in refresh if item.entity_id == _MERGED_SURVIVOR_ID)
     assert shared.has_evidence and shared.updated
     assert _TOKEN not in shared.salient_facts
     assert provider.embedded_texts
     assert all(_TOKEN not in profile_input for profile_input in provider.embedded_texts)
     with seeded_engine.connect() as connection:
-        row = connection.execute(
+        survivor_row = connection.execute(
             text(
                 "SELECT profile_summary, embedding IS NOT NULL,"
                 " embedding_input_policy_version, embedding_text_hash"
                 " FROM entities WHERE deployment_id = :deployment"
                 " AND entity_id = :entity"
             ),
+            {"deployment": _DEPLOYMENT_ID, "entity": _MERGED_SURVIVOR_ID},
+        ).one()
+        absorbed_row = connection.execute(
+            text(
+                "SELECT profile_summary, embedding, embedding_model,"
+                " embedding_input_policy_version, embedding_text_hash"
+                " FROM entities WHERE deployment_id = :deployment"
+                " AND entity_id = :entity"
+            ),
             {"deployment": _DEPLOYMENT_ID, "entity": _SHARED_ENTITY_ID},
         ).one()
-    assert _TOKEN not in str(row.profile_summary)
-    assert "shared observation" in str(row.profile_summary)
-    assert row[1] is True
-    assert row.embedding_input_policy_version == "entity-profile-v2"
-    assert row.embedding_text_hash != embedding_text_hash(old_input)
+    assert _TOKEN not in str(survivor_row.profile_summary)
+    assert "shared observation" in str(survivor_row.profile_summary)
+    assert survivor_row[1] is True
+    assert survivor_row.embedding_input_policy_version == "entity-profile-v2"
+    assert survivor_row.embedding_text_hash != embedding_text_hash(old_input)
+    assert tuple(absorbed_row) == (None, None, None, None, None)
 
 
 def test_readiness_rehonors_manifest_after_old_postgres_restore(

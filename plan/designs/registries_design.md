@@ -118,9 +118,13 @@ the exact profile input expire as wall time passes without an evidence mutation 
 refresh. This stable, conservative projection prevents capped facts from outranking replacements,
 joins a bounded prefix into
 `profile_summary`, and embeds the exact `name + summary + salient facts` input under
-`entity-profile-v2`. It holds the entity evidence lock from input selection through the vector
-write. The exact input hash, model, and policy are the debounce and staleness attestation:
-unchanged inputs make no provider call.
+`entity-profile-v2`. Hot-path identity traversal uses recursive CTEs anchored at the requested
+entity ids; it never materializes the deployment-wide survivor view. The refresher snapshots the
+entity and its complete redirect-closure evidence under the identity/evidence locks, commits that
+read transaction, and only then calls the provider. A second locked transaction reconstructs the
+exact input. If its hash changed, the paid stale vector is metered, discarded, and retried up to a
+bounded limit; it is never written. The exact input hash, model, and policy are the debounce and
+staleness attestation: unchanged inputs make no provider call.
 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
 merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same

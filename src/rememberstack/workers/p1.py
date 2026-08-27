@@ -36,7 +36,7 @@ from rememberstack.workers.base import HandlerOutcome
 P1_EMBED_CLAIMS_VERSION: Final = "p1-embed-claims-2026.07"
 """The claim-embed stage's component version (the model rides settings)."""
 
-FACT_LABEL_VERSION: Final = "p1-fact-label-2026.08:deterministic-s5"
+FACT_LABEL_VERSION: Final = "p1-fact-label-2026.08:deterministic-s4"
 """Fact-label generation: deterministic predicate surface templates (S4/S1)."""
 
 

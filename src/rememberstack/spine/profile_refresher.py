@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine import RowMapping
 
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.entity_profile_input import entity_profile_embedding_input
@@ -20,6 +21,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 PROFILE_SUMMARY_FACT_LIMIT: Final = 5
 PROFILE_SALIENT_FACT_LIMIT: Final = 8
 PROFILE_BACKFILL_BATCH_SIZE: Final = 100
+PROFILE_REFRESH_MAX_ATTEMPTS: Final = 3
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,17 @@ class ProfileBackfillResult:
     with_evidence: int
 
 
+@dataclass(frozen=True)
+class _PreparedProfile:
+    """One unlocked provider input that must be revalidated before commit."""
+
+    canonical_name: str
+    profile_summary: str
+    profile_input: str
+    input_hash: str
+    salient_facts: tuple[str, ...]
+
+
 class EntityProfileRefresher:
     """Rewrite one entity's disposable profile from current supported facts."""
 
@@ -70,120 +83,127 @@ class EntityProfileRefresher:
         meter: CostMeterPort | None = None,
         call_key: str = "refresh_profile",
     ) -> ProfileRefreshResult:
-        """Refresh under the entity evidence lock; unchanged inputs are a no-op.
+        """Refresh by optimistic snapshot/revalidation; unchanged inputs are a no-op.
 
-        The provider call stays inside the transaction holding the same entity
-        advisory lock used by observation materialization. That intentionally
-        rejects stale queued/snapshotted inputs: evidence cannot change between
-        the selected statements and the vector attestation written for them.
+        Evidence and identity are snapshotted under their advisory locks. The
+        transaction then closes before the provider call. A second locked
+        transaction reconstructs the exact input; a changed hash discards the
+        paid vector and retries instead of writing a stale projection.
         """
-        with self._engine.begin() as connection:
-            connection.execute(
-                _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
-            )
-            connection.execute(
-                _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{entity_id}"}
-            )
-            entity = (
-                connection.execute(
-                    _SELECT_ENTITY,
-                    {"deployment_id": deployment_id, "entity_id": entity_id},
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if entity is None:
-                return ProfileRefreshResult(
-                    entity_id=entity_id,
-                    updated=False,
-                    has_evidence=False,
-                    input_hash=None,
-                    salient_facts=(),
-                )
-            if str(entity["status"]) != "active":
-                updated = _clear_profile(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    entity_id=entity_id,
-                )
-                return ProfileRefreshResult(
-                    entity_id=entity_id,
-                    updated=updated,
-                    has_evidence=False,
-                    input_hash=None,
-                    salient_facts=(),
-                )
-            member_ids = tuple(
-                connection.execute(
-                    _SELECT_PROFILE_MEMBER_IDS,
-                    {"deployment_id": deployment_id, "entity_id": entity_id},
-                ).scalars()
-            )
-            for member_id in member_ids:
-                if member_id == entity_id:
-                    continue
-                connection.execute(
-                    _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"}
-                )
-            facts = _load_salient_facts(
-                connection=connection, deployment_id=deployment_id, entity_id=entity_id
-            )
-            if not facts:
-                updated = _clear_profile(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    entity_id=entity_id,
-                )
-                return ProfileRefreshResult(
-                    entity_id=entity_id,
-                    updated=updated,
-                    has_evidence=False,
-                    input_hash=None,
-                    salient_facts=(),
-                )
-            summary = profile_summary(salient_facts=facts)
-            profile_input = entity_profile_embedding_input(
-                canonical_name=str(entity["canonical_name"]),
-                profile_summary=summary,
-                salient_facts=facts,
-            )
-            input_hash = embedding_text_hash(profile_input)
-            if (
-                entity["profile_summary"] == summary
-                and bool(entity["has_embedding"])
-                and entity["embedding_model"] == self._embedding_model
-                and entity["embedding_input_policy_version"] == ENTITY_INPUT_POLICY
-                and entity["embedding_text_hash"] == input_hash
-            ):
-                return ProfileRefreshResult(
-                    entity_id=entity_id,
-                    updated=False,
-                    has_evidence=True,
-                    input_hash=input_hash,
-                    salient_facts=facts,
-                )
+        for attempt in range(1, PROFILE_REFRESH_MAX_ATTEMPTS + 1):
+            prepared = self._prepare(deployment_id=deployment_id, entity_id=entity_id)
+            if isinstance(prepared, ProfileRefreshResult):
+                return prepared
             response = self._model_provider.embed(
                 request=EmbeddingRequest(
                     model=self._embedding_model,
-                    texts=(profile_input,),
+                    texts=(prepared.profile_input,),
                     dimensions=P1_VECTOR_DIMENSIONS,
                 )
             )
             if meter is not None:
                 meter.record(
-                    call_key=call_key, tier="profile_embed", usage=response.usage
+                    call_key=f"{call_key}:optimistic:{attempt}",
+                    tier="profile_embed",
+                    usage=response.usage,
                 )
-            vector = response.vectors[0]
+            vector_literal = _vector_literal(response.vectors[0])
+            committed = self._commit_if_current(
+                deployment_id=deployment_id,
+                entity_id=entity_id,
+                prepared=prepared,
+                vector_literal=vector_literal,
+            )
+            if committed is not None:
+                return committed
+        raise RuntimeError(
+            f"entity profile {entity_id} changed during "
+            f"{PROFILE_REFRESH_MAX_ATTEMPTS} refresh attempts"
+        )
+
+    def _prepare(
+        self, *, deployment_id: UUID, entity_id: UUID
+    ) -> _PreparedProfile | ProfileRefreshResult:
+        """Snapshot one exact provider input or finish a no-provider outcome."""
+        with self._engine.begin() as connection:
+            entity, facts = _locked_profile_state(
+                connection=connection, deployment_id=deployment_id, entity_id=entity_id
+            )
+            terminal = _terminal_profile_result(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_id=entity_id,
+                entity=entity,
+                facts=facts,
+            )
+            if terminal is not None:
+                return terminal
+            assert entity is not None
+            prepared = _prepared_profile(entity=entity, facts=facts)
+            if _profile_is_current(
+                entity=entity,
+                profile_summary=prepared.profile_summary,
+                embedding_model=self._embedding_model,
+                input_hash=prepared.input_hash,
+            ):
+                return ProfileRefreshResult(
+                    entity_id=entity_id,
+                    updated=False,
+                    has_evidence=True,
+                    input_hash=prepared.input_hash,
+                    salient_facts=facts,
+                )
+            return prepared
+
+    def _commit_if_current(
+        self,
+        *,
+        deployment_id: UUID,
+        entity_id: UUID,
+        prepared: _PreparedProfile,
+        vector_literal: str,
+    ) -> ProfileRefreshResult | None:
+        """Write only when the locked current input still matches the snapshot."""
+        with self._engine.begin() as connection:
+            entity, facts = _locked_profile_state(
+                connection=connection, deployment_id=deployment_id, entity_id=entity_id
+            )
+            terminal = _terminal_profile_result(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_id=entity_id,
+                entity=entity,
+                facts=facts,
+            )
+            if terminal is not None:
+                return terminal
+            assert entity is not None
+            current = _prepared_profile(entity=entity, facts=facts)
+            if current.input_hash != prepared.input_hash:
+                return None
+            if _profile_is_current(
+                entity=entity,
+                profile_summary=current.profile_summary,
+                embedding_model=self._embedding_model,
+                input_hash=current.input_hash,
+            ):
+                return ProfileRefreshResult(
+                    entity_id=entity_id,
+                    updated=False,
+                    has_evidence=True,
+                    input_hash=current.input_hash,
+                    salient_facts=facts,
+                )
             result = connection.execute(
                 _UPDATE_PROFILE,
                 {
                     "deployment_id": deployment_id,
                     "entity_id": entity_id,
-                    "profile_summary": summary,
-                    "embedding": _vector_literal(vector),
+                    "profile_summary": current.profile_summary,
+                    "embedding": vector_literal,
                     "embedding_model": self._embedding_model,
                     "input_policy": ENTITY_INPUT_POLICY,
-                    "text_hash": input_hash,
+                    "text_hash": current.input_hash,
                 },
             )
             if result.rowcount != 1:
@@ -192,7 +212,7 @@ class EntityProfileRefresher:
                 entity_id=entity_id,
                 updated=True,
                 has_evidence=True,
-                input_hash=input_hash,
+                input_hash=current.input_hash,
                 salient_facts=facts,
             )
 
@@ -204,7 +224,13 @@ class EntityProfileRefresher:
         meter: CostMeterPort | None = None,
         call_key: str = "refresh_profile",
     ) -> tuple[ProfileRefreshResult, ...]:
-        """Refresh a deterministic unique entity set, one locked row at a time."""
+        """Refresh changed rows and live terminal survivors in deterministic order."""
+        with self._engine.connect() as connection:
+            targets = profile_refresh_targets(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_ids=entity_ids,
+            )
         return tuple(
             self.refresh(
                 deployment_id=deployment_id,
@@ -212,7 +238,7 @@ class EntityProfileRefresher:
                 meter=meter,
                 call_key=f"{call_key}:{entity_id}",
             )
-            for entity_id in sorted(set(entity_ids), key=str)
+            for entity_id in targets
         )
 
     def refresh_for_facts(
@@ -343,6 +369,112 @@ def profile_summary(*, salient_facts: tuple[str, ...]) -> str:
     return "; ".join(salient_facts[:PROFILE_SUMMARY_FACT_LIMIT])
 
 
+def _locked_profile_state(
+    *, connection: Connection, deployment_id: UUID, entity_id: UUID
+) -> tuple[RowMapping | None, tuple[str, ...]]:
+    """Load one current profile input under bounded identity/evidence locks."""
+    connection.execute(text("SET LOCAL statement_timeout = '15s'"))
+    connection.execute(text("SET LOCAL idle_in_transaction_session_timeout = '15s'"))
+    connection.execute(
+        _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
+    )
+    entity = (
+        connection.execute(
+            _SELECT_ENTITY, {"deployment_id": deployment_id, "entity_id": entity_id}
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if entity is None:
+        return None, ()
+    member_ids = (
+        tuple(
+            connection.execute(
+                _SELECT_PROFILE_MEMBER_IDS,
+                {"deployment_id": deployment_id, "entity_id": entity_id},
+            ).scalars()
+        )
+        if str(entity["status"]) == "active"
+        else (entity_id,)
+    )
+    for member_id in sorted(set(member_ids), key=str):
+        connection.execute(_LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"})
+    entity = (
+        connection.execute(
+            _SELECT_ENTITY, {"deployment_id": deployment_id, "entity_id": entity_id}
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if entity is None or str(entity["status"]) != "active":
+        return entity, ()
+    return entity, _load_salient_facts(
+        connection=connection, deployment_id=deployment_id, entity_id=entity_id
+    )
+
+
+def _terminal_profile_result(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    entity_id: UUID,
+    entity: RowMapping | None,
+    facts: tuple[str, ...],
+) -> ProfileRefreshResult | None:
+    """Return and apply a missing/inactive/empty outcome, else continue."""
+    if entity is None:
+        return ProfileRefreshResult(
+            entity_id=entity_id,
+            updated=False,
+            has_evidence=False,
+            input_hash=None,
+            salient_facts=(),
+        )
+    if str(entity["status"]) == "active" and facts:
+        return None
+    updated = _clear_profile(
+        connection=connection, deployment_id=deployment_id, entity_id=entity_id
+    )
+    return ProfileRefreshResult(
+        entity_id=entity_id,
+        updated=updated,
+        has_evidence=False,
+        input_hash=None,
+        salient_facts=(),
+    )
+
+
+def _prepared_profile(
+    *, entity: RowMapping, facts: tuple[str, ...]
+) -> _PreparedProfile:
+    """Build the deterministic provider input and exact attestation hash."""
+    summary = profile_summary(salient_facts=facts)
+    canonical_name = str(entity["canonical_name"])
+    profile_input = entity_profile_embedding_input(
+        canonical_name=canonical_name, profile_summary=summary, salient_facts=facts
+    )
+    return _PreparedProfile(
+        canonical_name=canonical_name,
+        profile_summary=summary,
+        profile_input=profile_input,
+        input_hash=embedding_text_hash(profile_input),
+        salient_facts=facts,
+    )
+
+
+def _profile_is_current(
+    *, entity: RowMapping, profile_summary: str, embedding_model: str, input_hash: str
+) -> bool:
+    """Whether all cached projection fields attest the exact current input."""
+    return bool(
+        entity["profile_summary"] == profile_summary
+        and entity["has_embedding"]
+        and entity["embedding_model"] == embedding_model
+        and entity["embedding_input_policy_version"] == ENTITY_INPUT_POLICY
+        and entity["embedding_text_hash"] == input_hash
+    )
+
+
 def profile_refresh_targets(
     *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
 ) -> tuple[UUID, ...]:
@@ -449,19 +581,47 @@ _SELECT_ACTIVE_ENTITIES = text(
 
 _SELECT_PROFILE_MEMBER_IDS = text(
     """
-    SELECT entity_id
-    FROM v_memory_entity_survivor
-    WHERE deployment_id = :deployment_id
-      AND survivor_entity_id = :entity_id
+    WITH RECURSIVE members(entity_id, path) AS (
+      SELECT entity.entity_id, ARRAY[entity.entity_id]
+      FROM entities entity
+      WHERE entity.deployment_id = :deployment_id
+        AND entity.entity_id = :entity_id
+        AND entity.status = 'active'
+      UNION ALL
+      SELECT child.entity_id, members.path || child.entity_id
+      FROM members
+      JOIN entities child
+        ON child.deployment_id = :deployment_id
+       AND child.merged_into = members.entity_id
+       AND child.status = 'merged'
+      WHERE NOT child.entity_id = ANY(members.path)
+    )
+    SELECT entity_id FROM members
     ORDER BY entity_id
     """
 )
 
 _SELECT_PROFILE_REFRESH_TARGETS = text(
     """
-    WITH nominated AS (
+    WITH RECURSIVE nominated AS (
       SELECT entity_id
       FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(entity_id)
+    ), up(origin_id, entity_id, status, merged_into, path) AS (
+      SELECT nominated.entity_id, entity.entity_id, entity.status,
+             entity.merged_into, ARRAY[entity.entity_id]
+      FROM nominated
+      JOIN entities entity
+        ON entity.deployment_id = :deployment_id
+       AND entity.entity_id = nominated.entity_id
+      UNION ALL
+      SELECT up.origin_id, parent.entity_id, parent.status,
+             parent.merged_into, up.path || parent.entity_id
+      FROM up
+      JOIN entities parent
+        ON parent.deployment_id = :deployment_id
+       AND parent.entity_id = up.merged_into
+      WHERE up.status = 'merged'
+        AND NOT parent.entity_id = ANY(up.path)
     ), targets AS (
       SELECT entity.entity_id
       FROM nominated
@@ -469,11 +629,7 @@ _SELECT_PROFILE_REFRESH_TARGETS = text(
         ON entity.deployment_id = :deployment_id
        AND entity.entity_id = nominated.entity_id
       UNION
-      SELECT survivor.survivor_entity_id
-      FROM nominated
-      JOIN v_memory_entity_survivor survivor
-        ON survivor.deployment_id = :deployment_id
-       AND survivor.entity_id = nominated.entity_id
+      SELECT up.entity_id FROM up WHERE up.status = 'active'
     )
     SELECT entity_id FROM targets ORDER BY entity_id
     """
@@ -481,20 +637,30 @@ _SELECT_PROFILE_REFRESH_TARGETS = text(
 
 _SELECT_SALIENT_FACTS = text(
     """
-    WITH requested AS MATERIALIZED (
+    WITH RECURSIVE requested AS MATERIALIZED (
       SELECT entity_id
       FROM unnest(CAST(:entity_ids AS uuid[])) AS nominated(entity_id)
-    ), identity_members AS MATERIALIZED (
-      SELECT requested.entity_id AS profile_entity_id,
-             survivor.entity_id AS member_entity_id
+    ), identity_members(profile_entity_id, member_entity_id, path) AS (
+      SELECT requested.entity_id, root.entity_id, ARRAY[root.entity_id]
       FROM requested
-      JOIN v_memory_entity_survivor survivor
-        ON survivor.deployment_id = :deployment_id
-       AND survivor.survivor_entity_id = requested.entity_id
+      JOIN entities root
+        ON root.deployment_id = :deployment_id
+       AND root.entity_id = requested.entity_id
+       AND root.status = 'active'
+      UNION ALL
+      SELECT members.profile_entity_id, child.entity_id,
+             members.path || child.entity_id
+      FROM identity_members members
+      JOIN entities child
+        ON child.deployment_id = :deployment_id
+       AND child.merged_into = members.member_entity_id
+       AND child.status = 'merged'
+      WHERE NOT child.entity_id = ANY(members.path)
     ), candidates AS (
       SELECT members.profile_entity_id, 'observation'::text AS kind,
              o.statement AS statement, NULL::text AS subject_name,
-             NULL::text AS predicate, NULL::text AS object_name,
+             NULL::uuid AS subject_entity_id, NULL::text AS predicate,
+             NULL::uuid AS object_entity_id,
              o.evidence_count, o.updated_at,
              o.observation_id AS fact_id
       FROM observations o
@@ -509,43 +675,79 @@ _SELECT_SALIENT_FACTS = text(
         AND o.evidence_count > 0
       UNION ALL
       SELECT DISTINCT members.profile_entity_id, 'relation'::text AS kind,
-             NULL::text AS statement, subject.canonical_name AS subject_name,
-             r.predicate, object.canonical_name AS object_name,
+             NULL::text AS statement, NULL::text AS subject_name,
+             r.subject_entity_id, r.predicate, r.object_entity_id,
              r.evidence_count, r.updated_at,
              r.relation_id AS fact_id
       FROM relations r
       JOIN identity_members members
         ON members.member_entity_id = r.subject_entity_id
         OR members.member_entity_id = r.object_entity_id
-      JOIN v_memory_entity_survivor subject_survivor
-        ON subject_survivor.deployment_id = r.deployment_id
-       AND subject_survivor.entity_id = r.subject_entity_id
-      JOIN v_memory_entity_survivor object_survivor
-        ON object_survivor.deployment_id = r.deployment_id
-       AND object_survivor.entity_id = r.object_entity_id
-      JOIN entities subject
-        ON subject.deployment_id = r.deployment_id
-       AND subject.entity_id = subject_survivor.survivor_entity_id
-      JOIN entities object
-        ON object.deployment_id = r.deployment_id
-       AND object.entity_id = object_survivor.survivor_entity_id
       WHERE r.deployment_id = :deployment_id
         AND r.invalidated_at IS NULL
         AND r.valid_until IS NULL
         AND r.evidence_count > 0
     ), ranked AS (
-      SELECT profile_entity_id, kind, statement, subject_name, predicate,
-             object_name,
+      SELECT profile_entity_id, kind, statement, subject_entity_id, predicate,
+             object_entity_id,
              row_number() OVER (
                PARTITION BY profile_entity_id
                ORDER BY evidence_count DESC, updated_at DESC, kind, fact_id
              ) AS ordinal
       FROM candidates
+    ), selected AS MATERIALIZED (
+      SELECT * FROM ranked WHERE ordinal <= :limit
     )
-    SELECT profile_entity_id, kind, statement, subject_name, predicate, object_name
-    FROM ranked
-    WHERE ordinal <= :limit
-    ORDER BY profile_entity_id, ordinal
+    SELECT selected.profile_entity_id, selected.kind, selected.statement,
+           subject.canonical_name, selected.predicate, object.canonical_name
+    FROM selected
+    LEFT JOIN LATERAL (
+      WITH RECURSIVE up(entity_id, status, merged_into, path) AS (
+        SELECT entity.entity_id, entity.status, entity.merged_into,
+               ARRAY[entity.entity_id]
+        FROM entities entity
+        WHERE entity.deployment_id = :deployment_id
+          AND entity.entity_id = selected.subject_entity_id
+        UNION ALL
+        SELECT parent.entity_id, parent.status, parent.merged_into,
+               up.path || parent.entity_id
+        FROM up
+        JOIN entities parent
+          ON parent.deployment_id = :deployment_id
+         AND parent.entity_id = up.merged_into
+        WHERE up.status = 'merged'
+          AND NOT parent.entity_id = ANY(up.path)
+      )
+      SELECT entity_id FROM up WHERE status = 'active' LIMIT 1
+    ) subject_root ON selected.kind = 'relation'
+    LEFT JOIN entities subject
+      ON subject.deployment_id = :deployment_id
+     AND subject.entity_id = subject_root.entity_id
+    LEFT JOIN LATERAL (
+      WITH RECURSIVE up(entity_id, status, merged_into, path) AS (
+        SELECT entity.entity_id, entity.status, entity.merged_into,
+               ARRAY[entity.entity_id]
+        FROM entities entity
+        WHERE entity.deployment_id = :deployment_id
+          AND entity.entity_id = selected.object_entity_id
+        UNION ALL
+        SELECT parent.entity_id, parent.status, parent.merged_into,
+               up.path || parent.entity_id
+        FROM up
+        JOIN entities parent
+          ON parent.deployment_id = :deployment_id
+         AND parent.entity_id = up.merged_into
+        WHERE up.status = 'merged'
+          AND NOT parent.entity_id = ANY(up.path)
+      )
+      SELECT entity_id FROM up WHERE status = 'active' LIMIT 1
+    ) object_root ON selected.kind = 'relation'
+    LEFT JOIN entities object
+      ON object.deployment_id = :deployment_id
+     AND object.entity_id = object_root.entity_id
+    WHERE selected.kind = 'observation'
+       OR (subject.entity_id IS NOT NULL AND object.entity_id IS NOT NULL)
+    ORDER BY selected.profile_entity_id, selected.ordinal
     """
 )
 
@@ -563,7 +765,7 @@ _SELECT_ACTIVE_ENTITY_PAGE = text(
 
 _SELECT_FACT_ENTITY_IDS = text(
     """
-    WITH affected AS (
+    WITH RECURSIVE affected AS (
       SELECT subject_entity_id AS entity_id
       FROM observations
       WHERE deployment_id = :deployment_id
@@ -578,13 +780,24 @@ _SELECT_FACT_ENTITY_IDS = text(
       FROM relations
       WHERE deployment_id = :deployment_id
         AND relation_id = ANY(CAST(:relation_ids AS uuid[]))
+    ), up(origin_id, entity_id, status, merged_into, path) AS (
+      SELECT affected.entity_id, entity.entity_id, entity.status,
+             entity.merged_into, ARRAY[entity.entity_id]
+      FROM affected
+      JOIN entities entity
+        ON entity.deployment_id = :deployment_id
+       AND entity.entity_id = affected.entity_id
+      UNION ALL
+      SELECT up.origin_id, parent.entity_id, parent.status,
+             parent.merged_into, up.path || parent.entity_id
+      FROM up
+      JOIN entities parent
+        ON parent.deployment_id = :deployment_id
+       AND parent.entity_id = up.merged_into
+      WHERE up.status = 'merged'
+        AND NOT parent.entity_id = ANY(up.path)
     )
-    SELECT DISTINCT survivor.survivor_entity_id
-    FROM affected
-    JOIN v_memory_entity_survivor survivor
-      ON survivor.deployment_id = :deployment_id
-     AND survivor.entity_id = affected.entity_id
-    ORDER BY survivor.survivor_entity_id
+    SELECT DISTINCT entity_id FROM up WHERE status = 'active' ORDER BY entity_id
     """
 )
 
