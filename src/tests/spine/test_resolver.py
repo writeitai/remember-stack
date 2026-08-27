@@ -149,10 +149,65 @@ def _claim(*, claim_text: str | None = None) -> ClaimForNormalization:
     )
 
 
-def test_cascade_mints_then_t0_then_t4_with_verdicts(database_engine: Engine) -> None:
-    """Mint on empty registry; T0 short-circuit; T1/T2 block into a T4 match —
-    every step leaving an append-only verdict with its tier and features."""
-    provider = FakeModelProvider(generate_router=_first_token_router)
+def _seed_profiled_entity(
+    *, engine: Engine, provider: FakeModelProvider, name: str, statement: str
+) -> UUID:
+    """Insert one active alias plus fact and build its current profile."""
+    entity_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:entity, :deployment, :name, :lemma)"
+            ),
+            {
+                "entity": entity_id,
+                "deployment": _DEPLOYMENT_ID,
+                "name": name,
+                "lemma": normalized_lemma(surface=name),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                " alias_text, normalized_lemma, provenance) VALUES"
+                " (:alias, :deployment, :entity, :name, :lemma, 'llm_canonical')"
+            ),
+            {
+                "alias": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": entity_id,
+                "name": name,
+                "lemma": normalized_lemma(surface=name),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity, :statement, 1,"
+                " 'resolver-profile-test')"
+            ),
+            {
+                "observation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": entity_id,
+                "statement": statement,
+            },
+        )
+    EntityProfileRefresher(
+        engine=engine,
+        model_provider=provider,
+        embedding_model="qwen/qwen3-embedding-8b",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=entity_id)
+    return entity_id
+
+
+def test_cascade_mints_then_exact_and_fuzzy_candidates_reach_t4(
+    database_engine: Engine,
+) -> None:
+    """T0/T1/T2 only generate candidates; T4 records both accepted paths."""
+    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
     resolver = _resolver(engine=database_engine, provider=provider)
 
     minted = resolver.resolve(
@@ -190,12 +245,69 @@ def test_cascade_mints_then_t0_then_t4_with_verdicts(database_engine: Engine) ->
             .mappings()
             .all()
         )
-    assert [d["method"] for d in decisions] == ["T0", "T0", "T4_small"]
+    assert [d["method"] for d in decisions] == ["T0", "T4_small", "T4_small"]
     assert [d["is_new_entity"] for d in decisions] == [True, False, False]
     # the mint verdict on an EMPTY registry records T0 (nothing blocked):
     assert decisions[0]["features"]["novelty"] is True
+    assert decisions[1]["features"]["blocking_tier"] == "T0"
     assert decisions[2]["features"]["blocking_tier"] in ("T1", "T2")
     assert all(d["resolver_version"] == RESOLVER_VERSION for d in decisions)
+
+
+def test_t4_no_match_mints_same_lemma_and_records_exclusion(
+    database_engine: Engine,
+) -> None:
+    """D95: father and son may share a name without T0 or clustering glue."""
+    provider = FakeModelProvider(generate_payload={"match": False, "confidence": 0.9})
+    resolver = _resolver(engine=database_engine, provider=provider)
+
+    father = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="John Smith"),
+        claim=_claim(claim_text="John Smith is the retired father in Bristol."),
+    )
+    son = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="John Smith"),
+        claim=_claim(claim_text="John Smith is his engineer son in Leeds."),
+    )
+
+    assert father.created
+    assert son.created
+    assert son.entity_id != father.entity_id
+    with database_engine.connect() as connection:
+        decision = (
+            connection.execute(
+                text(
+                    "SELECT method, features FROM resolution_decisions"
+                    " WHERE entity_id = :entity_id"
+                ),
+                {"entity_id": son.entity_id},
+            )
+            .mappings()
+            .one()
+        )
+        exclusion = connection.execute(
+            text(
+                "SELECT entity_id_low, entity_id_high, reason, created_by::text"
+                " FROM resolution_exclusions"
+            )
+        ).one()
+        guard = connection.execute(
+            text(
+                "SELECT distinct_entity_count, is_downweighted"
+                " FROM generic_identifier_guard"
+                " WHERE deployment_id = :deployment_id"
+                " AND normalized_lemma = 'john smith'"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID},
+        ).one()
+    assert decision["method"] == "T4_small"
+    assert decision["features"]["blocking_tier"] == "T0"
+    assert {exclusion[0], exclusion[1]} == {father.entity_id, son.entity_id}
+    assert exclusion[2] == f"t4-no-match:{RESOLVER_VERSION}"
+    assert exclusion[3] == "auto"
+    assert guard == (2, True)
 
 
 def test_t4_no_match_mints_a_distinct_entity(database_engine: Engine) -> None:
@@ -597,11 +709,125 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     assert "CANDIDATE FACTS:\n- KB Bank is based in Prague" in stale_prompt
 
 
+def test_sole_exact_candidate_with_current_profile_can_t3_accept(
+    database_engine: Engine,
+) -> None:
+    """A known James takes the cheap profile path, never an exact-name verdict."""
+    provider = FakeModelProvider(generate_payload={"match": False, "confidence": 0.9})
+    resolver = _resolver(
+        engine=database_engine,
+        provider=provider,
+        thresholds=ResolutionThresholds(t3_accept=-1.0, t3_reject=-1.0),
+    )
+    james = _seed_profiled_entity(
+        engine=database_engine,
+        provider=provider,
+        name="James Bell",
+        statement="James Bell leads the Prague engineering office.",
+    )
+    prompts_before = len(provider.generated_prompts)
+
+    repeat = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="James Bell"),
+        claim=_claim(claim_text="James Bell leads engineering from Prague."),
+    )
+
+    assert repeat.entity_id == james
+    assert not repeat.created
+    assert len(provider.generated_prompts) == prompts_before
+    with database_engine.connect() as connection:
+        method, blocking_tier = connection.execute(
+            text(
+                "SELECT method, features->>'blocking_tier'"
+                " FROM resolution_decisions ORDER BY decided_at DESC LIMIT 1"
+            )
+        ).one()
+    assert (method, blocking_tier) == ("T3", "T0")
+
+
+def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
+    database_engine: Engine,
+) -> None:
+    """Several same-name profiles stay ambiguous; cosine only orders T4."""
+    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    first = _seed_profiled_entity(
+        engine=database_engine,
+        provider=provider,
+        name="Jan Novak",
+        statement="Jan Novak is the retired father living in Bristol.",
+    )
+    second = _seed_profiled_entity(
+        engine=database_engine,
+        provider=provider,
+        name="Jan Novak",
+        statement="Jan Novak is the engineer son living in Leeds.",
+    )
+    resolver = _resolver(
+        engine=database_engine,
+        provider=provider,
+        thresholds=ResolutionThresholds(t3_accept=-1.0, t3_reject=-1.0),
+    )
+    prompts_before = len(provider.generated_prompts)
+
+    resolved = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Jan Novak"),
+        claim=_claim(claim_text="Jan Novak discussed the family records."),
+    )
+
+    assert resolved.entity_id in {first, second}
+    assert len(provider.generated_prompts) == prompts_before + 1
+    with database_engine.connect() as connection:
+        method = connection.execute(
+            text(
+                "SELECT method FROM resolution_decisions"
+                " ORDER BY decided_at DESC LIMIT 1"
+            )
+        ).scalar_one()
+    assert method == "T4_small"
+
+
+def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) -> None:
+    """T0 counts entity ids, not source/canonical alias rows."""
+    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    resolver = _resolver(engine=database_engine, provider=provider)
+    entity = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Application", surface="App"),
+        claim=_claim(claim_text="App opened the report."),
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                " alias_text, normalized_lemma, provenance) VALUES"
+                " (:alias, :deployment, :entity, 'Application', 'application',"
+                " 'source')"
+            ),
+            {
+                "alias": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": entity.entity_id,
+            },
+        )
+    prompts_before = len(provider.generated_prompts)
+
+    replay = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Application"),
+        claim=_claim(claim_text="Application opened another report."),
+    )
+
+    assert replay.entity_id == entity.entity_id
+    assert len(provider.generated_prompts) == prompts_before + 1
+
+
 def test_source_and_canonical_aliases_on_mint_and_replay(
     database_engine: Engine,
 ) -> None:
     """WP-I.1: claim surface App and canonical Application share one id."""
-    provider = FakeModelProvider(generate_router=_first_token_router)
+    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
     resolver = _resolver(engine=database_engine, provider=provider)
     claim = _claim(claim_text="We opened the App to file the report.")
     minted = resolver.resolve(
@@ -662,10 +888,38 @@ def test_source_and_canonical_aliases_on_mint_and_replay(
     assert by_lemma["app"]["is_downweighted"] is False
 
 
+def test_sap_shorthand_matches_through_t4_not_t0(database_engine: Engine) -> None:
+    """A source alias may resolve to SAP SE, but exact spelling is no verdict."""
+    provider = FakeModelProvider(generate_router=_first_token_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    company = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="SAP SE", surface="SAP"),
+        claim=_claim(claim_text="SAP announced its quarterly results."),
+    )
+
+    shorthand = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="SAP"),
+        claim=_claim(claim_text="We installed SAP for finance."),
+    )
+
+    assert shorthand.entity_id == company.entity_id
+    assert not shorthand.created
+    with database_engine.connect() as connection:
+        method, blocking_tier = connection.execute(
+            text(
+                "SELECT method, features->>'blocking_tier'"
+                " FROM resolution_decisions ORDER BY decided_at DESC LIMIT 1"
+            )
+        ).one()
+    assert (method, blocking_tier) == ("T4_small", "T0")
+
+
 def test_generic_identifier_guard_downweights_shared_lemma(
     database_engine: Engine,
 ) -> None:
-    """WP-I.1 writer: a lemma pointing at two entity ids is marked promiscuous."""
+    """A promiscuous lemma is marked and downranked without losing recall."""
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     first = resolver.resolve(
@@ -719,6 +973,54 @@ def test_generic_identifier_guard_downweights_shared_lemma(
     assert row["is_downweighted"] is True
     assert row["reason"] == "promiscuous-lemma"
 
+    near_lemma = normalized_lemma(surface="Jan Novakk")
+    unguarded_lemma = normalized_lemma(surface="Jan Novaksson")
+    temporary_alias_id = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO aliases ("
+                " alias_id, deployment_id, entity_id, alias_text,"
+                " normalized_lemma, provenance"
+                ") VALUES ("
+                " :alias_id, :deployment_id, :entity_id, 'Jan Novaksson',"
+                " :lemma, 'source'"
+                ")"
+            ),
+            {
+                "alias_id": temporary_alias_id,
+                "deployment_id": _DEPLOYMENT_ID,
+                "entity_id": first.entity_id,
+                "lemma": unguarded_lemma,
+            },
+        )
+        unguarded_score, guarded_score = connection.execute(
+            text("SELECT similarity(:query, :unguarded), similarity(:query, :guarded)"),
+            {"query": near_lemma, "unguarded": unguarded_lemma, "guarded": jan_lemma},
+        ).one()
+        ranked = resolver._blocked_candidates(  # noqa: SLF001 - pins SQL ordering
+            connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=near_lemma
+        )
+        connection.execute(
+            text("DELETE FROM aliases WHERE alias_id = :alias_id"),
+            {"alias_id": temporary_alias_id},
+        )
+    assert 0.3 <= unguarded_score < guarded_score
+    assert tuple(candidate.entity_id for candidate in ranked) == (
+        first.entity_id,
+        second.entity_id,
+    )
+
+    prompts_before = len(provider.generated_prompts)
+    near_variant = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Jan Novakk"),
+        claim=_claim(claim_text="Jan Novakk joined the remote meeting."),
+    )
+    assert not near_variant.created
+    assert near_variant.entity_id == first.entity_id
+    assert 1 <= len(provider.generated_prompts) - prompts_before <= 2
+
 
 def test_ungrounded_surface_does_not_write_source_alias(
     database_engine: Engine,
@@ -763,7 +1065,12 @@ def _normalize_through_shipped_resolver(
     *, database_engine: Engine, payload: dict[str, object], claim_text: str
 ) -> CascadeResolver:
     """E3 handler plus the production cascade; returns the resolver used."""
-    provider = FakeModelProvider(generate_payload=_payload(payload))
+    provider = FakeModelProvider(
+        generate_payloads={
+            "NormalizationResponse": _payload(payload),
+            "AdjudicationVerdict": {"match": True, "confidence": 0.9},
+        }
+    )
     resolver = _resolver(engine=database_engine, provider=provider)
     facts = RecordingFacts(predicates={"related_to": None})
     handler: NormalizeRelationsHandler = _handler(

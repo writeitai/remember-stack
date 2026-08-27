@@ -114,7 +114,7 @@ Entities live in a **canonical registry** with aliases and tiered resolution.
 
 | When | What ships today |
 | --- | --- |
-| **Write-time resolution** | Full cascade (exact → fuzzy → phonetic → embedding → gated LLM) |
+| **Write-time resolution** | Full cascade: exact/fuzzy/phonetic candidates → profile embedding → gated LLM residue |
 | **Query-time `resolve_entity`** | **T0 exact alias** match; ranked candidates on ambiguity — never a silent single guess |
 
 An entity profile is orientation, not identity or a type. It is a disposable
@@ -124,12 +124,19 @@ profile and salient facts; it never compares two name-only vectors. An entity
 with no evidence has no T3 vector and reaches gated T4 instead. T4 receives the
 candidate profile and the current salient statements explicitly.
 
+At write time, an exact name is only a T0 candidate signal. It never silently
+accepts or merges an entity. One candidate with a current profile may be
+accepted by T3. Empty or conflicting evidence, and every multiple-candidate
+case, reaches T4. When T4 says a same-name mention is a different referent, the
+registry mints another id with that spelling and stores the non-match as a
+durable exclusion so later clustering cannot glue the pair back together.
+
 Profile refreshes are evidence-change debounced. If evidence is withdrawn, the
 cached summary and vector rebuild or clear. Hard-forgetting one source of a
 shared entity rebuilds from the surviving sources, so forgotten phrases do not
 remain in the summary or semantic vector.
 
-Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve.
+Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve. There is no exact-name auto-accept switch in the shipped cascade.
 
 ## Document identity (write path)
 

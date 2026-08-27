@@ -168,12 +168,14 @@ attempt ledger.
 
 ## 3. Resolution cascade — T0–T4, block-loose / decide-tight (D17)
 
-One canonical cascade. Stop at the first confident match. **Registry-self-contained — no
-3rd-party external-authority tier** (D20).
+One canonical cascade. Names block loosely; only profile-bearing T3 or
+evidence-bearing T4 may accept a candidate. **Registry-self-contained — no
+3rd-party external-authority tier** (D20). D95 amends the original T0 rule:
+an exact lemma lists distinct active entity ids and never decides identity.
 
 | Tier | Mechanism | Role | Where |
 |---|---|---|---|
-| **T0** | exact match on the canonical name form (LLM-emitted, §5) | decision | Postgres |
+| **T0** | exact match on the canonical name form (LLM-emitted, §5) | **candidate generation, NOT a decision** | Postgres |
 | **T1** | fuzzy blocking — `pg_trgm` GIN, recall-first low floor | **candidate generation, NOT a decision** | Postgres |
 | **T2** | phonetic — Daitch-Mokotoff (`fuzzystrmatch`), **not Soundex** | candidate generation | Postgres |
 | **T3** | embedding similarity, residue only | decision (mid band) | PostgreSQL P1 (D94) |
@@ -185,6 +187,11 @@ One canonical cascade. Stop at the first confident match. **Registry-self-contai
   same-lemma/T0 negative canary derived from the normalized surfaces, not the expected-tier
   annotation; any false merge of that canary blocks independently of the global precision
   floor. The old JW≥0.92 / cosine≥0.88 are placeholders to overwrite.
+- T0 hits are distinct active entity ids, not alias rows. A sole candidate
+  with a current evidence-backed profile may T3-accept. Empty/conflicting
+  evidence or several candidates reaches T4. A T4 non-match may mint a second
+  id with the same lemma and records a durable `resolution_exclusions`
+  cannot-link pair; clustering honors those pairs.
 - Blocking (T1/T2) sets a hard recall ceiling, so cheap tiers **escalate near-misses to T4**,
   never auto-reject — textual recall is mediocre and over-rejection is a silent hole.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions
@@ -673,7 +680,7 @@ needs cheap tiers" principle (§4, D19), this is handled **without specialized M
 - **Canonicalization is LLM-emitted at extraction** (no UDPipe/MorphoDiTa lemmatizer pass). The
   E2 extractor emits each mention's **nominative/canonical name form** alongside the surface
   form — the same free per-mention output as type and coref. The canonical form is stored as a
-  first-class alias (`provenance=llm_canonical`); T0 exact match runs on it.
+  first-class alias (`provenance=llm_canonical`); T0 exact candidate generation runs on it.
 - **Residual variants are caught by the deterministic at-scale tiers** (these are cheap Postgres
   built-ins, not ML, and do what the per-mention LLM cannot — match against millions of existing
   aliases): T1 `unaccent` + `pg_trgm` (GIN), T2 `fuzzystrmatch.daitch_mokotoff` (UTF-8-safe,

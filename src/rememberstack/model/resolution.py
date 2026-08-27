@@ -1,8 +1,9 @@
-"""ER cascade values (D17): candidates, bands, verdicts, and the T4 response.
+"""ER cascade values (D17/D95): candidates, bands, verdicts, and T4.
 
-Block-loose / decide-tight: T1/T2 generate candidates and never decide; T0,
-T3, and T4 decide. One global threshold set is golden-set measured and
-versioned in `resolver_versions` — never committed as an unmeasured constant.
+Block-loose / decide-tight: T0/T1/T2 generate candidates and never accept;
+T3 may accept one profiled candidate and T4 decides the residue. One global
+threshold set is golden-set measured and versioned in `resolver_versions` —
+never committed as an unmeasured constant.
 """
 
 from typing import Annotated
@@ -33,9 +34,10 @@ class ResolutionCandidate(BaseModel):
 class ResolutionThresholds(BaseModel):
     """The global decision bands (starting points to measure, D22/D96).
 
-    T3 cosine >= accept: match. <= reject: not this candidate. Between the
-    bands: escalate to T4 — cheap tiers never auto-reject near-misses (the
-    blocking ceiling is a recall ceiling, not a verdict).
+    T3 cosine >= accept may match a sole candidate. Production resolution
+    sends every other score to T4; the reject band remains part of the
+    registry-free golden-pair evaluator so regressions retain deciding-tier
+    attribution. Blocking remains a recall ceiling, never a verdict.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

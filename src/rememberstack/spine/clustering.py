@@ -101,7 +101,22 @@ class EntityClusterer:
                         if UUID(str(member["entity_id"])) in current_profile_ids
                     ),
                 )
-                pieces = _hac_pieces(members=members, vectors=vectors, distance_cut=cut)
+                exclusions = frozenset(
+                    _exclusion_key(left=low, right=high)
+                    for low, high in connection.execute(
+                        _SELECT_RESOLUTION_EXCLUSIONS,
+                        {
+                            "deployment_id": deployment_id,
+                            "entity_ids": [member["entity_id"] for member in members],
+                        },
+                    )
+                )
+                pieces = _hac_pieces(
+                    members=members,
+                    vectors=vectors,
+                    distance_cut=cut,
+                    exclusions=exclusions,
+                )
                 changed_entity_ids: set[UUID] = set()
                 for piece in pieces:
                     changed_entity_ids.update(
@@ -571,12 +586,15 @@ def _hac_pieces(
     members: list[dict[str, object]],
     vectors: dict[str, tuple[float, ...]],
     distance_cut: float,
+    exclusions: frozenset[tuple[str, str]],
 ) -> tuple[tuple[dict[str, object], ...], ...]:
     """Agglomerative clustering, centroid linkage, cut at `distance_cut`.
 
     Members without a profile vector stay singletons — a missing profile is
-    never merge evidence (the paranoid direction). Deterministic: ties break
-    on entity id, so the same member set always yields the same pieces.
+    never merge evidence (the paranoid direction). A durable T4/human
+    exclusion is a cannot-link constraint across every proposed cluster pair.
+    Deterministic: ties break on entity id, so the same member set always
+    yields the same pieces.
     """
     clusters: list[tuple[list[dict[str, object]], tuple[float, ...] | None]] = []
     for member in sorted(members, key=lambda m: str(m["entity_id"])):
@@ -586,6 +604,10 @@ def _hac_pieces(
         best: tuple[int, int, float] | None = None
         for i in range(len(clusters)):
             for j in range(i + 1, len(clusters)):
+                if _clusters_are_excluded(
+                    left=clusters[i][0], right=clusters[j][0], exclusions=exclusions
+                ):
+                    continue
                 left, right = clusters[i][1], clusters[j][1]
                 if left is None or right is None:
                     continue
@@ -602,6 +624,26 @@ def _hac_pieces(
         clusters = [cluster for k, cluster in enumerate(clusters) if k not in (i, j)]
         clusters.append((merged_members, merged_centroid))
     return tuple(tuple(cluster[0]) for cluster in clusters)
+
+
+def _clusters_are_excluded(
+    *,
+    left: list[dict[str, object]],
+    right: list[dict[str, object]],
+    exclusions: frozenset[tuple[str, str]],
+) -> bool:
+    """Whether any durable cannot-link pair crosses two HAC pieces."""
+    return any(
+        _exclusion_key(left=a["entity_id"], right=b["entity_id"]) in exclusions
+        for a in left
+        for b in right
+    )
+
+
+def _exclusion_key(*, left: object, right: object) -> tuple[str, str]:
+    """Canonicalize one entity pair the same way as the exclusion table."""
+    first, second = sorted((str(left), str(right)))
+    return first, second
 
 
 def _membership_snapshot(
@@ -678,6 +720,16 @@ _GATHER_NEIGHBORHOOD = text(
       ON root.deployment_id = :deployment_id
      AND root.entity_id = up.entity_id
     WHERE root.entity_id <> reached.entity_id
+    """
+)
+
+_SELECT_RESOLUTION_EXCLUSIONS = text(
+    """
+    SELECT entity_id_low, entity_id_high
+    FROM resolution_exclusions
+    WHERE deployment_id = :deployment_id
+      AND entity_id_low = ANY(CAST(:entity_ids AS uuid[]))
+      AND entity_id_high = ANY(CAST(:entity_ids AS uuid[]))
     """
 )
 

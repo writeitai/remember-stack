@@ -242,6 +242,46 @@ def test_grouping_is_independent_of_arrival_order(
     assert frozenset({"Rachel Klein"}) in partitions[0]
 
 
+def test_resolution_exclusion_is_a_clustering_cannot_link(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A resolver T4 non-match cannot be re-glued by profile-space HAC."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    robert = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    variant = _arrive(engine=database_engine, index=index, name="R. Klein")
+    low, high = sorted((robert, variant), key=lambda entity_id: entity_id.int)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO generic_identifier_guard (deployment_id,"
+                " normalized_lemma, distinct_entity_count, is_downweighted, reason)"
+                " VALUES (:deployment, 'robert klein', 2, true, 'common-name'),"
+                " (:deployment, 'r klein', 2, true, 'common-name')"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO resolution_exclusions (deployment_id, entity_id_low,"
+                " entity_id_high, reason, created_by) VALUES"
+                " (:deployment, :low, :high, 't4-no-match:test', 'auto')"
+            ),
+            {"deployment": _DEPLOYMENT_ID, "low": low, "high": high},
+        )
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert report.members == 2
+    assert report.merged == ()
+    assert report.queued_for_review == 0
+    assert _partition(engine=database_engine) == frozenset(
+        {frozenset({"Robert Klein"}), frozenset({"R. Klein"})}
+    )
+
+
 def test_merge_is_reversible_by_snapshot_replay(
     database_engine: Engine, bootstrapped_deployment: None
 ) -> None:

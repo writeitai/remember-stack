@@ -139,6 +139,7 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     "FactLabelResponse": {"label": "Alice Novak works for Acme."},
     "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
     "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
+    "AdjudicationVerdict": {"match": True, "confidence": 0.9},
 }
 
 _TABLES = (

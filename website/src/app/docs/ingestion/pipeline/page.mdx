@@ -144,13 +144,20 @@ Write-time cascade tiers:
 
 | Tier | Signal |
 | --- | --- |
-| T0 | Canonical alias exact |
-| T1 | Trigram / fuzzy |
-| T2 | Phonetic |
-| T3 | Mention name + claim context against an evidence-backed candidate profile vector; empty/stale profiles cannot accept |
-| T4 | Gated LLM adjudication with candidate profile + current salient facts |
+| T0 | Canonical alias exact — distinct active candidates only, never a verdict |
+| T1 | Trigram / fuzzy candidate generation |
+| T2 | Phonetic candidate generation |
+| T3 | A sole candidate: mention name + claim context against an evidence-backed profile vector; empty/stale profiles cannot accept |
+| T4 | Gated LLM adjudication for empty/conflicting or multiple candidates, with candidate profile + current salient facts |
 
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
+
+Write-time T0 never accepts an exact name by itself. A T4 non-match may mint a
+second active entity with the same normalized lemma; the negative pair is
+stored as a clustering exclusion. Lemmas that span multiple entity ids are
+marked promiscuous and rank below unguarded fuzzy/phonetic matches without
+being dropped from the candidate set. The shipped cascade has no exact-name
+auto-accept flag.
 
 After supported open-ended observations or relations change, a deterministic refresher
 rebuilds the entity’s short summary and `entity-profile-v2` vector. Unchanged
