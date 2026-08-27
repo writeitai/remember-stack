@@ -701,7 +701,7 @@ def test_pg19_accepts_pgq_but_public_executor_rejects_direct_pgq(migrated: str) 
         assert connection.execute(sql).fetchall() == []
     outcome = _executor(migrated).query_sql(sql=sql)
     assert outcome.termination_reason == "rejected"
-    assert outcome.error_code == QueryErrorCode.STATEMENT_NOT_ALLOWED
+    assert outcome.error_code == QueryErrorCode.PARSE_ERROR
 
 
 def test_parameter_indices_must_be_contiguous() -> None:

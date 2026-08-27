@@ -79,6 +79,15 @@ class _GraphCorpus:
         self.docs: dict[str, UUID] = {}
         self.relations: dict[tuple[str, str, str], UUID] = {}
         with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO predicates (deployment_id, predicate,"
+                    " parent_predicate, description, tier) VALUES"
+                    " (:deployment_id, 'connected_to', 'related_to',"
+                    " 'A bounded graph-fixture connection.', 'extension')"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
             for name in entities:
                 connection.execute(
                     text(
