@@ -133,19 +133,24 @@ force an unbounded OR-join or full fact-set window sort while profile locks are 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
 merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same
 refresher. A survivor profile includes evidence anchored to every entity in its complete redirect
-closure; the absorbed row's cache clears. Fact-triggered refresh resolves raw endpoints to their
-terminal active survivor, so later lifecycle changes cannot strand evidence behind a redirect;
+closure. A merged row retains a separately attested member-local/subtree profile solely for joint
+neighborhood re-decision; it remains excluded from public entity resolution and search. Fact-
+triggered refresh repairs both raw endpoints and their terminal active survivor, so later
+lifecycle changes cannot strand evidence behind a redirect;
 hard-forget refreshes shared survivor ids after the
 lineage scrub and before projection rebuild/verification. When no supported fact remains, the
 summary, vector, and complete attestation clear together. The resolver independently loads the
 current salient facts and reconstructs the expected summary/hash. A mismatch makes T3 see a
 missing profile and makes T4 rely on the current facts rather than stale cached prose. Thus a
-missed or queued stale refresh can cost the cheap path but cannot authorize a merge. Boundaries:
+missed or queued stale refresh can cost the cheap path but cannot authorize a merge. Clustering
+performs the same exact current-input attestation under evidence locks and reads only the active
+model/policy generation, so stale member state cannot authorize an automatic merge or split.
+Boundaries:
 the refresher writes only the disposable profile projection and its attestation — never names,
 aliases, status, or identity.
 
 The hard policy cut vacates every legacy name-only vector. Deployment setup first finishes its
-idempotent registry and saved-query seeds, then scans active entity ids in bounded keyset pages
+idempotent registry and saved-query seeds, then scans active and merged entity ids in bounded keyset pages
 through this same idempotent refresher before marking the entity semantic channel ready. A
 provider failure leaves only that channel unavailable; rerunning setup resumes safely because
 already-attested profiles debounce. Setup, human-review, and hard-forget-readiness embeddings are
@@ -707,9 +712,10 @@ HAC merge is fail-closed by default: deployments may only enable it with explici
 configuration, while otherwise every multi-entity proposal routes to the reversible human review
 queue. Test scenarios opt in to their synthetic measured cut explicitly.
 A missing or stale member profile is ambiguity in both directions: it can neither authorize a
-merge nor automatically split an existing merge. In particular, clearing an absorbed row's
-disposable vector must not undo a human merge; split requires vector-backed disagreement or an
-explicit audited unmerge.
+merge nor automatically split an existing merge. Merged members therefore retain a current,
+member-local disposable profile for nDR; a failed refresh clears its old attestation before the
+provider call. Joint re-decision may split only on exact, generation-pinned vector disagreement;
+otherwise it requires an explicit audited unmerge.
 
 **Cap runaway blobs (the "black-hole guard").** Occasionally a blob balloons to thousands of
 mentions because one bad link or a generic name connected everything — almost always garbage,

@@ -154,6 +154,11 @@ class EntityProfileRefresher:
                     input_hash=prepared.input_hash,
                     salient_facts=facts,
                 )
+            # Provider failure must leave ambiguity, not a stale vector that
+            # another identity path can consume before this work retries.
+            _clear_profile(
+                connection=connection, deployment_id=deployment_id, entity_id=entity_id
+            )
             return prepared
 
     def _commit_if_current(
@@ -208,7 +213,9 @@ class EntityProfileRefresher:
                 },
             )
             if result.rowcount != 1:
-                raise RuntimeError(f"active entity {entity_id} vanished during refresh")
+                raise RuntimeError(
+                    f"clusterable entity {entity_id} vanished during refresh"
+                )
             return ProfileRefreshResult(
                 entity_id=entity_id,
                 updated=True,
@@ -330,7 +337,7 @@ class EntityProfileRefresher:
         meter: CostMeterPort | None = None,
         call_key: str = "backfill_profile",
     ) -> ProfileBackfillResult:
-        """Refresh every active entity through bounded UUID-keyset pages.
+        """Refresh every active/merged entity through bounded UUID-keyset pages.
 
         Deployment setup runs this after a profile-policy migration vacates
         legacy vectors and before it republishes the entity semantic channel.
@@ -363,9 +370,13 @@ class EntityProfileRefresher:
                 meter=meter,
                 call_key=call_key,
             )
-            scanned += len(results)
-            updated += sum(result.updated for result in results)
-            with_evidence += sum(result.has_evidence for result in results)
+            page_ids = frozenset(entity_ids)
+            page_results = tuple(
+                result for result in results if result.entity_id in page_ids
+            )
+            scanned += len(entity_ids)
+            updated += sum(result.updated for result in page_results)
+            with_evidence += sum(result.has_evidence for result in page_results)
             after_id = entity_ids[-1]
         return ProfileBackfillResult(
             scanned=scanned, updated=updated, with_evidence=with_evidence
@@ -420,6 +431,34 @@ def profile_summary(*, salient_facts: tuple[str, ...]) -> str:
     return "; ".join(salient_facts[:PROFILE_SUMMARY_FACT_LIMIT])
 
 
+def current_profile_entity_ids(
+    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+) -> frozenset[UUID]:
+    """Lock and attest exact current profile inputs for clustering.
+
+    The caller retains the transaction, and therefore the evidence locks,
+    while it reads vectors and decides. Missing, stale, retired, or empty
+    profiles are omitted so none can authorize either merge direction.
+    """
+    current: set[UUID] = set()
+    for entity_id in sorted(set(entity_ids), key=str):
+        entity, facts = _locked_profile_state(
+            connection=connection, deployment_id=deployment_id, entity_id=entity_id
+        )
+        if entity is None or str(entity["status"]) not in {"active", "merged"}:
+            continue
+        if not facts:
+            continue
+        prepared = _prepared_profile(entity=entity, facts=facts)
+        if _profile_input_is_current(
+            entity=entity,
+            profile_summary=prepared.profile_summary,
+            input_hash=prepared.input_hash,
+        ):
+            current.add(entity_id)
+    return frozenset(current)
+
+
 def _locked_profile_state(
     *, connection: Connection, deployment_id: UUID, entity_id: UUID
 ) -> tuple[RowMapping | None, tuple[str, ...]]:
@@ -438,15 +477,11 @@ def _locked_profile_state(
     )
     if entity is None:
         return None, ()
-    member_ids = (
-        tuple(
-            connection.execute(
-                _SELECT_PROFILE_MEMBER_IDS,
-                {"deployment_id": deployment_id, "entity_id": entity_id},
-            ).scalars()
-        )
-        if str(entity["status"]) == "active"
-        else (entity_id,)
+    member_ids = tuple(
+        connection.execute(
+            _SELECT_PROFILE_MEMBER_IDS,
+            {"deployment_id": deployment_id, "entity_id": entity_id},
+        ).scalars()
     )
     for member_id in sorted(set(member_ids), key=str):
         connection.execute(_LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"})
@@ -457,7 +492,7 @@ def _locked_profile_state(
         .mappings()
         .one_or_none()
     )
-    if entity is None or str(entity["status"]) != "active":
+    if entity is None or str(entity["status"]) not in {"active", "merged"}:
         return entity, ()
     return entity, _load_salient_facts(
         connection=connection, deployment_id=deployment_id, entity_id=entity_id
@@ -481,7 +516,7 @@ def _terminal_profile_result(
             input_hash=None,
             salient_facts=(),
         )
-    if str(entity["status"]) == "active" and facts:
+    if str(entity["status"]) in {"active", "merged"} and facts:
         return None
     updated = _clear_profile(
         connection=connection, deployment_id=deployment_id, entity_id=entity_id
@@ -518,9 +553,21 @@ def _profile_is_current(
 ) -> bool:
     """Whether all cached projection fields attest the exact current input."""
     return bool(
+        _profile_input_is_current(
+            entity=entity, profile_summary=profile_summary, input_hash=input_hash
+        )
+        and entity["embedding_model"] == embedding_model
+    )
+
+
+def _profile_input_is_current(
+    *, entity: RowMapping, profile_summary: str, input_hash: str
+) -> bool:
+    """Whether cached prose/vector attests the exact current evidence input."""
+    return bool(
         entity["profile_summary"] == profile_summary
         and entity["has_embedding"]
-        and entity["embedding_model"] == embedding_model
+        and entity["embedding_model"] is not None
         and entity["embedding_input_policy_version"] == ENTITY_INPUT_POLICY
         and entity["embedding_text_hash"] == input_hash
     )
@@ -637,7 +684,7 @@ _SELECT_PROFILE_MEMBER_IDS = text(
       FROM entities entity
       WHERE entity.deployment_id = :deployment_id
         AND entity.entity_id = :entity_id
-        AND entity.status = 'active'
+        AND entity.status IN ('active', 'merged')
       UNION ALL
       SELECT child.entity_id, members.path || child.entity_id
       FROM members
@@ -697,7 +744,7 @@ _SELECT_SALIENT_FACTS = text(
       JOIN entities root
         ON root.deployment_id = :deployment_id
        AND root.entity_id = requested.entity_id
-       AND root.status = 'active'
+       AND root.status IN ('active', 'merged')
       UNION ALL
       SELECT members.profile_entity_id, child.entity_id,
              members.path || child.entity_id
@@ -838,7 +885,7 @@ _SELECT_ACTIVE_ENTITY_PAGE = text(
     SELECT entity_id
     FROM entities
     WHERE deployment_id = :deployment_id
-      AND status = 'active'
+      AND status IN ('active', 'merged')
       AND (CAST(:after_id AS uuid) IS NULL OR entity_id > CAST(:after_id AS uuid))
     ORDER BY entity_id
     LIMIT :limit
@@ -879,7 +926,7 @@ _SELECT_FACT_ENTITY_IDS = text(
       WHERE up.status = 'merged'
         AND NOT parent.entity_id = ANY(up.path)
     )
-    SELECT DISTINCT entity_id FROM up WHERE status = 'active' ORDER BY entity_id
+    SELECT DISTINCT entity_id FROM up ORDER BY entity_id
     """
 )
 
@@ -893,7 +940,7 @@ _UPDATE_PROFILE = text(
       embedding_text_hash = :text_hash,
       updated_at = now()
     WHERE deployment_id = :deployment_id AND entity_id = :entity_id
-      AND status = 'active'
+      AND status IN ('active', 'merged')
     """
 )
 

@@ -72,6 +72,15 @@ class _BatchRecordingProvider(FakeModelProvider):
         return super().embed(request=request)
 
 
+class _FailingProvider(FakeModelProvider):
+    """Fail profile embedding after the refresher has invalidated stale cache."""
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Raise a provider outage for the fail-safe projection proof."""
+        del request
+        raise RuntimeError("provider unavailable")
+
+
 @pytest.fixture(scope="module")
 def database_engine() -> Iterator[Engine]:
     """Apply structural head and expose the accepted PostgreSQL engine."""
@@ -225,6 +234,58 @@ def test_refresh_discards_a_vector_when_evidence_changes_during_provider_call(
             {"entity": _FIRST_ENTITY},
         ).scalar_one()
     assert summary == "Jan now lives in Brno; Jan lives in Prague"
+
+
+def test_provider_failure_leaves_changed_profile_cache_empty(
+    database_engine: Engine,
+) -> None:
+    """A stale vector clears before provider work and cannot authorize identity."""
+    observation_id = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity,"
+                " 'Jan lives in Prague', 1, 'profile-test')"
+            ),
+            {
+                "observation": observation_id,
+                "deployment": _DEPLOYMENT_ID,
+                "entity": _FIRST_ENTITY,
+            },
+        )
+    EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="profile-embed-test",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE observations SET statement = 'Jan lives in Brno',"
+                " updated_at = now() WHERE observation_id = :observation"
+            ),
+            {"observation": observation_id},
+        )
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        EntityProfileRefresher(
+            engine=database_engine,
+            model_provider=_FailingProvider(),
+            embedding_model="profile-embed-test",
+        ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
+
+    with database_engine.connect() as connection:
+        cached = connection.execute(
+            text(
+                "SELECT profile_summary, embedding, embedding_model,"
+                " embedding_input_policy_version, embedding_text_hash"
+                " FROM entities WHERE entity_id = :entity"
+            ),
+            {"entity": _FIRST_ENTITY},
+        ).one()
+    assert tuple(cached) == (None, None, None, None, None)
 
 
 def test_empty_profile_clears_name_only_vector_without_embedding(
@@ -391,8 +452,18 @@ def test_backfill_batches_active_entities_and_debounces_on_retry(
     ]
 
 
-def test_backfill_keyset_pages_every_active_entity(database_engine: Engine) -> None:
-    """A one-row cursor advances through every active id and then terminates."""
+def test_backfill_keyset_pages_every_clusterable_entity(
+    database_engine: Engine,
+) -> None:
+    """A one-row cursor advances through active and merged ids, then terminates."""
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET status = 'merged', merged_into = :survivor"
+                " WHERE entity_id = :absorbed"
+            ),
+            {"survivor": _FIRST_ENTITY, "absorbed": _SECOND_ENTITY},
+        )
     provider = FakeModelProvider()
 
     result = EntityProfileRefresher(

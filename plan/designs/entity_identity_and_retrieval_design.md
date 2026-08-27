@@ -180,12 +180,16 @@ into `profile_summary`, and
 embeds `name + summary + salient facts` under `entity-profile-v2`. It is
 composed synchronously after evidence add/recount/supersession, merge/un-merge, terminal human
 review, normal deletion, and the D74 lineage scrub. Survivor profiles aggregate the complete
-redirect closure and inactive rows clear their caches. Deployment setup keyset-
-backfills every active entity after a policy-cut migration and republishes the
+redirect closure. Merged members retain separately attested member-local profiles solely for
+joint neighborhood re-decision; retired rows clear, and public resolution/search still exposes
+only active survivors. Deployment setup keyset-
+backfills every active or merged entity after a policy-cut migration and republishes the
 entity semantic channel only after that resumable pass completes. The exact
 text hash debounces unchanged evidence. Resolution
 reconstructs the expected summary/hash from current facts; stale or missing
 attestation disables T3 and T4 still receives the current salient statements.
+Clustering performs the same exact current-input check under evidence locks before reading a
+generation-pinned vector, so stale or missing member state cannot authorize a merge or split.
 Hot-path redirect traversal uses recursive CTEs anchored at the requested ids rather than the
 deployment-wide survivor view. No queued stale snapshot can overwrite newer evidence: the
 refresher snapshots under the identity/evidence locks, releases the transaction for the provider

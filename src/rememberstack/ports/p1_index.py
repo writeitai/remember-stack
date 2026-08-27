@@ -279,5 +279,5 @@ class EntityIndexPort(Protocol):
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
     ) -> dict[str, tuple[float, ...]]:
-        """Profile vectors for the requested ids (absent ids are omitted)."""
+        """Active-generation profile vectors; absent/mismatched ids are omitted."""
         ...

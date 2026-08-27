@@ -222,13 +222,11 @@ def test_supersession_closes_the_window_and_kills_the_zombie(
     assert supersede.subject_kind == "relation"
     assert supersede.method == "small_model"
 
-    # replay (D7): a second pass makes no further model calls
-    assert (
-        adjudicator.adjudicate_new_relation(
-            deployment_id=_DEPLOYMENT_ID, relation_id=new
-        )
-        == ()
-    )
+    # Replay (D7) makes no further model calls but returns the durable closed
+    # coordinate so a post-commit profile-refresh retry can repair old endpoints.
+    assert adjudicator.adjudicate_new_relation(
+        deployment_id=_DEPLOYMENT_ID, relation_id=new
+    ) == (old,)
     assert len(provider.generated_prompts) == 1
 
 

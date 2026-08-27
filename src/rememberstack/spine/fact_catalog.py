@@ -484,6 +484,27 @@ class FactCatalog:
             ).all()
         return tuple(row[0] for row in rows)
 
+    def observation_ids_for_origin_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        claim_ids: tuple[UUID, ...],
+        normalizer_version: str,
+    ) -> tuple[UUID, ...]:
+        """Observations evidenced by origin claims at this normalizer generation."""
+        if not claim_ids:
+            return ()
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _SELECT_OBSERVATIONS_BY_ORIGIN_CLAIMS,
+                {
+                    "deployment_id": deployment_id,
+                    "claim_ids": list(claim_ids),
+                    "normalizer_version": normalizer_version,
+                },
+            ).all()
+        return tuple(row[0] for row in rows)
+
 
 _LOCK_FACT = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
@@ -713,6 +734,17 @@ _SELECT_RELATIONS_BY_ORIGIN_CLAIMS = text(
       AND e.claim_id = ANY(:claim_ids)
       AND e.normalizer_version = :normalizer_version
     ORDER BY e.relation_id
+    """
+)
+
+_SELECT_OBSERVATIONS_BY_ORIGIN_CLAIMS = text(
+    """
+    SELECT DISTINCT e.observation_id
+    FROM observation_evidence e
+    WHERE e.deployment_id = :deployment_id
+      AND e.claim_id = ANY(:claim_ids)
+      AND e.normalizer_version = :normalizer_version
+    ORDER BY e.observation_id
     """
 )
 

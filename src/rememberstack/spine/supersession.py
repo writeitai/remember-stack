@@ -89,7 +89,8 @@ class SupersessionAdjudicator:
         A non-change-prone predicate, or an empty blocking set, is a clear
         ADD decided by the novelty gate with no model call. Each blocked
         candidate is adjudicated on the ladder; outcomes are applied and
-        recorded atomically.
+        recorded atomically. Replays return the same durably closed relation
+        ids so post-commit profile repair retains stable coordinates.
         """
         with self._engine.begin() as connection:
             subject = (
@@ -119,10 +120,13 @@ class SupersessionAdjudicator:
             connection.execute(
                 _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
             )
-            if self._already_adjudicated(
-                connection=connection, relation_id=relation_id
-            ):
-                return ()
+            replayed = self._replayed_closed_relation_ids(
+                connection=connection,
+                deployment_id=deployment_id,
+                relation_id=relation_id,
+            )
+            if replayed is not None:
+                return replayed
             if not subject["is_change_prone"]:
                 self._record(
                     connection=connection,
@@ -359,19 +363,30 @@ class SupersessionAdjudicator:
         resolved = {row[0]: row[1] for row in roots}
         return resolved.get(left) == resolved.get(right)
 
-    def _already_adjudicated(
-        self, *, connection: Connection, relation_id: UUID
-    ) -> bool:
-        """Replay check (D7): any decision of this generation is terminal."""
-        return (
-            connection.execute(
-                _COUNT_ADJUDICATIONS,
+    def _replayed_closed_relation_ids(
+        self, *, connection: Connection, deployment_id: UUID, relation_id: UUID
+    ) -> tuple[UUID, ...] | None:
+        """Return durable prior closures, or ``None`` when work is still new."""
+        rows = connection.execute(
+            _SELECT_REPLAYED_ADJUDICATIONS,
+            {
+                "deployment_id": deployment_id,
+                "relation_id": relation_id,
+                "adjudicator_version": ADJUDICATOR_VERSION,
+            },
+        ).mappings()
+        decisions = tuple(rows)
+        if not decisions:
+            return None
+        return tuple(
+            sorted(
                 {
-                    "relation_id": relation_id,
-                    "adjudicator_version": ADJUDICATOR_VERSION,
+                    UUID(str(decision["relation_id"]))
+                    for decision in decisions
+                    if str(decision["outcome"]) == "supersede"
                 },
-            ).scalar_one()
-            > 0
+                key=str,
+            )
         )
 
     def _record(
@@ -502,12 +517,15 @@ _SET_CONTRADICTION_GROUP = text(
     """
 )
 
-_COUNT_ADJUDICATIONS = text(
+_SELECT_REPLAYED_ADJUDICATIONS = text(
     """
-    SELECT count(*) FROM relation_adjudications
-    WHERE (relation_id = :relation_id OR related_relation_id = :relation_id)
+    SELECT relation_id, outcome::text AS outcome
+    FROM relation_adjudications
+    WHERE deployment_id = :deployment_id
+      AND (relation_id = :relation_id OR related_relation_id = :relation_id)
       AND adjudicator_version = :adjudicator_version
       AND outcome IN ('add', 'noop', 'supersede', 'contradict')
+    ORDER BY adjudication_id
     """
 )
 

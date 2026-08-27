@@ -13,12 +13,14 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import UnmergeError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 
@@ -131,6 +133,25 @@ def _arrive(*, engine: Engine, index: _ScriptedEntityIndex, name: str) -> UUID:
             ),
             {"a": uuid4(), "d": _DEPLOYMENT_ID, "e": entity_id, "n": name, "l": lemma},
         )
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity, :statement, 1,"
+                " 'cluster-test')"
+            ),
+            {
+                "observation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": entity_id,
+                "statement": f"{name} profile evidence",
+            },
+        )
+    EntityProfileRefresher(
+        engine=engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="cluster-profile-test",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=entity_id)
     index.seed(entity_id=entity_id, canonical_name=name)
     return entity_id
 
@@ -168,7 +189,11 @@ def _clusterer(
     return EntityClusterer(
         engine=engine,
         entity_index=index,
-        profile_refresher=RecordingProfileRefresher(),
+        profile_refresher=EntityProfileRefresher(
+            engine=engine,
+            model_provider=FakeModelProvider(),
+            embedding_model="cluster-profile-test",
+        ),
         config=ClusterConfig(auto_merge_enabled=True, **overrides),  # type: ignore[arg-type]
     )
 
@@ -401,6 +426,46 @@ def test_missing_absorbed_profile_never_authorizes_an_automatic_unmerge(
         }
     assert states[survivor] == ("active", None)
     assert states[absorbed] == ("merged", survivor)
+
+
+def test_stale_profile_never_authorizes_clustering(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """Exact current-input attestation excludes a stale indexed vector."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    _arrive(engine=database_engine, index=index, name="Robert Klein")
+    stale = _arrive(engine=database_engine, index=index, name="R. Klein")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE observations SET statement = 'R. Klein changed profile',"
+                " updated_at = now() WHERE subject_entity_id = :entity"
+            ),
+            {"entity": stale},
+        )
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert report.merged == ()
+    assert report.queued_for_review == 0
+
+
+def test_clustering_redirect_walks_are_anchored() -> None:
+    """Hot identity paths never materialize the deployment-wide survivor view."""
+    from rememberstack.spine import clustering
+
+    for statement in (
+        clustering._GATHER_NEIGHBORHOOD,
+        clustering._SELECT_PIECE_ROOTS,
+        clustering._SELECT_SURVIVOR_ROOT,
+        clustering._SELECT_ENTITY_ROOT_AND_STATUS,
+    ):
+        sql = str(statement)
+        assert "WITH RECURSIVE" in sql
+        assert "v_memory_entity_survivor" not in sql
 
 
 def test_black_hole_guard_tightens_the_cut(

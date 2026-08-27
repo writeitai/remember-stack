@@ -314,9 +314,19 @@ class NormalizeRelationsHandler:
                 call_key=f"observation:{entity_id}",
             )
             profile_entity_ids.add(entity_id)
-        self._profile_refresher.refresh_many(
+        claim_ids = tuple(claim.claim_id for claim in claims)
+        self._profile_refresher.refresh_for_facts(
             deployment_id=deployment_id,
-            entity_ids=tuple(profile_entity_ids),
+            relation_ids=self._facts.relation_ids_for_origin_claims(
+                deployment_id=deployment_id,
+                claim_ids=claim_ids,
+                normalizer_version=E3_NORMALIZER_VERSION,
+            ),
+            observation_ids=self._facts.observation_ids_for_origin_claims(
+                deployment_id=deployment_id,
+                claim_ids=claim_ids,
+                normalizer_version=E3_NORMALIZER_VERSION,
+            ),
             meter=meter,
             call_key=f"profile:normalize:{work.target_id}",
         )
@@ -671,12 +681,6 @@ class AdjudicateObservationsHandler:
                     "normalizer_version": normalizer_version,
                 },
             )
-        self._profile_refresher.refresh_many(
-            deployment_id=work.deployment_id,
-            entity_ids=tuple(by_entity),
-            meter=meter,
-            call_key=f"profile:observation_flush:{version_uuid}",
-        )
         # D90: do not version-wide clear (would wipe peer entity progress under
         # mixed cutover). Residual rows remain for ops / entity units.
         chunks = self._chunk_catalog.chunks_for_embedding(
@@ -689,6 +693,18 @@ class AdjudicateObservationsHandler:
             deployment_id=work.deployment_id,
             claim_ids=tuple(claim.claim_id for claim in claims),
             normalizer_version=normalizer_version,
+        )
+        observation_ids = self._facts.observation_ids_for_origin_claims(
+            deployment_id=work.deployment_id,
+            claim_ids=tuple(claim.claim_id for claim in claims),
+            normalizer_version=normalizer_version,
+        )
+        self._profile_refresher.refresh_for_facts(
+            deployment_id=work.deployment_id,
+            relation_ids=relation_ids,
+            observation_ids=observation_ids,
+            meter=meter,
+            call_key=f"profile:observation_flush:{version_uuid}",
         )
         doc_id = payload.get("doc_id")
         if doc_id is None and claims:
@@ -792,19 +808,20 @@ class AdjudicateSupersessionHandler:
                     normalizer_version=normalizer_version,
                 )
                 relation_ids = [str(rid) for rid in loaded]
-        closed_relation_ids: list[UUID] = []
-        for raw in relation_ids:
-            closed_relation_ids.extend(
+        stable_relation_ids = tuple(UUID(str(raw)) for raw in relation_ids)
+        affected_relation_ids = set(stable_relation_ids)
+        for relation_id in stable_relation_ids:
+            affected_relation_ids.update(
                 self._adjudicator.adjudicate_new_relation(
                     deployment_id=work.deployment_id,
-                    relation_id=UUID(str(raw)),
+                    relation_id=relation_id,
                     meter=meter,
-                    call_key=f"supersession:{raw}",
+                    call_key=f"supersession:{relation_id}",
                 )
             )
         self._profile_refresher.refresh_for_facts(
             deployment_id=work.deployment_id,
-            relation_ids=tuple(closed_relation_ids),
+            relation_ids=tuple(sorted(affected_relation_ids, key=str)),
             observation_ids=(),
             meter=meter,
             call_key=f"profile:supersession:{work.target_id}",

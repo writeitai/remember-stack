@@ -29,6 +29,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.p1_index import EntityIndexPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.profile_refresher import current_profile_entity_ids
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 
@@ -85,9 +86,20 @@ class EntityClusterer:
                     # rather than swallow the monster (registries §6)
                     cut = cut / 2.0
                     tightened = True
+                current_profile_ids = current_profile_entity_ids(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=tuple(
+                        UUID(str(member["entity_id"])) for member in members
+                    ),
+                )
                 vectors = self._entity_index.entity_vectors(
                     deployment_id=str(deployment_id),
-                    entity_ids=tuple(str(m["entity_id"]) for m in members),
+                    entity_ids=tuple(
+                        str(member["entity_id"])
+                        for member in members
+                        if UUID(str(member["entity_id"])) in current_profile_ids
+                    ),
                 )
                 pieces = _hac_pieces(members=members, vectors=vectors, distance_cut=cut)
                 changed_entity_ids: set[UUID] = set()
@@ -625,7 +637,7 @@ _LOCK_NEIGHBORHOOD = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0
 
 _GATHER_NEIGHBORHOOD = text(
     """
-    WITH reached AS (
+    WITH RECURSIVE reached AS MATERIALIZED (
         SELECT DISTINCT entities.entity_id, entities.canonical_name,
                entities.created_at, entities.status, entities.merged_into
         FROM aliases
@@ -636,53 +648,102 @@ _GATHER_NEIGHBORHOOD = text(
           AND (similarity(aliases.normalized_lemma, :lemma) >= 0.3
                OR daitch_mokotoff(aliases.normalized_lemma)
                   && daitch_mokotoff(:lemma))
+    ), up(origin_id, entity_id, status, merged_into, path) AS (
+        SELECT reached.entity_id, reached.entity_id, reached.status,
+               reached.merged_into, ARRAY[reached.entity_id]
+        FROM reached
+        UNION ALL
+        SELECT up.origin_id, parent.entity_id, parent.status,
+               parent.merged_into, up.path || parent.entity_id
+        FROM up
+        JOIN entities parent
+          ON parent.deployment_id = :deployment_id
+         AND parent.entity_id = up.merged_into
+        WHERE up.status = 'merged'
+          AND NOT parent.entity_id = ANY(up.path)
     )
     SELECT DISTINCT reached.entity_id, reached.canonical_name,
            reached.created_at AS first_seen,
-           survivor.survivor_entity_id AS current_root
+           up.entity_id AS current_root
     FROM reached
-    JOIN v_memory_entity_survivor survivor
-      ON survivor.deployment_id = :deployment_id
-     AND survivor.entity_id = reached.entity_id
+    JOIN up ON up.origin_id = reached.entity_id AND up.status = 'active'
     """
 )
 
 _SELECT_PIECE_ROOTS = text(
     """
+    WITH RECURSIVE requested AS MATERIALIZED (
+      SELECT entity_id
+      FROM unnest(CAST(:entity_ids AS uuid[])) AS nominated(entity_id)
+    ), up(origin_id, entity_id, status, merged_into, path) AS (
+      SELECT requested.entity_id, entity.entity_id, entity.status,
+             entity.merged_into, ARRAY[entity.entity_id]
+      FROM requested
+      JOIN entities entity
+        ON entity.deployment_id = :deployment_id
+       AND entity.entity_id = requested.entity_id
+      UNION ALL
+      SELECT up.origin_id, parent.entity_id, parent.status,
+             parent.merged_into, up.path || parent.entity_id
+      FROM up
+      JOIN entities parent
+        ON parent.deployment_id = :deployment_id
+       AND parent.entity_id = up.merged_into
+      WHERE up.status = 'merged'
+        AND NOT parent.entity_id = ANY(up.path)
+    )
     SELECT DISTINCT root.entity_id, root.created_at
-    FROM v_memory_entity_survivor survivor
+    FROM up
     JOIN entities root
-      ON root.deployment_id = survivor.deployment_id
-     AND root.entity_id = survivor.survivor_entity_id
+      ON root.deployment_id = :deployment_id
+     AND root.entity_id = up.entity_id
      AND root.status = 'active'
-    WHERE survivor.deployment_id = :deployment_id
-      AND survivor.entity_id = ANY(:entity_ids)
+    WHERE up.status = 'active'
     ORDER BY root.created_at, root.entity_id
     """
 )
 
 _SELECT_SURVIVOR_ROOT = text(
     """
-    SELECT survivor.survivor_entity_id
-    FROM v_memory_entity_survivor survivor
-    JOIN entities root
-      ON root.deployment_id = survivor.deployment_id
-     AND root.entity_id = survivor.survivor_entity_id
-     AND root.status = 'active'
-    WHERE survivor.deployment_id = :deployment_id
-      AND survivor.entity_id = :entity_id
+    WITH RECURSIVE up(entity_id, status, merged_into, path) AS (
+      SELECT entity.entity_id, entity.status, entity.merged_into,
+             ARRAY[entity.entity_id]
+      FROM entities entity
+      WHERE entity.deployment_id = :deployment_id
+        AND entity.entity_id = :entity_id
+      UNION ALL
+      SELECT parent.entity_id, parent.status, parent.merged_into,
+             up.path || parent.entity_id
+      FROM up
+      JOIN entities parent
+        ON parent.deployment_id = :deployment_id
+       AND parent.entity_id = up.merged_into
+      WHERE up.status = 'merged'
+        AND NOT parent.entity_id = ANY(up.path)
+    )
+    SELECT entity_id FROM up WHERE status = 'active'
     """
 )
 
 _SELECT_ENTITY_ROOT_AND_STATUS = text(
     """
-    SELECT survivor.survivor_entity_id, entity.status::text
-    FROM entities entity
-    JOIN v_memory_entity_survivor survivor
-      ON survivor.deployment_id = entity.deployment_id
-     AND survivor.entity_id = entity.entity_id
-    WHERE entity.deployment_id = :deployment_id
-      AND entity.entity_id = :entity_id
+    WITH RECURSIVE up(entity_id, status, merged_into, origin_status, path) AS (
+      SELECT entity.entity_id, entity.status, entity.merged_into,
+             entity.status, ARRAY[entity.entity_id]
+      FROM entities entity
+      WHERE entity.deployment_id = :deployment_id
+        AND entity.entity_id = :entity_id
+      UNION ALL
+      SELECT parent.entity_id, parent.status, parent.merged_into,
+             up.origin_status, up.path || parent.entity_id
+      FROM up
+      JOIN entities parent
+        ON parent.deployment_id = :deployment_id
+       AND parent.entity_id = up.merged_into
+      WHERE up.status = 'merged'
+        AND NOT parent.entity_id = ANY(up.path)
+    )
+    SELECT entity_id, origin_status::text FROM up WHERE status = 'active'
     """
 )
 

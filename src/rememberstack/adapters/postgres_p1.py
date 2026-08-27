@@ -1180,6 +1180,22 @@ class PostgresP1Index:
             ("entities", "entity_id"),
         }:
             raise ValueError("unsupported natural P1 vector target")
+        generation_sql = ""
+        parameters: dict[str, object] = {
+            "deployment_id": UUID(deployment_id),
+            "ids": _uuid_strings(item_ids),
+        }
+        if table == "entities":
+            generation_sql = (
+                " AND embedding_model = :embedding_model"
+                " AND embedding_input_policy_version = :input_policy"
+            )
+            parameters.update(
+                {
+                    "embedding_model": self._embedding_model,
+                    "input_policy": ENTITY_INPUT_POLICY,
+                }
+            )
         rows = self._engine_rows(
             f"""
             SELECT {id_column}::text AS item_id, embedding::text AS embedding
@@ -1187,8 +1203,9 @@ class PostgresP1Index:
             WHERE deployment_id = :deployment_id
               AND {id_column} = ANY(CAST(:ids AS uuid[]))
               AND embedding IS NOT NULL
+              {generation_sql}
             """,
-            {"deployment_id": UUID(deployment_id), "ids": _uuid_strings(item_ids)},
+            parameters,
         )
         return {
             str(row["item_id"]): _parse_vector(str(row["embedding"])) for row in rows

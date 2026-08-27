@@ -330,7 +330,7 @@ def test_merge_verdict_performs_a_reversible_human_merge(
 def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
     database_engine: Engine,
 ) -> None:
-    """Absorbed evidence moves into the survivor profile; stale cache clears."""
+    """Survivor aggregates the closure; absorbed keeps its current local profile."""
     survivor = _entity(engine=database_engine, name="Robert Klein")
     absorbed = _entity(engine=database_engine, name="R. Klein")
     with database_engine.begin() as connection:
@@ -391,7 +391,7 @@ def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
         "R. Klein works at Acme",
         "Robert lives in Prague",
     }
-    assert profiles[absorbed] == ("merged", None, 0)
+    assert profiles[absorbed] == ("merged", "R. Klein works at Acme", 5)
 
     # A lost response after the database verdict but before profile refresh is
     # repairable by the identical retry without minting another merge event.
