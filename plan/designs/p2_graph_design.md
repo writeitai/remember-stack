@@ -571,11 +571,15 @@ survivor/provenance authority scan remains at the requested deployment's
 cardinality. The fixed graph executor and recursive graph helper functions
 disable sequential scans locally for their bounded transaction/function call
 so the planner cannot trade that invariant for a cheaper global scan under
-skewed tenant statistics; other query-space statements retain PostgreSQL's
-default. The two function-local directives are part of the helpers' semantic
-catalog contract: readiness verifies them and graph-metadata repair reapplies
-them after recreating the helpers. The citation-path helper keeps the default
-planner because it is not one of the recursive entity-expansion helpers.
+skewed tenant statistics. When D97 supplies its common caller-owned snapshot,
+the executor applies all graph planner and resource settings inside a nested
+savepoint and rolls that savepoint back after hydrating the answer. Subsequent
+authority reads therefore retain the same outer MVCC cut but recover their
+prior settings; other query-space statements retain PostgreSQL's default. The
+two function-local directives are part of the helpers' semantic catalog
+contract: readiness verifies them and graph-metadata repair reapplies them
+after recreating the helpers. The citation-path helper keeps the default planner
+because it is not one of the recursive entity-expansion helpers.
 Measurements record hardware, cardinality, skew, and p50/p95/p99 rather than
 weakening correctness to a small-fixture promise.
 

@@ -441,30 +441,39 @@ class GraphQueries:
                 raise RuntimeError(
                     "shared graph reads require one read-only repeatable-read transaction"
                 )
-            statement_timeout_ms = _deadline_timeout_ms(
-                default_ms=5_000, deadline=deadline
-            )
-            transaction_timeout_ms = _deadline_timeout_ms(
-                default_ms=6_000, deadline=deadline
-            )
-            connection.exec_driver_sql(
-                f"SET LOCAL statement_timeout = '{statement_timeout_ms}ms'"
-            )
-            connection.exec_driver_sql(
-                f"SET LOCAL transaction_timeout = '{transaction_timeout_ms}ms'"
-            )
-            connection.exec_driver_sql("SET LOCAL lock_timeout = '500ms'")
-            connection.exec_driver_sql(
-                "SET LOCAL idle_in_transaction_session_timeout = '5s'"
-            )
-            connection.exec_driver_sql("SET LOCAL temp_file_limit = '65536kB'")
-            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
-            connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
-            connection.exec_driver_sql("SET LOCAL enable_nestloop = DEFAULT")
-            connection.exec_driver_sql("SET LOCAL join_collapse_limit = DEFAULT")
-            connection.exec_driver_sql("SET LOCAL from_collapse_limit = DEFAULT")
-            connection.exec_driver_sql(f"SET LOCAL work_mem = '{self._work_mem_kib}kB'")
-            yield connection
+            graph_scope = connection.begin_nested()
+            try:
+                statement_timeout_ms = _deadline_timeout_ms(
+                    default_ms=5_000, deadline=deadline
+                )
+                transaction_timeout_ms = _deadline_timeout_ms(
+                    default_ms=6_000, deadline=deadline
+                )
+                connection.exec_driver_sql(
+                    f"SET LOCAL statement_timeout = '{statement_timeout_ms}ms'"
+                )
+                connection.exec_driver_sql(
+                    f"SET LOCAL transaction_timeout = '{transaction_timeout_ms}ms'"
+                )
+                connection.exec_driver_sql("SET LOCAL lock_timeout = '500ms'")
+                connection.exec_driver_sql(
+                    "SET LOCAL idle_in_transaction_session_timeout = '5s'"
+                )
+                connection.exec_driver_sql("SET LOCAL temp_file_limit = '65536kB'")
+                connection.exec_driver_sql(
+                    "SET LOCAL max_parallel_workers_per_gather = 0"
+                )
+                connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
+                connection.exec_driver_sql("SET LOCAL enable_nestloop = DEFAULT")
+                connection.exec_driver_sql("SET LOCAL join_collapse_limit = DEFAULT")
+                connection.exec_driver_sql("SET LOCAL from_collapse_limit = DEFAULT")
+                connection.exec_driver_sql(
+                    f"SET LOCAL work_mem = '{self._work_mem_kib}kB'"
+                )
+                yield connection
+            finally:
+                if graph_scope.is_active:
+                    graph_scope.rollback()
         finally:
             self._slots.release()
 

@@ -37,7 +37,7 @@ Three facts drive every operational decision:
 - Protocol (`--protocol`, prepare-time only): `full-v15`. Both the answer
   agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
   `none` for both. It is the sole executable protocol and is not comparable with
-  historical v1–v13 runs.
+  historical v1–v14 runs.
 - The answer agent can use the complete public read plane: the four assured
   operations (`testimony_context`, `fact_context`, `answer_context`, and
   `resolve_entity`), direct primitives, open SQL, typed live-graph helpers,

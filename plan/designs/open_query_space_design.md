@@ -107,7 +107,7 @@ D54, D80, and D87 remain controlling.*
     exposed. The internal property-graph definition is verified separately from
     PostgreSQL's semantic catalogs and is not an open query surface.
 12. **No benchmark-specific product behavior exists.** The separately
-    fingerprinted v14 protocol consumes the customer surface unchanged.
+    fingerprinted v15 protocol consumes the customer surface unchanged.
     Dataset names, question classes,
     benchmark-only views, prompts, functions, branches, or limits are forbidden
     in product code.
@@ -1434,10 +1434,10 @@ protect nobody while preserving duplicate invariant logic.
 4. Do not ship deprecation headers, adapter warnings, compatibility-call
    counters, removal-denominator telemetry, or a product gate whose only
    purpose is preserving/removing the 17 adapters.
-5. The paid benchmark remains operator-invoked. Full-v9 through v13 are
-   immutable historical evidence over their pinned catalogs; v14 is the
-   D98-amended protocol identity but this design does not authorize running it. Any result
-   informs quality, not compatibility permission.
+5. The paid benchmark remains operator-invoked. Full-v9 through v14 are
+   immutable historical evidence over their pinned catalogs; v15 is the
+   D97-amended protocol identity but this design does not authorize running it.
+   Any result informs quality, not compatibility permission.
 
 Exactly four platform operations remain. Removing those intentional one-call
 contracts is not decided here; it remains the explicit product-quality

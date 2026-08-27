@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from uuid import UUID
 from uuid import uuid4
@@ -413,6 +414,53 @@ def test_sql_pgq_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None
         continuation=first.truncation.continuation,
     )
     assert _names(first).isdisjoint(_names(second))
+
+
+def test_shared_graph_scope_restores_outer_transaction_settings(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Graph-only settings end while the caller-owned snapshot stays usable."""
+    ids = graph.ids  # type: ignore[attr-defined]
+    setting_names = (
+        "statement_timeout",
+        "transaction_timeout",
+        "lock_timeout",
+        "idle_in_transaction_session_timeout",
+        "temp_file_limit",
+        "max_parallel_workers_per_gather",
+        "enable_seqscan",
+        "work_mem",
+    )
+    with database_engine.connect().execution_options(
+        isolation_level="REPEATABLE READ"
+    ) as connection:
+        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        connection.exec_driver_sql("SET LOCAL statement_timeout = '17s'")
+        connection.exec_driver_sql("SET LOCAL transaction_timeout = '19s'")
+        connection.exec_driver_sql("SET LOCAL enable_seqscan = on")
+        before = {
+            name: connection.exec_driver_sql(f"SHOW {name}").scalar_one()
+            for name in setting_names
+        }
+
+        answer = graph.neighborhood(
+            entity_id=ids["Acme"],
+            hops=1,
+            _deadline=monotonic() + 5.0,
+            _connection=connection,
+        )
+
+        after = {
+            name: connection.exec_driver_sql(f"SHOW {name}").scalar_one()
+            for name in setting_names
+        }
+        assert {"Alice", "Bob"} <= _names(answer)
+        assert after == before
+        assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
+        assert (
+            connection.exec_driver_sql("SHOW transaction_read_only").scalar_one()
+            == "on"
+        )
 
 
 def test_tombstoned_relation_evidence_disappears_and_restores_live(

@@ -541,3 +541,24 @@ expected helper configuration name-specific and teach catalog replay to
 reapply p9_19 after recreating the p9_17 helpers. A test must reset the two
 directives and prove that one semantic repair restores them without changing
 the citation helper, whose non-recursive plan does not need the directive.
+
+The next exact-tip review found that the executor-local half of the planner
+remedy was still too broad when D97 supplied its caller-owned transaction.
+`SET LOCAL` survives until the outer transaction ends, so the shared graph
+context leaked `enable_seqscan=off` and every graph resource setting into the
+later neighbor-authority and fact-confirmation statements. That contradicted
+the intended graph-only scope even though all statements still observed the
+same MVCC cut. The graph call must therefore open a nested savepoint, apply its
+planner and resource settings inside it, detach the hydrated result, and roll
+the savepoint back before returning to the recipe. Rolling back instead of
+releasing restores the caller's prior settings while preserving the outer
+read-only repeatable-read snapshot; standalone graph transactions remain
+unchanged. A database-backed test must prove both restoration and continued
+use of the outer transaction.
+
+The same review found four remaining current-contract sentences that still
+called the answer/P3 behavior V14, plus the runbook's V1–V13 comparability
+boundary and one query-space invariant. They are editorial drift after the
+D97 protocol roll: V14 remains immutable historical evidence, while those
+current behaviors and invariants belong to `full-v15`. Updating those labels
+does not change benchmark behavior or authorize a paid run.
