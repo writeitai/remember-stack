@@ -462,10 +462,7 @@ def test_handle_claim_grain_returns_barrier() -> None:
     legal = {
         "relations": [],
         "observations": [
-            {
-                "subject": {"name": "Bob", "type": "Person"},
-                "statement": "Bob works at Acme",
-            }
+            {"subject": {"name": "Bob"}, "statement": "Bob works at Acme"}
         ],
     }
     provider = FakeModelProvider(generate_payload=legal)

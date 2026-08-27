@@ -1,13 +1,11 @@
 """E3 normalization values: LLM candidates, resolution, and fact records (D2-D5, D17-D18, D43)."""
 
 from typing import Annotated
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
-from pydantic import model_validator
 
 _NonEmpty = Annotated[str, Field(min_length=1)]
 
@@ -17,22 +15,13 @@ class EntityRef(BaseModel):
 
     ``name`` is the nominative/canonical form. ``surface`` is the span as it
     appeared in the claim when it differs (``App`` vs ``Application``).
-    Legacy ``type`` on inbound JSON is discarded (D96).
+    Entity classes are rejected as extra input after the D96 hard cut.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: _NonEmpty
     surface: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _discard_legacy_type(cls, value: Any) -> Any:
-        """Drop D18 ``type`` so old normalizer JSON does not fail extra=forbid."""
-        if isinstance(value, dict) and "type" in value:
-            value = dict(value)
-            value.pop("type", None)
-        return value
 
     def mention_surface(self) -> str:
         """The claim spelling used for source aliases; falls back to ``name``."""
@@ -100,12 +89,3 @@ class ResolvedEntity(BaseModel):
 
     entity_id: UUID
     created: bool
-
-    @model_validator(mode="before")
-    @classmethod
-    def _discard_legacy_entity_type(cls, value: Any) -> Any:
-        """Drop D18 ``entity_type`` on inbound constructors."""
-        if isinstance(value, dict) and "entity_type" in value:
-            value = dict(value)
-            value.pop("entity_type", None)
-        return value

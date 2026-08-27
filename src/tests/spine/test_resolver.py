@@ -15,13 +15,15 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.eval import PRECISION_FLOOR
+from rememberstack.eval import ResolutionSuiteRecordError
 from rememberstack.eval import run_resolution_suite
 from rememberstack.eval import seed_synthetic_golden_pairs
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EntityRef
+from rememberstack.model import ResolutionThresholds
 from rememberstack.model import ResolverConfig
-from rememberstack.model import TypeThresholds
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import RESOLVER_VERSION
@@ -36,7 +38,7 @@ from tests.workers.e3_test_doubles import RecordingFacts
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b0000000-0000-0000-0000-000000000001")
 
-_ALWAYS_ESCALATE = TypeThresholds(t3_accept=1.0, t3_reject=-1.0)
+_ALWAYS_ESCALATE = ResolutionThresholds(t3_accept=1.0, t3_reject=-1.0)
 """Bands that route every blocked candidate through T4 (deterministic tests)."""
 
 
@@ -54,8 +56,21 @@ def _first_token_router(prompt: str, type_name: str) -> dict[str, object]:
         stripped = "".join(c for c in folded if not unicodedata.combining(c))
         return stripped.lower().split()[0]
 
+    mention = next(
+        line.split("'")[1]
+        for line in prompt.splitlines()
+        if line.startswith("MENTION:")
+    )
+    candidate = next(
+        line.split("'")[1]
+        for line in prompt.splitlines()
+        if line.startswith("CANDIDATE:")
+    )
     return {
-        "match": first_token("MENTION:") == first_token("CANDIDATE:"),
+        "match": (
+            mention != candidate
+            and first_token("MENTION:") == first_token("CANDIDATE:")
+        ),
         "confidence": 0.9,
     }
 
@@ -104,12 +119,11 @@ def _resolver(
     *,
     engine: Engine,
     provider: FakeModelProvider,
-    thresholds: TypeThresholds | None = None,
+    thresholds: ResolutionThresholds | None = None,
 ) -> CascadeResolver:
     """One composed cascade with test bands."""
     config = ResolverConfig(
-        resolver_version=RESOLVER_VERSION,
-        default_thresholds=thresholds or _ALWAYS_ESCALATE,
+        resolver_version=RESOLVER_VERSION, thresholds=thresholds or _ALWAYS_ESCALATE
     )
     return CascadeResolver(
         engine=engine,
@@ -254,8 +268,7 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
 def test_resolution_suite_records_curves_and_blocks_on_regression(
     database_engine: Engine,
 ) -> None:
-    """The exit-criterion machinery: per-type P/R over the golden set, curves
-    recorded on resolver_versions, run in eval_runs; a broken judge fails."""
+    """Global P/R gates while blocking and deciding tiers retain blame."""
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     # the judge's own config registers itself (immutable per version):
@@ -263,7 +276,7 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         engine=database_engine,
         deployment_id=_DEPLOYMENT_ID,
         config=ResolverConfig(
-            resolver_version=RESOLVER_VERSION, default_thresholds=_ALWAYS_ESCALATE
+            resolver_version=RESOLVER_VERSION, thresholds=_ALWAYS_ESCALATE
         ),
     )
     seed_synthetic_golden_pairs(engine=database_engine, deployment_id=_DEPLOYMENT_ID)
@@ -273,12 +286,42 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         deployment_id=_DEPLOYMENT_ID,
         component_version=RESOLVER_VERSION,
     )
-    assert report["passed"], report["curves"]
-    curves = report["curves"]
-    assert isinstance(curves, dict)
-    person, organization = curves["Person"], curves["Organization"]
-    assert person == {"precision": 1.0, "recall": 1.0, "pairs": 4}
-    assert organization["pairs"] == 2
+    assert report["passed"], report["curve"]
+    assert report["curve"] == {
+        "precision": 1.0,
+        "recall": 1.0,
+        "pairs": 8,
+        "false_merges": 0,
+        "false_splits": 0,
+    }
+    diagnostics = report["tier_diagnostics"]
+    assert diagnostics["blocking"]["T0"] == {
+        "pairs": 3,
+        "correct": 3,
+        "false_merges": 0,
+        "false_splits": 0,
+    }
+    assert diagnostics["deciding"]["T4_small"]["pairs"] == 7
+    assert report["gate_guards"] == {
+        "positive_labels_measured": True,
+        "negative_labels_measured": True,
+        "t0_negative_canary_measured": True,
+        "t0_false_merge_free": True,
+    }
+
+    one_sided_provider = FakeModelProvider(generate_router=_first_token_router)
+    one_sided = _resolver(
+        engine=database_engine,
+        provider=one_sided_provider,
+        thresholds=ResolutionThresholds(t3_accept=0.0, t3_reject=-1.0),
+    )
+    assert one_sided.judge_pair(
+        surface_a="John Smith",
+        surface_b="John Smith",
+        context_a="John Smith lives in Bristol.",
+        context_b=None,
+    ) == (False, "T4_small")
+    assert one_sided_provider.embedded_texts == []
 
     with database_engine.connect() as connection:
         notes = connection.execute(
@@ -294,15 +337,16 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
                 " ORDER BY ran_at DESC LIMIT 1"
             )
         ).scalar_one()
-    assert "curves" in str(notes)
+    assert "tier_diagnostics" in str(notes)
     assert recorded is True
 
-    def broken_router(prompt: str, type_name: str) -> dict[str, object]:
-        return {"match": False, "confidence": 0.9}  # kills recall
+    def false_merge_router(prompt: str, type_name: str) -> dict[str, object]:
+        """Regress T4 to match everything, including same-name non-matches."""
+        return {"match": True, "confidence": 0.9}
 
     broken = _resolver(
         engine=database_engine,
-        provider=FakeModelProvider(generate_router=broken_router),
+        provider=FakeModelProvider(generate_router=false_merge_router),
     )
     regression = run_resolution_suite(
         engine=database_engine,
@@ -311,6 +355,109 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
         component_version=RESOLVER_VERSION,
     )
     assert not regression["passed"]
+    regression_diagnostics = regression["tier_diagnostics"]
+    assert regression_diagnostics["blocking"]["T0"]["false_merges"] == 2
+    assert regression_diagnostics["deciding"]["T4_small"]["false_merges"] >= 2
+    assert regression["gate_guards"]["t0_false_merge_free"] is False
+
+    # Once profile-like context exists, the same-name pair must be able to
+    # expose a loose T3 band rather than being structurally hidden from it.
+    # Add enough easy positives that the global 0.90 floor alone would dilute
+    # the false merge; the zero-tolerance T0 canary must still block the run.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO golden_pairs (pair_id, deployment_id, surface_a,"
+                " surface_b, label, hardness, expected_blocking_tier,"
+                " is_synthetic, adjudicated_by) VALUES"
+                " (:pair, :deployment, 'Known Entity', 'Known Co', 'match',"
+                " 'easy', 'T1', true, 'dilution-proof')"
+            ),
+            [{"pair": uuid4(), "deployment": _DEPLOYMENT_ID} for _ in range(100)],
+        )
+    loose_t3 = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_first_token_router),
+        thresholds=ResolutionThresholds(t3_accept=0.7, t3_reject=0.0),
+    )
+    t3_regression = run_resolution_suite(
+        engine=database_engine,
+        resolver=loose_t3,
+        deployment_id=_DEPLOYMENT_ID,
+        component_version=RESOLVER_VERSION,
+    )
+    assert not t3_regression["passed"]
+    assert t3_regression["curve"]["precision"] is not None
+    assert t3_regression["curve"]["precision"] >= PRECISION_FLOOR
+    t3_diagnostics = t3_regression["tier_diagnostics"]
+    assert t3_diagnostics["blocking"]["T0"]["false_merges"] >= 1
+    assert t3_diagnostics["deciding"]["T3"]["false_merges"] >= 1
+    assert t3_regression["gate_guards"]["t0_false_merge_free"] is False
+
+    # The safety canary is measured from the actual lemmas, not from nullable
+    # human-entered blocking metadata that can be stale or misclassified.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE golden_pairs SET expected_blocking_tier = NULL"
+                " WHERE deployment_id = :deployment"
+                " AND surface_a = 'John Smith' AND surface_b = 'John Smith'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+    misclassified_t3 = run_resolution_suite(
+        engine=database_engine,
+        resolver=loose_t3,
+        deployment_id=_DEPLOYMENT_ID,
+        component_version=RESOLVER_VERSION,
+    )
+    assert misclassified_t3["curve"]["precision"] is not None
+    assert misclassified_t3["curve"]["precision"] >= PRECISION_FLOOR
+    assert misclassified_t3["tier_diagnostics"]["deciding"]["T3"]["false_merges"] >= 1
+    assert misclassified_t3["gate_guards"]["t0_false_merge_free"] is False
+    assert not misclassified_t3["passed"]
+
+    # A one-class golden set cannot manufacture perfect precision: both match
+    # and no-match labels, including a T0 negative canary, are mandatory.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM golden_pairs"
+                " WHERE deployment_id = :deployment AND label = 'no_match'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+    positive_only = run_resolution_suite(
+        engine=database_engine,
+        resolver=resolver,
+        deployment_id=_DEPLOYMENT_ID,
+        component_version=RESOLVER_VERSION,
+    )
+    assert positive_only["curve"]["precision"] == 1.0
+    assert positive_only["curve"]["recall"] == 1.0
+    assert positive_only["gate_guards"]["negative_labels_measured"] is False
+    assert positive_only["gate_guards"]["t0_negative_canary_measured"] is False
+    assert not positive_only["passed"]
+
+    with pytest.raises(
+        ResolutionSuiteRecordError, match="resolver version 'resolver-missing'"
+    ):
+        run_resolution_suite(
+            engine=database_engine,
+            resolver=resolver,
+            deployment_id=_DEPLOYMENT_ID,
+            component_version="resolver-missing",
+        )
+    with database_engine.connect() as connection:
+        missing_runs = connection.execute(
+            text(
+                "SELECT count(*) FROM eval_runs"
+                " WHERE deployment_id = :deployment"
+                " AND component_version = 'resolver-missing'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one()
+    assert missing_runs == 0
 
 
 def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> None:
@@ -335,7 +482,7 @@ def test_resolver_version_definitions_are_immutable(database_engine: Engine) -> 
             deployment_id=_DEPLOYMENT_ID,
             config=ResolverConfig(
                 resolver_version="resolver-immutable-test",
-                default_thresholds=TypeThresholds(t3_accept=0.95),
+                thresholds=ResolutionThresholds(t3_accept=0.95),
             ),
         )
 
@@ -562,9 +709,9 @@ def test_e3_drops_game_before_shipped_resolver_mints(database_engine: Engine) ->
         payload={
             "relations": [
                 {
-                    "subject": {"name": "James", "type": "Person"},
+                    "subject": {"name": "James"},
                     "predicate": "related_to",
-                    "object": {"name": "game", "type": "Product"},
+                    "object": {"name": "game"},
                 }
             ]
         },
@@ -587,18 +734,14 @@ def test_e3_mints_fifa_23_and_app_application_on_shipped_resolver(
         payload={
             "relations": [
                 {
-                    "subject": {"name": "James", "type": "Person"},
+                    "subject": {"name": "James"},
                     "predicate": "related_to",
-                    "object": {"name": "FIFA 23", "type": "Product"},
+                    "object": {"name": "FIFA 23"},
                 },
                 {
-                    "subject": {"name": "James", "type": "Person"},
+                    "subject": {"name": "James"},
                     "predicate": "related_to",
-                    "object": {
-                        "name": "Application",
-                        "type": "Product",
-                        "surface": "App",
-                    },
+                    "object": {"name": "Application", "surface": "App"},
                 },
             ]
         },

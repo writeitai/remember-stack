@@ -746,6 +746,32 @@ def test_all_seven_rules_materialize_and_evaluate(corpus: _Corpus) -> None:
     assert ("manual", "entity", str(corpus.entities["outside"])) in keys
 
 
+def test_scope_entity_type_interest_fails_closed(corpus: _Corpus) -> None:
+    """A stale typed interest cannot silently widen a D96 scope selection."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO scope_interests (interest_id, deployment_id, scope_id,"
+                " interest_type, value) VALUES"
+                " (:interest, :deployment, :scope, 'entity_type', 'Person')"
+            ),
+            {
+                "interest": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "scope": corpus.scope_id,
+            },
+        )
+
+    with pytest.raises(
+        KnowledgeCompilationError,
+        match="scope interest entity_type is unsupported after D96",
+    ):
+        corpus.page(
+            params=ScopeInterestsRuleParams(scope_id=corpus.scope_id),
+            slug="stale-typed-scope",
+        )
+
+
 def test_stale_set_is_exact_and_claim_reextraction_is_stable(corpus: _Corpus) -> None:
     """Only candidate-state drift stales; raw claim churn at one coordinate does not."""
     page = corpus.page(

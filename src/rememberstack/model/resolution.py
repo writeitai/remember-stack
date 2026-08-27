@@ -1,8 +1,8 @@
 """ER cascade values (D17): candidates, bands, verdicts, and the T4 response.
 
 Block-loose / decide-tight: T1/T2 generate candidates and never decide; T0,
-T3, and T4 decide. Thresholds are per-type, golden-set-measured starting
-points versioned in `resolver_versions` — never committed constants.
+T3, and T4 decide. One global threshold set is golden-set measured and
+versioned in `resolver_versions` — never committed as an unmeasured constant.
 """
 
 from typing import Annotated
@@ -28,8 +28,8 @@ class ResolutionCandidate(BaseModel):
     embedding_score: _Unit | None = None
 
 
-class TypeThresholds(BaseModel):
-    """One entity type's decision bands (starting points to measure, D22).
+class ResolutionThresholds(BaseModel):
+    """The global decision bands (starting points to measure, D22/D96).
 
     T3 cosine >= accept: match. <= reject: not this candidate. Between the
     bands: escalate to T4 — cheap tiers never auto-reject near-misses (the
@@ -52,12 +52,7 @@ class ResolverConfig(BaseModel):
     trigram_floor: Annotated[float, Field(ge=0.0, le=1.0)] = 0.3
     blocking_limit: Annotated[int, Field(ge=1)] = 10
     t4_max_candidates: Annotated[int, Field(ge=1)] = 3
-    default_thresholds: TypeThresholds = TypeThresholds()
-    thresholds_by_type: dict[str, TypeThresholds] = {}
-
-    def thresholds_for(self, *, entity_type: str) -> TypeThresholds:
-        """The type's bands, falling back to the defaults."""
-        return self.thresholds_by_type.get(entity_type, self.default_thresholds)
+    thresholds: ResolutionThresholds = ResolutionThresholds()
 
 
 class AdjudicationVerdict(BaseModel):

@@ -305,8 +305,8 @@ from rememberstack.model.relations import ResolvedEntity
 from rememberstack.model.resolution import AdjudicationVerdict
 from rememberstack.model.resolution import P1EntityRow
 from rememberstack.model.resolution import ResolutionCandidate
+from rememberstack.model.resolution import ResolutionThresholds
 from rememberstack.model.resolution import ResolverConfig
-from rememberstack.model.resolution import TypeThresholds
 from rememberstack.model.retrieval_spikes import RETRIEVAL_SPIKE_NAMES
 from rememberstack.model.retrieval_spikes import RetrievalSpikeMeasurement
 from rememberstack.model.retrieval_spikes import RetrievalSpikeName
@@ -511,6 +511,7 @@ __all__ = (
     "RepresentationRecord",
     "RenderedConsumptionSkill",
     "ResolutionCandidate",
+    "ResolutionThresholds",
     "ResolvedEntity",
     "ResolverConfig",
     "RETRIEVAL_SPIKE_NAMES",
@@ -649,7 +650,6 @@ __all__ = (
     "TelemetryEvent",
     "ToolDescriptor",
     "TranscriptEntry",
-    "TypeThresholds",
     "UTCDateTime",
     "UnknownStageHandlerError",
     "UnmergeError",

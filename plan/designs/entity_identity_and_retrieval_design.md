@@ -215,7 +215,14 @@ that, D22 cannot see the failure this design exists to fix.
 Thresholds are **one global** precision/recall curve (types are gone).
 The harness still **records the deciding tier** (T0 / T3 / T4) so a
 false merge can be blamed on the right step. “One curve” does not mean
-deleting per-tier diagnostics. Activating D95 T0 requires a recorded
+deleting per-tier diagnostics. A passing run must measure both positive
+and negative labels and at least one same-lemma/T0 negative canary,
+identified from the normalized surfaces rather than the optional expected-tier
+annotation; any false merge of that canary blocks the run independently of
+the global precision floor, so easy positives cannot dilute the D95 failure. A
+same-lemma golden pair may exercise T3 only when both stored contexts
+provide distinguishing evidence; an empty-evidence pair skips unsafe
+name-only cosine and reaches T4. Activating D95 T0 requires a recorded
 passing run of this suite **after** profile/T3 safety exists.
 
 ### 3.5 Relatedness
@@ -429,7 +436,7 @@ Minimum rows:
 **Type-cut consumer checklist** (same PR as the schema drop; not
 compatibility): `workers/p2.py`, `spine/projection.py` Entity export,
 `workers/p3.py` + P3 path above, P1 entity search, `memory_v1.entities_current`,
-`GraphNode` / envelope, `query_engine` `resolve`/`typed_absence`,
+`GraphNode` / envelope, `query_engine` `resolve`/`predicate_absence`,
 `http_api.py` / `sdk.py`, `assured_operations.py`, bootstrap/`core_manifest`
 type seed, eval type strata, migration tests. Dropping the SQL column
 without these still fails the hard cut.

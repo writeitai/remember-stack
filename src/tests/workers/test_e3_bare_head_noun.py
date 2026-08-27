@@ -36,9 +36,9 @@ def test_normalize_drops_game_relation_without_resolve() -> None:
     payload = {
         "relations": [
             {
-                "subject": {"name": "James", "type": "Person"},
+                "subject": {"name": "James"},
                 "predicate": "related_to",
-                "object": {"name": "game", "type": "Product"},
+                "object": {"name": "game"},
             }
         ]
     }
@@ -65,9 +65,9 @@ def test_normalize_resolves_fifa_23() -> None:
     payload = {
         "relations": [
             {
-                "subject": {"name": "James", "type": "Person"},
+                "subject": {"name": "James"},
                 "predicate": "related_to",
-                "object": {"name": "FIFA 23", "type": "Product"},
+                "object": {"name": "FIFA 23"},
             }
         ]
     }
@@ -93,12 +93,7 @@ def test_normalize_resolves_fifa_23() -> None:
 def test_normalize_drops_game_observation_without_resolve() -> None:
     """Bare-noun observation subjects are dropped the same way as relations."""
     payload = {
-        "observations": [
-            {
-                "subject": {"name": "game", "type": "Product"},
-                "statement": "the game is fun",
-            }
-        ]
+        "observations": [{"subject": {"name": "game"}, "statement": "the game is fun"}]
     }
     provider = FakeModelProvider(generate_payload=_payload(payload))
     resolver = RecordingResolver()
@@ -122,9 +117,9 @@ def test_works_for_between_people_is_not_dropped() -> None:
     payload = {
         "relations": [
             {
-                "subject": {"name": "Alice", "type": "Person"},
+                "subject": {"name": "Alice"},
                 "predicate": "works_for",
-                "object": {"name": "Me", "type": "Person"},
+                "object": {"name": "Me"},
             }
         ]
     }
@@ -152,9 +147,9 @@ def test_normalize_passes_source_surface_to_resolve() -> None:
     payload = {
         "relations": [
             {
-                "subject": {"name": "James", "type": "Person"},
+                "subject": {"name": "James"},
                 "predicate": "related_to",
-                "object": {"name": "Application", "type": "Product", "surface": "App"},
+                "object": {"name": "Application", "surface": "App"},
             }
         ]
     }

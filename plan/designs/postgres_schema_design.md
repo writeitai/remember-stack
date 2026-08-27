@@ -865,7 +865,7 @@ CREATE TABLE resolution_decisions (
   mention_id      uuid NOT NULL,               -- LOGICAL FK → mentions
   entity_id       uuid NOT NULL,               -- LOGICAL FK → entities; the resolved canonical id
   method          resolution_tier NOT NULL,    -- T0 | T3 | T4_small | T4_frontier | human (NOT T1/T2 — see CHECK)
-  confidence      real NOT NULL,               -- tier confidence; bands per resolver_versions.thresholds_by_type
+  confidence      real NOT NULL,               -- tier confidence; bands in resolver_versions.thresholds
   is_new_entity   boolean NOT NULL DEFAULT false, -- true if this decision minted a new entity (no confident match)
   features        jsonb,                       -- evidence used (trigram/phonetic/cosine scores incl. the surfacing blocking tier, LLM rationale)
   resolver_version text NOT NULL,              -- LOGICAL FK → resolver_versions; pins the thresholds in force
@@ -971,7 +971,7 @@ CREATE TABLE golden_pairs (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE golden_pairs IS
-  'Human-adjudicated ER evaluation pairs (D22/D95). Measures one global precision/recall curve plus deciding-tier diagnostics and is never used for training. Same-lemma non-matches are first-class rows; surfaces and contexts survive re-resolution.';
+  'Human-adjudicated ER evaluation pairs (D22/D95). Measures one global precision/recall curve plus blocking-stratum and deciding-tier diagnostics and is never used for training. Same-lemma non-matches are first-class rows; surfaces and contexts survive re-resolution.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- golden_claim_labels — the E2 Selection verifiability golden set (D22/D25/D35).

@@ -114,6 +114,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_11_0032",
         "p9_13_0034",
         "p9_14_0035",
+        "p9_15_0036",
     )
     assert len(script.get_heads()) == 1
 
@@ -637,8 +638,186 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_14_0035"
+    assert head_before_noop == head_after_noop == "p9_15_0036"
     assert _inventory(database_url=database_url) == restored_inventory
+
+
+def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
+    """I.3 keeps the global band, drops type strata, and downgrades explicitly."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p9_14_0035")
+    deployment_id = uuid4()
+    pair_id = uuid4()
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:deployment, 'i3-migration', 'I.3 migration', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO resolver_versions (deployment_id, resolver_version,"
+                    " tier_config, thresholds_by_type) VALUES"
+                    " (:deployment, 'resolver-i3', '{}'::jsonb,"
+                    ' \'{"default": {"t3_accept": 0.91, "t3_reject": 0.63},'
+                    ' "Person": {"t3_accept": 0.99, "t3_reject": 0.80}}\'::jsonb)'
+                ),
+                {"deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO golden_pairs (pair_id, deployment_id, entity_type,"
+                    " surface_a, surface_b, label, hardness, adjudicated_by) VALUES"
+                    " (:pair, :deployment, 'Person', 'John Smith', 'John Smith',"
+                    " 'no_match', 'hard_negative', 'human-test')"
+                ),
+                {"pair": pair_id, "deployment": deployment_id},
+            )
+
+        command.upgrade(config=config, revision="p9_15_0036")
+        with engine.connect() as connection:
+            resolver_columns = set(
+                connection.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND table_name = 'resolver_versions'"
+                    )
+                ).scalars()
+            )
+            golden_columns = set(
+                connection.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public' AND table_name = 'golden_pairs'"
+                    )
+                ).scalars()
+            )
+            thresholds = connection.execute(
+                text(
+                    "SELECT thresholds FROM resolver_versions"
+                    " WHERE deployment_id = :deployment"
+                ),
+                {"deployment": deployment_id},
+            ).scalar_one()
+            pair_count = connection.execute(
+                text("SELECT count(*) FROM golden_pairs WHERE pair_id = :pair"),
+                {"pair": pair_id},
+            ).scalar_one()
+            golden_index = connection.execute(
+                text("SELECT to_regclass('public.ix_golden_type')")
+            ).scalar_one()
+            upgraded_comments = (
+                connection.execute(
+                    text(
+                        "SELECT"
+                        " col_description('resolver_versions'::regclass,"
+                        " (SELECT attnum FROM pg_attribute"
+                        "  WHERE attrelid = 'resolver_versions'::regclass"
+                        "  AND attname = 'thresholds')) AS thresholds,"
+                        " obj_description('resolver_versions'::regclass, 'pg_class')"
+                        " AS resolver_table,"
+                        " obj_description('golden_pairs'::regclass, 'pg_class')"
+                        " AS golden_table"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert "thresholds" in resolver_columns
+        assert "thresholds_by_type" not in resolver_columns
+        assert "entity_type" not in golden_columns
+        assert thresholds == {"t3_accept": 0.91, "t3_reject": 0.63}
+        assert pair_count == 1
+        assert golden_index is None
+        assert upgraded_comments == {
+            "thresholds": (
+                "one global accept/reject band set, golden-set measured; "
+                "starting points, not constants"
+            ),
+            "resolver_table": (
+                "Versioned global resolution thresholds plus tier config and "
+                "review-routing bands (D17/D22/D24/D96). Block-loose and "
+                "decide-tight; thresholds are golden-set-measured starting points "
+                "to be re-measured, never committed constants."
+            ),
+            "golden_table": (
+                "Human-adjudicated ER evaluation pairs (D22/D95). Measures one "
+                "global precision/recall curve plus blocking-stratum and "
+                "deciding-tier diagnostics and is never used for training. "
+                "Same-lemma non-matches are first-class rows; surfaces and "
+                "contexts survive re-resolution."
+            ),
+        }
+
+        command.downgrade(config=config, revision="p9_14_0035")
+        with engine.connect() as connection:
+            restored_thresholds = connection.execute(
+                text(
+                    "SELECT thresholds_by_type FROM resolver_versions"
+                    " WHERE deployment_id = :deployment"
+                ),
+                {"deployment": deployment_id},
+            ).scalar_one()
+            restored_type = connection.execute(
+                text("SELECT entity_type FROM golden_pairs WHERE pair_id = :pair"),
+                {"pair": pair_id},
+            ).scalar_one()
+            restored_index = connection.execute(
+                text("SELECT to_regclass('public.ix_golden_type')")
+            ).scalar_one()
+            restored_comments = (
+                connection.execute(
+                    text(
+                        "SELECT"
+                        " col_description('resolver_versions'::regclass,"
+                        " (SELECT attnum FROM pg_attribute"
+                        "  WHERE attrelid = 'resolver_versions'::regclass"
+                        "  AND attname = 'thresholds_by_type')) AS thresholds,"
+                        " obj_description('resolver_versions'::regclass, 'pg_class')"
+                        " AS resolver_table,"
+                        " obj_description('golden_pairs'::regclass, 'pg_class')"
+                        " AS golden_table"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert restored_thresholds == {
+            "default": {"t3_accept": 0.91, "t3_reject": 0.63}
+        }
+        assert restored_type == "Unknown"
+        assert restored_index == "ix_golden_type"
+        assert restored_comments == {
+            "thresholds": (
+                "per-entity-type accept/reject bands (golden-set-measured, D22) — "
+                "starting points, not constants"
+            ),
+            "resolver_table": (
+                "Versioned, per-type resolution thresholds + tier config + "
+                "review-routing bands (D17/D22/D24). Block-loose/decide-tight; "
+                "thresholds are golden-set-measured starting points to be "
+                "re-measured, never committed constants."
+            ),
+            "golden_table": (
+                "Human-adjudicated ER evaluation pairs (D22). Measures P/R and "
+                "tunes per-type thresholds; never used for training. "
+                "expected_blocking_tier supports blocking-stratified recall. "
+                "Stored as surface+context so it survives re-resolution."
+            ),
+        }
+    finally:
+        engine.dispose()
+        command.downgrade(config=config, revision="base")
+        command.upgrade(config=config, revision="head")
 
 
 def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:

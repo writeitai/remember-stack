@@ -140,7 +140,7 @@ this maps them to the phase that must run them, at entry or inside):
 |---|---|
 | 0 | blockizer golden corpus bootstrap (e1 §10.2); golden-set labeling protocol (registries §11.1) |
 | 1 | token budget baseline (e1 §10.1); E2 one-vs-two-call + bundle cost (e2_e3 §7); grounding safety (e2_e3 §7.3) |
-| 2 | ER threshold curves per type, Czech/D-M recall, un-merge ripple, scale load-test (registries §11); observation adjudicator eval + hub cost (observations §7) |
+| 2 | Global ER threshold curve with per-tier diagnostics, Czech/D-M recall, un-merge ripple, scale load-test (registries §11); observation adjudicator eval + hub cost (observations §7) |
 | 3 | reuse hit-rate under A1–A3, conversion cost floor, connector identity rules, versioning-mode defaults, cross-cycle move gap, zero-support false-withdrawal (lifecycle §11; e1 §10.4) |
 | 4 | the D44 P2 spikes (UUID PK, ATTACH throughput, merge-recursion gate, as-of path perf, retention, NULL timestamps — questions #20a); placement quality + P3 cadence (e0 §8); storage-class routing (e0 §8.6) |
 | 5 | PostgreSQL-native P1 functional contracts, hub pagination, rerank weights, envelope overhead, hydration batching, `resolve` context ranking, the S58 protocol (retrieval §13) |

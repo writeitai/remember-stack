@@ -558,7 +558,7 @@ def _tier_one_entities_index(*, entities: tuple[dict[str, object], ...]) -> str:
             f" {entity.get('mention_count') or 0} | [`{canonical}/`]({link}) |"
         )
     if len(lines) == 6:
-        lines.append("| — | — | — | — |")
+        lines.append("| — | — | — |")
     lines.append("")
     return "\n".join(lines)
 

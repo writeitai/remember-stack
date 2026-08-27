@@ -222,7 +222,6 @@ EXPECTED_INDEXES: Final = (
     "ix_eval_suite_ver",
     "ix_forget_content_guard",
     "ix_forget_source_guard",
-    "ix_golden_type",
     "ix_grounding_claim",
     "ix_kae_claim_coordinate",
     "ix_kae_doc",
@@ -348,7 +347,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 68,
     "f": 127,
-    "n": 548,
+    "n": 547,
     "p": 72,
     "u": 36,
     "x": 1,

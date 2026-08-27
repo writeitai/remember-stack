@@ -126,16 +126,13 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     "NormalizationResponse": {
         "relations": [
             {
-                "subject": {"name": "Alice Novak", "type": "Person"},
+                "subject": {"name": "Alice Novak"},
                 "predicate": "works_for",
-                "object": {"name": "Acme", "type": "Organization"},
+                "object": {"name": "Acme"},
             }
         ],
         "observations": [
-            {
-                "subject": {"name": "Acme", "type": "Organization"},
-                "statement": "Acme's headcount is 600.",
-            }
+            {"subject": {"name": "Acme"}, "statement": "Acme's headcount is 600."}
         ],
     },
     "FactLabelResponse": {"label": "Alice Novak works for Acme."},

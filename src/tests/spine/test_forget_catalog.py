@@ -987,9 +987,9 @@ def _seed_knowledge_and_residuals(*, connection: Connection) -> None:
     )
     connection.execute(
         text(
-            "INSERT INTO golden_pairs (pair_id, deployment_id, entity_type,"
+            "INSERT INTO golden_pairs (pair_id, deployment_id,"
             " surface_a, surface_b, context_a, context_b, label, hardness,"
-            " adjudicated_by) VALUES (:id, :d, 'Person', :token, :token, :token,"
+            " adjudicated_by) VALUES (:id, :d, :token, :token, :token,"
             " :token, 'match', 'easy', 'proof')"
         ),
         {
