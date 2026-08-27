@@ -18,6 +18,11 @@ from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ProjectionCatalog
+from rememberstack.spine.surface_cost import open_surface_scope
+from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
+from rememberstack.spine.surface_cost import SurfaceCallSite
+from rememberstack.spine.surface_cost import SurfaceCostKind
+from rememberstack.spine.surface_cost import SurfaceCostMeter
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
 from rememberstack.workers import GraphRebuildWorker
@@ -36,12 +41,14 @@ class SelfHostHardForget:
     def __init__(
         self,
         *,
+        engine: Engine,
         catalog: ForgetCatalog,
         service: HardForgetService,
         handler: HardForgetHandler,
         readiness: HardForgetReadiness,
     ) -> None:
         """Retain one shared coordinator graph for every self-host surface."""
+        self._engine = engine
         self._catalog = catalog
         self._service = service
         self._handler = handler
@@ -120,7 +127,11 @@ class SelfHostHardForget:
             handler=handler,
         )
         return cls(
-            catalog=catalog, service=service, handler=handler, readiness=readiness
+            engine=engine,
+            catalog=catalog,
+            service=service,
+            handler=handler,
+            readiness=readiness,
         )
 
     def register(self, *, registry: HandlerRegistry) -> None:
@@ -145,7 +156,17 @@ class SelfHostHardForget:
 
     def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
         """Re-honor every portable manifest before serving begins."""
-        return self._readiness.ensure_ready(deployment_id=deployment_id)
+        meter = SurfaceCostMeter(
+            recorder=SqlSurfaceCostRecorder(
+                engine=self._engine, deployment_id=deployment_id
+            ),
+            deployment_id=deployment_id,
+            call_site=SurfaceCallSite.PROFILE_FORGET_RECOVERY,
+        )
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            return self._readiness.ensure_ready(
+                deployment_id=deployment_id, meter=meter
+            )
 
     def assert_available(self, *, deployment_id: UUID) -> None:
         """Implement the shared public/mount admission perimeter."""

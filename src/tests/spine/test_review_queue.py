@@ -297,6 +297,209 @@ def test_merge_verdict_performs_a_reversible_human_merge(
         )
 
 
+def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
+    database_engine: Engine,
+) -> None:
+    """Absorbed evidence moves into the survivor profile; stale cache clears."""
+    survivor = _entity(engine=database_engine, name="Robert Klein")
+    absorbed = _entity(engine=database_engine, name="R. Klein")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:first, :deployment, :survivor, 'Robert lives in Prague',"
+                " 1, 'review-test'), (:second, :deployment, :absorbed,"
+                " 'R. Klein works at Acme', 1, 'review-test')"
+            ),
+            {
+                "first": uuid4(),
+                "second": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "survivor": survivor,
+                "absorbed": absorbed,
+            },
+        )
+    provider = FakeModelProvider()
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="review-profile-test",
+    )
+    refresher.refresh_many(
+        deployment_id=_DEPLOYMENT_ID, entity_ids=(survivor, absorbed)
+    )
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    queue = ReviewQueue(engine=database_engine, profile_refresher=refresher)
+
+    queue.decide_merge(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="merge",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        profiles = {
+            entity_id: (status, summary, cached)
+            for entity_id, status, summary, cached in connection.execute(
+                text(
+                    "SELECT entity_id, status::text, profile_summary,"
+                    " num_nonnulls(profile_summary, embedding, embedding_model,"
+                    " embedding_input_policy_version, embedding_text_hash)"
+                    " FROM entities WHERE entity_id = ANY(:entity_ids)"
+                ),
+                {"entity_ids": [survivor, absorbed]},
+            )
+        }
+    assert profiles[survivor][0] == "active"
+    original_summary = profiles[survivor][1]
+    assert isinstance(original_summary, str)
+    assert set(original_summary.split("; ")) == {
+        "R. Klein works at Acme",
+        "Robert lives in Prague",
+    }
+    assert profiles[absorbed] == ("merged", None, 0)
+
+    # A lost response after the database verdict but before profile refresh is
+    # repairable by the identical retry without minting another merge event.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET profile_summary = NULL, embedding = NULL,"
+                " embedding_model = NULL, embedding_input_policy_version = NULL,"
+                " embedding_text_hash = NULL WHERE entity_id = :entity"
+            ),
+            {"entity": survivor},
+        )
+    assert (
+        queue.decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+        == ()
+    )
+    with database_engine.connect() as connection:
+        repaired = connection.execute(
+            text("SELECT profile_summary FROM entities WHERE entity_id = :entity"),
+            {"entity": survivor},
+        ).scalar_one()
+    assert repaired == original_summary
+
+
+def test_merge_resolves_a_stale_survivor_to_its_live_terminal_root(
+    database_engine: Engine,
+) -> None:
+    """A queued survivor may move; applying its proposal must not create a cycle."""
+    from rememberstack.spine.clustering import apply_merge
+
+    queued_survivor = _entity(engine=database_engine, name="Queued Survivor")
+    absorbed = _entity(engine=database_engine, name="Queued Target")
+    live_root = _entity(engine=database_engine, name="Live Root")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity, 'Target evidence',"
+                " 1, 'review-test')"
+            ),
+            {"observation": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": absorbed},
+        )
+    review_id = _queued_merge(
+        engine=database_engine, survivor=queued_survivor, absorbed=absorbed
+    )
+    with database_engine.begin() as connection:
+        moved = apply_merge(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            survivor_id=live_root,
+            absorbed_id=queued_survivor,
+            trigger_lemmas=[],
+            evidence={},
+            blast_radius=1,
+            decided_by="auto",
+        )
+    assert moved is not None
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="review-profile-test",
+    )
+
+    ReviewQueue(engine=database_engine, profile_refresher=refresher).decide_merge(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="merge",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        roots = {
+            UUID(str(entity_id)): UUID(str(root_id))
+            for entity_id, root_id in connection.execute(
+                text(
+                    "SELECT entity_id, survivor_entity_id"
+                    " FROM v_memory_entity_survivor"
+                    " WHERE deployment_id = :deployment"
+                ),
+                {"deployment": _DEPLOYMENT_ID},
+            )
+        }
+        summary = connection.execute(
+            text("SELECT profile_summary FROM entities WHERE entity_id = :entity"),
+            {"entity": live_root},
+        ).scalar_one()
+    assert roots[queued_survivor] == live_root
+    assert roots[absorbed] == live_root
+    assert roots[live_root] == live_root
+    assert summary == "Target evidence"
+
+
+def test_merge_rejects_a_target_absorbed_by_another_cluster(
+    database_engine: Engine,
+) -> None:
+    """A stale blast radius cannot silently swallow a target's newer cluster."""
+    from rememberstack.spine.clustering import apply_merge
+
+    survivor = _entity(engine=database_engine, name="Review Survivor")
+    absorbed = _entity(engine=database_engine, name="Review Target")
+    competing_root = _entity(engine=database_engine, name="Competing Root")
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    with database_engine.begin() as connection:
+        moved = apply_merge(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            survivor_id=competing_root,
+            absorbed_id=absorbed,
+            trigger_lemmas=[],
+            evidence={},
+            blast_radius=1,
+            decided_by="auto",
+        )
+    assert moved is not None
+
+    with pytest.raises(ReviewDecisionError, match="no longer active"):
+        _queue(engine=database_engine).decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+    with database_engine.connect() as connection:
+        status = connection.execute(
+            text("SELECT status::text FROM review_queue WHERE review_id = :review"),
+            {"review": review_id},
+        ).scalar_one()
+    assert status == "pending"
+
+
 def test_not_merge_closes_without_touching_entities(database_engine: Engine) -> None:
     """A not_merge verdict records the rejection and merges nothing."""
     survivor = _entity(engine=database_engine, name="Jan Novak")
@@ -528,7 +731,7 @@ def test_cli_lists_and_decides_through_the_same_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The remember CLI is a thin veneer: list ranks, decide applies the verdict."""
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
     survivor = _entity(engine=database_engine, name="CLI Survivor")
     absorbed = _entity(engine=database_engine, name="CLI Absorbed")
     review_id = _queued_merge(
@@ -538,22 +741,22 @@ def test_cli_lists_and_decides_through_the_same_paths(
     listed = capsys.readouterr().out.strip().splitlines()
     assert json.loads(listed[0])["review_id"] == str(review_id)
 
-    assert (
-        cli_main(
-            [
-                "review",
-                "decide",
-                str(review_id),
-                "--deployment",
-                str(_DEPLOYMENT_ID),
-                "--verdict",
-                "merge",
-                "--reviewer",
-                "jiri",
-            ]
-        )
-        == 0
-    )
+    decide_args = [
+        "review",
+        "decide",
+        str(review_id),
+        "--deployment",
+        str(_DEPLOYMENT_ID),
+        "--verdict",
+        "merge",
+        "--reviewer",
+        "jiri",
+    ]
+    assert cli_main(decide_args) == 1
+    assert "profile-changing review verdicts require" in capsys.readouterr().err
+
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    assert cli_main(decide_args) == 0
     decided = json.loads(capsys.readouterr().out.strip())
     assert decided["verdict"] == "merge"
     assert len(decided["merge_events"]) == 1

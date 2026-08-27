@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.entity_profile_input import entity_profile_embedding_input
+from rememberstack.core.fact_label import deterministic_fact_label
 from rememberstack.model import EmbeddingRequest
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -78,6 +79,9 @@ class EntityProfileRefresher:
         """
         with self._engine.begin() as connection:
             connection.execute(
+                _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
+            )
+            connection.execute(
                 _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{entity_id}"}
             )
             entity = (
@@ -108,6 +112,18 @@ class EntityProfileRefresher:
                     has_evidence=False,
                     input_hash=None,
                     salient_facts=(),
+                )
+            member_ids = tuple(
+                connection.execute(
+                    _SELECT_PROFILE_MEMBER_IDS,
+                    {"deployment_id": deployment_id, "entity_id": entity_id},
+                ).scalars()
+            )
+            for member_id in member_ids:
+                if member_id == entity_id:
+                    continue
+                connection.execute(
+                    _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"}
                 )
             facts = _load_salient_facts(
                 connection=connection, deployment_id=deployment_id, entity_id=entity_id
@@ -283,24 +299,43 @@ def load_entity_profile_evidence(
     *, connection: Connection, deployment_id: UUID, entity_id: UUID
 ) -> EntityProfileEvidence | None:
     """Load one candidate's current summary and independently selected facts."""
-    row = (
+    return load_entity_profile_evidence_many(
+        connection=connection, deployment_id=deployment_id, entity_ids=(entity_id,)
+    ).get(entity_id)
+
+
+def load_entity_profile_evidence_many(
+    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+) -> dict[UUID, EntityProfileEvidence]:
+    """Load current profile evidence for a candidate batch in two queries."""
+    requested = tuple(sorted(set(entity_ids), key=str))
+    if not requested:
+        return {}
+    rows = (
         connection.execute(
-            _SELECT_ENTITY, {"deployment_id": deployment_id, "entity_id": entity_id}
+            _SELECT_ACTIVE_ENTITIES,
+            {"deployment_id": deployment_id, "entity_ids": list(requested)},
         )
         .mappings()
-        .one_or_none()
+        .all()
     )
-    if row is None or str(row["status"]) != "active":
-        return None
-    return EntityProfileEvidence(
-        canonical_name=str(row["canonical_name"]),
-        profile_summary=(
-            str(row["profile_summary"]) if row["profile_summary"] is not None else None
-        ),
-        salient_facts=_load_salient_facts(
-            connection=connection, deployment_id=deployment_id, entity_id=entity_id
-        ),
+    facts_by_entity = _load_salient_facts_many(
+        connection=connection,
+        deployment_id=deployment_id,
+        entity_ids=tuple(row["entity_id"] for row in rows),
     )
+    return {
+        row["entity_id"]: EntityProfileEvidence(
+            canonical_name=str(row["canonical_name"]),
+            profile_summary=(
+                str(row["profile_summary"])
+                if row["profile_summary"] is not None
+                else None
+            ),
+            salient_facts=facts_by_entity.get(row["entity_id"], ()),
+        )
+        for row in rows
+    }
 
 
 def profile_summary(*, salient_facts: tuple[str, ...]) -> str:
@@ -308,26 +343,62 @@ def profile_summary(*, salient_facts: tuple[str, ...]) -> str:
     return "; ".join(salient_facts[:PROFILE_SUMMARY_FACT_LIMIT])
 
 
+def profile_refresh_targets(
+    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+) -> tuple[UUID, ...]:
+    """Return changed rows plus their live terminal survivors for projection repair."""
+    if not entity_ids:
+        return ()
+    return tuple(
+        connection.execute(
+            _SELECT_PROFILE_REFRESH_TARGETS,
+            {"deployment_id": deployment_id, "entity_ids": list(entity_ids)},
+        ).scalars()
+    )
+
+
 def _load_salient_facts(
     *, connection: Connection, deployment_id: UUID, entity_id: UUID
 ) -> tuple[str, ...]:
     """Return current supported observation/relation prose in stable rank order."""
+    return _load_salient_facts_many(
+        connection=connection, deployment_id=deployment_id, entity_ids=(entity_id,)
+    ).get(entity_id, ())
+
+
+def _load_salient_facts_many(
+    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+) -> dict[UUID, tuple[str, ...]]:
+    """Return evidence-ranked statements for active survivor ids in one query."""
+    if not entity_ids:
+        return {}
     rows = connection.execute(
         _SELECT_SALIENT_FACTS,
         {
             "deployment_id": deployment_id,
-            "entity_id": entity_id,
+            "entity_ids": list(entity_ids),
             "limit": PROFILE_SALIENT_FACT_LIMIT * 2,
         },
-    ).scalars()
-    unique: list[str] = []
-    for value in rows:
-        statement = " ".join(str(value).split())
-        if statement and statement not in unique:
-            unique.append(statement)
-        if len(unique) >= PROFILE_SALIENT_FACT_LIMIT:
-            break
-    return tuple(unique)
+    ).all()
+    unique: dict[UUID, list[str]] = {}
+    for entity_id, kind, statement, subject, predicate, object_name in rows:
+        statements = unique.setdefault(entity_id, [])
+        value = (
+            deterministic_fact_label(
+                subject=str(subject),
+                predicate=str(predicate),
+                object_name=str(object_name),
+            )
+            if kind == "relation"
+            else str(statement)
+        )
+        normalized = " ".join(value.split())
+        if normalized and normalized not in statements:
+            statements.append(normalized)
+    return {
+        entity_id: tuple(statements[:PROFILE_SALIENT_FACT_LIMIT])
+        for entity_id, statements in unique.items()
+    }
 
 
 def _clear_profile(
@@ -351,6 +422,10 @@ def _vector_literal(vector: tuple[float, ...]) -> str:
 
 _LOCK_ENTITY = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
+_LOCK_IDENTITY_SHARED = text(
+    "SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"
+)
+
 _SELECT_ENTITY = text(
     """
     SELECT canonical_name, status::text AS status, profile_summary,
@@ -361,40 +436,116 @@ _SELECT_ENTITY = text(
     """
 )
 
+_SELECT_ACTIVE_ENTITIES = text(
+    """
+    SELECT entity_id, canonical_name, profile_summary
+    FROM entities
+    WHERE deployment_id = :deployment_id
+      AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
+      AND status = 'active'
+    ORDER BY entity_id
+    """
+)
+
+_SELECT_PROFILE_MEMBER_IDS = text(
+    """
+    SELECT entity_id
+    FROM v_memory_entity_survivor
+    WHERE deployment_id = :deployment_id
+      AND survivor_entity_id = :entity_id
+    ORDER BY entity_id
+    """
+)
+
+_SELECT_PROFILE_REFRESH_TARGETS = text(
+    """
+    WITH nominated AS (
+      SELECT entity_id
+      FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(entity_id)
+    ), targets AS (
+      SELECT entity.entity_id
+      FROM nominated
+      JOIN entities entity
+        ON entity.deployment_id = :deployment_id
+       AND entity.entity_id = nominated.entity_id
+      UNION
+      SELECT survivor.survivor_entity_id
+      FROM nominated
+      JOIN v_memory_entity_survivor survivor
+        ON survivor.deployment_id = :deployment_id
+       AND survivor.entity_id = nominated.entity_id
+    )
+    SELECT entity_id FROM targets ORDER BY entity_id
+    """
+)
+
 _SELECT_SALIENT_FACTS = text(
     """
-    WITH candidates AS (
-      SELECT o.statement AS statement, o.evidence_count, o.updated_at,
-             'observation'::text AS kind, o.observation_id AS fact_id
+    WITH requested AS MATERIALIZED (
+      SELECT entity_id
+      FROM unnest(CAST(:entity_ids AS uuid[])) AS nominated(entity_id)
+    ), identity_members AS MATERIALIZED (
+      SELECT requested.entity_id AS profile_entity_id,
+             survivor.entity_id AS member_entity_id
+      FROM requested
+      JOIN v_memory_entity_survivor survivor
+        ON survivor.deployment_id = :deployment_id
+       AND survivor.survivor_entity_id = requested.entity_id
+    ), candidates AS (
+      SELECT members.profile_entity_id, 'observation'::text AS kind,
+             o.statement AS statement, NULL::text AS subject_name,
+             NULL::text AS predicate, NULL::text AS object_name,
+             o.evidence_count, o.updated_at,
+             o.observation_id AS fact_id
       FROM observations o
+      JOIN identity_members members
+        ON members.member_entity_id = o.subject_entity_id
       WHERE o.deployment_id = :deployment_id
-        AND o.subject_entity_id = :entity_id
         AND o.invalidated_at IS NULL
+        -- Profiles deliberately admit only open-ended facts. Including a
+        -- future cap would make the exact input hash expire as wall time
+        -- passes without an evidence mutation capable of scheduling refresh.
         AND o.valid_until IS NULL
         AND o.evidence_count > 0
       UNION ALL
-      SELECT subject.canonical_name || ' '
-               || replace(r.predicate, '_', ' ') || ' '
-               || object.canonical_name AS statement,
+      SELECT DISTINCT members.profile_entity_id, 'relation'::text AS kind,
+             NULL::text AS statement, subject.canonical_name AS subject_name,
+             r.predicate, object.canonical_name AS object_name,
              r.evidence_count, r.updated_at,
-             'relation'::text AS kind, r.relation_id AS fact_id
+             r.relation_id AS fact_id
       FROM relations r
+      JOIN identity_members members
+        ON members.member_entity_id = r.subject_entity_id
+        OR members.member_entity_id = r.object_entity_id
+      JOIN v_memory_entity_survivor subject_survivor
+        ON subject_survivor.deployment_id = r.deployment_id
+       AND subject_survivor.entity_id = r.subject_entity_id
+      JOIN v_memory_entity_survivor object_survivor
+        ON object_survivor.deployment_id = r.deployment_id
+       AND object_survivor.entity_id = r.object_entity_id
       JOIN entities subject
         ON subject.deployment_id = r.deployment_id
-       AND subject.entity_id = r.subject_entity_id
+       AND subject.entity_id = subject_survivor.survivor_entity_id
       JOIN entities object
         ON object.deployment_id = r.deployment_id
-       AND object.entity_id = r.object_entity_id
+       AND object.entity_id = object_survivor.survivor_entity_id
       WHERE r.deployment_id = :deployment_id
-        AND (r.subject_entity_id = :entity_id OR r.object_entity_id = :entity_id)
         AND r.invalidated_at IS NULL
         AND r.valid_until IS NULL
         AND r.evidence_count > 0
+    ), ranked AS (
+      SELECT profile_entity_id, kind, statement, subject_name, predicate,
+             object_name,
+             row_number() OVER (
+               PARTITION BY profile_entity_id
+               ORDER BY evidence_count DESC, updated_at DESC, kind, fact_id
+             ) AS ordinal
+      FROM candidates
     )
-    SELECT statement
-    FROM candidates
-    ORDER BY evidence_count DESC, updated_at DESC, kind, fact_id
-    LIMIT :limit
+    SELECT profile_entity_id, kind, statement, subject_name, predicate, object_name
+    FROM ranked
+    WHERE ordinal <= :limit
+    ORDER BY profile_entity_id, ordinal
     """
 )
 
@@ -412,8 +563,7 @@ _SELECT_ACTIVE_ENTITY_PAGE = text(
 
 _SELECT_FACT_ENTITY_IDS = text(
     """
-    SELECT DISTINCT entity_id
-    FROM (
+    WITH affected AS (
       SELECT subject_entity_id AS entity_id
       FROM observations
       WHERE deployment_id = :deployment_id
@@ -428,8 +578,13 @@ _SELECT_FACT_ENTITY_IDS = text(
       FROM relations
       WHERE deployment_id = :deployment_id
         AND relation_id = ANY(CAST(:relation_ids AS uuid[]))
-    ) affected
-    ORDER BY entity_id
+    )
+    SELECT DISTINCT survivor.survivor_entity_id
+    FROM affected
+    JOIN v_memory_entity_survivor survivor
+      ON survivor.deployment_id = :deployment_id
+     AND survivor.entity_id = affected.entity_id
+    ORDER BY survivor.survivor_entity_id
     """
 )
 

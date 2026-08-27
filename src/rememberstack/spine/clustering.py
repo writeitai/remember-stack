@@ -21,26 +21,36 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClusterConfig
+from rememberstack.model import MergeApplicationError
 from rememberstack.model import MergeProposal
 from rememberstack.model import NeighborhoodReport
 from rememberstack.model import UnmergeError
+from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.p1_index import EntityIndexPort
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 
 class EntityClusterer:
     """Neighborhood re-decision, reversible merges, and the guards (D21)."""
 
     def __init__(
-        self, *, engine: Engine, entity_index: EntityIndexPort, config: ClusterConfig
+        self,
+        *,
+        engine: Engine,
+        entity_index: EntityIndexPort,
+        profile_refresher: ProfileRefresherPort,
+        config: ClusterConfig,
     ) -> None:
         """Bind the clusterer to the registry, the profile index, and config."""
         self._engine = engine
         self._entity_index = entity_index
+        self._profile_refresher = profile_refresher
         self._config = config
 
     def recluster_neighborhood(
-        self, *, deployment_id: UUID, surface: str
+        self, *, deployment_id: UUID, surface: str, meter: CostMeterPort | None = None
     ) -> NeighborhoodReport:
         """Jointly re-decide the surface's 1-hop neighborhood (nDR).
 
@@ -52,63 +62,88 @@ class EntityClusterer:
         the order documents arrived in (registries §6).
         """
         lemma = normalized_lemma(surface=surface)
+        refresh_entity_ids: tuple[UUID, ...] = ()
         with self._engine.begin() as connection:
             connection.execute(_LOCK_NEIGHBORHOOD, {"key": f"{deployment_id}:cluster"})
+            connection.execute(
+                _LOCK_IDENTITY_EXCLUSIVE, {"key": f"{deployment_id}:identity-epoch"}
+            )
             members = self._gather(
                 connection=connection, deployment_id=deployment_id, lemma=lemma
             )
             if len(members) < 2:
-                return NeighborhoodReport(members=len(members))
-            # re-deciding the pocket JOINTLY may move a previously-merged
-            # member to a different group (the R. Klein case): first split
-            # every merged member whose piece disagrees with its current
-            # root, then apply the piece merges (registries §6).
-            cut = self._config.distance_cut
-            tightened = False
-            if len(members) > self._config.blob_cap:
-                # black-hole guard: raise the matching bar and re-split
-                # rather than swallow the monster (registries §6)
-                cut = cut / 2.0
-                tightened = True
-            vectors = self._entity_index.entity_vectors(
-                deployment_id=str(deployment_id),
-                entity_ids=tuple(str(m["entity_id"]) for m in members),
-            )
-            pieces = _hac_pieces(members=members, vectors=vectors, distance_cut=cut)
-            for piece in pieces:
-                self._split_disagreeing_members(
-                    connection=connection, deployment_id=deployment_id, piece=piece
+                report = NeighborhoodReport(members=len(members))
+            else:
+                # re-deciding the pocket JOINTLY may move a previously-merged
+                # member to a different group (the R. Klein case): first split
+                # every merged member whose piece disagrees with its current
+                # root, then apply the piece merges (registries §6).
+                cut = self._config.distance_cut
+                tightened = False
+                if len(members) > self._config.blob_cap:
+                    # black-hole guard: raise the matching bar and re-split
+                    # rather than swallow the monster (registries §6)
+                    cut = cut / 2.0
+                    tightened = True
+                vectors = self._entity_index.entity_vectors(
+                    deployment_id=str(deployment_id),
+                    entity_ids=tuple(str(m["entity_id"]) for m in members),
                 )
-            merged: list[UUID] = []
-            queued = 0
-            for proposal in self._proposals(
-                connection=connection, deployment_id=deployment_id, pieces=pieces
-            ):
-                if proposal.blast_radius > self._config.blast_radius_cap:
-                    self._queue_for_review(
-                        connection=connection,
-                        deployment_id=deployment_id,
-                        proposal=proposal,
-                        trigger_lemma=lemma,
+                pieces = _hac_pieces(members=members, vectors=vectors, distance_cut=cut)
+                for piece in pieces:
+                    self._split_disagreeing_members(
+                        connection=connection, deployment_id=deployment_id, piece=piece
                     )
-                    queued += 1
-                    continue
-                merged.extend(
-                    self._merge(
-                        connection=connection,
-                        deployment_id=deployment_id,
-                        proposal=proposal,
-                        trigger_lemma=lemma,
+                merged: list[UUID] = []
+                queued = 0
+                for proposal in self._proposals(
+                    connection=connection, deployment_id=deployment_id, pieces=pieces
+                ):
+                    if (
+                        not self._config.auto_merge_enabled
+                        or proposal.blast_radius > self._config.blast_radius_cap
+                    ):
+                        self._queue_for_review(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            proposal=proposal,
+                            trigger_lemma=lemma,
+                        )
+                        queued += 1
+                        continue
+                    merged.extend(
+                        self._merge(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            proposal=proposal,
+                            trigger_lemma=lemma,
+                        )
                     )
+                refresh_entity_ids = profile_refresh_targets(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=tuple(
+                        UUID(str(member["entity_id"])) for member in members
+                    ),
                 )
-            return NeighborhoodReport(
-                members=len(members),
-                merged=tuple(merged),
-                queued_for_review=queued,
-                black_hole_tightened=tightened,
+                report = NeighborhoodReport(
+                    members=len(members),
+                    merged=tuple(merged),
+                    queued_for_review=queued,
+                    black_hole_tightened=tightened,
+                )
+        if refresh_entity_ids:
+            self._profile_refresher.refresh_many(
+                deployment_id=deployment_id,
+                entity_ids=refresh_entity_ids,
+                meter=meter,
+                call_key=f"profile:recluster:{lemma}",
             )
+        return report
 
-    def unmerge(self, *, deployment_id: UUID, merge_id: UUID) -> UUID:
+    def unmerge(
+        self, *, deployment_id: UUID, merge_id: UUID, meter: CostMeterPort | None = None
+    ) -> UUID:
         """Reverse one merge by replaying its snapshot (D21).
 
         The absorbed entity becomes active again (redirect removed); a
@@ -135,6 +170,20 @@ class EntityClusterer:
             reversal_id = self._reverse_event(
                 connection=connection, deployment_id=deployment_id, event=full_event
             )
+            affected_entity_ids = profile_refresh_targets(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_ids=(
+                    UUID(str(event["survivor_id"])),
+                    UUID(str(event["absorbed_id"])),
+                ),
+            )
+        self._profile_refresher.refresh_many(
+            deployment_id=deployment_id,
+            entity_ids=affected_entity_ids,
+            meter=meter,
+            call_key=f"profile:unmerge:{merge_id}",
+        )
         return reversal_id
 
     def _reverse_event(
@@ -338,12 +387,18 @@ class EntityClusterer:
         for piece in pieces:
             if len(piece) < 2:
                 continue
-            ordered = sorted(
-                piece, key=lambda m: (m["first_seen"], str(m["entity_id"]))
-            )
-            ids = [UUID(str(member["entity_id"])) for member in ordered]
+            piece_ids = [UUID(str(member["entity_id"])) for member in piece]
+            roots = connection.execute(
+                _SELECT_PIECE_ROOTS,
+                {"deployment_id": deployment_id, "entity_ids": piece_ids},
+            ).all()
+            if len(roots) < 2:
+                continue
+            ids = [UUID(str(entity_id)) for entity_id, _created_at in roots]
+            blast_entity_ids = sorted(set((*piece_ids, *ids)), key=str)
             blast = connection.execute(
-                _BLAST_RADIUS, {"deployment_id": deployment_id, "entity_ids": ids}
+                _BLAST_RADIUS,
+                {"deployment_id": deployment_id, "entity_ids": blast_entity_ids},
             ).scalar_one()
             proposals.append(
                 MergeProposal(
@@ -425,6 +480,31 @@ def apply_merge(
     auto clusterer and human review verdicts — one mechanism, one audit
     shape. Returns the merge id, or None if nothing was redirected.
     """
+    connection.execute(
+        _LOCK_IDENTITY_EXCLUSIVE, {"key": f"{deployment_id}:identity-epoch"}
+    )
+    survivor_root = connection.execute(
+        _SELECT_SURVIVOR_ROOT,
+        {"deployment_id": deployment_id, "entity_id": survivor_id},
+    ).scalar_one_or_none()
+    if survivor_root is None:
+        raise MergeApplicationError(
+            f"merge survivor {survivor_id} has no valid terminal redirect"
+        )
+    survivor_id = UUID(str(survivor_root))
+    absorbed = connection.execute(
+        _SELECT_ENTITY_ROOT_AND_STATUS,
+        {"deployment_id": deployment_id, "entity_id": absorbed_id},
+    ).one_or_none()
+    if absorbed is None:
+        raise MergeApplicationError(f"merge target {absorbed_id} does not exist")
+    absorbed_root, absorbed_status = absorbed
+    if UUID(str(absorbed_root)) == survivor_id:
+        return None
+    if str(absorbed_status) != "active":
+        raise MergeApplicationError(
+            f"merge target {absorbed_id} is no longer active; re-evaluate the cluster"
+        )
     snapshot = _membership_snapshot(
         connection=connection,
         deployment_id=deployment_id,
@@ -531,7 +611,7 @@ _LOCK_NEIGHBORHOOD = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0
 
 _GATHER_NEIGHBORHOOD = text(
     """
-    WITH RECURSIVE reached AS (
+    WITH reached AS (
         SELECT DISTINCT entities.entity_id, entities.canonical_name,
                entities.created_at, entities.status, entities.merged_into
         FROM aliases
@@ -542,23 +622,48 @@ _GATHER_NEIGHBORHOOD = text(
           AND (similarity(aliases.normalized_lemma, :lemma) >= 0.3
                OR daitch_mokotoff(aliases.normalized_lemma)
                   && daitch_mokotoff(:lemma))
-    ),
-    rooted AS (
-        SELECT entity_id, canonical_name, created_at, status, merged_into,
-               entity_id AS current_root
-        FROM reached WHERE status = 'active'
-        UNION ALL
-        SELECT r.entity_id, r.canonical_name, r.created_at, r.status,
-               r.merged_into, e.entity_id
-        FROM (
-            SELECT reached.*, reached.merged_into AS walk FROM reached
-            WHERE status = 'merged'
-        ) r
-        JOIN entities e ON e.entity_id = r.walk AND e.status = 'active'
     )
-    SELECT DISTINCT entity_id, canonical_name,
-           created_at AS first_seen, current_root
-    FROM rooted
+    SELECT DISTINCT reached.entity_id, reached.canonical_name,
+           reached.created_at AS first_seen,
+           survivor.survivor_entity_id AS current_root
+    FROM reached
+    JOIN v_memory_entity_survivor survivor
+      ON survivor.deployment_id = :deployment_id
+     AND survivor.entity_id = reached.entity_id
+    """
+)
+
+_SELECT_PIECE_ROOTS = text(
+    """
+    SELECT DISTINCT root.entity_id, root.created_at
+    FROM v_memory_entity_survivor survivor
+    JOIN entities root
+      ON root.deployment_id = survivor.deployment_id
+     AND root.entity_id = survivor.survivor_entity_id
+     AND root.status = 'active'
+    WHERE survivor.deployment_id = :deployment_id
+      AND survivor.entity_id = ANY(:entity_ids)
+    ORDER BY root.created_at, root.entity_id
+    """
+)
+
+_SELECT_SURVIVOR_ROOT = text(
+    """
+    SELECT survivor_entity_id
+    FROM v_memory_entity_survivor
+    WHERE deployment_id = :deployment_id AND entity_id = :entity_id
+    """
+)
+
+_SELECT_ENTITY_ROOT_AND_STATUS = text(
+    """
+    SELECT survivor.survivor_entity_id, entity.status::text
+    FROM entities entity
+    JOIN v_memory_entity_survivor survivor
+      ON survivor.deployment_id = entity.deployment_id
+     AND survivor.entity_id = entity.entity_id
+    WHERE entity.deployment_id = :deployment_id
+      AND entity.entity_id = :entity_id
     """
 )
 

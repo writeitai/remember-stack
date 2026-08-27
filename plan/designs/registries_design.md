@@ -92,7 +92,11 @@ resolver_versions(resolver_version, tier_config jsonb, thresholds jsonb, configu
 
 Invariants: `entity_id` is **never reused**; a merge is a **redirect** (`merged_into`), never a
 rewrite (Wikidata model) — everything downstream that stored the old ID still resolves; P2
-rebuild (D7) re-points graph edges on merge/un-merge for free.
+rebuild (D7) re-points graph edges on merge/un-merge for free. At application time the proposed
+survivor resolves through the complete live redirect closure. The absorbed target must still be
+active (or already resolve to that same survivor); otherwise the stale proposal is rejected for
+re-evaluation. This prevents a queued review from creating a redirect cycle or silently absorbing
+a newer cluster under an obsolete blast-radius calculation.
 
 ### Entity profiles — maintenance of `profile_summary` / `embedding`
 
@@ -108,15 +112,21 @@ against the ready current vector on that row.
 
 They are maintained by the deterministic **profile refresher** composed synchronously after
 evidence mutations. There is no profile-writing LLM and no second salient-fact authority. The
-refresher evidence-ranks supported open-ended observations and relation prose (capped
-`valid_until` rows are historical, not profile inputs), joins a bounded prefix into
+refresher evidence-ranks supported open-ended observations and canonical relation prose. Timed
+facts are deliberately excluded even before a future `valid_until`: admitting them would make
+the exact profile input expire as wall time passes without an evidence mutation to schedule a
+refresh. This stable, conservative projection prevents capped facts from outranking replacements,
+joins a bounded prefix into
 `profile_summary`, and embeds the exact `name + summary + salient facts` input under
-`entity-profile-v1`. It holds the entity evidence lock from input selection through the vector
+`entity-profile-v2`. It holds the entity evidence lock from input selection through the vector
 write. The exact input hash, model, and policy are the debounce and staleness attestation:
 unchanged inputs make no provider call.
 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
-terminal human review, normal deletion, and D74 hard-forget invoke the same refresher;
+merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same
+refresher. A survivor profile includes evidence anchored to every entity in its complete redirect
+closure; the absorbed row's cache clears. Fact-triggered refresh resolves raw endpoints to their
+terminal active survivor, so later lifecycle changes cannot strand evidence behind a redirect;
 hard-forget refreshes shared survivor ids after the
 lineage scrub and before projection rebuild/verification. When no supported fact remains, the
 summary, vector, and complete attestation clear together. The resolver independently loads the
@@ -126,10 +136,13 @@ missed or queued stale refresh can cost the cheap path but cannot authorize a me
 the refresher writes only the disposable profile projection and its attestation — never names,
 aliases, status, or identity.
 
-The hard policy cut vacates every legacy name-only vector. Deployment setup then scans active
-entity ids in bounded keyset pages through this same idempotent refresher before marking the
-entity semantic channel ready. A provider failure leaves the channel unavailable; rerunning setup
-resumes safely because already-attested profiles debounce.
+The hard policy cut vacates every legacy name-only vector. Deployment setup first finishes its
+idempotent registry and saved-query seeds, then scans active entity ids in bounded keyset pages
+through this same idempotent refresher before marking the entity semantic channel ready. A
+provider failure leaves only that channel unavailable; rerunning setup resumes safely because
+already-attested profiles debounce. Setup, human-review, and hard-forget-readiness embeddings are
+attributed to the operational surface-cost ledger; worker-triggered refreshes stay on the worker
+attempt ledger.
 
 ## 3. Resolution cascade — T0–T4, block-loose / decide-tight (D17)
 
@@ -680,6 +693,11 @@ with a distance cut* — in practice dedupe's `linkage(centroid)` + `fcluster(di
 blob is only ever a *candidate pool*, never automatically one entity. (Community-detection
 algorithms like Louvain/Leiden are for topic communities — D11 — and must never be used to
 decide identity.)
+
+The starting profile-vector distance cut has no accepted calibration record. Therefore automatic
+HAC merge is fail-closed by default: deployments may only enable it with explicit measured
+configuration, while otherwise every multi-entity proposal routes to the reversible human review
+queue. Test scenarios opt in to their synthetic measured cut explicitly.
 
 **Cap runaway blobs (the "black-hole guard").** Occasionally a blob balloons to thousands of
 mentions because one bad link or a generic name connected everything — almost always garbage,

@@ -23,6 +23,8 @@ class ClusterConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    auto_merge_enabled: bool = False
+    """Fail closed until a profile-space clustering cut has evaluation provenance."""
     distance_cut: Annotated[float, Field(ge=0.0, le=2.0)] = 0.15
     blob_cap: Annotated[int, Field(ge=2)] = 50
     blast_radius_cap: Annotated[int, Field(ge=1)] = 100
@@ -52,3 +54,7 @@ class NeighborhoodReport(BaseModel):
 
 class UnmergeError(Exception):
     """The merge event cannot be reversed (already reversed, or unknown)."""
+
+
+class MergeApplicationError(Exception):
+    """A proposed merge is stale or cannot resolve to a safe live redirect."""

@@ -18,10 +18,13 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.model import MergeApplicationError
 from rememberstack.model import ReviewDecisionError
 from rememberstack.model import ReviewItem
+from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
+from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
 
@@ -30,11 +33,16 @@ class ReviewQueue:
     """List, flag, and decide review items over an explicitly composed engine."""
 
     def __init__(
-        self, *, engine: Engine, profile_refresher: ProfileRefresherPort
+        self,
+        *,
+        engine: Engine,
+        profile_refresher: ProfileRefresherPort | None = None,
+        meter: CostMeterPort | None = None,
     ) -> None:
         """Bind review mutations and their evidence-derived projection."""
         self._engine = engine
         self._profile_refresher = profile_refresher
+        self._meter = meter
 
     def pending(
         self, *, deployment_id: UUID, limit: int = 20
@@ -129,6 +137,9 @@ class ReviewQueue:
             raise ReviewDecisionError(
                 f"verdict {verdict!r} is not valid for a merge_cluster item"
             )
+        refresher = self._require_profile_refresher() if verdict == "merge" else None
+        events: tuple[UUID, ...] = ()
+        affected_entity_ids: tuple[UUID, ...] = ()
         with self._engine.begin() as connection:
             item = self._claim_item(
                 connection=connection,
@@ -138,33 +149,68 @@ class ReviewQueue:
                 verdict=verdict,
             )
             if item is None:
-                return ()  # idempotent retry of the same verdict
-            events: tuple[UUID, ...] = ()
+                # As with support triage, an identical retry repairs a profile
+                # refresh that may have failed after the verdict committed.
+                item = dict(
+                    connection.execute(
+                        _SELECT_ITEM_LOCKED,
+                        {"deployment_id": deployment_id, "review_id": review_id},
+                    )
+                    .mappings()
+                    .one()
+                )
+            else:
+                if verdict == "merge":
+                    candidate = _candidate(item=item)
+                    survivor = UUID(str(candidate["survivor_id"]))
+                    try:
+                        events = tuple(
+                            apply_merge(
+                                connection=connection,
+                                deployment_id=deployment_id,
+                                survivor_id=survivor,
+                                absorbed_id=UUID(str(absorbed)),
+                                trigger_lemmas=[
+                                    str(candidate.get("trigger_lemma", ""))
+                                ],
+                                evidence={"review_id": str(review_id), "note": note},
+                                blast_radius=int(str(item["blast_radius"])),
+                                decided_by="human",
+                            )
+                            for absorbed in list(candidate["absorbed_ids"])  # type: ignore[arg-type]
+                        )
+                    except MergeApplicationError as error:
+                        raise ReviewDecisionError(str(error)) from error
+                    events = tuple(event for event in events if event is not None)
+                self._close(
+                    connection=connection,
+                    review_id=review_id,
+                    status="accepted" if verdict == "merge" else "rejected",
+                    verdict=verdict,
+                    note=note,
+                    reviewer=reviewer,
+                    result_decision_id=events[0] if events else None,
+                )
             if verdict == "merge":
                 candidate = _candidate(item=item)
                 survivor = UUID(str(candidate["survivor_id"]))
-                events = tuple(
-                    apply_merge(
-                        connection=connection,
-                        deployment_id=deployment_id,
-                        survivor_id=survivor,
-                        absorbed_id=UUID(str(absorbed)),
-                        trigger_lemmas=[str(candidate.get("trigger_lemma", ""))],
-                        evidence={"review_id": str(review_id), "note": note},
-                        blast_radius=int(str(item["blast_radius"])),
-                        decided_by="human",
-                    )
-                    for absorbed in list(candidate["absorbed_ids"])  # type: ignore[arg-type]
+                affected_entity_ids = profile_refresh_targets(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=(
+                        survivor,
+                        *(
+                            UUID(str(value))
+                            for value in list(candidate["absorbed_ids"])  # type: ignore[arg-type]
+                        ),
+                    ),
                 )
-                events = tuple(event for event in events if event is not None)
-            self._close(
-                connection=connection,
-                review_id=review_id,
-                status="accepted" if verdict == "merge" else "rejected",
-                verdict=verdict,
-                note=note,
-                reviewer=reviewer,
-                result_decision_id=events[0] if events else None,
+        if refresher is not None:
+            refresher.refresh_many(
+                deployment_id=deployment_id,
+                entity_ids=affected_entity_ids,
+                meter=self._meter,
+                call_key=f"profile:review_merge:{review_id}",
             )
         return events
 
@@ -189,6 +235,9 @@ class ReviewQueue:
             raise ReviewDecisionError(
                 f"verdict {verdict!r} is not valid for a support_withdrawn item"
             )
+        refresher = (
+            self._require_profile_refresher() if verdict != "uncertain" else None
+        )
         fact_kind: str
         fact_id: UUID
         with self._engine.begin() as connection:
@@ -247,13 +296,23 @@ class ReviewQueue:
                     reviewer=reviewer,
                     result_decision_id=None,
                 )
-        if verdict != "uncertain":
-            self._profile_refresher.refresh_for_facts(
+        if refresher is not None:
+            refresher.refresh_for_facts(
                 deployment_id=deployment_id,
                 relation_ids=(fact_id,) if fact_kind == "relation" else (),
                 observation_ids=(fact_id,) if fact_kind == "observation" else (),
+                meter=self._meter,
                 call_key=f"profile:review:{review_id}",
             )
+
+    def _require_profile_refresher(self) -> ProfileRefresherPort:
+        """Refuse a projection-changing verdict without its repair seam."""
+        if self._profile_refresher is None:
+            raise ReviewDecisionError(
+                "this review verdict changes entity profiles, but no profile "
+                "refresher was composed"
+            )
+        return self._profile_refresher
 
     def _restore_support(
         self,

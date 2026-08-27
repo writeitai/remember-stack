@@ -880,7 +880,7 @@ def test_entity_profile_migration_vacates_name_only_vectors() -> None:
                 {"deployment": deployment_id},
             ).one()
         assert tuple(cache) == (None, None, None, None, None)
-        assert tuple(channel) == ("entity-profile-v1", False)
+        assert tuple(channel) == ("entity-profile-v2", False)
 
         command.downgrade(config=config, revision="p9_15_0036")
         with engine.connect() as connection:

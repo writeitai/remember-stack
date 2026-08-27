@@ -174,11 +174,13 @@ built from.
 
 The as-built starting refresher is deterministic: it evidence-ranks a
 bounded set of supported, open-ended observation statements and canonical
-relation prose (`valid_until IS NULL`, so capped superseded facts cannot
-outrank their replacements), joins the leading statements into `profile_summary`, and
-embeds `name + summary + salient facts` under `entity-profile-v1`. It is
-composed synchronously after evidence add/recount/supersession, terminal human
-review, normal deletion, and the D74 lineage scrub. Deployment setup keyset-
+relation prose (`valid_until IS NULL`, a deliberate stable projection so a timed
+fact cannot expire without an evidence event to trigger refresh), joins the leading statements
+into `profile_summary`, and
+embeds `name + summary + salient facts` under `entity-profile-v2`. It is
+composed synchronously after evidence add/recount/supersession, merge/un-merge, terminal human
+review, normal deletion, and the D74 lineage scrub. Survivor profiles aggregate the complete
+redirect closure and inactive rows clear their caches. Deployment setup keyset-
 backfills every active entity after a policy-cut migration and republishes the
 entity semantic channel only after that resumable pass completes. The exact
 text hash debounces unchanged evidence. Resolution
@@ -186,6 +188,14 @@ reconstructs the expected summary/hash from current facts; stale or missing
 attestation disables T3 and T4 still receives the current salient statements.
 No queued stale snapshot can overwrite newer evidence because selection and
 write share the entity evidence lock.
+
+Merge application also resolves a queued survivor to its live terminal root and requires the
+absorbed target to remain active. A target that joined another cluster after proposal creation is
+rejected for re-evaluation rather than silently extending the stale proposal's blast radius.
+
+Worker refresh calls retain their processing-attempt meter. Setup backfill, human-review, and
+hard-forget readiness replay have no worker identity, so they write provider receipts to the
+operational surface-cost ledger instead of disappearing between ledgers.
 
 Production `_T4_PROMPT` includes:
 
@@ -437,7 +447,7 @@ Minimum rows:
 | `CascadeResolver.resolve` | T0 lists distinct entity ids, never auto-accepts; T3 may accept with profile; T4 if empty/conflict/many; same lemma may mint; no type argument |
 | `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
-| Profile refresher | deterministic current-fact projection under `entity-profile-v1`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
+| Profile refresher | deterministic current-fact projection under `entity-profile-v2`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |

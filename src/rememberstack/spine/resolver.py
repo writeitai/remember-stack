@@ -36,7 +36,7 @@ from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 from rememberstack.spine.entity_registry import normalized_lemma
-from rememberstack.spine.profile_refresher import load_entity_profile_evidence
+from rememberstack.spine.profile_refresher import load_entity_profile_evidence_many
 from rememberstack.spine.profile_refresher import (
     profile_summary as build_profile_summary,
 )
@@ -246,7 +246,7 @@ class CascadeResolver:
             score = _cosine(vectors[0], vectors[1])
             if score >= thresholds.t3_accept:
                 return True, "T3"
-            if score <= thresholds.t3_reject and not same_lemma:
+            if score <= thresholds.t3_reject:
                 return False, "T3"
         prompt = _T4_PROMPT.format(
             mention=surface_b,
@@ -290,12 +290,15 @@ class CascadeResolver:
             .mappings()
             .all()
         )
+        profiles = load_entity_profile_evidence_many(
+            connection=connection,
+            deployment_id=deployment_id,
+            entity_ids=tuple(row["entity_id"] for row in rows),
+        )
         candidates: list[ResolutionCandidate] = []
         for row in rows:
             entity_id = row["entity_id"]
-            profile = load_entity_profile_evidence(
-                connection=connection, deployment_id=deployment_id, entity_id=entity_id
-            )
+            profile = profiles.get(entity_id)
             facts = profile.salient_facts if profile is not None else ()
             current_summary = (
                 build_profile_summary(salient_facts=facts) if facts else None

@@ -73,6 +73,8 @@ def _run_review(args: argparse.Namespace) -> int:
         from sqlalchemy import create_engine
 
         from rememberstack.spine.settings import load_database_settings
+        from rememberstack.spine.surface_cost import open_surface_scope
+        from rememberstack.spine.surface_cost import SurfaceCostKind
 
         review_queue_builder = import_module(
             "rememberstack.profiles.selfhost"
@@ -86,17 +88,31 @@ def _run_review(args: argparse.Namespace) -> int:
 
     engine = create_engine(load_database_settings().sqlalchemy_url())
     try:
-        queue = review_queue_builder(engine=engine)
-        if args.review_command == "list":
-            return _list(queue=queue, deployment_id=args.deployment)
-        return _decide(
-            queue=queue,
-            deployment_id=args.deployment,
-            review_id=args.review_id,
-            verdict=args.verdict,
-            reviewer=args.reviewer,
-            note=args.note,
+        project_profiles = args.review_command == "decide" and args.verdict in (
+            "merge",
+            "restore_support",
+            "invalidate_fact",
         )
+        try:
+            queue = review_queue_builder(
+                engine=engine,
+                deployment_id=args.deployment,
+                project_profiles=project_profiles,
+            )
+        except ReviewDecisionError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            if args.review_command == "list":
+                return _list(queue=queue, deployment_id=args.deployment)
+            return _decide(
+                queue=queue,
+                deployment_id=args.deployment,
+                review_id=args.review_id,
+                verdict=args.verdict,
+                reviewer=args.reviewer,
+                note=args.note,
+            )
     finally:
         engine.dispose()
 

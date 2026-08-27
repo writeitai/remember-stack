@@ -153,10 +153,12 @@ Write-time cascade tiers:
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
 After supported open-ended observations or relations change, a deterministic refresher
-rebuilds the entity’s short summary and `entity-profile-v1` vector. Unchanged
-input hashes skip embedding. Supersession, terminal human review, normal
+rebuilds the entity’s short summary and `entity-profile-v2` vector. Unchanged
+input hashes skip embedding. Supersession, merge/un-merge, terminal human review, normal
 deletion/reconciliation, and hard-forget use the same refresh seam; if no
-supported fact remains, every profile cache field clears together. During the
+supported fact remains, every profile cache field clears together. A survivor
+profile includes evidence from its complete redirect closure, while absorbed
+profile caches clear. During the
 profile-policy cut, `remember selfhost setup` clears name-only vectors, rebuilds
 active entity profiles in bounded resumable pages, and publishes entity semantic
 search only after that pass completes.

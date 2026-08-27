@@ -630,6 +630,28 @@ def test_channel_readiness_fails_closed(
         index.configure_channels(deployment_id=_DEPLOYMENT_ID)
 
 
+def test_setup_backfill_gate_tracks_the_exact_entity_channel(
+    database_engine: Engine, seeded: dict[str, object]
+) -> None:
+    """Idempotent setup skips scans only after the profile channel is exact-ready."""
+    index = seeded["index"]
+    assert isinstance(index, PostgresP1Index)
+    assert not index.entity_profile_backfill_required(deployment_id=_DEPLOYMENT_ID)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE p1_search_channels SET ready = false"
+                " WHERE deployment_id = :deployment AND target = 'entities'"
+                " AND channel = 'semantic'"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+    try:
+        assert index.entity_profile_backfill_required(deployment_id=_DEPLOYMENT_ID)
+    finally:
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID)
+
+
 def test_ranked_search_never_crosses_deployments(
     database_engine: Engine, seeded: dict[str, object]
 ) -> None:
@@ -675,7 +697,7 @@ def test_ranked_search_never_crosses_deployments(
                     "UPDATE entities SET profile_summary = :summary,"
                     " embedding = CAST(:embedding AS vector),"
                     " embedding_model = :model,"
-                    " embedding_input_policy_version = 'entity-profile-v1',"
+                    " embedding_input_policy_version = 'entity-profile-v2',"
                     " embedding_text_hash = 'search-scope-proof'"
                     " WHERE deployment_id = :deployment AND entity_id = :entity"
                 ),

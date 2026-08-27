@@ -19,10 +19,15 @@ from rememberstack.adapters.testing.model_provider import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
+from rememberstack.model import ProviderCallUsage
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
+from rememberstack.spine.surface_cost import SurfaceCallSite
+from rememberstack.spine.surface_cost import SurfaceCostKind
+from rememberstack.spine.surface_cost import SurfaceCostMeter
 from rememberstack.surfaces.query_engine import QueryEngine
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -137,6 +142,46 @@ def test_bm25_search_writes_zero_surface_rows(database_engine: Engine) -> None:
             text("SELECT count(*) FROM surface_cost_ledger")
         ).scalar_one()
     assert int(count) == 0
+
+
+def test_operational_profile_meter_writes_an_allowlisted_surface_receipt(
+    database_engine: Engine,
+) -> None:
+    """Setup/review/recovery embeddings cannot disappear between ledgers."""
+    _bootstrap(database_engine)
+    meter = SurfaceCostMeter(
+        recorder=SqlSurfaceCostRecorder(
+            engine=database_engine, deployment_id=_DEPLOYMENT_ID
+        ),
+        deployment_id=_DEPLOYMENT_ID,
+        call_site=SurfaceCallSite.PROFILE_BACKFILL,
+    )
+    with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+        meter.record(
+            call_key="profile:one",
+            tier="profile_embed",
+            usage=ProviderCallUsage(
+                model_name="profile-model",
+                tokens_in=3,
+                tokens_out=0,
+                cost_usd=Decimal("0.0001"),
+                latency_ms=5,
+            ),
+        )
+
+    with database_engine.connect() as connection:
+        receipt = connection.execute(
+            text(
+                "SELECT surface::text, call_site, model_name, cost_usd"
+                " FROM surface_cost_ledger"
+            )
+        ).one()
+    assert receipt == (
+        "operation",
+        "profile_backfill",
+        "profile-model",
+        Decimal("0.000100000000"),
+    )
 
 
 def test_tiny_embed_cost_survives_numeric_scale(database_engine: Engine) -> None:

@@ -17,6 +17,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core.fact_label import deterministic_fact_label
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NonRetryableHandlerError
@@ -35,7 +36,7 @@ from rememberstack.workers.base import HandlerOutcome
 P1_EMBED_CLAIMS_VERSION: Final = "p1-embed-claims-2026.07"
 """The claim-embed stage's component version (the model rides settings)."""
 
-FACT_LABEL_VERSION: Final = "p1-fact-label-2026.08:deterministic-s4"
+FACT_LABEL_VERSION: Final = "p1-fact-label-2026.08:deterministic-s5"
 """Fact-label generation: deterministic predicate surface templates (S4/S1)."""
 
 
@@ -54,34 +55,6 @@ _DEFAULT_EMBED_BATCH_SIZE: Final = 64
 
 _OPENROUTER_EMBED_INPUT_CAP: Final = 1024
 """Hard upper bound observed on OpenRouter embedding hosts (422 above this)."""
-
-# Registry-friendly surface phrases for core predicates (S4). Unknown predicates
-# fall back to the raw slug (S1): "{subject} {predicate} {object}".
-_PREDICATE_SURFACE: Final[dict[str, str]] = {
-    "works_for": "works for",
-    "works_at": "works at",
-    "part_of": "is part of",
-    "member_of": "is a member of",
-    "located_in": "is located in",
-    "based_in": "is based in",
-    "created": "created",
-    "owns": "owns",
-    "uses": "uses",
-    "about": "is about",
-    "related_to": "is related to",
-    "reports_to": "reports to",
-    "employed_by": "is employed by",
-    "subsidiary_of": "is a subsidiary of",
-    "founded": "founded",
-    "authored": "authored",
-    "mentions": "mentions",
-}
-
-
-def deterministic_fact_label(*, subject: str, predicate: str, object_name: str) -> str:
-    """Build the embeddable relation label without an LLM (S4 with S1 fallback)."""
-    surface = _PREDICATE_SURFACE.get(predicate, predicate.replace("_", " "))
-    return f"{subject} {surface} {object_name}"
 
 
 class P1Settings(BaseSettings):

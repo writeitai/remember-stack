@@ -34,7 +34,7 @@ def upgrade() -> None:
         ) > 0;
 
         UPDATE p1_search_channels SET
-          embedding_input_policy_version = 'entity-profile-v1',
+          embedding_input_policy_version = 'entity-profile-v2',
           ready = false,
           updated_at = now()
         WHERE target = 'entities' AND channel = 'semantic';

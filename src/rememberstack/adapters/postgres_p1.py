@@ -107,6 +107,31 @@ class PostgresP1Index:
         with self._engine.begin() as connection:
             connection.execute(statement, rows)
 
+    def entity_profile_backfill_required(self, *, deployment_id: UUID) -> bool:
+        """Whether setup must repair profiles before publishing entity semantics."""
+        with self._engine.connect() as connection:
+            ready = connection.execute(
+                text(
+                    """
+                    SELECT count(*) = 1
+                    FROM p1_search_channels
+                    WHERE deployment_id = :deployment_id
+                      AND target = 'entities' AND channel = 'semantic'
+                      AND ready
+                      AND embedding_model = :embedding_model
+                      AND embedding_dimension = :embedding_dimension
+                      AND embedding_input_policy_version = :input_policy
+                    """
+                ),
+                {
+                    "deployment_id": deployment_id,
+                    "embedding_model": self._embedding_model,
+                    "embedding_dimension": P1_VECTOR_DIMENSIONS,
+                    "input_policy": ENTITY_INPUT_POLICY,
+                },
+            ).scalar_one()
+        return not bool(ready)
+
     def upsert_chunks(self, *, rows: tuple[P1ChunkRow, ...]) -> None:
         """Upsert normalized chunk text, vector, and its complete attestation."""
         if not rows:

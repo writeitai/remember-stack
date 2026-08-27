@@ -314,7 +314,7 @@ class _ReadinessHandler:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
-    def honor(self, *, manifest: ForgetManifest) -> None:
+    def honor(self, *, manifest: ForgetManifest, **_: object) -> None:
         self.events.append("honor")
 
 

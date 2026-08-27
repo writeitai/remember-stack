@@ -123,7 +123,7 @@ class _PostgresRestoreHandler:
         """Bind the real catalog used by readiness rematerialization."""
         self._catalog = catalog
 
-    def honor(self, *, manifest: ForgetManifest) -> None:
+    def honor(self, *, manifest: ForgetManifest, **_: object) -> None:
         """Scrub, verify, and complete the rematerialized PostgreSQL intent."""
         self._catalog.scrub_postgres(manifest=manifest)
         self._catalog.verify_postgres_scrubbed(manifest=manifest)
@@ -233,7 +233,7 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
                 "UPDATE entities SET profile_summary = :summary,"
                 " embedding = array_fill(0.75::real, ARRAY[1536])::vector,"
                 " embedding_model = 'profile-test',"
-                " embedding_input_policy_version = 'entity-profile-v1',"
+                " embedding_input_policy_version = 'entity-profile-v2',"
                 " embedding_text_hash = :hash"
                 " WHERE deployment_id = :deployment AND entity_id = :entity"
             ),
@@ -284,7 +284,7 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
     assert _TOKEN not in str(row.profile_summary)
     assert "shared observation" in str(row.profile_summary)
     assert row[1] is True
-    assert row.embedding_input_policy_version == "entity-profile-v1"
+    assert row.embedding_input_policy_version == "entity-profile-v2"
     assert row.embedding_text_hash != embedding_text_hash(old_input)
 
 

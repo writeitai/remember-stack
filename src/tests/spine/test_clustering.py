@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import UnmergeError
@@ -163,7 +164,8 @@ def _clusterer(
     return EntityClusterer(
         engine=engine,
         entity_index=index,
-        config=ClusterConfig(**overrides),  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(auto_merge_enabled=True, **overrides),  # type: ignore[arg-type]
     )
 
 
@@ -337,6 +339,28 @@ def test_high_blast_radius_routes_to_review_never_auto(
     assert review["status"] == "pending"
     assert review["expected_impact"] == pytest.approx(review["blast_radius"] * 0.5)
     assert merged == 0
+
+
+def test_uncalibrated_profile_space_routes_every_merge_to_review(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """The default cut is inert until a measured profile-space opt-in exists."""
+    index = _ScriptedEntityIndex()
+    clusterer = EntityClusterer(
+        engine=database_engine,
+        entity_index=index,
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(distance_cut=_CUT),
+    )
+    _arrive(engine=database_engine, index=index, name="Robert Klein")
+    _arrive(engine=database_engine, index=index, name="R. Klein")
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert report.merged == ()
+    assert report.queued_for_review == 1
 
 
 def test_black_hole_guard_tightens_the_cut(

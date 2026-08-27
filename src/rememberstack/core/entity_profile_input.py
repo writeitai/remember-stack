@@ -4,7 +4,7 @@
 def entity_profile_embedding_input(
     *, canonical_name: str, profile_summary: str, salient_facts: tuple[str, ...]
 ) -> str:
-    """Build the candidate profile text stamped by entity-profile-v1."""
+    """Build the candidate profile text stamped by entity-profile-v2."""
     facts = "\n".join(f"- {fact}" for fact in salient_facts)
     return (
         f"ENTITY: {canonical_name}\nPROFILE: {profile_summary}\nSALIENT FACTS:\n{facts}"

@@ -259,7 +259,9 @@ class HardForgetReadiness:
         self._request_service = request_service
         self._handler = handler
 
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+    def ensure_ready(
+        self, *, deployment_id: UUID, meter: CostMeterPort | None = None
+    ) -> tuple[UUID, ...]:
         """Recover preparation, rematerialize, and re-honor every portable manifest."""
         pending = self._catalog.preparing_record(deployment_id=deployment_id)
         if pending is not None:
@@ -276,7 +278,7 @@ class HardForgetReadiness:
         manifests = self._manifest_store.manifests(deployment_id=deployment_id)
         for manifest in manifests:
             self._catalog.materialize_portable(manifest=manifest)
-            self._handler.honor(manifest=manifest)
+            self._handler.honor(manifest=manifest, meter=meter)
         return tuple(manifest.forget_id for manifest in manifests)
 
 
