@@ -331,8 +331,9 @@ they co-occur.
 
 The resolver **populates** `generic_identifier_guard` when a lemma
 points at too many distinct entities (D21; starting threshold measured
-on the golden set). Guarded lemmas stop driving T0 auto-accept and are
-down-weighted in T1/T2 blocking.
+on the golden set). Guarded lemmas are down-weighted in T1/T2 blocking.
+They do not change T0's role: exact T0 always lists candidates and never
+accepts a referent.
 
 ---
 
