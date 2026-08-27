@@ -794,8 +794,8 @@ def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) 
     resolver = _resolver(engine=database_engine, provider=provider)
     entity = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
-        reference=EntityRef(name="Application"),
-        claim=_claim(claim_text="Application opened the report."),
+        reference=EntityRef(name="Application", surface="App"),
+        claim=_claim(claim_text="App opened the report."),
     )
     with database_engine.begin() as connection:
         connection.execute(
