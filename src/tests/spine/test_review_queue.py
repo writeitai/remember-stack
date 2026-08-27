@@ -19,6 +19,7 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ReviewDecisionError
+from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import FactCatalog
@@ -29,6 +30,22 @@ from rememberstack.surfaces import cli_main
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a1000000-0000-0000-0000-000000000001")
+
+
+class _FailingProfileRefresher(RecordingProfileRefresher):
+    """Simulate a provider failure after a review verdict commits."""
+
+    def refresh_many(
+        self,
+        *,
+        deployment_id: UUID,
+        entity_ids: tuple[UUID, ...],
+        meter: CostMeterPort | None = None,
+        call_key: str = "refresh_profile",
+    ) -> None:
+        """Fail every post-commit merge projection repair."""
+        del deployment_id, entity_ids, meter, call_key
+        raise RuntimeError("provider unavailable")
 
 
 def _queue(*, engine: Engine) -> ReviewQueue:
@@ -498,6 +515,81 @@ def test_merge_rejects_a_target_absorbed_by_another_cluster(
             {"review": review_id},
         ).scalar_one()
     assert status == "pending"
+
+
+def test_merge_rejects_a_survivor_retired_after_review_was_queued(
+    database_engine: Engine,
+) -> None:
+    """A stale review cannot redirect an active entity into a retired root."""
+    survivor = _entity(engine=database_engine, name="Retired Survivor")
+    absorbed = _entity(engine=database_engine, name="Still Active Target")
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE entities SET status = 'retired' WHERE entity_id = :entity"),
+            {"entity": survivor},
+        )
+
+    with pytest.raises(ReviewDecisionError, match="no valid terminal redirect"):
+        _queue(engine=database_engine).decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+
+    with database_engine.connect() as connection:
+        state = connection.execute(
+            text(
+                "SELECT review.status::text, entity.status::text"
+                " FROM review_queue review CROSS JOIN entities entity"
+                " WHERE review.review_id = :review AND entity.entity_id = :entity"
+            ),
+            {"review": review_id, "entity": absorbed},
+        ).one()
+    assert tuple(state) == ("pending", "active")
+
+
+def test_committed_verdict_reports_profile_failure_and_repairs_on_retry(
+    database_engine: Engine,
+) -> None:
+    """The CLI-facing error says the verdict is durable and retry is repair."""
+    survivor = _entity(engine=database_engine, name="Durable Survivor")
+    absorbed = _entity(engine=database_engine, name="Durable Target")
+    review_id = _queued_merge(
+        engine=database_engine, survivor=survivor, absorbed=absorbed
+    )
+    failing = ReviewQueue(
+        engine=database_engine, profile_refresher=_FailingProfileRefresher()
+    )
+
+    with pytest.raises(ReviewDecisionError, match="verdict is durable"):
+        failing.decide_merge(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="merge",
+            reviewer="jiri",
+        )
+
+    repaired = RecordingProfileRefresher()
+    events = ReviewQueue(
+        engine=database_engine, profile_refresher=repaired
+    ).decide_merge(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="merge",
+        reviewer="jiri",
+    )
+    assert events == ()
+    assert set(repaired.entity_ids) == {survivor, absorbed}
+    with database_engine.connect() as connection:
+        event_count = connection.execute(
+            text("SELECT count(*) FROM merge_events WHERE absorbed_id = :entity"),
+            {"entity": absorbed},
+        ).scalar_one()
+    assert event_count == 1
 
 
 def test_not_merge_closes_without_touching_entities(database_engine: Engine) -> None:

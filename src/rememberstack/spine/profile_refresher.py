@@ -21,6 +21,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 PROFILE_SUMMARY_FACT_LIMIT: Final = 5
 PROFILE_SALIENT_FACT_LIMIT: Final = 8
 PROFILE_BACKFILL_BATCH_SIZE: Final = 100
+PROFILE_EMBED_BATCH_SIZE: Final = 64
 PROFILE_REFRESH_MAX_ATTEMPTS: Final = 3
 
 
@@ -224,21 +225,71 @@ class EntityProfileRefresher:
         meter: CostMeterPort | None = None,
         call_key: str = "refresh_profile",
     ) -> tuple[ProfileRefreshResult, ...]:
-        """Refresh changed rows and live terminal survivors in deterministic order."""
+        """Refresh live targets with bounded provider batches and revalidation."""
         with self._engine.connect() as connection:
             targets = profile_refresh_targets(
                 connection=connection,
                 deployment_id=deployment_id,
                 entity_ids=entity_ids,
             )
-        return tuple(
-            self.refresh(
-                deployment_id=deployment_id,
-                entity_id=entity_id,
-                meter=meter,
-                call_key=f"{call_key}:{entity_id}",
-            )
-            for entity_id in targets
+        completed: dict[UUID, ProfileRefreshResult] = {}
+        pending = targets
+        for attempt in range(1, PROFILE_REFRESH_MAX_ATTEMPTS + 1):
+            prepared: list[tuple[UUID, _PreparedProfile]] = []
+            for entity_id in pending:
+                candidate = self._prepare(
+                    deployment_id=deployment_id, entity_id=entity_id
+                )
+                if isinstance(candidate, ProfileRefreshResult):
+                    completed[entity_id] = candidate
+                else:
+                    prepared.append((entity_id, candidate))
+            retry: list[UUID] = []
+            for start in range(0, len(prepared), PROFILE_EMBED_BATCH_SIZE):
+                batch = prepared[start : start + PROFILE_EMBED_BATCH_SIZE]
+                response = self._model_provider.embed(
+                    request=EmbeddingRequest(
+                        model=self._embedding_model,
+                        texts=tuple(item.profile_input for _, item in batch),
+                        dimensions=P1_VECTOR_DIMENSIONS,
+                    )
+                )
+                if meter is not None:
+                    meter.record(
+                        call_key=(
+                            f"{call_key}:batch:{batch[0][0]}:optimistic:{attempt}"
+                        ),
+                        tier="profile_embed",
+                        usage=response.usage,
+                    )
+                if len(response.vectors) != len(batch):
+                    raise ValueError(
+                        "profile embedding response count does not match request: "
+                        f"{len(response.vectors)} != {len(batch)}"
+                    )
+                vector_literals = tuple(
+                    _vector_literal(vector) for vector in response.vectors
+                )
+                for (entity_id, candidate), vector_literal in zip(
+                    batch, vector_literals, strict=True
+                ):
+                    result = self._commit_if_current(
+                        deployment_id=deployment_id,
+                        entity_id=entity_id,
+                        prepared=candidate,
+                        vector_literal=vector_literal,
+                    )
+                    if result is None:
+                        retry.append(entity_id)
+                    else:
+                        completed[entity_id] = result
+            if not retry:
+                return tuple(completed[entity_id] for entity_id in targets)
+            pending = tuple(retry)
+        changed = ", ".join(str(entity_id) for entity_id in pending)
+        raise RuntimeError(
+            "entity profiles changed during "
+            f"{PROFILE_REFRESH_MAX_ATTEMPTS} refresh attempts: {changed}"
         )
 
     def refresh_for_facts(
@@ -770,12 +821,12 @@ _SELECT_FACT_ENTITY_IDS = text(
       FROM observations
       WHERE deployment_id = :deployment_id
         AND observation_id = ANY(CAST(:observation_ids AS uuid[]))
-      UNION ALL
+      UNION
       SELECT subject_entity_id AS entity_id
       FROM relations
       WHERE deployment_id = :deployment_id
         AND relation_id = ANY(CAST(:relation_ids AS uuid[]))
-      UNION ALL
+      UNION
       SELECT object_entity_id AS entity_id
       FROM relations
       WHERE deployment_id = :deployment_id

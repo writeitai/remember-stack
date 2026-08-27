@@ -90,9 +90,14 @@ class EntityClusterer:
                     entity_ids=tuple(str(m["entity_id"]) for m in members),
                 )
                 pieces = _hac_pieces(members=members, vectors=vectors, distance_cut=cut)
+                changed_entity_ids: set[UUID] = set()
                 for piece in pieces:
-                    self._split_disagreeing_members(
-                        connection=connection, deployment_id=deployment_id, piece=piece
+                    changed_entity_ids.update(
+                        self._split_disagreeing_members(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            piece=piece,
+                        )
                     )
                 merged: list[UUID] = []
                 queued = 0
@@ -111,21 +116,22 @@ class EntityClusterer:
                         )
                         queued += 1
                         continue
-                    merged.extend(
-                        self._merge(
-                            connection=connection,
-                            deployment_id=deployment_id,
-                            proposal=proposal,
-                            trigger_lemma=lemma,
-                        )
+                    applied = self._merge(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        proposal=proposal,
+                        trigger_lemma=lemma,
                     )
-                refresh_entity_ids = profile_refresh_targets(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    entity_ids=tuple(
-                        UUID(str(member["entity_id"])) for member in members
-                    ),
-                )
+                    merged.extend(applied)
+                    if applied:
+                        changed_entity_ids.add(proposal.survivor_id)
+                        changed_entity_ids.update(proposal.absorbed_ids)
+                if changed_entity_ids:
+                    refresh_entity_ids = profile_refresh_targets(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        entity_ids=tuple(changed_entity_ids),
+                    )
                 report = NeighborhoodReport(
                     members=len(members),
                     merged=tuple(merged),
@@ -342,7 +348,7 @@ class EntityClusterer:
         connection: Connection,
         deployment_id: UUID,
         piece: tuple[dict[str, object], ...],
-    ) -> None:
+    ) -> tuple[UUID, ...]:
         """Unmerge every merged member whose piece disagrees with its root.
 
         The joint decision is authoritative for the pocket: a member absorbed
@@ -351,6 +357,7 @@ class EntityClusterer:
         merges (if any) re-attach it where the joint decision says.
         """
         piece_ids = {str(member["entity_id"]) for member in piece}
+        changed: set[UUID] = set()
         for member in piece:
             root = member.get("current_root")
             if root is None or str(root) == str(member["entity_id"]):
@@ -374,6 +381,9 @@ class EntityClusterer:
                     deployment_id=deployment_id,
                     event=dict(event),
                 )
+                changed.add(UUID(str(event["survivor_id"])))
+                changed.add(UUID(str(event["absorbed_id"])))
+        return tuple(sorted(changed, key=str))
 
     def _proposals(
         self,
@@ -649,9 +659,14 @@ _SELECT_PIECE_ROOTS = text(
 
 _SELECT_SURVIVOR_ROOT = text(
     """
-    SELECT survivor_entity_id
-    FROM v_memory_entity_survivor
-    WHERE deployment_id = :deployment_id AND entity_id = :entity_id
+    SELECT survivor.survivor_entity_id
+    FROM v_memory_entity_survivor survivor
+    JOIN entities root
+      ON root.deployment_id = survivor.deployment_id
+     AND root.entity_id = survivor.survivor_entity_id
+     AND root.status = 'active'
+    WHERE survivor.deployment_id = :deployment_id
+      AND survivor.entity_id = :entity_id
     """
 )
 

@@ -817,6 +817,8 @@ def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
         }
     finally:
         engine.dispose()
+        command.downgrade(config=config, revision="base")
+        command.upgrade(config=config, revision="head")
 
 
 def test_entity_profile_migration_vacates_name_only_vectors() -> None:

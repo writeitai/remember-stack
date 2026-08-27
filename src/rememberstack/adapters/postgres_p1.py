@@ -51,8 +51,10 @@ class PostgresP1Index:
         self._embedding_model = embedding_model
         self._chunk_input_policy = chunk_input_policy
 
-    def configure_channels(self, *, deployment_id: UUID) -> None:
-        """Publish the fixed D94 channel configuration during deployment setup."""
+    def configure_channels(
+        self, *, deployment_id: UUID, include_entity: bool = True
+    ) -> None:
+        """Publish D94 channels, optionally leaving entity semantics gated."""
         semantic = (
             ("chunks", self._chunk_input_policy),
             ("claims", CLAIM_INPUT_POLICY),
@@ -71,6 +73,7 @@ class PostgresP1Index:
                 "text_config": None,
             }
             for target, policy in semantic
+            if include_entity or target != "entities"
         ]
         rows.extend(
             {

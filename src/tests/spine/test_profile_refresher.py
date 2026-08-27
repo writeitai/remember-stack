@@ -58,6 +58,20 @@ class _EvidenceMutatingProvider(FakeModelProvider):
         return super().embed(request=request)
 
 
+class _BatchRecordingProvider(FakeModelProvider):
+    """Record request sizes while retaining deterministic fake vectors."""
+
+    def __init__(self) -> None:
+        """Start with no provider batches."""
+        super().__init__()
+        self.batch_sizes: list[int] = []
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Record one bounded batch before returning its vectors."""
+        self.batch_sizes.append(len(request.texts))
+        return super().embed(request=request)
+
+
 @pytest.fixture(scope="module")
 def database_engine() -> Iterator[Engine]:
     """Apply structural head and expose the accepted PostgreSQL engine."""
@@ -198,7 +212,7 @@ def test_refresh_discards_a_vector_when_evidence_changes_during_provider_call(
         engine=database_engine,
         model_provider=provider,
         embedding_model="profile-embed-test",
-    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
+    ).refresh_many(deployment_id=_DEPLOYMENT_ID, entity_ids=(_FIRST_ENTITY,))[0]
 
     assert result.updated
     assert result.salient_facts == ("Jan now lives in Brno", "Jan lives in Prague")
@@ -340,31 +354,38 @@ def test_backfill_pages_every_active_entity_and_debounces_on_retry(
             text(
                 "INSERT INTO observations (observation_id, deployment_id,"
                 " subject_entity_id, statement, evidence_count, normalizer_version)"
-                " VALUES (:observation, :deployment, :entity,"
-                " 'Jan is a bank', 1, 'profile-test')"
+                " VALUES (:first_observation, :deployment, :first_entity,"
+                " 'Jan is a bank', 1, 'profile-test'),"
+                " (:second_observation, :deployment, :second_entity,"
+                " 'Jan is an engineer', 1, 'profile-test')"
             ),
             {
-                "observation": uuid4(),
+                "first_observation": uuid4(),
+                "second_observation": uuid4(),
                 "deployment": _DEPLOYMENT_ID,
-                "entity": _FIRST_ENTITY,
+                "first_entity": _FIRST_ENTITY,
+                "second_entity": _SECOND_ENTITY,
             },
         )
-    provider = FakeModelProvider()
+    provider = _BatchRecordingProvider()
     refresher = EntityProfileRefresher(
         engine=database_engine,
         model_provider=provider,
         embedding_model="profile-embed-test",
     )
 
-    first = refresher.backfill(deployment_id=_DEPLOYMENT_ID, batch_size=1)
-    second = refresher.backfill(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+    first = refresher.backfill(deployment_id=_DEPLOYMENT_ID, batch_size=100)
+    second = refresher.backfill(deployment_id=_DEPLOYMENT_ID, batch_size=100)
 
     assert first.scanned == 2
-    assert first.updated == 1
-    assert first.with_evidence == 1
+    assert first.updated == 2
+    assert first.with_evidence == 2
     assert second.scanned == 2
     assert second.updated == 0
-    assert second.with_evidence == 1
+    assert second.with_evidence == 2
+    assert provider.batch_sizes == [2]
     assert provider.embedded_texts == [
-        "ENTITY: Jan\nPROFILE: Jan is a bank\nSALIENT FACTS:\n- Jan is a bank"
+        "ENTITY: Jan\nPROFILE: Jan is a bank\nSALIENT FACTS:\n- Jan is a bank",
+        "ENTITY: Jan\nPROFILE: Jan is an engineer\n"
+        "SALIENT FACTS:\n- Jan is an engineer",
     ]

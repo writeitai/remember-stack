@@ -124,7 +124,9 @@ entity and its complete redirect-closure evidence under the identity/evidence lo
 read transaction, and only then calls the provider. A second locked transaction reconstructs the
 exact input. If its hash changed, the paid stale vector is metered, discarded, and retried up to a
 bounded limit; it is never written. The exact input hash, model, and policy are the debounce and
-staleness attestation: unchanged inputs make no provider call.
+staleness attestation: unchanged inputs make no provider call. Multi-entity refresh and setup
+backfill batch provider inputs to bound policy-cut downtime while retaining per-entity locked
+revalidation and exact attestations.
 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
 merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same

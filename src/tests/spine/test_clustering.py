@@ -346,10 +346,11 @@ def test_uncalibrated_profile_space_routes_every_merge_to_review(
 ) -> None:
     """The default cut is inert until a measured profile-space opt-in exists."""
     index = _ScriptedEntityIndex()
+    profile_refresher = RecordingProfileRefresher()
     clusterer = EntityClusterer(
         engine=database_engine,
         entity_index=index,
-        profile_refresher=RecordingProfileRefresher(),
+        profile_refresher=profile_refresher,
         config=ClusterConfig(distance_cut=_CUT),
     )
     _arrive(engine=database_engine, index=index, name="Robert Klein")
@@ -361,6 +362,7 @@ def test_uncalibrated_profile_space_routes_every_merge_to_review(
 
     assert report.merged == ()
     assert report.queued_for_review == 1
+    assert profile_refresher.entity_ids == []
 
 
 def test_black_hole_guard_tightens_the_cut(

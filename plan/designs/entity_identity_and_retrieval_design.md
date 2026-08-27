@@ -190,7 +190,8 @@ Hot-path redirect traversal uses recursive CTEs anchored at the requested ids ra
 deployment-wide survivor view. No queued stale snapshot can overwrite newer evidence: the
 refresher snapshots under the identity/evidence locks, releases the transaction for the provider
 call, then reacquires the locks and rebuilds the exact input. A changed hash discards and meters
-the stale vector and triggers a bounded retry rather than writing it.
+the stale vector and triggers a bounded retry rather than writing it. Multi-entity refreshes use
+bounded provider batches, but each entity still revalidates and commits independently.
 
 Merge application also resolves a queued survivor to its live terminal root and requires the
 absorbed target to remain active. A target that joined another cluster after proposal creation is

@@ -206,12 +206,18 @@ class ReviewQueue:
                     ),
                 )
         if refresher is not None:
-            refresher.refresh_many(
-                deployment_id=deployment_id,
-                entity_ids=affected_entity_ids,
-                meter=self._meter,
-                call_key=f"profile:review_merge:{review_id}",
-            )
+            try:
+                refresher.refresh_many(
+                    deployment_id=deployment_id,
+                    entity_ids=affected_entity_ids,
+                    meter=self._meter,
+                    call_key=f"profile:review_merge:{review_id}",
+                )
+            except Exception as error:
+                raise ReviewDecisionError(
+                    "review verdict is durable but entity profile refresh failed; "
+                    "rerun the identical verdict to repair the projection"
+                ) from error
         return events
 
     def decide_support_withdrawn(
@@ -297,13 +303,19 @@ class ReviewQueue:
                     result_decision_id=None,
                 )
         if refresher is not None:
-            refresher.refresh_for_facts(
-                deployment_id=deployment_id,
-                relation_ids=(fact_id,) if fact_kind == "relation" else (),
-                observation_ids=(fact_id,) if fact_kind == "observation" else (),
-                meter=self._meter,
-                call_key=f"profile:review:{review_id}",
-            )
+            try:
+                refresher.refresh_for_facts(
+                    deployment_id=deployment_id,
+                    relation_ids=(fact_id,) if fact_kind == "relation" else (),
+                    observation_ids=(fact_id,) if fact_kind == "observation" else (),
+                    meter=self._meter,
+                    call_key=f"profile:review:{review_id}",
+                )
+            except Exception as error:
+                raise ReviewDecisionError(
+                    "review verdict is durable but entity profile refresh failed; "
+                    "rerun the identical verdict to repair the projection"
+                ) from error
 
     def _require_profile_refresher(self) -> ProfileRefresherPort:
         """Refuse a projection-changing verdict without its repair seam."""

@@ -648,6 +648,20 @@ def test_setup_backfill_gate_tracks_the_exact_entity_channel(
         )
     try:
         assert index.entity_profile_backfill_required(deployment_id=_DEPLOYMENT_ID)
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID, include_entity=False)
+        with database_engine.connect() as connection:
+            readiness = {
+                str(target): bool(ready)
+                for target, ready in connection.execute(
+                    text(
+                        "SELECT target::text, ready FROM p1_search_channels"
+                        " WHERE deployment_id = :deployment AND channel = 'semantic'"
+                    ),
+                    {"deployment": _DEPLOYMENT_ID},
+                )
+            }
+        assert readiness["entities"] is False
+        assert all(ready for target, ready in readiness.items() if target != "entities")
     finally:
         index.configure_channels(deployment_id=_DEPLOYMENT_ID)
 

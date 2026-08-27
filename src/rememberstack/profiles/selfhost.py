@@ -566,6 +566,11 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             call_site=SurfaceCallSite.PROFILE_BACKFILL,
         )
+        # Publish unaffected channels first. The entity semantic channel stays
+        # fail-closed until its policy-cut backfill completes successfully.
+        p1_index.configure_channels(
+            deployment_id=self._settings.deployment_id, include_entity=False
+        )
         if p1_index.entity_profile_backfill_required(
             deployment_id=self._settings.deployment_id
         ):
@@ -577,7 +582,9 @@ class SelfHostProfile:
                 ).backfill(
                     deployment_id=self._settings.deployment_id, meter=profile_meter
                 )
-        p1_index.configure_channels(deployment_id=self._settings.deployment_id)
+        p1_index.configure_channels(
+            deployment_id=self._settings.deployment_id, include_entity=True
+        )
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
