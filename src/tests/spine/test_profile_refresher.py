@@ -345,7 +345,7 @@ def test_capped_fact_cannot_outrank_the_open_current_profile(
     assert "Acme" not in provider.embedded_texts[0]
 
 
-def test_backfill_pages_every_active_entity_and_debounces_on_retry(
+def test_backfill_batches_active_entities_and_debounces_on_retry(
     database_engine: Engine,
 ) -> None:
     """Setup can repopulate vacated profiles through bounded resumable pages."""
@@ -389,3 +389,19 @@ def test_backfill_pages_every_active_entity_and_debounces_on_retry(
         "ENTITY: Jan\nPROFILE: Jan is an engineer\n"
         "SALIENT FACTS:\n- Jan is an engineer",
     ]
+
+
+def test_backfill_keyset_pages_every_active_entity(database_engine: Engine) -> None:
+    """A one-row cursor advances through every active id and then terminates."""
+    provider = FakeModelProvider()
+
+    result = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="profile-embed-test",
+    ).backfill(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+
+    assert result.scanned == 2
+    assert result.updated == 0
+    assert result.with_evidence == 0
+    assert provider.embedded_texts == []

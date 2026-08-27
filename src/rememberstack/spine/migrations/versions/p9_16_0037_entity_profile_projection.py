@@ -2,7 +2,8 @@
 
 Deployment setup must keyset-backfill active entities through
 ``EntityProfileRefresher.backfill`` before republishing the semantic channel.
-The migration deliberately leaves that channel unready until setup succeeds.
+The migration also adds partial ranking indexes for bounded profile evidence
+selection and deliberately leaves the channel unready until setup succeeds.
 
 revision: p9_16_0037
 """
@@ -38,6 +39,33 @@ def upgrade() -> None:
           ready = false,
           updated_at = now()
         WHERE target = 'entities' AND channel = 'semantic';
+
+        CREATE INDEX ix_observations_profile_salience
+          ON observations (
+            deployment_id, subject_entity_id, evidence_count DESC,
+            updated_at DESC, observation_id
+          )
+          WHERE invalidated_at IS NULL
+            AND valid_until IS NULL
+            AND evidence_count > 0;
+
+        CREATE INDEX ix_relations_profile_subject_salience
+          ON relations (
+            deployment_id, subject_entity_id, evidence_count DESC,
+            updated_at DESC, relation_id
+          )
+          WHERE invalidated_at IS NULL
+            AND valid_until IS NULL
+            AND evidence_count > 0;
+
+        CREATE INDEX ix_relations_profile_object_salience
+          ON relations (
+            deployment_id, object_entity_id, evidence_count DESC,
+            updated_at DESC, relation_id
+          )
+          WHERE invalidated_at IS NULL
+            AND valid_until IS NULL
+            AND evidence_count > 0;
         """
     )
 
@@ -63,5 +91,9 @@ def downgrade() -> None:
           ready = false,
           updated_at = now()
         WHERE target = 'entities' AND channel = 'semantic';
+
+        DROP INDEX IF EXISTS ix_relations_profile_object_salience;
+        DROP INDEX IF EXISTS ix_relations_profile_subject_salience;
+        DROP INDEX IF EXISTS ix_observations_profile_salience;
         """
     )

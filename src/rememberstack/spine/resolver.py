@@ -203,7 +203,8 @@ class CascadeResolver:
         decide non-identical spellings. Same-lemma pairs exercise T3 only when
         both sides of the golden pair supply distinguishing context as a
         stand-in for profile evidence; an empty-profile pair skips unsafe
-        name-only cosine and goes to T4. Returns (match, deciding_tier).
+        name-only cosine and goes to T4. T3 therefore decides only
+        context-bearing pairs. Returns (match, deciding_tier).
         """
         lemma_a = normalized_lemma(surface=surface_a)
         lemma_b = normalized_lemma(surface=surface_b)

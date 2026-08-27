@@ -126,7 +126,9 @@ exact input. If its hash changed, the paid stale vector is metered, discarded, a
 bounded limit; it is never written. The exact input hash, model, and policy are the debounce and
 staleness attestation: unchanged inputs make no provider call. Multi-entity refresh and setup
 backfill batch provider inputs to bound policy-cut downtime while retaining per-entity locked
-revalidation and exact attestations.
+revalidation and exact attestations. Salient-fact selection takes an index-backed bounded prefix
+per redirect-closure member and endpoint direction before the final entity-wide rank; no hub can
+force an unbounded OR-join or full fact-set window sort while profile locks are held.
 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
 merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same
@@ -704,6 +706,10 @@ The starting profile-vector distance cut has no accepted calibration record. The
 HAC merge is fail-closed by default: deployments may only enable it with explicit measured
 configuration, while otherwise every multi-entity proposal routes to the reversible human review
 queue. Test scenarios opt in to their synthetic measured cut explicitly.
+A missing or stale member profile is ambiguity in both directions: it can neither authorize a
+merge nor automatically split an existing merge. In particular, clearing an absorbed row's
+disposable vector must not undo a human merge; split requires vector-backed disagreement or an
+explicit audited unmerge.
 
 **Cap runaway blobs (the "black-hole guard").** Occasionally a blob balloons to thousands of
 mentions because one bad link or a generic name connected everything — almost always garbage,

@@ -586,9 +586,9 @@ class AdjudicateObservationsHandler:
             meter=meter,
             call_key=f"observation_flush:{entity_id}",
         )
-        self._profile_refresher.refresh(
+        self._profile_refresher.refresh_many(
             deployment_id=work.deployment_id,
-            entity_id=entity_id,
+            entity_ids=(entity_id,),
             meter=meter,
             call_key=f"profile:observation_flush:{entity_id}",
         )

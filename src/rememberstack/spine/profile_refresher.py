@@ -707,37 +707,68 @@ _SELECT_SALIENT_FACTS = text(
        AND child.merged_into = members.member_entity_id
        AND child.status = 'merged'
       WHERE NOT child.entity_id = ANY(members.path)
-    ), candidates AS (
+    ), observation_candidates AS (
       SELECT members.profile_entity_id, 'observation'::text AS kind,
-             o.statement AS statement, NULL::text AS subject_name,
-             NULL::uuid AS subject_entity_id, NULL::text AS predicate,
-             NULL::uuid AS object_entity_id,
-             o.evidence_count, o.updated_at,
-             o.observation_id AS fact_id
-      FROM observations o
-      JOIN identity_members members
-        ON members.member_entity_id = o.subject_entity_id
-      WHERE o.deployment_id = :deployment_id
-        AND o.invalidated_at IS NULL
-        -- Profiles deliberately admit only open-ended facts. Including a
-        -- future cap would make the exact input hash expire as wall time
-        -- passes without an evidence mutation capable of scheduling refresh.
-        AND o.valid_until IS NULL
-        AND o.evidence_count > 0
-      UNION ALL
+             observation.statement, NULL::uuid AS subject_entity_id,
+             NULL::text AS predicate, NULL::uuid AS object_entity_id,
+             observation.evidence_count, observation.updated_at,
+             observation.observation_id AS fact_id
+      FROM identity_members members
+      CROSS JOIN LATERAL (
+        SELECT o.observation_id, o.statement, o.evidence_count, o.updated_at
+        FROM observations o
+        WHERE o.deployment_id = :deployment_id
+          AND o.subject_entity_id = members.member_entity_id
+          AND o.invalidated_at IS NULL
+          -- Profiles deliberately admit only open-ended facts. Including a
+          -- future cap would make the exact input hash expire as wall time
+          -- passes without an evidence mutation capable of scheduling refresh.
+          AND o.valid_until IS NULL
+          AND o.evidence_count > 0
+        ORDER BY o.evidence_count DESC, o.updated_at DESC, o.observation_id
+        LIMIT :limit
+      ) observation
+    ), relation_candidates AS (
       SELECT DISTINCT members.profile_entity_id, 'relation'::text AS kind,
-             NULL::text AS statement, NULL::text AS subject_name,
-             r.subject_entity_id, r.predicate, r.object_entity_id,
-             r.evidence_count, r.updated_at,
-             r.relation_id AS fact_id
-      FROM relations r
-      JOIN identity_members members
-        ON members.member_entity_id = r.subject_entity_id
-        OR members.member_entity_id = r.object_entity_id
-      WHERE r.deployment_id = :deployment_id
-        AND r.invalidated_at IS NULL
-        AND r.valid_until IS NULL
-        AND r.evidence_count > 0
+             NULL::text AS statement, relation.subject_entity_id,
+             relation.predicate, relation.object_entity_id,
+             relation.evidence_count, relation.updated_at,
+             relation.relation_id AS fact_id
+      FROM identity_members members
+      CROSS JOIN LATERAL (
+        SELECT direction.relation_id, direction.subject_entity_id,
+               direction.predicate, direction.object_entity_id,
+               direction.evidence_count, direction.updated_at
+        FROM (
+          (SELECT r.relation_id, r.subject_entity_id, r.predicate,
+                  r.object_entity_id, r.evidence_count, r.updated_at
+           FROM relations r
+           WHERE r.deployment_id = :deployment_id
+             AND r.subject_entity_id = members.member_entity_id
+             AND r.invalidated_at IS NULL
+             AND r.valid_until IS NULL
+             AND r.evidence_count > 0
+           ORDER BY r.evidence_count DESC, r.updated_at DESC, r.relation_id
+           LIMIT :limit)
+          UNION ALL
+          (SELECT r.relation_id, r.subject_entity_id, r.predicate,
+                  r.object_entity_id, r.evidence_count, r.updated_at
+           FROM relations r
+           WHERE r.deployment_id = :deployment_id
+             AND r.object_entity_id = members.member_entity_id
+             AND r.invalidated_at IS NULL
+             AND r.valid_until IS NULL
+             AND r.evidence_count > 0
+           ORDER BY r.evidence_count DESC, r.updated_at DESC, r.relation_id
+           LIMIT :limit)
+        ) direction
+        ORDER BY evidence_count DESC, updated_at DESC, relation_id
+        LIMIT :limit
+      ) relation
+    ), candidates AS (
+      SELECT * FROM observation_candidates
+      UNION ALL
+      SELECT * FROM relation_candidates
     ), ranked AS (
       SELECT profile_entity_id, kind, statement, subject_entity_id, predicate,
              object_entity_id,

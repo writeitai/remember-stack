@@ -881,8 +881,19 @@ def test_entity_profile_migration_vacates_name_only_vectors() -> None:
                 ),
                 {"deployment": deployment_id},
             ).one()
+            profile_indexes = {
+                name: connection.execute(
+                    text("SELECT to_regclass(:name)"), {"name": name}
+                ).scalar_one()
+                for name in (
+                    "ix_observations_profile_salience",
+                    "ix_relations_profile_subject_salience",
+                    "ix_relations_profile_object_salience",
+                )
+            }
         assert tuple(cache) == (None, None, None, None, None)
         assert tuple(channel) == ("entity-profile-v2", False)
+        assert all(value is not None for value in profile_indexes.values())
 
         command.downgrade(config=config, revision="p9_15_0036")
         with engine.connect() as connection:
@@ -894,7 +905,14 @@ def test_entity_profile_migration_vacates_name_only_vectors() -> None:
                 ),
                 {"deployment": deployment_id},
             ).one()
+            dropped_indexes = tuple(
+                connection.execute(
+                    text("SELECT to_regclass(:name)"), {"name": name}
+                ).scalar_one()
+                for name in profile_indexes
+            )
         assert tuple(downgraded) == ("entity-canonical-name-v1", False)
+        assert dropped_indexes == (None, None, None)
     finally:
         engine.dispose()
         command.downgrade(config=config, revision="base")

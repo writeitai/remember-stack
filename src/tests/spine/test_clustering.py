@@ -48,6 +48,10 @@ class _ScriptedEntityIndex:
         """Register one scripted vector by canonical name."""
         self._vectors[str(entity_id)] = _VECTORS[canonical_name]
 
+    def discard(self, *, entity_id: UUID) -> None:
+        """Remove one profile vector to simulate an absorbed-row cache clear."""
+        self._vectors.pop(str(entity_id), None)
+
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
     ) -> dict[str, tuple[float, ...]]:
@@ -363,6 +367,40 @@ def test_uncalibrated_profile_space_routes_every_merge_to_review(
     assert report.merged == ()
     assert report.queued_for_review == 1
     assert profile_refresher.entity_ids == []
+
+
+def test_missing_absorbed_profile_never_authorizes_an_automatic_unmerge(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A cleared absorbed-row vector is ambiguity, not split evidence."""
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    survivor = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    absorbed = _arrive(engine=database_engine, index=index, name="R. Klein")
+    first = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+    assert first.merged
+    index.discard(entity_id=absorbed)
+
+    second = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert second.merged == ()
+    with database_engine.connect() as connection:
+        states = {
+            entity_id: (str(status), merged_into)
+            for entity_id, status, merged_into in connection.execute(
+                text(
+                    "SELECT entity_id, status::text, merged_into FROM entities"
+                    " WHERE entity_id = ANY(:entity_ids)"
+                ),
+                {"entity_ids": [survivor, absorbed]},
+            )
+        }
+    assert states[survivor] == ("active", None)
+    assert states[absorbed] == ("merged", survivor)
 
 
 def test_black_hole_guard_tightens_the_cut(

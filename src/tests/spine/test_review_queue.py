@@ -47,6 +47,19 @@ class _FailingProfileRefresher(RecordingProfileRefresher):
         del deployment_id, entity_ids, meter, call_key
         raise RuntimeError("provider unavailable")
 
+    def refresh_for_facts(
+        self,
+        *,
+        deployment_id: UUID,
+        relation_ids: tuple[UUID, ...],
+        observation_ids: tuple[UUID, ...],
+        meter: CostMeterPort | None = None,
+        call_key: str = "refresh_profile",
+    ) -> None:
+        """Fail every post-commit support-triage projection repair."""
+        del deployment_id, relation_ids, observation_ids, meter, call_key
+        raise RuntimeError("provider unavailable")
+
 
 def _queue(*, engine: Engine) -> ReviewQueue:
     """Compose review behavior with an observable profile projection seam."""
@@ -665,6 +678,51 @@ def test_restore_support_writes_the_currency_event_and_recounts(
     assert current is True
     assert count == 1  # support restored (lineage-distinct, D54)
     assert profile_refresher.fact_refreshes == [((relation,), ())]
+
+
+def test_committed_support_verdict_reports_failure_and_repairs_on_retry(
+    database_engine: Engine,
+) -> None:
+    """Support-triage retries repair projection without duplicating the verdict."""
+    relation, claim_id = _withdrawn_fact(engine=database_engine)
+    review_id = _queue(engine=database_engine).flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation,
+        claim_id=claim_id,
+        diff={},
+    )
+    failing = ReviewQueue(
+        engine=database_engine, profile_refresher=_FailingProfileRefresher()
+    )
+    with pytest.raises(ReviewDecisionError, match="verdict is durable"):
+        failing.decide_support_withdrawn(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="restore_support",
+            reviewer="jiri",
+        )
+
+    repaired = RecordingProfileRefresher()
+    ReviewQueue(
+        engine=database_engine, profile_refresher=repaired
+    ).decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="restore_support",
+        reviewer="jiri",
+    )
+
+    assert repaired.fact_refreshes == [((relation,), ())]
+    with database_engine.connect() as connection:
+        event_count = connection.execute(
+            text(
+                "SELECT count(*) FROM testimony_currency_events"
+                " WHERE claim_id = :claim AND reconciliation_id = :review"
+            ),
+            {"claim": claim_id, "review": review_id},
+        ).scalar_one()
+    assert event_count == 1
 
 
 def test_invalidate_fact_retires_it_with_a_recorded_adjudication(

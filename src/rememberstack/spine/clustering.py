@@ -97,6 +97,7 @@ class EntityClusterer:
                             connection=connection,
                             deployment_id=deployment_id,
                             piece=piece,
+                            vector_entity_ids=frozenset(vectors),
                         )
                     )
                 merged: list[UUID] = []
@@ -331,8 +332,8 @@ class EntityClusterer:
         """The 1-hop neighborhood, REDIRECTS INCLUDED (Codex review).
 
         Absorbed entities stay reachable through their aliases and appear as
-        members with their own vectors plus their current survivor root — so
-        a later arrival can trigger the joint re-decision that moves them.
+        members plus their current survivor root. A current profile vector can
+        support joint re-decision; its absence is ambiguity and cannot split.
         Hub-triggered 2-hop extension is a documented follow-up.
         """
         return [
@@ -348,8 +349,9 @@ class EntityClusterer:
         connection: Connection,
         deployment_id: UUID,
         piece: tuple[dict[str, object], ...],
+        vector_entity_ids: frozenset[str],
     ) -> tuple[UUID, ...]:
-        """Unmerge every merged member whose piece disagrees with its root.
+        """Unmerge merged members only on vector-backed piece disagreement.
 
         The joint decision is authoritative for the pocket: a member absorbed
         into an entity OUTSIDE its piece (or alone in a singleton piece) is
@@ -359,6 +361,8 @@ class EntityClusterer:
         piece_ids = {str(member["entity_id"]) for member in piece}
         changed: set[UUID] = set()
         for member in piece:
+            if str(member["entity_id"]) not in vector_entity_ids:
+                continue  # missing profile is ambiguity, never split evidence
             root = member.get("current_root")
             if root is None or str(root) == str(member["entity_id"]):
                 continue  # active, or its own root

@@ -50,6 +50,8 @@ def test_entity_handler_applies_global_stream_and_row_clear() -> None:
     assert "flush_entity_global_staging" in source
     assert "unit_assertions" not in source
     assert 'row["version_id"] == version_id' not in source
+    assert "_profile_refresher.refresh_many" in source
+    assert "_profile_refresher.refresh(" not in source
 
 
 def test_adjudicator_resplit_late_arrival() -> None:
