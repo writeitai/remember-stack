@@ -155,6 +155,11 @@ def test_uv_lock_and_automation_share_one_tool_version() -> None:
     required_version = pyproject["tool"]["uv"]["required-version"]
     assert required_version == "==0.12.6"
     assert "revision = 3" in (_ROOT / "uv.lock").read_text(encoding="utf-8")
+    app_dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert (
+        "ghcr.io/astral-sh/uv:0.12.6@sha256:"
+        "88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d"
+    ) in app_dockerfile
 
     for relative_path in (
         ".github/workflows/ci.yml",
