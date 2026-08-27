@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.5.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.5.0) on [PyPI](https://pypi.org/project/rememberstack/0.5.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.6.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.6.0) on [PyPI](https://pypi.org/project/rememberstack/0.6.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -96,6 +96,17 @@ Current public release: [`v0.5.0`](https://github.com/writeitai/remember-stack/r
 - Typed graph HTTP and Python SDK operations expose current and bi-temporal
   as-of traversal. The release also publishes a multi-architecture PostgreSQL
   19 Beta 3 foundation with pinned pgvector, pg_textsearch, and pg_partman.
+
+## What landed after v0.5.0 (in v0.6.0)
+
+- `fact_context` now composes lexical/vector search, referent resolution,
+  bounded live-graph expansion, and evidence hydration under one snapshot and
+  deadline. Same-name exact matches remain visible candidates rather than a
+  silent entity choice.
+- The assured-operation registry publishes the new retrieval contract as
+  operation version 2, and the bundled saved query follows the same default.
+- Graph planner settings are deployment-local and transaction-contained, with
+  migrations and readiness checks for the PostgreSQL 19 execution plans.
 
 ## Intentionally not in the library
 
