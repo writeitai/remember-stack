@@ -6,6 +6,9 @@ ARG PG_TEXTSEARCH_PATCH_SHA256=a8c97f39714ab0193c82fcda3709d3e4df54bcc7f2804fde8
 ARG PG_TEXTSEARCH_LICENSE_SHA256=d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5
 ARG PG_TEXTSEARCH_NOTICE_SHA256=ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d
 
+# The prerelease base can carry an older CA bundle than the PGDG archive's
+# current CloudFront chain. Debian remains usable when that source warns, so
+# refresh trust first and then require a clean archive update.
 RUN set -eux; \
     for pgdg_source_file in \
       /etc/apt/sources.list.d/pgdg.list \
@@ -21,8 +24,11 @@ RUN set -eux; \
     grep -R 'apt-archive.postgresql.org/pub/repos/apt' \
       /etc/apt/sources.list.d/pgdg.*; \
     apt-get update; \
+    apt-get install -y --reinstall --no-install-recommends ca-certificates; \
+    update-ca-certificates; \
+    apt-get update; \
     apt-get install -y --no-install-recommends \
-      build-essential ca-certificates curl patch postgresql-server-dev-19; \
+      build-essential curl patch postgresql-server-dev-19; \
     curl --fail --location --show-error \
       --output /tmp/pg_textsearch.tar.gz \
       "https://github.com/timescale/pg_textsearch/archive/${PG_TEXTSEARCH_REVISION}.tar.gz"; \
@@ -61,6 +67,8 @@ COPY --from=pg_textsearch_builder /src/pg_textsearch/LICENSE /usr/share/doc/pg_t
 COPY --from=pg_textsearch_builder /src/pg_textsearch/NOTICE /usr/share/doc/pg_textsearch/NOTICE
 COPY --from=pg_textsearch_builder /tmp/pg_textsearch-artifacts.sha256 /usr/share/doc/pg_textsearch/artifacts.sha256
 
+# Refresh the prerelease base's trust bundle before the archive update; package
+# signatures still provide apt's normal authenticity boundary.
 RUN set -eux; \
     for pgdg_source_file in \
       /etc/apt/sources.list.d/pgdg.list \
@@ -75,6 +83,9 @@ RUN set -eux; \
     done; \
     grep -R 'apt-archive.postgresql.org/pub/repos/apt' \
       /etc/apt/sources.list.d/pgdg.*; \
+    apt-get update; \
+    apt-get install -y --reinstall --no-install-recommends ca-certificates; \
+    update-ca-certificates; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       postgresql-19-partman=5.5.0-1.pgdg13+1 \

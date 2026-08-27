@@ -113,8 +113,18 @@ def test_postgres_image_verifies_extension_source_patch_and_license() -> None:
     assert dockerfile.count("s|http://apt.postgresql.org/pub/repos/apt|") == 2
     assert dockerfile.count("s|https://apt.postgresql.org/pub/repos/apt|") == 2
     assert dockerfile.count("trixie-pgdg-archive") == 2
+    assert (
+        dockerfile.count(
+            "apt-get install -y --reinstall --no-install-recommends ca-certificates"
+        )
+        == 2
+    )
+    assert dockerfile.count("update-ca-certificates") == 2
     runtime_stage = dockerfile.split("FROM postgres:19beta3-trixie@", maxsplit=2)[2]
     assert "apt-archive.postgresql.org/pub/repos/apt" in runtime_stage
+    assert runtime_stage.index("update-ca-certificates") < runtime_stage.rindex(
+        "apt-get update"
+    )
     assert runtime_stage.index("trixie-pgdg-archive") < runtime_stage.index(
         "postgresql-19-partman="
     )
