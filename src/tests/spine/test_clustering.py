@@ -134,6 +134,8 @@ def _arrive(*, engine: Engine, index: _ScriptedEntityIndex, name: str) -> UUID:
                 entity_id=entity_id,
                 deployment_id=_DEPLOYMENT_ID,
                 canonical_name=name,
+                profile_summary=f"Profile for {name}",
+                salient_facts=(f"Profile for {name}",),
                 vector=_VECTORS[name],
             ),
         )

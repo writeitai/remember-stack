@@ -18,7 +18,7 @@ P1_VECTOR_DIMENSIONS = 1_536
 
 CLAIM_INPUT_POLICY = "claim-text-v1"
 FACT_INPUT_POLICY = "fact-label-v1"
-ENTITY_INPUT_POLICY = "entity-canonical-name-v1"
+ENTITY_INPUT_POLICY = "entity-profile-v1"
 
 
 @runtime_checkable

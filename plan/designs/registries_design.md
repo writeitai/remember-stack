@@ -106,18 +106,23 @@ live as private derived columns on the canonical entity row (D94); there is no
 opaque reference or `p1_entity` mirror table. **T3** compares mention embeddings
 against the ready current vector on that row.
 
-They are maintained by a dedicated **profile refresher** worker: a batched micro-LLM job
-(small model; stage `refresh_profile`, component `profile_summarizer` — schema §1), versioned
-and replayable like every non-deterministic producer (D7/D12), **debounced on evidence
-change** — an entity whose relations/observations materially changed since its last profile
-build is re-summarized and re-embedded on the next batch (new entities get a first profile as
-soon as they have any evidence to summarize; until then T3/T4 fall back to alias/mention
-signals alone). Boundaries: the refresher writes **only** these two fields — never names,
-aliases, types, or status (identity belongs to resolution) — and profile staleness degrades
-inside the cascade's existing safety envelope: one global threshold set is golden-set-measured
-(D22/D96), near-misses escalate rather than auto-reject (§3), and high-blast-radius merges route
-to review regardless (§6) — a stale profile costs match quality, never an unreviewed
-catastrophic merge.
+They are maintained by the deterministic **profile refresher** composed synchronously after
+evidence mutations. There is no profile-writing LLM and no second salient-fact authority. The
+refresher evidence-ranks current supported observations and relation prose, joins a bounded
+prefix into `profile_summary`, and embeds the exact `name + summary + salient facts` input under
+`entity-profile-v1`. It holds the entity evidence lock from input selection through the vector
+write. The exact input hash, model, and policy are the debounce and staleness attestation:
+unchanged inputs make no provider call.
+
+New entities have no profile vector until they have evidence. Evidence add/recount/closure and
+D74 hard-forget invoke the same refresher; hard-forget refreshes shared survivor ids after the
+lineage scrub and before projection rebuild/verification. When no supported fact remains, the
+summary, vector, and complete attestation clear together. The resolver independently loads the
+current salient facts and reconstructs the expected summary/hash. A mismatch makes T3 see a
+missing profile and makes T4 rely on the current facts rather than stale cached prose. Thus a
+missed or queued stale refresh can cost the cheap path but cannot authorize a merge. Boundaries:
+the refresher writes only the disposable profile projection and its attestation — never names,
+aliases, status, or identity.
 
 ## 3. Resolution cascade — T0–T4, block-loose / decide-tight (D17)
 

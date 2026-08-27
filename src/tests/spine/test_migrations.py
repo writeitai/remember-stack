@@ -115,6 +115,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_13_0034",
         "p9_14_0035",
         "p9_15_0036",
+        "p9_16_0037",
     )
     assert len(script.get_heads()) == 1
 
@@ -638,7 +639,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_15_0036"
+    assert head_before_noop == head_after_noop == "p9_16_0037"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -814,6 +815,84 @@ def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
                 "Stored as surface+context so it survives re-resolution."
             ),
         }
+    finally:
+        engine.dispose()
+
+
+def test_entity_profile_migration_vacates_name_only_vectors() -> None:
+    """I.4 cuts cached names, changes policy, and keeps downgrade fail-safe."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p9_15_0036")
+    deployment_id = uuid4()
+    entity_id = uuid4()
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:deployment, 'i4-migration', 'I.4 migration', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                    " normalized_name, profile_summary, embedding, embedding_model,"
+                    " embedding_input_policy_version, embedding_text_hash) VALUES"
+                    " (:entity, :deployment, 'Jan', 'jan', 'stale profile',"
+                    " array_fill(0.5::real, ARRAY[1536])::vector, 'old-model',"
+                    " 'entity-canonical-name-v1', 'old-hash')"
+                ),
+                {"entity": entity_id, "deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO p1_search_channels (deployment_id, target, channel,"
+                    " embedding_model, embedding_dimension,"
+                    " embedding_input_policy_version, ready) VALUES"
+                    " (:deployment, 'entities', 'semantic', 'old-model', 1536,"
+                    " 'entity-canonical-name-v1', true)"
+                ),
+                {"deployment": deployment_id},
+            )
+
+        command.upgrade(config=config, revision="p9_16_0037")
+        with engine.connect() as connection:
+            cache = connection.execute(
+                text(
+                    "SELECT profile_summary, embedding, embedding_model,"
+                    " embedding_input_policy_version, embedding_text_hash"
+                    " FROM entities WHERE entity_id = :entity"
+                ),
+                {"entity": entity_id},
+            ).one()
+            channel = connection.execute(
+                text(
+                    "SELECT embedding_input_policy_version, ready"
+                    " FROM p1_search_channels WHERE deployment_id = :deployment"
+                    " AND target = 'entities' AND channel = 'semantic'"
+                ),
+                {"deployment": deployment_id},
+            ).one()
+        assert tuple(cache) == (None, None, None, None, None)
+        assert tuple(channel) == ("entity-profile-v1", False)
+
+        command.downgrade(config=config, revision="p9_15_0036")
+        with engine.connect() as connection:
+            downgraded = connection.execute(
+                text(
+                    "SELECT embedding_input_policy_version, ready"
+                    " FROM p1_search_channels WHERE deployment_id = :deployment"
+                    " AND target = 'entities' AND channel = 'semantic'"
+                ),
+                {"deployment": deployment_id},
+            ).one()
+        assert tuple(downgraded) == ("entity-canonical-name-v1", False)
     finally:
         engine.dispose()
         command.downgrade(config=config, revision="base")

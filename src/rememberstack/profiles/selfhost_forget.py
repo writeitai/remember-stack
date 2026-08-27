@@ -13,6 +13,8 @@ from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
 from rememberstack.model import ForgetManifest
 from rememberstack.model import PipelineStage
+from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ProjectionCatalog
@@ -50,6 +52,8 @@ class SelfHostHardForget:
         cls,
         *,
         engine: Engine,
+        model_provider: ModelProviderPort,
+        embedding_model: str,
         manifest_root: Path,
         object_roots: tuple[Path, ...],
         snapshot_root: Path,
@@ -78,9 +82,18 @@ class SelfHostHardForget:
         service = HardForgetService(
             catalog=catalog, manifest_store=manifest_store, k_git=k_git
         )
+        profile_refresher = EntityProfileRefresher(
+            engine=engine,
+            model_provider=model_provider,
+            embedding_model=embedding_model,
+        )
         handler = HardForgetHandler(
             catalog=catalog,
-            deletion=DeletionService(catalog=LifecycleCatalog(engine=engine)),
+            deletion=DeletionService(
+                catalog=LifecycleCatalog(engine=engine),
+                profile_refresher=profile_refresher,
+            ),
+            profile_refresher=profile_refresher,
             object_purgers=object_purgers,
             projection_rebuilder=ProjectionPairForgetRebuilder(
                 graph=GraphRebuildWorker(

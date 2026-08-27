@@ -667,12 +667,16 @@ def test_ranked_search_never_crosses_deployments(
                 entity_id=first_entity,
                 deployment_id=_DEPLOYMENT_ID,
                 canonical_name="Aster",
+                profile_summary="Aster is a bank",
+                salient_facts=("Aster is a bank",),
                 vector=_vector(axis=1),
             ),
             P1EntityRow(
                 entity_id=other_entity,
                 deployment_id=_OTHER_DEPLOYMENT_ID,
                 canonical_name="Nearest foreign row",
+                profile_summary="Nearest foreign row is a control entity",
+                salient_facts=("Nearest foreign row is a control entity",),
                 vector=_vector(axis=0),
             ),
         )

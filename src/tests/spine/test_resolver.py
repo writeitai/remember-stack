@@ -26,6 +26,7 @@ from rememberstack.model import ResolutionThresholds
 from rememberstack.model import ResolverConfig
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.entity_registry import normalized_lemma
@@ -516,6 +517,72 @@ def test_missing_profile_vector_escalates_to_t4(database_engine: Engine) -> None
     assert drifted.entity_id == minted.entity_id
 
 
+def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
+    database_engine: Engine,
+) -> None:
+    """WP-I.4: profile text drives T3 and precedes the T4 identity question."""
+    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    resolver = _resolver(engine=database_engine, provider=provider)
+    minted = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="KB Bank"),
+        claim=_claim(claim_text="KB Bank opened its Prague branch."),
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity,"
+                " 'KB Bank is a bank licensed by CNB', 2, 'profile-test')"
+            ),
+            {
+                "observation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": minted.entity_id,
+            },
+        )
+    EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="qwen/qwen3-embedding-8b",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=minted.entity_id)
+
+    resolved = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="KB Banc"),
+        claim=_claim(claim_text="KB Banc is a bank serving Prague."),
+    )
+
+    assert resolved.entity_id == minted.entity_id
+    assert provider.embedded_texts[-1] == (
+        "ENTITY: KB Banc\nCLAIM CONTEXT: KB Banc is a bank serving Prague."
+    )
+    prompt = provider.generated_prompts[-1]
+    assert "CANDIDATE PROFILE: KB Bank is a bank licensed by CNB" in prompt
+    assert "CANDIDATE FACTS:\n- KB Bank is a bank licensed by CNB" in prompt
+    assert prompt.index("CANDIDATE FACTS:") < prompt.index("Same real-world entity?")
+
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE observations SET statement = 'KB Bank is based in Prague',"
+                " updated_at = now() WHERE subject_entity_id = :entity"
+            ),
+            {"entity": minted.entity_id},
+        )
+    embedded_before = len(provider.embedded_texts)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="KB Banque"),
+        claim=_claim(claim_text="KB Banque is based in Prague."),
+    )
+    stale_prompt = provider.generated_prompts[-1]
+    assert len(provider.embedded_texts) == embedded_before
+    assert "CANDIDATE PROFILE: (none)" in stale_prompt
+    assert "CANDIDATE FACTS:\n- KB Bank is based in Prague" in stale_prompt
+
+
 def test_source_and_canonical_aliases_on_mint_and_replay(
     database_engine: Engine,
 ) -> None:
@@ -693,6 +760,7 @@ def _normalize_through_shipped_resolver(
         created_relations=created,
         observations_by_entity={},
         staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=_DEPLOYMENT_ID,
         claim=_claim(claim_text=claim_text),
         predicates={"related_to": None},

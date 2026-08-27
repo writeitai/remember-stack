@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.core.entity_profile_input import entity_profile_embedding_input
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
@@ -318,6 +319,7 @@ class PostgresP1Index:
         statement = text(
             """
             UPDATE entities SET
+              profile_summary = :profile_summary,
               embedding = CAST(:embedding AS vector),
               embedding_model = :model,
               embedding_input_policy_version = :policy,
@@ -335,7 +337,14 @@ class PostgresP1Index:
                         "embedding": _vector_literal(row.vector),
                         "model": self._embedding_model,
                         "policy": ENTITY_INPUT_POLICY,
-                        "text_hash": embedding_text_hash(row.canonical_name),
+                        "text_hash": embedding_text_hash(
+                            entity_profile_embedding_input(
+                                canonical_name=row.canonical_name,
+                                profile_summary=row.profile_summary,
+                                salient_facts=row.salient_facts,
+                            )
+                        ),
+                        "profile_summary": row.profile_summary,
                         "deployment_id": row.deployment_id,
                         "entity_id": row.entity_id,
                         "canonical_name": row.canonical_name,

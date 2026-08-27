@@ -30,6 +30,7 @@ from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.entity_eligibility import is_bare_head_noun
@@ -113,17 +114,19 @@ class NormalizeRelationsHandler:
         resolver: CascadeResolver,
         facts: FactCatalog,
         observation_adjudicator: ObservationAdjudicator,
+        profile_refresher: ProfileRefresherPort,
         model_provider: ModelProviderPort,
         settings: E3Settings,
         chunker_version: str,
     ) -> None:
-        """Bind the handler to its catalogs, registry, provider, and generation."""
+        """Bind the handler to its catalogs, profile projection, and provider."""
         self._claim_catalog = claim_catalog
         self._chunk_catalog = chunk_catalog
         self._registry = registry
         self._resolver = resolver
         self._facts = facts
         self._observation_adjudicator = observation_adjudicator
+        self._profile_refresher = profile_refresher
         self._model_provider = model_provider
         self._settings = settings
         self._chunker_version = chunker_version
@@ -203,15 +206,23 @@ class NormalizeRelationsHandler:
         predicates = self._facts.active_predicates(deployment_id=deployment_id)
         prompt_lines = self._facts.predicate_prompt_lines(deployment_id=deployment_id)
         staged_observations: list[tuple[UUID, ObservationAssertion]] = []
+        profile_entity_ids: set[UUID] = set()
         self._normalize_claim(
             created_relations=[],  # claim grain does not collect for payload
             observations_by_entity={},
             staged_observations=staged_observations,
+            profile_entity_ids=profile_entity_ids,
             deployment_id=deployment_id,
             claim=claim,
             predicates=predicates,
             prompt_lines=prompt_lines,
             meter=meter,
+        )
+        self._profile_refresher.refresh_many(
+            deployment_id=deployment_id,
+            entity_ids=tuple(profile_entity_ids),
+            meter=meter,
+            call_key=f"profile:normalize:{claim_id}",
         )
         # Stage under every version that currently lists this claim (D56). A
         # shared claim work row may complete with one payload while siblings
@@ -277,6 +288,7 @@ class NormalizeRelationsHandler:
             claim_ids=tuple(claim.claim_id for claim in claims)
         )
         observations_by_entity: dict[UUID, list[ObservationAssertion]] = {}
+        profile_entity_ids: set[UUID] = set()
         for claim in claims:
             if claim.claim_id in normalized_claim_ids:
                 continue
@@ -284,6 +296,7 @@ class NormalizeRelationsHandler:
                 created_relations=created_relations,
                 observations_by_entity=observations_by_entity,
                 staged_observations=None,
+                profile_entity_ids=profile_entity_ids,
                 deployment_id=deployment_id,
                 claim=claim,
                 predicates=predicates,
@@ -300,6 +313,13 @@ class NormalizeRelationsHandler:
                 meter=meter,
                 call_key=f"observation:{entity_id}",
             )
+            profile_entity_ids.add(entity_id)
+        self._profile_refresher.refresh_many(
+            deployment_id=deployment_id,
+            entity_ids=tuple(profile_entity_ids),
+            meter=meter,
+            call_key=f"profile:normalize:{work.target_id}",
+        )
         return HandlerOutcome(
             follow_up=self._terminal_branches(
                 work=work, doc_id=source.doc_id, relation_ids=tuple(created_relations)
@@ -350,6 +370,7 @@ class NormalizeRelationsHandler:
         created_relations: list[str],
         observations_by_entity: dict[UUID, list[ObservationAssertion]],
         staged_observations: list[tuple[UUID, ObservationAssertion]] | None,
+        profile_entity_ids: set[UUID],
         deployment_id: UUID,
         claim: ClaimForNormalization,
         predicates: dict[str, str | None],
@@ -427,6 +448,7 @@ class NormalizeRelationsHandler:
             )
             if upserted.created:
                 created_relations.append(str(upserted.relation_id))
+            profile_entity_ids.update((subject.entity_id, object_.entity_id))
         for observation_index, observation in enumerate(response.observations):
             if is_bare_head_noun(name=observation.subject.name):
                 _logger.warning(
@@ -513,13 +535,15 @@ class AdjudicateObservationsHandler:
         *,
         facts: FactCatalog,
         observation_adjudicator: ObservationAdjudicator,
+        profile_refresher: ProfileRefresherPort,
         chunk_catalog: ChunkCatalog,
         claim_catalog: ClaimCatalog,
         chunker_version: str,
     ) -> None:
-        """Bind catalogs for staging load and claim-set discovery."""
+        """Bind catalogs, adjudicator, profile projection, and claim discovery."""
         self._facts = facts
         self._observation_adjudicator = observation_adjudicator
+        self._profile_refresher = profile_refresher
         self._chunk_catalog = chunk_catalog
         self._claim_catalog = claim_catalog
         self._chunker_version = chunker_version
@@ -561,6 +585,12 @@ class AdjudicateObservationsHandler:
             subject_entity_id=entity_id,
             meter=meter,
             call_key=f"observation_flush:{entity_id}",
+        )
+        self._profile_refresher.refresh(
+            deployment_id=work.deployment_id,
+            entity_id=entity_id,
+            meter=meter,
+            call_key=f"profile:observation_flush:{entity_id}",
         )
         raw_doc_id = unit.get("doc_id")
         doc_id = UUID(str(raw_doc_id)) if raw_doc_id is not None else None
@@ -641,6 +671,12 @@ class AdjudicateObservationsHandler:
                     "normalizer_version": normalizer_version,
                 },
             )
+        self._profile_refresher.refresh_many(
+            deployment_id=work.deployment_id,
+            entity_ids=tuple(by_entity),
+            meter=meter,
+            call_key=f"profile:observation_flush:{version_uuid}",
+        )
         # D90: do not version-wide clear (would wipe peer entity progress under
         # mixed cutover). Residual rows remain for ops / entity units.
         chunks = self._chunk_catalog.chunks_for_embedding(

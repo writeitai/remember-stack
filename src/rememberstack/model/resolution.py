@@ -26,6 +26,8 @@ class ResolutionCandidate(BaseModel):
     blocking_tier: _NonEmpty  # T0 | T1 | T2
     trigram_score: float | None = None
     embedding_score: _Unit | None = None
+    profile_summary: str | None = None
+    salient_facts: tuple[str, ...] = ()
 
 
 class ResolutionThresholds(BaseModel):
@@ -73,4 +75,6 @@ class P1EntityRow(BaseModel):
     entity_id: UUID
     deployment_id: UUID
     canonical_name: _NonEmpty
+    profile_summary: _NonEmpty
+    salient_facts: Annotated[tuple[_NonEmpty, ...], Field(min_length=1)]
     vector: Annotated[tuple[float, ...], Field(min_length=1)]

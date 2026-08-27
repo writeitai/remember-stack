@@ -16,6 +16,7 @@ from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.ports.cost_meter import CostMeterPort
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.knowledge_driver import KnowledgeCommitDriver
@@ -166,6 +167,7 @@ class HardForgetHandler:
         *,
         catalog: ForgetCatalog,
         deletion: DeletionService,
+        profile_refresher: ProfileRefresherPort,
         object_purgers: tuple[ObjectPurgePort, ...],
         projection_rebuilder: ForgetProjectionRebuilder,
         projection_purger: ProjectionPurgePort,
@@ -177,6 +179,7 @@ class HardForgetHandler:
             raise ValueError("hard-forget requires at least one object-store purger")
         self._catalog = catalog
         self._deletion = deletion
+        self._profile_refresher = profile_refresher
         self._object_purgers = object_purgers
         self._projection_rebuilder = projection_rebuilder
         self._projection_purger = projection_purger
@@ -185,20 +188,27 @@ class HardForgetHandler:
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Honor every idempotent stage in order and reopen only after verification."""
-        del meter
         forget_id = _forget_id(work=work)
         manifest = self._catalog.manifest_for(
             deployment_id=work.deployment_id, forget_id=forget_id
         )
-        self.honor(manifest=manifest)
+        self.honor(manifest=manifest, meter=meter)
         return HandlerOutcome()
 
-    def honor(self, *, manifest: ForgetManifest) -> None:
+    def honor(
+        self, *, manifest: ForgetManifest, meter: CostMeterPort | None = None
+    ) -> None:
         """Run the shared purge path used by both the worker and readiness replay."""
         self._deletion.delete_lineage(
             deployment_id=manifest.deployment_id, doc_id=manifest.doc_id
         )
         self._catalog.scrub_postgres(manifest=manifest)
+        self._profile_refresher.refresh_many(
+            deployment_id=manifest.deployment_id,
+            entity_ids=manifest.resolved_entity_ids,
+            meter=meter,
+            call_key=f"profile:hard_forget:{manifest.forget_id}",
+        )
         for purger in self._object_purgers:
             purger.purge_objects(keys=manifest.object_keys, prefixes=())
         self._projection_rebuilder.rebuild_without_lineage(

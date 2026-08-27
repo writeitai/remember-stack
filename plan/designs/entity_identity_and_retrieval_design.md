@@ -172,6 +172,17 @@ built from.
   statements, not a type filter. Boolean lists are only as sharp as
   the observations. That is accepted.
 
+The as-built starting refresher is deterministic: it evidence-ranks a
+bounded set of current supported observation statements and canonical
+relation prose, joins the leading statements into `profile_summary`, and
+embeds `name + summary + salient facts` under `entity-profile-v1`. It is
+composed synchronously after evidence add/recount/closure and after the D74
+lineage scrub. The exact text hash debounces unchanged evidence. Resolution
+reconstructs the expected summary/hash from current facts; stale or missing
+attestation disables T3 and T4 still receives the current salient statements.
+No queued stale snapshot can overwrite newer evidence because selection and
+write share the entity evidence lock.
+
 Production `_T4_PROMPT` includes:
 
 ```text
@@ -422,7 +433,7 @@ Minimum rows:
 | `CascadeResolver.resolve` | T0 lists distinct entity ids, never auto-accepts; T3 may accept with profile; T4 if empty/conflict/many; same lemma may mint; no type argument |
 | `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
-| Profile refresher | rewrite `profile_summary` from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
+| Profile refresher | deterministic current-fact projection under `entity-profile-v1`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |

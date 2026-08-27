@@ -41,6 +41,7 @@ from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
@@ -271,6 +272,11 @@ class _ApiRig:
             ),
         )
         facts = FactCatalog(engine=engine)
+        profile_refresher = EntityProfileRefresher(
+            engine=engine,
+            model_provider=self.provider,
+            embedding_model=P1Settings().embedding_model,
+        )
         obs_adjudicator = ObservationAdjudicator(
             engine=engine, model_provider=self.provider, settings=ObservationSettings()
         )
@@ -290,6 +296,7 @@ class _ApiRig:
                 ),
                 facts=facts,
                 observation_adjudicator=obs_adjudicator,
+                profile_refresher=profile_refresher,
                 model_provider=self.provider,
                 settings=E3Settings(),
                 chunker_version=generation,
@@ -300,6 +307,7 @@ class _ApiRig:
             handler=AdjudicateObservationsHandler(
                 facts=facts,
                 observation_adjudicator=obs_adjudicator,
+                profile_refresher=profile_refresher,
                 chunk_catalog=chunk_catalog,
                 claim_catalog=claim_catalog,
                 chunker_version=generation,
@@ -331,6 +339,7 @@ class _ApiRig:
             handler=ReconcileHandler(
                 catalog=LifecycleCatalog(engine=engine),
                 review_queue=ReviewQueue(engine=engine),
+                profile_refresher=profile_refresher,
                 chunker_version=generation,
             ),
         )

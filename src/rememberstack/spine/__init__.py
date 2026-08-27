@@ -32,6 +32,8 @@ from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.operations import error_class_from_traceback
 from rememberstack.spine.operations import OperationalCatalog
 from rememberstack.spine.operations import OperationalSettings
+from rememberstack.spine.profile_refresher import EntityProfileRefresher
+from rememberstack.spine.profile_refresher import ProfileRefreshResult
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.resolver import CascadeResolver
@@ -56,6 +58,7 @@ __all__ = (
     "install_pack",
     "ADJUDICATOR_VERSION",
     "CascadeResolver",
+    "EntityProfileRefresher",
     "SupersessionAdjudicator",
     "SupersessionSettings",
     "SyncCatalog",
@@ -63,6 +66,7 @@ __all__ = (
     "ForgetCatalog",
     "OBSERVATION_ADJUDICATOR_VERSION",
     "ObservationAdjudicator",
+    "ProfileRefreshResult",
     "ObservationSettings",
     "OperationalCatalog",
     "OperationalSettings",

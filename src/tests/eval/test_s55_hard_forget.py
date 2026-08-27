@@ -6,6 +6,7 @@ from datetime import timezone
 from typing import cast
 from uuid import UUID
 
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetManifest
@@ -195,6 +196,7 @@ def _readiness(*, state: _ServingState) -> tuple[HardForgetReadiness, _Catalog]:
     handler = HardForgetHandler(
         catalog=cast(ForgetCatalog, catalog),
         deletion=cast(DeletionService, _Deletion()),
+        profile_refresher=RecordingProfileRefresher(),
         object_purgers=(cast(ObjectPurgePort, _Objects(state=state)),),
         projection_rebuilder=cast(
             ForgetProjectionRebuilder, _ProjectionRebuilder(state=state)

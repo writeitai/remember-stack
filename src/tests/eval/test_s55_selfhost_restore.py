@@ -14,6 +14,7 @@ from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import ObjectAlreadyExistsError
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetManifest
@@ -215,6 +216,7 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
     handler = HardForgetHandler(
         catalog=cast(ForgetCatalog, catalog),
         deletion=cast(DeletionService, _Deletion()),
+        profile_refresher=RecordingProfileRefresher(),
         object_purgers=(objects,),
         projection_rebuilder=cast(ForgetProjectionRebuilder, _ProjectionRebuilder()),
         projection_purger=SelfHostProjectionPurger(

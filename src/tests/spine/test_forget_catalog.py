@@ -16,11 +16,14 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ForgetManifest
 from rememberstack.model import ForgetManifestStatus
 from rememberstack.ports import ForgetManifestPort
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import HardForgetHandler
@@ -217,6 +220,72 @@ def test_inventory_scrub_and_verification_preserve_independent_evidence(
     assert record is not None
     assert record.status is ForgetManifestStatus.COMPLETE
     _assert_scrubbed_and_control_survives(engine=seeded_engine)
+
+
+def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
+    seeded_engine: Engine,
+) -> None:
+    """WP-I.4/D74: shared identity keeps remaining facts, never stale prose."""
+    old_input = f"Shared\n{_TOKEN}\nshared observation"
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET profile_summary = :summary,"
+                " embedding = array_fill(0.75::real, ARRAY[1536])::vector,"
+                " embedding_model = 'profile-test',"
+                " embedding_input_policy_version = 'entity-profile-v1',"
+                " embedding_text_hash = :hash"
+                " WHERE deployment_id = :deployment AND entity_id = :entity"
+            ),
+            {
+                "summary": f"{_TOKEN}; shared observation",
+                "hash": embedding_text_hash(old_input),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": _SHARED_ENTITY_ID,
+            },
+        )
+    catalog = ForgetCatalog(engine=seeded_engine)
+    catalog.prepare(
+        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
+    )
+    manifest = catalog.inventory_and_store_manifest(
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=_TARGET_DOC_ID,
+        forget_id=_FORGET_ID,
+        requested_at=_NOW,
+    )
+    catalog.accept_and_enqueue(manifest=manifest)
+    catalog.scrub_postgres(manifest=manifest)
+    provider = FakeModelProvider()
+    refresh = EntityProfileRefresher(
+        engine=seeded_engine, model_provider=provider, embedding_model="profile-test"
+    ).refresh_many(
+        deployment_id=_DEPLOYMENT_ID,
+        entity_ids=manifest.resolved_entity_ids,
+        call_key=f"profile:hard_forget:{_FORGET_ID}",
+    )
+    catalog.verify_postgres_scrubbed(manifest=manifest)
+
+    shared = next(item for item in refresh if item.entity_id == _SHARED_ENTITY_ID)
+    assert shared.has_evidence and shared.updated
+    assert _TOKEN not in shared.salient_facts
+    assert provider.embedded_texts
+    assert all(_TOKEN not in profile_input for profile_input in provider.embedded_texts)
+    with seeded_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT profile_summary, embedding IS NOT NULL,"
+                " embedding_input_policy_version, embedding_text_hash"
+                " FROM entities WHERE deployment_id = :deployment"
+                " AND entity_id = :entity"
+            ),
+            {"deployment": _DEPLOYMENT_ID, "entity": _SHARED_ENTITY_ID},
+        ).one()
+    assert _TOKEN not in str(row.profile_summary)
+    assert "shared observation" in str(row.profile_summary)
+    assert row[1] is True
+    assert row.embedding_input_policy_version == "entity-profile-v1"
+    assert row.embedding_text_hash != embedding_text_hash(old_input)
 
 
 def test_readiness_rehonors_manifest_after_old_postgres_restore(

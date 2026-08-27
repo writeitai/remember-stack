@@ -795,6 +795,7 @@ class SelfHostProfile:
         from rememberstack.spine import ChunkCatalog
         from rememberstack.spine import ClaimCatalog
         from rememberstack.spine import DocumentCatalog
+        from rememberstack.spine import EntityProfileRefresher
         from rememberstack.spine import EntityRegistry
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
@@ -830,6 +831,11 @@ class SelfHostProfile:
         facts = FactCatalog(engine=self._engine)
 
         p1_settings = P1Settings.model_validate({})
+        profile_refresher = EntityProfileRefresher(
+            engine=self._engine,
+            model_provider=self._model_provider,
+            embedding_model=p1_settings.embedding_model,
+        )
         index = PostgresP1Index(
             engine=self._engine, embedding_model=p1_settings.embedding_model
         )
@@ -897,6 +903,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=observation_settings,
                 ),
+                profile_refresher=profile_refresher,
                 model_provider=self._model_provider,
                 settings=E3Settings.model_validate({}),
                 chunker_version=chunk_generation,
@@ -910,6 +917,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=observation_settings,
                 ),
+                profile_refresher=profile_refresher,
                 chunk_catalog=chunks,
                 claim_catalog=claims,
                 chunker_version=chunk_generation,
@@ -939,6 +947,7 @@ class SelfHostProfile:
             return ReconcileHandler(
                 catalog=LifecycleCatalog(engine=self._engine),
                 review_queue=ReviewQueue(engine=self._engine),
+                profile_refresher=profile_refresher,
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.LABEL_RELATION:
