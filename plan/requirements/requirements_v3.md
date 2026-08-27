@@ -223,8 +223,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   **pgvector** (semantic indexes; reference Qwen profile fixed at 1,536
   dimensions) and **pg_textsearch** (BM25). Pgvectorscale
   remains an unchosen future proposal, not a baseline dependency or automatic
-  default (D94). Fixed one/two-hop graph patterns use SQL/PGQ; bounded recursive
-  SQL supplies variable and shortest traversal. There is no Ladybug/P2 graph
+  default (D94). Fixed one-hop graph patterns use SQL/PGQ; bounded recursive SQL
+  supplies depth-two, variable, and shortest traversal. There is no Ladybug/P2 graph
   data snapshot (D98).
 - Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**
   principle.

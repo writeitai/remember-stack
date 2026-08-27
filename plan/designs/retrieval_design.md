@@ -1,8 +1,8 @@
 # Retrieval Design — the Query Machine
 
 > **Binding D98 amendment (2026-08-27).** The graph channel reads live
-> PostgreSQL authority views. Fixed one/two-hop server statements use SQL/PGQ;
-> variable neighborhoods, entity paths, and citation paths use bounded
+> PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;
+> depth-two/variable neighborhoods, entity paths, and citation paths use bounded
 > recursive SQL. There is no Ladybug reader, P2 snapshot/generation,
 > `built_at`, local graph file, or nominate-then-drop graph hydration boundary.
 > A compound assured read uses one bounded `REPEATABLE READ, READ ONLY`

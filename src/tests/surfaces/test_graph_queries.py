@@ -376,17 +376,19 @@ def _path_rows(rows: Iterable[RowMapping]) -> list[tuple[object, object, object]
 
 
 def test_sql_pgq_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None:
-    """A fixed two-hop read sees authority immediately and discloses paging."""
+    """A one-hop PGQ read sees authority immediately and discloses paging."""
     ids = graph.ids  # type: ignore[attr-defined]
-    full = graph.neighborhood(entity_id=ids["Acme"], hops=2)
-    assert {"Alice", "Bob", "Beacon"} <= _names(full)
+    full = graph.neighborhood(entity_id=ids["Acme"], hops=1)
+    assert {"Alice", "Bob"} <= _names(full)
     assert full.freshness.pg_live_ts is not None
     assert full.truncation is not None and full.truncation.truncated is False
-    first = graph.neighborhood(entity_id=ids["Acme"], hops=2, limit=1)
+    first = graph.neighborhood(entity_id=ids["Acme"], hops=1, limit=1)
     assert first.truncation is not None and first.truncation.continuation is not None
+    assert first.truncation.truncated is True
+    assert first.truncation.reason == "result_budget"
     second = graph.neighborhood(
         entity_id=ids["Acme"],
-        hops=2,
+        hops=1,
         limit=1,
         continuation=first.truncation.continuation,
     )

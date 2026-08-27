@@ -238,7 +238,8 @@ half-open clock predicates on every matched edge. The result is relational and
 may join authority tables for hydration in the same statement.
 
 The one-hop neighborhood is the deliberate dual-implementation seam. The
-recursive/frontier result contract is canonical. The SQL/PGQ query must:
+recursive/frontier result contract is canonical. The PGQ statement and its
+bounded server-side result fold together must:
 
 1. match only semantic `relates` edges, exactly like the frontier helper; the
    mention and document-cross-reference labels in the same property graph are
@@ -246,11 +247,16 @@ recursive/frontier result contract is canonical. The SQL/PGQ query must:
 2. treat semantic discovery as undirected while retaining stored edge
    direction;
 3. exclude the anchor as a returned neighbor;
-4. choose the minimum hop for a node and then the lexicographically smallest
-   relation-id path;
-5. deduplicate nodes, edges, and paths exactly as the canonical helper does;
-6. apply the same predicate/time filters, deterministic ordering, returned
-   edge cap, expansion budget, and truncation disclosure.
+4. have PGQ return the admitted one-hop edge set with predicate/time filters;
+5. have the server choose the lexicographically smallest relation-id
+   representative per endpoint, then order and page those identifiers;
+6. disclose the same returned-edge cap, expansion budget, and truncation state
+   as the canonical helper.
+
+PostgreSQL 19's default is repeatable-elements matching. The one-hop statement
+therefore keeps anchor exclusion (`y.entity_id <> x.entity_id`) in the
+graph-pattern `WHERE` after the complete `MATCH`, where cross-element
+comparisons are valid.
 
 Because PG19 has no inside-match work counter, each fixed PGQ operation begins
 with a separate static, indexed, tenant-and-anchor-first relational guard in

@@ -165,7 +165,7 @@ JOIN entities AS terminal
  AND terminal.entity_id = c.cur
  AND terminal.merged_into IS NULL;  -- only a terminated chain resolves
 COMMENT ON VIEW v_memory_entity_survivor IS
-  'Private merge-redirect resolution: maps an entity id to the terminal survivor of its merged_into chain. Resolution is fail-closed because acyclicity is not schema-enforced: a chain that does not reach an unmerged entity within the depth bound — a cycle, an over-long chain, or a redirect to a missing row — yields no row at all, so the entity is absent from every survivor-joined relation rather than being exposed as its own survivor. Not part of memory_v1 and never granted to a query role.';
+  'Private merge-redirect resolution: maps an entity id to the terminal survivor of its merged_into chain. Resolution is fail-closed because acyclicity is not schema-enforced: a chain that does not reach an unmerged entity within the depth bound — a cycle, an over-long chain, or a redirect to a missing row — yields no row at all, so the entity is absent from every survivor-joined relation rather than being exposed as its own survivor. Not part of memory_v1 and never granted to a deployment query role; a bounded internal graph role may receive exact-column read access.';
 """
 
 # ── E0 content surface ────────────────────────────────────────────────────

@@ -2,8 +2,8 @@
 
 > **Binding D98 amendment (2026-08-27).** The architecture has no LadybugDB or
 > physical P2 graph projection. PostgreSQL 19 serves a live property graph over
-> authority views: SQL/PGQ handles fixed one/two-hop patterns and bounded
-> recursive SQL handles variable/shortest traversal. P1 remains PostgreSQL
+> authority views: SQL/PGQ handles fixed one-hop patterns and bounded recursive
+> SQL handles depth-two, variable, and shortest traversal. P1 remains PostgreSQL
 > search and P3 remains the corpus filesystem projection. The implementation
 > contract is [`p2_graph_design.md`](p2_graph_design.md). The three **product planes** E/K/P
 > remain; “P2” is no longer a physical store within plane P.
@@ -166,8 +166,8 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
   or changes a principle; citations, watches, review flags, and dispatch keep it connected to
   changing evidence without rewriting it. E3 remains the system's current fact state.
 - **Live graph**: PostgreSQL 19 property graphs over normalized authority views
-  serve fixed one/two-hop SQL/PGQ; deployment-scoped, work-bounded frontier
-  traversal serves variable/shortest paths. There is no copied graph data,
+  serve fixed one-hop SQL/PGQ; deployment-scoped, work-bounded frontier
+  traversal serves depth-two, variable, and shortest paths. There is no copied graph data,
   generation, build, or reader swap (D98). Full design: `p2_graph_design.md`.
 - **P1**: written inline by plane E (see §4); batch rebuild path exercised for embedding
   migrations and drills.

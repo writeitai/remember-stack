@@ -17,8 +17,8 @@ store:
   structural edges.
 - A PostgreSQL 19 property graph declares graph labels and properties over the
   existing live views. It copies no rows and can be queried with SQL/PGQ.
-- Fixed one- and two-hop graph shapes use SQL/PGQ in the cutover architecture.
-- Variable-length neighborhoods and shortest paths use new deployment-scoped,
+- Fixed one-hop graph shapes use SQL/PGQ in the cutover architecture.
+- Depth-two and variable-length neighborhoods and shortest paths use new deployment-scoped,
   work-bounded frontier traversal functions until PostgreSQL implements
   quantified paths and shortest-path modes. The existing recursive helpers
   prove temporal semantics but are not retained implementations.

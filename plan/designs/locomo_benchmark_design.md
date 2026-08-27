@@ -68,7 +68,7 @@ Cypher tools and every P2 build/readiness/snapshot input. The complete answer
 catalog now contains four assured operations, seven direct primitives, seven
 open-query operations, and three P3 motions: **21 descriptors**. Graph questions
 use `graph_path`, `graph_neighborhood`, typed live-graph operations, or saved SQL;
-server-owned fixed one/two-hop execution exercises SQL/PGQ behind those
+server-owned fixed one-hop execution exercises SQL/PGQ behind those
 contracts. Readiness pins PostgreSQL 19, the exact property-graph semantic
 catalog and grants, helper versions, traversal budgets, and empty-deployment
 execution. A separate isolated benchmark preflight proves immediate visibility

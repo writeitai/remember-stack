@@ -69,15 +69,14 @@ data directory across prerelease versions.
    rewrite specified by the open-query design, including a status-only carrier
    for empty caller results. Citation
    traversal is directed.
-3. Add static, parameterized one- and two-hop SQL/PGQ statements in a small
-   typed module for current and as-of (`memory_history`) shapes. Specify anchor
-   and cycle exclusion, dedup, minimum-hop/lexicographic path selection,
-   budgets, and truncation so depths one/two are byte-identical to canonical
-   frontier results. Put cross-element UUID exclusions only in the graph-pattern
-   `WHERE` after the full `MATCH`. Execute a separate static
-   deployment/anchor-first indexed degree guard in the same transaction and
-   branch before sending `GRAPH_TABLE`, stopping each fixed level at
-   `expansion_budget + 1`; PG19 has no inside-match work counter and planner
+3. Add a static, parameterized one-hop SQL/PGQ statement in a small typed module
+   for current and as-of (`memory_history`) shapes. Specify anchor exclusion,
+   dedup, lexicographic representative selection, budgets, and truncation so
+   depth one is byte-identical to the canonical frontier result. Put the
+   cross-element UUID exclusion only in the graph-pattern `WHERE` after the full
+   `MATCH`. Execute a separate static deployment/anchor-first indexed degree
+   guard in the same transaction and branch before sending `GRAPH_TABLE`,
+   stopping at `expansion_budget + 1`; PG19 has no inside-match work counter and planner
    short-circuit is not an admission boundary. The admitted PGQ uses PG19's
    implicit comma-join correlation—never an explicit `LATERAL` keyword. No SQL
    text generation and no arbitrary PGQ admission.
@@ -210,8 +209,8 @@ data directory across prerelease versions.
    tenant-isolated chains, cycles, a high-degree hub (separate over-budget
    contracts, not byte parity), invalid direct plus valid
    longer route, historical intervals, mention edges, and citation chains.
-2. Capture `EXPLAIN (ANALYZE, BUFFERS)` for PGQ one/two-hop and frontier
-   two/four-hop, shortest path, and citation path. Fail on an unanchored tenant
+2. Capture `EXPLAIN (ANALYZE, BUFFERS)` for PGQ one-hop and frontier two/four-hop,
+   shortest path, and citation path. Fail on an unanchored tenant
    relation scan, any expansion beyond the declared work budget, or unexpected
    temp spill at representative target scale.
 3. Run bounded concurrent graph reads with authority writes, HNSW, and BM25.

@@ -32,8 +32,6 @@ from rememberstack.model import GraphPath
 from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import Truncation
-from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 
@@ -132,7 +130,6 @@ class GraphQueries:
                 "expansion_budget": DEFAULT_EXPANSION_BUDGET,
                 "frontier_budget": DEFAULT_FRONTIER_BUDGET,
                 "time_budget_ms": DEFAULT_TIME_BUDGET_MS,
-                "use_current_graph": valid_at is None and believed_at is None,
             }
             if hops == 1:
                 parameters.update({"anchor_id": entity_id, "result_offset": offset})
@@ -524,15 +521,10 @@ def _shallow_neighborhood_rows(
     *, connection: Connection, parameters: dict[str, object]
 ) -> list[RowMapping]:
     """Run the relational guard, and execute PGQ only after explicit admission."""
-    use_current_graph = cast(bool, parameters.get("use_current_graph", False))
-    guard_statement = (
-        CURRENT_NEIGHBORHOOD_GUARD if use_current_graph else HISTORY_NEIGHBORHOOD_GUARD
-    )
-    one_hop_statement = (
-        CURRENT_NEIGHBORHOOD_PGQ if use_current_graph else HISTORY_NEIGHBORHOOD_PGQ
-    )
     guard_rows = _rows(
-        connection=connection, statement=guard_statement, parameters=parameters
+        connection=connection,
+        statement=HISTORY_NEIGHBORHOOD_GUARD,
+        parameters=parameters,
     )
     if len(guard_rows) != 1:
         raise RuntimeError("shallow graph guard did not return exactly one row")
@@ -561,7 +553,7 @@ def _shallow_neighborhood_rows(
             )
         ]
     paths = _rows(
-        connection=connection, statement=one_hop_statement, parameters=parameters
+        connection=connection, statement=HISTORY_NEIGHBORHOOD_PGQ, parameters=parameters
     )
     representatives: dict[UUID, RowMapping] = {}
     for row in paths:

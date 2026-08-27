@@ -1121,6 +1121,26 @@ END
 $do$;
 """
 
+_REVOKE_GRAPH_GUARD_GRANTS = r"""
+DO $do$
+DECLARE
+  graph_role text := 'rememberstack_graph_' || current_database();
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = graph_role) THEN
+    EXECUTE format(
+      'REVOKE SELECT (deployment_id, relation_id, subject_entity_id, object_entity_id, predicate, valid_from, valid_until, ingested_at, invalidated_at) ON public.relations FROM %I',
+      graph_role
+    );
+    EXECUTE format(
+      'REVOKE SELECT (deployment_id, entity_id, survivor_entity_id) ON public.v_memory_entity_survivor FROM %I',
+      graph_role
+    );
+    EXECUTE format('REVOKE USAGE ON SCHEMA public FROM %I', graph_role);
+  END IF;
+END
+$do$;
+"""
+
 _HELPER_COMMENTS = f"""
 COMMENT ON FUNCTION memory_v1.graph_neighborhood(
   uuid, uuid, integer, text[], timestamptz, timestamptz,
@@ -1267,6 +1287,7 @@ def downgrade() -> None:
 
     op.execute("DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_history")
     op.execute("DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current")
+    op.execute(_REVOKE_GRAPH_GUARD_GRANTS)
     op.execute(
         "DROP FUNCTION IF EXISTS memory_v1.graph_citation_path(uuid, uuid, uuid, integer, integer, integer, integer, integer)"
     )

@@ -391,8 +391,8 @@ withdrawn is returned flagged, not hidden.
 ## Live graph surface
 
 PostgreSQL 19 serves graph reads directly from the same authority database.
-Server-owned one- and two-hop neighborhoods execute fixed SQL/PGQ patterns;
-deeper neighborhoods and shortest-tier paths execute bounded recursive SQL
+Server-owned one-hop neighborhoods execute fixed SQL/PGQ patterns; deeper
+neighborhoods and shortest-tier paths execute bounded recursive SQL
 helpers. There is no graph export, generation, local database, or Cypher API.
 
 The public SQL helpers are `memory_v1.graph_neighborhood`,

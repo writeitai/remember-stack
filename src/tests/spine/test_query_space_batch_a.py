@@ -1510,6 +1510,24 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
                 " WHERE table_schema = 'memory_v1' AND grantee = 'PUBLIC'"
             ),
         )
+        graph_guard_columns = _rows(
+            connection=connection,
+            sql=(
+                "SELECT table_name, column_name, privilege_type FROM"
+                " information_schema.role_column_grants"
+                " WHERE table_schema = 'public' AND grantee = :graph_role"
+            ),
+            graph_role=graph_role,
+        )
+        graph_public_table_grants = _rows(
+            connection=connection,
+            sql=(
+                "SELECT table_name, privilege_type FROM"
+                " information_schema.role_table_grants"
+                " WHERE table_schema = 'public' AND grantee = :graph_role"
+            ),
+            graph_role=graph_role,
+        )
 
     for row in view_grants:
         grantee = row["grantee"]
@@ -1523,6 +1541,27 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
                 "query/graph role holds more than SELECT"
             )
     assert public_grants == []
+    assert {
+        (row["table_name"], row["column_name"], row["privilege_type"])
+        for row in graph_guard_columns
+    } == {
+        ("relations", column, "SELECT")
+        for column in (
+            "deployment_id",
+            "relation_id",
+            "subject_entity_id",
+            "object_entity_id",
+            "predicate",
+            "valid_from",
+            "valid_until",
+            "ingested_at",
+            "invalidated_at",
+        )
+    } | {
+        ("v_memory_entity_survivor", column, "SELECT")
+        for column in ("deployment_id", "entity_id", "survivor_entity_id")
+    }
+    assert graph_public_table_grants == []
 
 
 def test_every_declared_row_key_is_unique_on_the_fixture_corpus(
