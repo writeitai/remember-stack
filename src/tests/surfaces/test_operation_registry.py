@@ -117,6 +117,16 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
         "type": "string",
     }
     assert "type" not in fact_properties
+    fact_operation = next(
+        operation
+        for operation in CANONICAL_OPERATIONS
+        if operation.name is AssuredOperationName.FACT_CONTEXT
+    )
+    assert isinstance(fact_operation.execution_plan, PrimitiveChainPlan)
+    assert tuple(step.op for step in fact_operation.execution_plan.steps) == (
+        "graph_neighborhood",
+        "fact_context",
+    )
 
 
 def test_fact_time_models_reject_naive_wall_times() -> None:
@@ -147,7 +157,7 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
             testimony.model_copy(update={"output_grain": Grain.FACT}),
             expected=testimony,
         )
-    with pytest.raises(AssuredOperationLintError, match="same-named authority"):
+    with pytest.raises(AssuredOperationLintError, match="canonical primitive chain"):
         lint_assured_operation(
             testimony.model_copy(
                 update={

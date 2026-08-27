@@ -35,6 +35,7 @@ from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import query_engine as query_engine_module
@@ -70,6 +71,7 @@ class _FactIndex:
     def __init__(self, *, fact_keys: tuple[tuple[str, UUID], ...]) -> None:
         self.fact_keys = tuple((kind, str(fact_id)) for kind, fact_id in fact_keys)
         self.requested_k: list[int] = []
+        self.requested_entity_ids: list[tuple[str, ...]] = []
 
     def search_facts_scored(
         self,
@@ -79,8 +81,8 @@ class _FactIndex:
         entity_ids: tuple[str, ...] = (),
         **_: object,
     ) -> tuple[P1Nomination, ...]:
-        del entity_ids
         self.requested_k.append(k)
+        self.requested_entity_ids.append(entity_ids)
         allowed = None if candidate_keys is None else set(candidate_keys)
         selected = tuple(
             (kind, fact_id)
@@ -150,6 +152,14 @@ class _ProfileRescueIndex(_FactIndex):
         return super().search_facts_scored(
             k=k, candidate_keys=candidate_keys, entity_ids=entity_ids, **arguments
         )
+
+
+class _UnavailableProfileIndex(_FactIndex):
+    """Expose the ordinary fact channel while the additive profile channel is cut."""
+
+    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        """Match the adapter contract during profile backfill or republishing."""
+        raise P1SearchUnavailableError("entities semantic channel is not ready")
 
 
 class _GraphNeighborhood:
@@ -798,7 +808,7 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
     corpus: _Corpus,
 ) -> None:
     """A neighbor's observation is found as fact text, never as a graph node."""
-    engine, _index = corpus.query_engine(fact_ids=(corpus.observation_id,))
+    engine, index = corpus.query_engine(fact_ids=(corpus.observation_id,))
     graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
 
     answer = engine.default_fact_context(
@@ -822,6 +832,32 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
         }
     ]
     assert answer.freshness.p2_snapshot_version == "batch-c-p2"
+    assert index.requested_entity_ids == [
+        (str(corpus.object_id), str(corpus.subject_id))
+    ]
+
+
+def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts(
+    corpus: _Corpus,
+) -> None:
+    """A lagging P2 node is disclosed as hydration loss, not a whole-answer veto."""
+    stale_neighbor_id = uuid4()
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(stale_neighbor_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert answer.nodes == ()
+    assert answer.negative is None
+    assert answer.dropped_by_hydration == 1
+    assert index.requested_entity_ids == [(str(corpus.subject_id),)]
 
 
 def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmation(
@@ -964,6 +1000,25 @@ def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) 
         FACT_CONTEXT_CANDIDATE_K + 1,
     ]
     assert len(corpus.provider.embedded_texts) == embedded_before + 1
+
+
+def test_fact_context_falls_back_while_profile_channel_is_unpublished(
+    corpus: _Corpus,
+) -> None:
+    """Profile backfill cannot turn ordinary deployment-wide facts into a 500."""
+    index = _UnavailableProfileIndex(fact_keys=(("relation", corpus.relation_id),))
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+    )
+
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice employment", evaluated_at=_NOW
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
 
 
 def test_profile_rescue_rrf_counts_each_fact_once_per_channel() -> None:

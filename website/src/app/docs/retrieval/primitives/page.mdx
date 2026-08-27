@@ -126,11 +126,13 @@ Conceptual chain:
 5. Package graph nodes separately from facts, plus `fact_evidence`, exact totals, contradictions, support markers
 
 `hops` is 1–2. `predicate` is optional and may be any stored predicate; it is
-passed unchanged to P2 and re-confirmed on relation rows in Postgres. A
-predicate filter does not turn observations into graph nodes. Missing or
-lagging P2 is a typed `boundary`, and the combined entity cap is explicit in
-`truncation`. `overlap` and `history` retain the explicit anchor scope because
-P2 traversal has a single world-time instant.
+passed unchanged to P2 and re-confirmed on relation rows in Postgres. It is an
+exact relation-only filter, so observations are excluded when it is present;
+unfiltered observations remain facts and never become graph nodes. A missing
+snapshot or current anchor absent from P2 is a typed `boundary`; a stale
+neighbor is omitted and counted in `dropped_by_hydration`. The combined entity
+cap is explicit in `truncation`. `overlap` and `history` retain the explicit
+anchor scope because P2 traversal has a single world-time instant.
 
 Without `entity_ids`, profile prose is a second bounded nomination path for
 fact text. “List banks” can therefore reach a bank observation; no `type`

@@ -36,6 +36,12 @@ _CONTRACTS = {
     ),
 }
 
+_PRIMITIVE_CHAINS = {
+    AssuredOperationName.RESOLVE_ENTITY: ("resolve_entity",),
+    AssuredOperationName.TESTIMONY_CONTEXT: ("testimony_context",),
+    AssuredOperationName.FACT_CONTEXT: ("graph_neighborhood", "fact_context"),
+}
+
 
 def lint_assured_operation(
     operation: AssuredOperation, *, expected: AssuredOperation
@@ -75,11 +81,11 @@ def lint_assured_operation(
             raise AssuredOperationLintError(
                 f"{operation.name.value} must use a primitive_chain plan"
             )
-        if tuple(step.op for step in operation.execution_plan.steps) != (
-            operation.name.value,
-        ):
+        expected_steps = _PRIMITIVE_CHAINS[operation.name]
+        if tuple(step.op for step in operation.execution_plan.steps) != expected_steps:
             raise AssuredOperationLintError(
-                f"{operation.name.value} must delegate to its same-named authority"
+                f"{operation.name.value} must use canonical primitive chain"
+                f" {expected_steps!r}"
             )
     if operation != expected:
         raise AssuredOperationLintError(

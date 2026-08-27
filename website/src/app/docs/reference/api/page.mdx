@@ -215,6 +215,12 @@ curl -X POST "$REMEMBERSTACK_API_URL/operations/resolve_entity" \
 
 An unknown operation is **404**; a missing required argument is **422**.
 
+On self-host upgrades, run the new image's `setup` entrypoint before starting
+API or worker processes. Setup atomically reconciles the four stored canonical
+descriptors, including their implementation-plan hashes. The stock Compose file
+enforces that order by making API and workers wait for the setup service to
+complete successfully.
+
 The complete operation catalog is:
 
 | Operation | Arguments | What it returns |
@@ -236,9 +242,12 @@ from each anchor with an empty predicate list, the anchor-plus-neighbor union is
 capped at 20 IDs, and fact-text search is constrained to that union. Empty
 predicates mean every stored relation, including `other:*`. Supplying
 `predicate` narrows both traversal and PostgreSQL-confirmed relations to that
-exact dynamic value. Observations are searched and returned as facts; they are
-not graph nodes. A missing P2 snapshot, a current anchor absent from P2, or a
-stale neighbor is a `boundary`. Caps are reported in `truncation`.
+exact dynamic value; because observations have no relation predicate, that
+filtered result contains relations only. Unfiltered observations are searched
+and returned as facts, but they are never graph nodes. A missing P2 snapshot or
+a current anchor absent from P2 is a `boundary`. A stale P2 neighbor is omitted
+and counted in `dropped_by_hydration`, so current anchor facts can still return.
+Caps are reported in `truncation`.
 
 With no IDs, fact search is deployment-wide and may use matching entity profile
 prose to nominate an additional bounded fact scope—so “list banks” can match an

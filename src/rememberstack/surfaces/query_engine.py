@@ -23,6 +23,7 @@ from time import monotonic
 from typing import cast
 from typing import Final
 from typing import Literal
+from typing import TYPE_CHECKING
 import unicodedata
 from uuid import UUID
 
@@ -79,12 +80,16 @@ from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
+from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostOutcome
+
+if TYPE_CHECKING:
+    from rememberstack.surfaces.graph_queries import GraphQueries
 
 DEFAULT_DELTA_LIMIT = 500
 """How many change-feed rows one `delta` page returns before truncating —
@@ -562,6 +567,7 @@ class QueryEngine:
         predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        _database_deadline: float | None = None,
     ) -> Envelope:
         """Return adjudicated facts under an explicit current-belief time scope."""
         _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
@@ -569,7 +575,11 @@ class QueryEngine:
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
-        database_deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+        database_deadline = (
+            _database_deadline
+            if _database_deadline is not None
+            else monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+        )
         with self._engine.connect() as connection:
             if entity_ids:
                 _configure_fact_context_connection(
@@ -758,12 +768,12 @@ class QueryEngine:
         """Apply D97's default entity-neighborhood then fact-text recipe.
 
         Callers resolve names first and pass the complete candidate choice as
-        ids. PostgreSQL validates those anchors, P2 expands them with an empty
-        predicate list by default, and fact text is then searched only inside
-        the bounded anchor-plus-neighbor scope. A missing or lagging P2 is a
-        typed boundary rather than a silent anchor-only fallback. Interval and
-        history reads preserve their explicit anchor scope because P2 exposes
-        point-in-time traversal only; their freshness therefore has no P2 stamp.
+        ids. PostgreSQL validates those anchors, the live graph expands them
+        with an empty predicate list by default, and fact text is then searched
+        only inside the bounded anchor-plus-neighbor scope. An unavailable live
+        graph is a typed boundary rather than a silent anchor-only fallback.
+        Interval and history reads preserve their explicit anchor scope because
+        neighborhood expansion requires a single world-time instant.
         """
         _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
         _validate_default_fact_context_hops(hops=hops)
@@ -771,6 +781,7 @@ class QueryEngine:
         anchors = _validate_context_entity_ids(entity_ids=entity_ids)
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
+        database_deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
         if not anchors:
             return self.fact_context(
                 deployment_id=deployment_id,
@@ -781,8 +792,12 @@ class QueryEngine:
                 predicate=predicate,
                 time=selected_time,
                 evaluated_at=evaluation,
+                _database_deadline=database_deadline,
             )
         with self._engine.connect() as connection:
+            _configure_fact_context_connection(
+                connection=connection, deadline=database_deadline
+            )
             if not _context_entities_are_current(
                 connection=connection, deployment_id=deployment_id, entity_ids=anchors
             ):
@@ -803,22 +818,35 @@ class QueryEngine:
                 predicate=predicate,
                 time=selected_time,
                 evaluated_at=evaluation,
+                _database_deadline=database_deadline,
             )
         if graph_queries is None:
             return _fact_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
-                explanation="the P2 graph projection is not configured",
+                explanation="the live PostgreSQL graph authority is not configured",
             )
 
         remaining = CONTEXT_ENTITY_LIMIT - len(anchors)
+        if remaining == 0:
+            return _fact_context_graph_boundary(
+                time=selected_time,
+                evaluated_at=evaluation,
+                explanation=(
+                    "the 20-entity combined scope leaves no capacity for the"
+                    " required graph neighborhood"
+                ),
+                workaround="retry with fewer anchor entity_ids",
+            )
         neighbors: dict[UUID, GraphNode] = {}
         graph_answers: list[Envelope] = []
-        graph_cap_applied = remaining == 0
-        for anchor in anchors:
+        graph_cap_applied = False
+        for anchor_index, anchor in enumerate(anchors):
             if remaining == 0:
                 graph_cap_applied = True
                 break
+            anchors_left = len(anchors) - anchor_index
+            anchor_limit = max(1, remaining // anchors_left)
             graph = graph_queries.neighborhood(
                 entity_id=anchor,
                 hops=hops,
@@ -826,7 +854,7 @@ class QueryEngine:
                 valid_at=_fact_context_graph_time(
                     time=selected_time, evaluated_at=evaluation
                 ),
-                limit=remaining,
+                limit=anchor_limit,
             )
             graph_answers.append(graph)
             if (
@@ -837,7 +865,7 @@ class QueryEngine:
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation=(
-                        "the P2 graph projection could not expand a current anchor: "
+                        "the live graph could not expand a current anchor: "
                         f"{graph.negative.explanation}"
                     ),
                     freshness=graph.freshness,
@@ -853,21 +881,22 @@ class QueryEngine:
                 graph.truncation is not None and graph.truncation.truncated
             )
 
-        scoped_ids = (*anchors, *neighbors)
         with self._engine.connect() as connection:
-            if not _context_entities_are_current(
+            _configure_fact_context_connection(
+                connection=connection, deadline=database_deadline
+            )
+            current_neighbor_ids = _current_context_entity_ids(
                 connection=connection,
                 deployment_id=deployment_id,
-                entity_ids=scoped_ids,
-            ):
-                return _fact_context_graph_boundary(
-                    time=selected_time,
-                    evaluated_at=evaluation,
-                    explanation=(
-                        "the P2 graph projection nominated a non-current neighbor"
-                    ),
-                    freshness=(graph_answers[0].freshness if graph_answers else None),
-                )
+                entity_ids=tuple(neighbors),
+            )
+        stale_neighbor_count = len(neighbors) - len(current_neighbor_ids)
+        neighbors = {
+            entity_id: node
+            for entity_id, node in neighbors.items()
+            if entity_id in current_neighbor_ids
+        }
+        scoped_ids = (*anchors, *neighbors)
         facts = self.fact_context(
             deployment_id=deployment_id,
             query=query,
@@ -877,8 +906,8 @@ class QueryEngine:
             predicate=predicate,
             time=selected_time,
             evaluated_at=evaluation,
+            _database_deadline=database_deadline,
         )
-        graph_freshness = graph_answers[0].freshness if graph_answers else None
         fact_truncation = facts.truncation
         graph_estimated = sum(
             (
@@ -904,18 +933,8 @@ class QueryEngine:
         return facts.model_copy(
             update={
                 "nodes": tuple(neighbors.values()),
-                "freshness": (
-                    facts.freshness
-                    if graph_freshness is None
-                    else facts.freshness.model_copy(
-                        update={
-                            "p2_snapshot_version": graph_freshness.p2_snapshot_version,
-                            "p2_snapshot_ts": graph_freshness.p2_snapshot_ts,
-                            "p2_believed_at_horizon": (
-                                graph_freshness.p2_believed_at_horizon
-                            ),
-                        }
-                    )
+                "dropped_by_hydration": (
+                    facts.dropped_by_hydration + stale_neighbor_count
                 ),
                 "truncation": Truncation(
                     truncated=(
@@ -2209,11 +2228,6 @@ class QueryEngine:
         evaluated_at: datetime,
     ) -> tuple[P1Nomination, ...]:
         """Rank candidates, deferring final fact authority to the confirm gate."""
-        query_vector = self._embed(
-            query=query,
-            call_site=SurfaceCallSite.FACT_CONTEXT,
-            deployment_id=deployment_id,
-        )
         method = (
             None
             if predicate is not None
@@ -2223,6 +2237,11 @@ class QueryEngine:
             method = getattr(self._search_index, "search_facts_scored", None)
         if not callable(method):
             raise RuntimeError("fact_context requires scored, time-filtered P1 search")
+        query_vector = self._embed(
+            query=query,
+            call_site=SurfaceCallSite.FACT_CONTEXT,
+            deployment_id=deployment_id,
+        )
 
         def nominate(*, scope: tuple[UUID, ...]) -> tuple[P1Nomination, ...]:
             """Run the selected bounded P1 fact nomination in one entity scope."""
@@ -2243,14 +2262,19 @@ class QueryEngine:
         entity_method = getattr(self._search_index, "search_entities_scored", None)
         if entity_ids or not callable(entity_method):
             return nominated
-        profile_entities = cast(
-            "tuple[P1Nomination, ...]",
-            entity_method(
-                deployment_id=str(deployment_id),
-                vector=query_vector,
-                k=FACT_CONTEXT_PROFILE_ENTITY_K,
-            ),
-        )
+        try:
+            profile_entities = cast(
+                "tuple[P1Nomination, ...]",
+                entity_method(
+                    deployment_id=str(deployment_id),
+                    vector=query_vector,
+                    k=FACT_CONTEXT_PROFILE_ENTITY_K,
+                ),
+            )
+        except P1SearchUnavailableError:
+            # Profiles are an additive recall channel. During backfill or a
+            # policy cut, authoritative fact search remains fully usable.
+            return nominated
         profile_ids = tuple(UUID(item.item_id) for item in profile_entities)
         if not profile_ids:
             return nominated
@@ -2856,11 +2880,22 @@ def _context_entities_are_current(
     *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
 ) -> bool:
     """Confirm every supplied ID as a current survivor in this deployment."""
+    return _current_context_entity_ids(
+        connection=connection, deployment_id=deployment_id, entity_ids=entity_ids
+    ) == set(entity_ids)
+
+
+def _current_context_entity_ids(
+    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+) -> set[UUID]:
+    """Return the subset that still names current survivors in this deployment."""
+    if not entity_ids:
+        return set()
     confirmed = connection.execute(
         _CONFIRM_CONTEXT_ENTITIES,
         {"deployment_id": deployment_id, "entity_ids": list(entity_ids)},
     ).mappings()
-    return {row["entity_id"] for row in confirmed} == set(entity_ids)
+    return {row["entity_id"] for row in confirmed}
 
 
 def _fact_time_parameters(
@@ -2985,7 +3020,7 @@ def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
 
 
 def _fact_context_graph_time(*, time: FactTime, evaluated_at: datetime) -> datetime:
-    """Select the single world-time instant supported by P2 traversal."""
+    """Select the single world-time instant for live graph traversal."""
     if isinstance(time, AtFactTime):
         return time.at
     if isinstance(time, CurrentFactTime):
@@ -2999,6 +3034,7 @@ def _fact_context_graph_boundary(
     evaluated_at: datetime,
     explanation: str,
     freshness: Freshness | None = None,
+    workaround: str = "restore live graph access or use direct lookup/search primitives",
 ) -> Envelope:
     """Expose an unavailable graph dependency without widening fact scope."""
     return _envelope(
@@ -3006,11 +3042,7 @@ def _fact_context_graph_boundary(
         temporal_scope=_fact_temporal_scope(time=time, evaluated_at=evaluated_at),
         freshness=freshness or _freshness(at=evaluated_at),
         negative=Negative(
-            kind=NegativeKind.BOUNDARY,
-            explanation=explanation,
-            workaround=(
-                "build a fresh P2 projection or use direct lookup/search primitives"
-            ),
+            kind=NegativeKind.BOUNDARY, explanation=explanation, workaround=workaround
         ),
     )
 

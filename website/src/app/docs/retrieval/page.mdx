@@ -64,9 +64,12 @@ from those anchors, walks one P2 hop by default, then searches relation labels
 and observation statements only inside the anchor-plus-neighbor scope. The
 default predicate list is empty, which means **all stored relations**, including
 `other:*`; `predicate` is an optional narrowing string, not an enum. Observations
-remain fact rows and never become graph nodes. The combined scope is capped at
-20 entities and the envelope marks graph or fact truncation. Missing or lagging
-P2 returns a `boundary`, never a silent anchor-only current answer.
+remain fact rows and never become graph nodes; when `predicate` is supplied,
+the exact relation-only filter excludes observations. The combined scope is
+capped at 20 entities and the envelope marks graph or fact truncation. A
+missing snapshot or current anchor absent from P2 returns a `boundary`, never a
+silent anchor-only current answer. A stale neighbor is omitted and counted in
+`dropped_by_hydration`, preserving current facts inside the surviving scope.
 
 Omitting `entity_ids` keeps deployment-wide fact search and also lets matching
 entity profile prose nominate a bounded scope. That is how a query such as

@@ -50,7 +50,9 @@ class OperationStep(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    op: Literal["resolve_entity", "testimony_context", "fact_context"]
+    op: Literal[
+        "resolve_entity", "testimony_context", "graph_neighborhood", "fact_context"
+    ]
 
 
 class PrimitiveChainPlan(BaseModel):

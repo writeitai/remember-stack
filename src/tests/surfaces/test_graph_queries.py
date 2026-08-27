@@ -74,6 +74,8 @@ class _GraphCorpus:
             "Beacon",
             "ESB Migration",
             "Vector Databases",
+            "Traveler",
+            "Prague",
         ) + tuple(f"Hub Leaf {index:02d}" for index in range(20))
         self.ids = {name: uuid4() for name in entities}
         self.docs: dict[str, UUID] = {}
@@ -116,6 +118,15 @@ class _GraphCorpus:
                         "title": name,
                     },
                 )
+            connection.execute(
+                text(
+                    "INSERT INTO predicates (deployment_id, predicate,"
+                    " parent_predicate, description, tier)"
+                    " VALUES (:deployment_id, 'other:traveled', 'related_to',"
+                    " 'Dynamic travel relation for D97 graph coverage', 'other')"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
             evidence_doc, evidence_claim = self._seed_claim(connection=connection)
             self.evidence_doc = evidence_doc
             for subject, predicate, obj in (
@@ -125,6 +136,7 @@ class _GraphCorpus:
                 ("Carol", "works_on", "ESB Migration"),
                 ("Beacon", "part_of", "ESB Migration"),
                 ("Bob", "knows_about", "Vector Databases"),
+                ("Traveler", "other:traveled", "Prague"),
             ):
                 relation_id = self._seed_edge(
                     connection=connection,
@@ -452,6 +464,23 @@ def test_tombstoned_relation_evidence_disappears_and_restores_live(
         )
     restored = graph.neighborhood(entity_id=graph.ids["Acme"], hops=1)  # type: ignore[attr-defined]
     assert "Alice" in _names(restored)
+
+
+def test_empty_predicates_include_dynamic_other_edges(graph: GraphQueries) -> None:
+    """D97: an empty live-graph filter includes dynamic `other:*` relations."""
+    ids = graph.ids  # type: ignore[attr-defined]
+
+    unfiltered = graph.neighborhood(entity_id=ids["Traveler"], hops=1)
+    dynamic = graph.neighborhood(
+        entity_id=ids["Traveler"], hops=1, predicates=("other:traveled",)
+    )
+    unrelated = graph.neighborhood(
+        entity_id=ids["Traveler"], hops=1, predicates=("works_for",)
+    )
+
+    assert _names(unfiltered) == {"Prague"}
+    assert _names(dynamic) == {"Prague"}
+    assert _names(unrelated) == set()
 
 
 def test_tombstoned_crossref_endpoint_disappears_and_restores_live(

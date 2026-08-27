@@ -246,7 +246,9 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
     AssuredOperation(
         name=AssuredOperationName.FACT_CONTEXT,
         description=(
-            "Adjudicated relations and observations under an explicit world-time scope."
+            "Adjudicated relations and observations under an explicit world-time"
+            " scope, with bounded P2 expansion for current or point-in-time entity"
+            " anchors."
         ),
         parameters={
             "query": _QUERY,
@@ -270,7 +272,12 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
             "time": {**_TIME_SCHEMA, "required": False},
         },
         result_schema=_envelope_schema(),
-        execution_plan=PrimitiveChainPlan(steps=(OperationStep(op="fact_context"),)),
+        execution_plan=PrimitiveChainPlan(
+            steps=(
+                OperationStep(op="graph_neighborhood"),
+                OperationStep(op="fact_context"),
+            )
+        ),
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.FACTS,
@@ -278,7 +285,8 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
     AssuredOperation(
         name=AssuredOperationName.ANSWER_CONTEXT,
         description=(
-            "Complete testimony and fact responses side by side in ContextBundle/v1."
+            "Complete testimony and neighborhood-aware fact responses side by side"
+            " in ContextBundle/v1."
         ),
         parameters={
             "query": _QUERY,

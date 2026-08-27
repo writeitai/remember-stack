@@ -20,6 +20,10 @@ FACT_INPUT_POLICY = "fact-label-v1"
 ENTITY_INPUT_POLICY = "entity-profile-v2"
 
 
+class P1SearchUnavailableError(RuntimeError):
+    """The requested P1 channel is not published under the active contract."""
+
+
 @runtime_checkable
 class ChunkIndexPort(Protocol):
     """Write the P1 chunk table without exposing vector-store types."""

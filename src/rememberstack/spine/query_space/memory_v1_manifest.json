@@ -274,9 +274,9 @@
       "contract": "memory_v1.core_operations/1",
       "operations": [
         {
-          "description": "Complete testimony and fact responses side by side in ContextBundle/v1.",
+          "description": "Complete testimony and neighborhood-aware fact responses side by side in ContextBundle/v1.",
           "grain": null,
-          "implementation_plan_hash": "a7b2eaf5260fa59157ca64aefab6b95af1382f45da16277eddac6534e780ffaa",
+          "implementation_plan_hash": "3cfe84b1adadae185645c8700e7400f257fa6b851b2b28d7fbda8c44767b9df5",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2165,9 +2165,9 @@
               ]
             }
           },
-          "description": "Adjudicated relations and observations under an explicit world-time scope.",
+          "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded P2 expansion for current or point-in-time entity anchors.",
           "grain": "fact",
-          "implementation_plan_hash": "51f533c7529bebfbe90420974245c51952879a7b4e54f1cf579c6578ea437a51",
+          "implementation_plan_hash": "cecdbadf6452e3c383f07c546061affc889f20328ffac2cdc9c977082347ef77",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -37492,5 +37492,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "365c5876fe9e7832e7811d1b8ccf9114222e06143f9986a4c81fc8db8aa5e285"
+  "surface_manifest_hash": "c5736577e6c16569fe9a533fc8a58d7554159308e7d14bff31490ac0a44a4bcb"
 }
