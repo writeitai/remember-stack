@@ -556,11 +556,10 @@ def test_property_graph_owner_cannot_bypass_invoker_source_acl(
             transaction.rollback()
 
 
-@pytest.mark.parametrize("depth", [1, 2])
 def test_sql_pgq_matches_canonical_helper_under_budget(
-    graph: GraphQueries, database_engine: Engine, depth: int
+    graph: GraphQueries, database_engine: Engine
 ) -> None:
-    """Fixed PGQ and the canonical frontier return identical shallow paths."""
+    """One-hop PGQ and the canonical frontier return identical paths."""
     anchor_id = graph.ids["Acme"]  # type: ignore[attr-defined]
     with database_engine.connect().execution_options(
         isolation_level="REPEATABLE READ"
@@ -572,29 +571,18 @@ def test_sql_pgq_matches_canonical_helper_under_budget(
         parameters = {
             "deployment_id": _DEPLOYMENT_ID,
             "anchor_id": anchor_id,
-            "max_depth": depth,
+            "max_depth": 1,
             "predicates": None,
             "valid_at": operation_at,
             "believed_at": operation_at,
             "max_results": 500,
             "expansion_budget": 2000,
             "frontier_budget": 1000,
-            "time_budget_ms": 5000,
+            "time_budget_ms": 1000,
             "result_offset": 0,
         }
-        guard = (
-            connection.execute(text(HISTORY_NEIGHBORHOOD_GUARD), parameters)
-            .mappings()
-            .one()
-        )
-        assert guard["admitted"] is True
-        pgq = (
-            connection.execute(
-                text(HISTORY_NEIGHBORHOOD_PGQ),
-                {**parameters, "guard_examined_edges": guard["examined_edges"]},
-            )
-            .mappings()
-            .all()
+        pgq = graph_queries_module._shallow_neighborhood_rows(  # noqa: SLF001
+            connection=connection, parameters=parameters
         )
         helper = (
             connection.execute(
@@ -631,7 +619,7 @@ def test_recursive_helper_null_depth_uses_default_and_truthful_data_status(
                 text(
                     "SELECT * FROM memory_v1.graph_neighborhood("
                     ":deployment_id, :anchor_id, NULL, NULL, :operation_at, "
-                    ":operation_at, 100, 2000, 1000, 5000)"
+                    ":operation_at, 100, 2000, 1000, 1000)"
                 ),
                 {
                     "deployment_id": _DEPLOYMENT_ID,
@@ -736,13 +724,7 @@ def test_shallow_guard_plan_is_endpoint_anchored(
 
     plan_text = str(plan)
     assert "ix_relations_block_subj" in plan_text
-    # A reverse edge stored against a merged predecessor cannot be constrained
-    # by the raw object id; PG may enter through the tenant relation key before
-    # applying the survivor endpoint. It must never fall back to a table scan.
-    assert (
-        "ix_relations_block_obj" in plan_text
-        or "relations_deployment_id_relation_id_key" in plan_text
-    )
+    assert "ix_relations_block_obj" in plan_text, plan_text
     assert not (
         "'Node Type': 'Seq Scan'" in plan_text
         and "'Relation Name': 'relations'" in plan_text

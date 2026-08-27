@@ -495,18 +495,7 @@ def _live_graph_status(
             )
             if len(guard_rows) != 1 or not bool(guard_rows[0]["admitted"]):
                 return False, "graph_pgq_guard_smoke_failed"
-            admitted_parameters = {
-                **pgq_parameters,
-                "guard_examined_edges": guard_rows[0]["examined_edges"],
-            }
-            pgq_rows = (
-                connection.execute(text(pgq_statement), admitted_parameters)
-                .mappings()
-                .all()
-            )
-            if any(row["row_kind"] == "data" for row in pgq_rows):
-                return False, "graph_pgq_smoke_failed"
-            if sum(row["row_kind"] == "status" for row in pgq_rows) != 1:
+            if connection.execute(text(pgq_statement), pgq_parameters).first():
                 return False, "graph_pgq_smoke_failed"
         for reason, statement in (
             ("graph_neighborhood_smoke_failed", _NEIGHBORHOOD_HEALTH),

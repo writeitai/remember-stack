@@ -22,22 +22,17 @@ from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 
 def test_shallow_pgq_uses_bounded_canonical_guard_and_excludes_self_loops() -> None:
     """A transparent bounded relational guard is separate from GRAPH_TABLE."""
-    assert "rememberstack_graph_internal.relations_current" in (
+    assert "JOIN public.relations AS c" in CURRENT_NEIGHBORHOOD_GUARD
+    assert "FROM public.v_memory_entity_survivor AS anchor" in (
         CURRENT_NEIGHBORHOOD_GUARD
     )
     assert "LIMIT b.budget + 1" in CURRENT_NEIGHBORHOOD_GUARD
-    assert "greatest(b.budget - least(s.examined, b.budget), 0) + 1" in (
-        CURRENT_NEIGHBORHOOD_GUARD
-    )
-    assert (
-        CURRENT_NEIGHBORHOOD_GUARD.count("LIMIT (SELECT scan_cap FROM second_limit)")
-        == 2
-    )
     assert "graph_neighborhood(" not in CURRENT_NEIGHBORHOOD_GUARD
     assert "GRAPH_TABLE" not in CURRENT_NEIGHBORHOOD_GUARD
     assert "admitted" not in CURRENT_NEIGHBORHOOD_PGQ
     assert "AND y.entity_id <> x.entity_id" in CURRENT_NEIGHBORHOOD_PGQ
-    assert "OFFSET (SELECT result_offset FROM bounds)" in CURRENT_NEIGHBORHOOD_PGQ
+    assert "ranked AS" not in CURRENT_NEIGHBORHOOD_PGQ
+    assert "UNION" not in CURRENT_NEIGHBORHOOD_PGQ
 
 
 def test_relational_guards_parse_as_static_postgresql_sql() -> None:
@@ -93,16 +88,13 @@ def test_guard_refusal_never_executes_the_pgq_statement(
     assert rows[0]["truncation_reason"] == "expansion_budget"
 
 
-def test_history_pgq_has_both_half_open_clocks_on_every_pattern_edge() -> None:
-    """One-hop r and two-hop r1/r2 each carry both bitemporal axes."""
-    for alias in ("r", "r1", "r2"):
-        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"{alias}.ingested_at IS NULL") == 1
-        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"{alias}.invalidated_at IS NULL") == 1
-        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"{alias}.valid_from IS NULL") == 1
-        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"{alias}.valid_until IS NULL") == 1
-    assert HISTORY_NEIGHBORHOOD_PGQ.count("memory_v1.memory_history") == 2
+def test_history_pgq_has_both_half_open_clocks_on_its_pattern_edge() -> None:
+    """The one-hop PGQ edge carries both bitemporal axes."""
     for clock_column in ("ingested_at", "invalidated_at", "valid_from", "valid_until"):
-        assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 8
+        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"r.{clock_column}") == 2
+    assert HISTORY_NEIGHBORHOOD_PGQ.count("memory_v1.memory_history") == 1
+    for clock_column in ("ingested_at", "invalidated_at", "valid_from", "valid_until"):
+        assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 4
 
 
 def test_temporal_template_marker_drift_fails_loudly() -> None:

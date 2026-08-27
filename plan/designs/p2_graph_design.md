@@ -22,8 +22,8 @@ from PostgreSQL 19:
 
 - PostgreSQL authority views are the graph element tables. Graph rows are not
   copied into another store.
-- PostgreSQL 19 SQL/PGQ property graphs and `GRAPH_TABLE` implement fixed,
-  shallow graph patterns in the cutover architecture.
+- PostgreSQL 19 SQL/PGQ property graphs and `GRAPH_TABLE` implement fixed
+  one-hop graph patterns in the cutover architecture.
 - Work-bounded PostgreSQL frontier functions implement variable-depth
   neighborhoods and shortest paths, including temporal filtering during
   expansion.
@@ -51,10 +51,10 @@ The live graph provides:
 
 | Operation | Default | Engine | Hard database clamp |
 | --- | ---: | --- | ---: |
-| Current/as-of entity neighborhood | 2 hops | SQL/PGQ at 1–2 hops; work-bounded frontier BFS otherwise | 4 hops, 500 returned edges and a 2,000-edge expansion budget |
+| Current/as-of entity neighborhood | 2 hops | SQL/PGQ at 1 hop; work-bounded frontier BFS at 2–4 hops | 4 hops, 500 returned edges and a 2,000-edge expansion budget |
 | Entity-to-entity path | 4 hops | work-bounded frontier BFS | 6 hops, 10 complete paths, 500 returned edges and a 2,000-edge expansion budget |
 | Citation/document path | 6 hops | directed work-bounded frontier BFS | 6 hops and the same complete-path/result/expansion budgets |
-| Fixed relationship shape | explicit pattern | SQL/PGQ | at most 2 hops in shipped statements |
+| Fixed relationship shape | explicit pattern | SQL/PGQ | 1 hop in shipped statements |
 
 These are product bounds, not suggested client values. Server code and the SQL
 functions clamp them even if a caller asks for more. Any tier limit may be
@@ -232,21 +232,13 @@ PostgreSQL 19 conformance table. The application exposes ordinary UUID
 properties when it needs element identity.
 
 Shipped PGQ statements are static application SQL, parameterized, deployment
-scoped, and limited to one or two explicit hops. Current shapes use
-`memory_current`; fixed as-of shapes use `memory_history` and put both
+scoped, and limited to one explicit hop. Current shapes use `memory_current`;
+fixed as-of shapes use `memory_history` and put both
 half-open clock predicates on every matched edge. The result is relational and
 may join authority tables for hydration in the same statement.
 
-PostgreSQL 19's default is repeatable-elements matching: a fixed pattern is a
-walk, not a guaranteed simple path. Every two-hop statement therefore compares
-the exposed entity and relation UUID properties in the **graph-pattern `WHERE`
-after the complete `MATCH` pattern** to reject a return to the anchor, repeated
-vertices, and repeated relation ids. Cross-element comparisons are forbidden in
-an element-local `WHERE`; PG19 rejects them as non-local element references.
-
-The one/two-hop neighborhood is the one deliberate dual-implementation seam.
-The recursive/frontier result contract is canonical. The SQL/PGQ query is an
-explicit `UNION ALL` of one-hop and two-hop patterns and must:
+The one-hop neighborhood is the deliberate dual-implementation seam. The
+recursive/frontier result contract is canonical. The SQL/PGQ query must:
 
 1. match only semantic `relates` edges, exactly like the frontier helper; the
    mention and document-cross-reference labels in the same property graph are
@@ -254,18 +246,20 @@ explicit `UNION ALL` of one-hop and two-hop patterns and must:
 2. treat semantic discovery as undirected while retaining stored edge
    direction;
 3. exclude the anchor as a returned neighbor;
-4. reject repeated vertices and relation ids inside a path;
-5. choose the minimum hop for a node and then the lexicographically smallest
+4. choose the minimum hop for a node and then the lexicographically smallest
    relation-id path;
-6. deduplicate nodes, edges, and paths exactly as the canonical helper does;
-7. apply the same predicate/time filters, deterministic ordering, returned
+5. deduplicate nodes, edges, and paths exactly as the canonical helper does;
+6. apply the same predicate/time filters, deterministic ordering, returned
    edge cap, expansion budget, and truncation disclosure.
 
 Because PG19 has no inside-match work counter, each fixed PGQ operation begins
 with a separate static, indexed, tenant-and-anchor-first relational guard in
-the same read-only repeatable-read transaction. The guard selects identifiers
-only, counts eligible incident edges through the requested fixed depth, and
-uses per-level `budget + 1` limits. Application control flow inspects its one
+the same read-only repeatable-read transaction. The guard expands the anchor's
+merge membership, probes both raw relation endpoint indexes, counts temporal-
+and-predicate-eligible candidate rows, and uses a `budget + 1` limit. Counting
+before the graph views remove missing provenance is deliberately conservative:
+those rows are still possible rewrite work. The graph role receives only the
+columns needed for this guard. Application control flow inspects its one
 decision row and does not send the `GRAPH_TABLE` statement to PostgreSQL unless
 the guard admits it. Refusal therefore cannot depend on planner short-circuit
 behavior: it returns zero graph data plus the disclosed truncation reason and
@@ -277,20 +271,23 @@ standalone guard and graph rewrite use endpoint indexes and do not scan a
 deployment-wide eligible edge relation. `statement_timeout` remains a final
 safety boundary, not the work-budget implementation.
 
-Byte-identical PGQ/frontier parity is required at depths one and two whenever
+Byte-identical PGQ/frontier parity is required at depth one whenever
 the guard proves the request is within `expansion_budget`; fixtures include
-skew, cycles, parallel edges, and temporal filtering below that budget. The
+skew, parallel edges, and temporal filtering below that budget. The
 over-budget contracts are deliberately different and separately tested:
 server-owned PGQ returns zero data rows plus
 `truncation_reason = 'expansion_budget'` without evaluating the graph pattern,
 while a direct recursive-helper call may return its deterministic partial
-prefix plus the same reason. The typed depth-one/two operation always uses the
-PGQ rule, so routing is fixed before execution and there is no runtime fallback
-that could hide a mismatch. Dense-hub fixtures assert each disclosed contract;
-they are not part of the byte-parity set. SQL/PGQ does not ship until both the
-under-budget parity gate and the separate over-budget gates pass. This extra
-implementation is an explicit operator requirement to use the standard graph
-surface from the cutover, not a speculative compatibility layer.
+prefix plus the same reason. The typed depth-one operation always uses the PGQ
+rule; depth two and above always use the frontier helper, so routing is fixed
+before execution and there is no runtime fallback that could hide a mismatch.
+PostgreSQL 19 Beta 3's view-backed two-hop rewrite exceeded the binding
+transaction bound and did not retain endpoint-anchored access. It is therefore
+not on the request path until a later PostgreSQL release passes both gates.
+Dense-hub fixtures assert each disclosed contract; they are not part of the
+byte-parity set. This deliberate one-hop implementation satisfies the operator
+requirement to use the standard graph surface from the cutover without making
+SQL/PGQ the traversal engine.
 
 PostgreSQL 19 does not implement element-pattern quantifiers or shortest-path
 modes. No implementation may emulate runtime depth by generating an unbounded
@@ -665,10 +662,10 @@ Implementation is accepted only when all of these pass:
 
 1. fresh PostgreSQL 19 migration creates both property graphs over views and
    each declared element `KEY` query proves unique;
-2. one- and two-hop SQL/PGQ tests prove tenant isolation, direction, labels,
-   structural edges, current/as-of visibility, anchor/cycle exclusion,
-   deduplication, deterministic truncation, and byte-identical parity with the
-   canonical traversal at depths one and two for under-budget inputs; separate
+2. one-hop SQL/PGQ tests prove tenant isolation, direction, labels,
+   current/as-of visibility, anchor exclusion, deduplication, deterministic
+   truncation, and byte-identical parity with the canonical traversal at depth
+   one for under-budget inputs; separate
    dense-hub tests prove PGQ's zero-data refusal and the helper's deterministic
    partial-prefix over-budget contracts;
 3. frontier tests prove required `deployment_id`, current/history source
@@ -715,7 +712,7 @@ Rejected by this design:
   release lacks PostgreSQL 19 and the required per-edge temporal predicate;
 - SQL/PGQ alone, because PostgreSQL 19 lacks quantified and shortest paths;
 - recursive SQL alone, because the operator explicitly requires SQL/PGQ as the
-  standard fixed-pattern surface from the cutover;
+  standard one-hop fixed-pattern surface from the cutover;
 - closure tables, unbounded generated joins, parser bypasses, and a permanent
   dual-run migration.
 

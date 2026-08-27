@@ -697,7 +697,16 @@ def _check_role(*, connection: Connection, problems: list[str]) -> None:
                 "'memory_v1.graph_edges_visible_history', 'SELECT') "
                 "AND has_table_privilege('rememberstack_graph_' || current_database(), "
                 "'memory_v1.document_crossrefs_live', 'SELECT') "
-                "AS graph_hydration_select"
+                "AS graph_hydration_select, "
+                "has_schema_privilege('rememberstack_graph_' || current_database(), "
+                "'public', 'USAGE') "
+                "AND has_any_column_privilege("
+                "'rememberstack_graph_' || current_database(), "
+                "'public.relations', 'SELECT') "
+                "AND has_any_column_privilege("
+                "'rememberstack_graph_' || current_database(), "
+                "'public.v_memory_entity_survivor', 'SELECT') "
+                "AS graph_guard_select"
             )
         )
         .mappings()
@@ -724,6 +733,7 @@ def _check_role(*, connection: Connection, problems: list[str]) -> None:
         or privilege_row["graph_source_select"] is not True
         or privilege_row["graph_public_schema_usage"] is not True
         or privilege_row["graph_hydration_select"] is not True
+        or privilege_row["graph_guard_select"] is not True
         or graph_privileges
         != {
             ("rememberstack_query_" + database_name, "memory_current"),

@@ -1489,8 +1489,10 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
     # database, so the gate matches the prefix rather than a fixed name.
     allowed_grantees = {"rememberstack_view_owner"}
     query_role_prefix = "rememberstack_query"
-    graph_role_prefix = "rememberstack_graph"
     with corpus.engine.connect() as connection:
+        graph_role = connection.execute(
+            text("SELECT 'rememberstack_graph_' || current_database()")
+        ).scalar_one()
         view_grants = _rows(
             connection=connection,
             sql=(
@@ -1512,7 +1514,7 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
     for row in view_grants:
         grantee = row["grantee"]
         is_query_role = grantee.startswith(query_role_prefix)
-        is_graph_role = grantee.startswith(graph_role_prefix)
+        is_graph_role = grantee == graph_role
         assert grantee in allowed_grantees or is_query_role or is_graph_role, (
             f"unexpected grantee {grantee}"
         )

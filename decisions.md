@@ -4132,12 +4132,12 @@ PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
 experiment, and replace LadybugDB P2 with a live PostgreSQL graph in one cut.
 `memory_v1.memory_current` and `memory_v1.memory_history` are SQL/PGQ property
 graphs over the existing normalized authority views; they copy no graph rows.
-Server-owned fixed one- and two-hop patterns use `GRAPH_TABLE` in the cutover.
+Server-owned fixed one-hop patterns use `GRAPH_TABLE` in the cutover.
 Each fixed operation first runs a static deployment/anchor-first relational
 `budget + 1` guard in the same repeatable-read transaction; application control
 flow sends `GRAPH_TABLE` only after admission, so dense-hub refusal never
 depends on planner short-circuit behavior.
-Variable-depth neighborhoods and shortest paths use replacement
+Two-hop and variable-depth neighborhoods and shortest paths use replacement
 deployment-scoped, level-at-a-time frontier functions with hard expansion,
 frontier, result, depth, temp, and time budgets. Predicate, valid-time, and
 belief-time filters apply during every expansion.
@@ -4159,8 +4159,10 @@ references, `GRAPH_TABLE`, view-backed element tables, and property-graph
 DDL/catalog/ACL support. It lacks quantified paths/edges, path variables,
 TRAIL/SIMPLE/ACYCLIC and shortest/any-path modes, graph identity/topology
 functions, and within-match aggregates, so SQL/PGQ alone is not the traversal
-engine. Its repeatable-elements match mode also requires explicit UUID-based
-cycle/repeated-edge exclusion in the shipped two-hop statements.
+engine. The PostgreSQL 19 Beta 3 rewriter produced a deployment-wide plan for
+the view-backed two-hop pattern under the required live/provenance semantics,
+so the bounded frontier implementation owns depth two and above until a later
+PostgreSQL release passes the same plan and latency gates.
 
 **Context.** PostgreSQL already owns entities, relations, both temporal clocks,
 merge redirects, evidence, and documents. Ladybug added a second operational

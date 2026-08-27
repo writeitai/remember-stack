@@ -4,7 +4,7 @@
 > graph surface are removed. `query_cypher` and `explain_cypher`, Cypher
 > grammar/limits/errors, `snapshot_graph`, `p2_snapshot`, generation discovery,
 > and P2 confirmation are not public or internal contracts. Server-owned,
-> parameterized PostgreSQL 19 SQL/PGQ serves fixed one/two-hop shapes, while the
+> parameterized PostgreSQL 19 SQL/PGQ serves fixed one-hop shapes, while the
 > replacement public bounded `graph_neighborhood`/`graph_path`/
 > `graph_citation_path` SQL functions and
 > typed graph operations use recursive SQL for variable/shortest traversal.
@@ -81,9 +81,9 @@ D54, D80, and D87 remain controlling.*
    `support_withdrawn` review state. A zero count MUST NOT manufacture it.
 7. **The graph is first-class and live.** A PostgreSQL property graph over
    deployment-keyed invariant views is the fixed-pattern substrate. Server-owned
-   SQL/PGQ implements admitted one- and two-hop shapes. Public bounded
+   SQL/PGQ implements the admitted one-hop shape. Public bounded
    `graph_path` and `graph_neighborhood` functions, plus typed graph operations,
-   use work-bounded recursive SQL for variable-length and shortest traversal.
+   use work-bounded recursive SQL from depth two and for shortest traversal.
    There is no copied graph, snapshot generation, public Cypher, or public
    arbitrary SQL/PGQ on the accepted surface.
 8. **PostgreSQL-native P1 SQL preserves D80 and D48.** `semantic_claims`,
@@ -782,7 +782,7 @@ EXECUTE privilege for subsequent functions in this schema.
 Public Cypher is removed. Public arbitrary SQL/PGQ is not admitted while the
 default-deny `pglast` gate embeds PostgreSQL 18 grammar. The typed graph API and
 server-owned SQL use the live-graph contract in
-[`p2_graph_design.md`](p2_graph_design.md): fixed one/two-hop SQL/PGQ plus
+[`p2_graph_design.md`](p2_graph_design.md): fixed one-hop SQL/PGQ plus
 deployment-scoped work-bounded traversal functions. Public `query_sql` may call
 only the allowlisted traversal functions described in §3.4; it cannot submit
 `GRAPH_TABLE`, property-graph DDL, generated joins, or arbitrary graph labels,
@@ -1513,7 +1513,7 @@ for the shipping surface pass before release.
    Across 10,000 injected stale/mismatched candidates, zero unconfirmed rows or
    bytes return, every drop category is counted exactly, and no invocation
    mixes configured policy or embedder attestation.
-8. **Graph authority and work bounds.** Server-owned fixed one/two-hop SQL/PGQ
+8. **Graph authority and work bounds.** Server-owned fixed one-hop SQL/PGQ
    and recursive helpers equal exhaustive ground truth on generated graphs
    through their declared caps, use deterministic ordering, obey both clocks,
    and never cross deployments. Simple-path shapes explicitly exclude repeated
@@ -1526,7 +1526,7 @@ for the shipping surface pass before release.
    dense hubs, direct/helper empty results, caller filters/joins/aggregates that
    remove every data row, the reserved status-only right-join carrier, alias
    collisions, no GUC/session state across A→B→A pool reuse, truncation honesty,
-   exact PGQ/recursive parity for under-budget overlapping one/two-hop shapes,
+   exact PGQ/recursive parity for the under-budget overlapping one-hop shape,
    and separately disclosed zero-data PGQ versus deterministic-prefix helper
    results on over-budget hubs. A forced hash-join fixture proves that the
    rewrite preserves top-level `ORDER BY`, `LIMIT`, and `OFFSET`, including the
@@ -1645,7 +1645,7 @@ for the shipping surface pass before release.
    the §10 recorded alternative.
 4. **Batch D — live graph:** deployment-keyed invariant vertex/edge views,
    exact PostgreSQL 19 property-graph DDL and grants, semantic-catalog readiness,
-   server-owned fixed one/two-hop SQL/PGQ templates, and level-at-a-time bounded
+   server-owned fixed one-hop SQL/PGQ templates, and level-at-a-time bounded
    recursive helpers. It includes endpoint indexes; depth/frontier/examined-edge/
    result/temp/time budgets; deterministic shortest-hop behavior; explicit
    repeated-element exclusion where required; truncation telemetry; and the

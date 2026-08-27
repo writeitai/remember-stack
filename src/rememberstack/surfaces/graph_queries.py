@@ -1,7 +1,7 @@
 """Typed live-graph reads over PostgreSQL 19 SQL/PGQ and bounded helpers.
 
-One- and two-hop neighborhoods execute static SQL/PGQ. Variable-depth
-neighborhoods and shortest entity or document paths execute deployment-first
+One-hop neighborhoods execute static SQL/PGQ. Deeper neighborhoods and
+shortest entity or document paths execute deployment-first
 PostgreSQL helpers. Hydration shares one read-only repeatable-read transaction,
 so every answer is one MVCC cut and one temporal instant without snapshots.
 """
@@ -32,6 +32,8 @@ from rememberstack.model import GraphPath
 from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import Truncation
+from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
+from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 
@@ -126,12 +128,13 @@ class GraphQueries:
                 "predicates": list(predicates) or None,
                 "valid_at": applied_valid,
                 "believed_at": applied_believed,
-                "max_results": limit if hops <= 2 else fetch,
+                "max_results": limit if hops == 1 else fetch,
                 "expansion_budget": DEFAULT_EXPANSION_BUDGET,
                 "frontier_budget": DEFAULT_FRONTIER_BUDGET,
                 "time_budget_ms": DEFAULT_TIME_BUDGET_MS,
+                "use_current_graph": valid_at is None and believed_at is None,
             }
-            if hops <= 2:
+            if hops == 1:
                 parameters.update({"anchor_id": entity_id, "result_offset": offset})
                 raw = _shallow_neighborhood_rows(
                     connection=connection, parameters=parameters
@@ -144,8 +147,8 @@ class GraphQueries:
                     parameters=parameters,
                 )
             data, status = _split_status(rows=raw)
-            selected = data[:limit] if hops <= 2 else data[offset : offset + limit]
-            more = len(data) > limit if hops <= 2 else len(data) > offset + limit
+            selected = data[:limit] if hops == 1 else data[offset : offset + limit]
+            more = len(data) > limit if hops == 1 else len(data) > offset + limit
             if include_paths:
                 paths = _hydrate_entity_paths(
                     connection=connection,
@@ -521,10 +524,15 @@ def _shallow_neighborhood_rows(
     *, connection: Connection, parameters: dict[str, object]
 ) -> list[RowMapping]:
     """Run the relational guard, and execute PGQ only after explicit admission."""
+    use_current_graph = cast(bool, parameters.get("use_current_graph", False))
+    guard_statement = (
+        CURRENT_NEIGHBORHOOD_GUARD if use_current_graph else HISTORY_NEIGHBORHOOD_GUARD
+    )
+    one_hop_statement = (
+        CURRENT_NEIGHBORHOOD_PGQ if use_current_graph else HISTORY_NEIGHBORHOOD_PGQ
+    )
     guard_rows = _rows(
-        connection=connection,
-        statement=HISTORY_NEIGHBORHOOD_GUARD,
-        parameters=parameters,
+        connection=connection, statement=guard_statement, parameters=parameters
     )
     if len(guard_rows) != 1:
         raise RuntimeError("shallow graph guard did not return exactly one row")
@@ -552,12 +560,75 @@ def _shallow_neighborhood_rows(
                 },
             )
         ]
-    pgq_parameters = {**parameters, "guard_examined_edges": guard["examined_edges"]}
-    return _rows(
-        connection=connection,
-        statement=HISTORY_NEIGHBORHOOD_PGQ,
-        parameters=pgq_parameters,
+    paths = _rows(
+        connection=connection, statement=one_hop_statement, parameters=parameters
     )
+    representatives: dict[UUID, RowMapping] = {}
+    for row in paths:
+        node_ids = tuple(cast(list[UUID], row["node_ids"]))
+        relation_ids = tuple(cast(list[UUID], row["relation_ids"]))
+        endpoint = node_ids[-1]
+        candidate_key = (int(row["hops"]), relation_ids)
+        previous = representatives.get(endpoint)
+        if previous is None:
+            representatives[endpoint] = row
+            continue
+        previous_key = (
+            int(previous["hops"]),
+            tuple(cast(list[UUID], previous["relation_ids"])),
+        )
+        if candidate_key < previous_key:
+            representatives[endpoint] = row
+
+    ordered = sorted(
+        representatives.values(),
+        key=lambda row: (
+            int(row["hops"]),
+            tuple(cast(list[UUID], row["relation_ids"])),
+            tuple(cast(list[UUID], row["node_ids"])),
+        ),
+    )
+    result_cap = min(max(cast(int, parameters["max_results"]), 1), 500)
+    result_offset = max(cast(int, parameters["result_offset"]), 0)
+    page = ordered[result_offset : result_offset + result_cap + 1]
+    result_truncated = len(ordered) > result_offset + result_cap
+    returned_paths = min(len(page), result_cap)
+    reason = "result_budget" if result_truncated else None
+    data = [
+        cast(
+            RowMapping,
+            {
+                "row_kind": "data",
+                "hops": row["hops"],
+                "relation_ids": row["relation_ids"],
+                "node_ids": row["node_ids"],
+                "truncated": result_truncated,
+                "truncation_reason": reason,
+                "examined_edges": guard["examined_edges"],
+                "returned_paths": returned_paths,
+                "effective_depth": guard["effective_depth"],
+                "effective_expansion_budget": guard["effective_expansion_budget"],
+            },
+        )
+        for row in page
+    ]
+    return data + [
+        cast(
+            RowMapping,
+            {
+                "row_kind": "status",
+                "hops": None,
+                "relation_ids": None,
+                "node_ids": None,
+                "truncated": result_truncated,
+                "truncation_reason": reason,
+                "examined_edges": guard["examined_edges"],
+                "returned_paths": returned_paths,
+                "effective_depth": guard["effective_depth"],
+                "effective_expansion_budget": guard["effective_expansion_budget"],
+            },
+        )
+    ]
 
 
 def _split_status(*, rows: list[RowMapping]) -> tuple[list[RowMapping], RowMapping]:

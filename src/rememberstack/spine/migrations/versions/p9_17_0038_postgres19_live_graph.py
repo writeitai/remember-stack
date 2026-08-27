@@ -36,21 +36,10 @@ CREATE VIEW rememberstack_graph_internal.entities_live AS
 SELECT e.deployment_id, e.entity_id, e.canonical_name, e.profile_summary
 FROM entities AS e
 WHERE e.status = 'active'
-  -- Separate correlated semijoins keep PG19's fixed-pattern rewriter from
-  -- flattening a provenance UNION once per vertex occurrence in GRAPH_TABLE.
-  AND (
-    EXISTS (
-      SELECT 1
-      FROM documents AS document
-      JOIN v_memory_entity_survivor AS survivor
-        ON survivor.deployment_id = document.deployment_id
-       AND survivor.entity_id = document.document_entity_id
-      WHERE document.deployment_id = e.deployment_id
-        AND survivor.survivor_entity_id = e.entity_id
-        AND document.deleted_at IS NULL
-    )
-    OR EXISTS (
-      SELECT 1
+  AND EXISTS (
+    SELECT 1
+    FROM (
+      SELECT mention.deployment_id, survivor.survivor_entity_id AS entity_id
       FROM mentions AS mention
       JOIN chunks AS chunk
         ON chunk.deployment_id = mention.deployment_id
@@ -76,9 +65,16 @@ WHERE e.status = 'active'
       JOIN v_memory_entity_survivor AS survivor
         ON survivor.deployment_id = mention.deployment_id
        AND survivor.entity_id = decided.entity_id
-      WHERE mention.deployment_id = e.deployment_id
-        AND survivor.survivor_entity_id = e.entity_id
-    )
+      UNION ALL
+      SELECT document.deployment_id, survivor.survivor_entity_id
+      FROM documents AS document
+      JOIN v_memory_entity_survivor AS survivor
+        ON survivor.deployment_id = document.deployment_id
+       AND survivor.entity_id = document.document_entity_id
+      WHERE document.deleted_at IS NULL
+    ) AS provenance
+    WHERE provenance.deployment_id = e.deployment_id
+      AND provenance.entity_id = e.entity_id
   );
 
 CREATE VIEW rememberstack_graph_internal.documents_live AS
@@ -419,6 +415,7 @@ DECLARE
   head_id uuid;
   neighbor_id uuid;
   edge_record record;
+  unpacked_path_ordinal bigint;
   level integer;
   examined bigint := 0;
   was_truncated boolean := coalesce(max_depth, 2) > 4;
@@ -432,6 +429,7 @@ BEGIN
   <<levels>>
   FOR level IN 1..depth_cap LOOP
     next_frontier := ARRAY[]::jsonb[];
+    unpacked_path_ordinal := NULL;
     -- Plan one indexed adjacency statement per BFS level, not one copy of the
     -- survivor/provenance views per frontier node.
     FOR edge_record IN
@@ -486,14 +484,17 @@ BEGIN
       ORDER BY path.path_ordinal, edge.relation_id
       LIMIT greatest(expansion_cap - examined + 1, 1)
     LOOP
-      current_path := edge_record.current_path;
       head_id := edge_record.head_id;
-      SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
-        INTO path_nodes
-        FROM jsonb_array_elements_text(current_path -> 'nodes') AS value;
-      SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
-        INTO path_edges
-        FROM jsonb_array_elements_text(current_path -> 'edges') AS value;
+      IF unpacked_path_ordinal IS DISTINCT FROM edge_record.path_ordinal THEN
+        current_path := edge_record.current_path;
+        SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
+          INTO path_nodes
+          FROM jsonb_array_elements_text(current_path -> 'nodes') AS value;
+        SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
+          INTO path_edges
+          FROM jsonb_array_elements_text(current_path -> 'edges') AS value;
+        unpacked_path_ordinal := edge_record.path_ordinal;
+      END IF;
       IF examined >= expansion_cap THEN
         was_truncated := true;
         reason := 'expansion_budget';
@@ -661,6 +662,7 @@ DECLARE
   head_id uuid;
   neighbor_id uuid;
   edge_record record;
+  unpacked_path_ordinal bigint;
   level integer;
   examined bigint := 0;
   was_truncated boolean := coalesce(max_depth, 4) > 6;
@@ -675,6 +677,7 @@ BEGIN
   FOR level IN 1..depth_cap LOOP
     next_frontier := ARRAY[]::jsonb[];
     found_paths := ARRAY[]::jsonb[];
+    unpacked_path_ordinal := NULL;
     -- Equal-length alternatives share one planned adjacency statement while
     -- path ordinality preserves the canonical deterministic expansion order.
     FOR edge_record IN
@@ -729,14 +732,17 @@ BEGIN
       ORDER BY path.path_ordinal, edge.relation_id
       LIMIT greatest(expansion_cap - examined + 1, 1)
     LOOP
-      current_path := edge_record.current_path;
       head_id := edge_record.head_id;
-      SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
-        INTO path_nodes
-        FROM jsonb_array_elements_text(current_path -> 'nodes') AS value;
-      SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
-        INTO path_edges
-        FROM jsonb_array_elements_text(current_path -> 'edges') AS value;
+      IF unpacked_path_ordinal IS DISTINCT FROM edge_record.path_ordinal THEN
+        current_path := edge_record.current_path;
+        SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
+          INTO path_nodes
+          FROM jsonb_array_elements_text(current_path -> 'nodes') AS value;
+        SELECT coalesce(array_agg(value::uuid), ARRAY[]::uuid[])
+          INTO path_edges
+          FROM jsonb_array_elements_text(current_path -> 'edges') AS value;
+        unpacked_path_ordinal := edge_record.path_ordinal;
+      END IF;
       IF examined >= expansion_cap THEN
         was_truncated := true;
         reason := 'expansion_budget';
@@ -1076,12 +1082,21 @@ BEGIN
     'GRANT USAGE ON SCHEMA rememberstack_graph_internal TO %I', graph_role
   );
   EXECUTE format('GRANT USAGE ON SCHEMA memory_v1 TO %I', graph_role);
+  EXECUTE format('GRANT USAGE ON SCHEMA public TO %I', graph_role);
   EXECUTE format(
     'GRANT SELECT ON ALL TABLES IN SCHEMA rememberstack_graph_internal TO %I',
     graph_role
   );
   EXECUTE format(
     'GRANT SELECT ON memory_v1.entities_current, memory_v1.documents_live, memory_v1.graph_edges_visible_history, memory_v1.document_crossrefs_live, memory_v1.entity_document_mentions TO %I',
+    graph_role
+  );
+  EXECUTE format(
+    'GRANT SELECT (deployment_id, relation_id, subject_entity_id, object_entity_id, predicate, valid_from, valid_until, ingested_at, invalidated_at) ON public.relations TO %I',
+    graph_role
+  );
+  EXECUTE format(
+    'GRANT SELECT (deployment_id, entity_id, survivor_entity_id) ON public.v_memory_entity_survivor TO %I',
     graph_role
   );
   EXECUTE format(
