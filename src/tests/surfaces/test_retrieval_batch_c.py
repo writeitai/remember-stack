@@ -844,8 +844,8 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
         "entity_id": corpus.object_id,
         "hops": 1,
         "predicates": (),
-        "valid_at": _NOW,
-        "believed_at": _NOW,
+        "valid_at": None,
+        "believed_at": None,
         "limit": 19,
     }
     assert answer.freshness.pg_live_ts == _NOW
@@ -857,7 +857,7 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
 def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
     corpus: _Corpus,
 ) -> None:
-    """The composed recipe supplies both clocks to the production graph facade."""
+    """The current recipe leaves both clocks to the production graph facade."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = GraphQueries(engine=corpus.engine, deployment_id=_DEPLOYMENT_ID)
 
@@ -871,6 +871,27 @@ def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
 
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
     assert corpus.subject_id in {node.entity_id for node in answer.nodes}
+
+
+def test_default_fact_context_supplies_paired_clocks_for_at_time(
+    corpus: _Corpus,
+) -> None:
+    """An explicit world time travels with the operation's belief-time clock."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where did Alice work?",
+        entity_ids=(corpus.object_id,),
+        time=AtFactTime(at=_NOW - timedelta(days=3)),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.temporal_scope.mode == "at"
+    assert graph.calls[0]["valid_at"] == _NOW - timedelta(days=3)
+    assert graph.calls[0]["believed_at"] == _NOW
 
 
 def test_live_graph_rejects_an_expired_composed_operation_deadline() -> None:

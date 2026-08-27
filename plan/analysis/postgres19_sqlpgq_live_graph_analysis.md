@@ -490,6 +490,37 @@ is available. The release must also diff PG18/PG19 keywords, AST forms, and
 admitted built-ins and prove new PG19 syntax/functions default-deny; the parser
 version mismatch is a broader safety boundary, not only a PGQ limitation.
 
+### 8.1 Post-merge one-hop provenance-plan finding
+
+The first D97 composition test after the PostgreSQL graph cut exposed a plan
+shape that the smaller graph fixture had not forced. On 2026-08-27, the Batch C
+retrieval fixture contained 38 entities, 38 relations, 193 relation-evidence
+rows, and 234 documents. Its admitted one-hop `GRAPH_TABLE` query hit the
+five-second graph `statement_timeout` for both the current and explicitly
+clocked history shapes. This was not dense-hub refusal: the relational guard
+admitted two incident edges.
+
+`EXPLAIN (FORMAT JSON)` showed that PostgreSQL 19 Beta 3 repeatedly inlined the
+correlated provenance `EXISTS` from
+`rememberstack_graph_internal.entities_live` through the vertex and endpoint
+copies produced by the PGQ rewrite. The resulting plan repeatedly expanded the
+survivor and partitioned-resolution branches before reaching the anchored
+relation. Moving predicates into element patterns and splitting the undirected
+match into directed shapes did not remove that expansion. A raw-table property
+graph completed in milliseconds, but it was rejected because it would bypass
+the surviving-provenance membership rule.
+
+A semantic-equivalent prototype changed only the private entity view's SQL
+shape: it materialized the complete `(deployment_id, survivor_entity_id)`
+provenance keyset once inside each view expansion, then semi-joined active
+entities to that keyset. The property-graph keys, rows, labels, grants, relation
+source, and hydration contract did not change. The same production
+`GraphQueries.neighborhood` call then completed in approximately 0.9 seconds
+and returned the two admitted edges. This is the chosen repair because it
+retains the D48 absence rule and D98's PGQ/current-snapshot semantics while
+removing repeated evaluation rather than raising a timeout or introducing a
+fallback traversal.
+
 ## 9. Recommendation and design inputs
 
 Accept the live PostgreSQL graph and direct PG19 Beta 3 cut with these binding

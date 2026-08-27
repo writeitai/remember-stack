@@ -258,6 +258,16 @@ therefore keeps anchor exclusion (`y.entity_id <> x.entity_id`) in the
 graph-pattern `WHERE` after the complete `MATCH`, where cross-element
 comparisons are valid.
 
+The private entity element view materializes its complete
+`(deployment_id, survivor_entity_id)` provenance keyset once per view
+expansion, then semi-joins active registry entities to that keyset. This is a
+planner-shape requirement, not a projection: the CTE copies no durable rows and
+the view retains exactly the D48 surviving-provenance membership rule. A
+correlated provenance `EXISTS` at each entity row is forbidden here because the
+PG19 Beta 3 graph rewrite duplicates that branch across vertex and endpoint
+copies and can exhaust the graph statement timeout on a small admitted
+neighborhood.
+
 Because PG19 has no inside-match work counter, each fixed PGQ operation begins
 with a separate static, indexed, tenant-and-anchor-first relational guard in
 the same read-only repeatable-read transaction. The guard expands the anchor's
@@ -546,10 +556,13 @@ representative fixtures is an implementation gate.
 The scale contract is bounded work at every supported cardinality: no operation
 may examine more than its expansion budget or retain more than its frontier,
 returned-result, temp-space, and time budgets. At representative target-scale
-fixtures, default two-hop neighborhood and four-hop path queries must complete
-inside the configured statement timeout without spills or an unanchored scan
-of the tenant relation set. Measurements record hardware, cardinality, skew,
-and p50/p95/p99 rather than weakening correctness to a small-fixture promise.
+fixtures, fixed one-hop PGQ, default two-hop neighborhood, and four-hop path
+queries must complete inside the configured statement timeout without spills
+or an unanchored scan of the tenant relation set. The one-hop fixture includes
+enough entity provenance, resolution partitions, evidence, and documents to
+expose repeated view expansion even when the anchor has only a few incident
+edges. Measurements record hardware, cardinality, skew, and p50/p95/p99 rather
+than weakening correctness to a small-fixture promise.
 
 ## 9. PostgreSQL 19 and extension posture
 

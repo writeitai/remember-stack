@@ -906,6 +906,9 @@ class QueryEngine:
             )
 
         remaining = CONTEXT_ENTITY_LIMIT - len(anchors)
+        graph_valid_at, graph_believed_at = _fact_context_graph_clocks(
+            time=selected_time, evaluated_at=evaluation
+        )
         neighbors: dict[UUID, GraphNode] = {}
         graph_answers: list[Envelope] = []
         graph_cap_applied = False
@@ -930,10 +933,8 @@ class QueryEngine:
                     entity_id=anchor,
                     hops=hops,
                     predicates=(predicate,) if predicate is not None else (),
-                    valid_at=_fact_context_graph_time(
-                        time=selected_time, evaluated_at=evaluation
-                    ),
-                    believed_at=evaluation,
+                    valid_at=graph_valid_at,
+                    believed_at=graph_believed_at,
                     limit=anchor_limit,
                     _deadline=database_deadline,
                 )
@@ -3145,12 +3146,14 @@ def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
     return HistoryTemporalScope(evaluated_at=evaluated_at, believed_at=evaluated_at)
 
 
-def _fact_context_graph_time(*, time: FactTime, evaluated_at: datetime) -> datetime:
-    """Select the single world-time instant for live graph traversal."""
+def _fact_context_graph_clocks(
+    *, time: FactTime, evaluated_at: datetime
+) -> tuple[datetime | None, datetime | None]:
+    """Select current or paired historical clocks for live graph traversal."""
     if isinstance(time, AtFactTime):
-        return time.at
+        return time.at, evaluated_at
     if isinstance(time, CurrentFactTime):
-        return evaluated_at
+        return None, None
     raise ValueError("overlap and history fact scopes have no single graph instant")
 
 

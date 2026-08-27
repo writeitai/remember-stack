@@ -196,3 +196,16 @@ def test_private_relation_source_requires_live_evidence_documents() -> None:
     assert "JOIN documents AS evidence_document" in relation_source
     assert "evidence_document.doc_id = evidence.doc_id" in relation_source
     assert "evidence_document.deleted_at IS NULL" in relation_source
+
+
+def test_private_entity_source_materializes_provenance_once() -> None:
+    """The PGQ vertex source cannot correlate the full provenance plan per row."""
+    ddl = p9_17_0038_postgres19_live_graph._GRAPH_SOURCES
+    entity_source = ddl.split(
+        "CREATE VIEW rememberstack_graph_internal.entities_live AS", maxsplit=1
+    )[1].split(
+        "CREATE VIEW rememberstack_graph_internal.documents_live AS", maxsplit=1
+    )[0]
+
+    assert "WITH provenance AS MATERIALIZED" in entity_source
+    assert entity_source.count("FROM provenance") == 1
