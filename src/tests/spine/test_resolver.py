@@ -974,6 +974,7 @@ def test_generic_identifier_guard_downweights_shared_lemma(
     assert row["reason"] == "promiscuous-lemma"
 
     near_lemma = normalized_lemma(surface="Jan Novakk")
+    unguarded_lemma = normalized_lemma(surface="Jan Novaksson")
     temporary_alias_id = uuid4()
     with database_engine.begin() as connection:
         connection.execute(
@@ -982,7 +983,7 @@ def test_generic_identifier_guard_downweights_shared_lemma(
                 " alias_id, deployment_id, entity_id, alias_text,"
                 " normalized_lemma, provenance"
                 ") VALUES ("
-                " :alias_id, :deployment_id, :entity_id, 'Jan Novakk',"
+                " :alias_id, :deployment_id, :entity_id, 'Jan Novaksson',"
                 " :lemma, 'source'"
                 ")"
             ),
@@ -990,9 +991,13 @@ def test_generic_identifier_guard_downweights_shared_lemma(
                 "alias_id": temporary_alias_id,
                 "deployment_id": _DEPLOYMENT_ID,
                 "entity_id": first.entity_id,
-                "lemma": near_lemma,
+                "lemma": unguarded_lemma,
             },
         )
+        unguarded_score, guarded_score = connection.execute(
+            text("SELECT similarity(:query, :unguarded), similarity(:query, :guarded)"),
+            {"query": near_lemma, "unguarded": unguarded_lemma, "guarded": jan_lemma},
+        ).one()
         ranked = resolver._blocked_candidates(  # noqa: SLF001 - pins SQL ordering
             connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=near_lemma
         )
@@ -1000,6 +1005,7 @@ def test_generic_identifier_guard_downweights_shared_lemma(
             text("DELETE FROM aliases WHERE alias_id = :alias_id"),
             {"alias_id": temporary_alias_id},
         )
+    assert 0.3 <= unguarded_score < guarded_score
     assert tuple(candidate.entity_id for candidate in ranked) == (
         first.entity_id,
         second.entity_id,
