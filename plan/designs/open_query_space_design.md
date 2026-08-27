@@ -1142,6 +1142,14 @@ manifest hash at start and compare-and-swaps that same hash at transition: if
 the hash changes while validation runs, its result cannot activate the version,
 which remains or returns to `pending_revalidation` for a fresh validation.
 
+Stock self-host `setup` owns this publication ordering on upgrade. It publishes
+the checked-in hash before seeding `examples.*`, suspending ordinary active
+versions atomically. The platform seed then installs one new active version for
+each shipped example and deprecates that example's suspended prior version;
+customer-authored versions remain `pending_revalidation`. When the authoritative
+hash already matches, setup performs neither a publication audit nor shipped
+version churn.
+
 Agents can create drafts. Only a deployment operator or explicit deployment
 policy can activate, make discoverable-by-default, or approve a version.
 Saved queries are invoked through `run_saved_query`; they do not become

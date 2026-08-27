@@ -786,7 +786,7 @@ def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(
                        :deployment_id,
                        'Unrelated Entity ' || ordinal::text,
                        'unrelated entity ' || ordinal::text
-                FROM generate_series(1, 1000) AS ordinal
+                FROM generate_series(1, 10000) AS ordinal
                 """
             ),
             {"deployment_id": _OTHER_DEPLOYMENT_ID},
@@ -804,7 +804,7 @@ def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(
                        'unrelated-document-' || ordinal::text,
                        md5('unrelated-entity-' || ordinal::text)::uuid,
                        'Unrelated Document ' || ordinal::text
-                FROM generate_series(1, 1000) AS ordinal
+                FROM generate_series(1, 10000) AS ordinal
                 """
             ),
             {"deployment_id": _OTHER_DEPLOYMENT_ID},
@@ -812,6 +812,7 @@ def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(
         connection.exec_driver_sql("ANALYZE entities")
         connection.exec_driver_sql("ANALYZE documents")
     with database_engine.connect() as connection:
+        connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
         plan = connection.execute(
             text(
                 """
@@ -826,14 +827,39 @@ def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(
 
     plan_text = str(plan)
     assert "deployments_pkey" in plan_text
-    authority_rows = [
-        float(node.get("Actual Rows", 0))
+    assert "entities_deployment_id_entity_id_key" in plan_text
+    authority_prefixes = (
+        "entities",
+        "merge_events",
+        "resolution_decisions",
+        "mentions",
+        "chunks",
+        "document_versions",
+        "documents",
+    )
+    authority_nodes = [
+        node
         for node in _walk_plan_nodes(plan[0]["Plan"])
-        if node.get("Relation Name")
-        in {"entities", "entity_resolution_events", "mentions", "chunks", "documents"}
+        if any(
+            str(node.get("Relation Name", "")) == relation
+            or str(node.get("Relation Name", "")).startswith(f"{relation}_p")
+            or str(node.get("Relation Name", "")).startswith(f"{relation}_default")
+            for relation in authority_prefixes
+        )
     ]
-    assert authority_rows
-    assert max(authority_rows) < 100, plan_text
+    assert authority_nodes
+    assert all(node.get("Node Type") != "Seq Scan" for node in authority_nodes), (
+        plan_text
+    )
+    examined_rows = [
+        (
+            float(node.get("Actual Rows", 0))
+            + float(node.get("Rows Removed by Filter", 0))
+        )
+        * float(node.get("Actual Loops", 0))
+        for node in authority_nodes
+    ]
+    assert max(examined_rows) < 100, plan_text
 
 
 def test_bounded_graph_read_transaction_does_not_starve_authority_write(

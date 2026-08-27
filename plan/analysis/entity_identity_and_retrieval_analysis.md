@@ -466,3 +466,65 @@ default recipe therefore maps primary-channel unavailability to the same typed
 fact-context boundary used for bounded database/graph unavailability. The
 optional profile channel remains an additive recall path and may still be
 skipped when it alone is unpublished.
+
+The first exact-tip deployment proof exposed one more upgrade consequence.
+Advancing the assured-operation versions rolls `surface_manifest_hash`, but an
+existing deployment's saved-query registry still holds the previous hash.
+Self-host `setup` attempted to seed the shipped `examples.*` rows before
+publishing the new hash, so the registry correctly rejected the stale caller
+with `saved_query_revalidation_pending`; setup could not complete on an
+existing store. A fresh store did not expose the bug.
+
+The required ordering is the registry's existing fail-closed protocol, not a
+compatibility bypass: setup atomically publishes the new hash and suspends all
+active saved-query versions, then the platform seed installs a new active
+version of each unchanged shipped example and deprecates its suspended prior
+version. Customer-authored queries stay `pending_revalidation` for their normal
+operator/fixture workflow. Re-running setup against the same hash creates no
+publication audit or version churn.
+
+---
+
+## 10. Exact-tip snapshot and acceptance-proof findings (2026-08-27)
+
+Review of the versioned-contract tip found that the default D97 recipe shared
+an absolute deadline but not the accepted common database snapshot. Anchor
+validation, P1 nomination, each graph expansion, neighbor validation, and fact
+confirmation could each open a new transaction. The current graph call also
+left both clocks implicit. A relation committed after the operation's captured
+`evaluated_at` could therefore nominate a neighbor from a later statement
+snapshot; fact confirmation would reject the too-new relation while the
+neighbor node remained in the answer. Multiple anchors could likewise observe
+different graph cuts.
+
+The deadline pool is already the common admission authority for P1 and fact
+reads, so it can own the missing invariant without a second pool or snapshot
+export protocol: one outer `READ ONLY, REPEATABLE READ` transaction is admitted
+for the complete default recipe; nested P1 and authority reads reuse that
+connection; and the graph facade executes its fixed statements on the same
+connection while still taking its graph concurrency slot and planner limits.
+Both graph instants are passed explicitly from operation entry, including for
+`current`. Standalone graph calls retain their dedicated graph pool and
+least-privilege role. This implements the binding D98 transaction contract
+without weakening the role-isolated public graph surface.
+
+The same review identified two acceptance-proof drifts. The cross-deployment
+vertex plan test counted only emitted rows, which cannot detect a sequential
+scan that examines many foreign rows and filters them away. The proof must also
+reject authority sequential scans and bound rows removed by filtering (scaled
+by loops). Separately, the maintained benchmark runbook still named
+`full-v14` after the executable protocol moved to `full-v15`; the literal
+single-conversation command would fail argument validation. These are test and
+runbook repairs, not new retrieval or benchmark decisions.
+
+The first plan repair materialized an index-ordered `tenant_entities` CTE and
+reused it throughout the vertex view. It eliminated foreign-row work in the
+adversarial plan, but PostgreSQL estimated the correlated slice at roughly half
+the global registry and carried that inflated estimate through recursive graph
+helpers. The maintained `multi_hop_context` example then exceeded its five
+second statement cap on the small validation corpus. That repair is rejected.
+The narrower remedy keeps the already-correct deployment-lateral view and pins
+`enable_seqscan=off` only inside the graph executor transaction and the two
+recursive graph helper functions. The strengthened 10,000-foreign-row plan
+proof still observes index access and fewer than 100 examined authority rows;
+unrelated query-space statements keep PostgreSQL's default planner choice.

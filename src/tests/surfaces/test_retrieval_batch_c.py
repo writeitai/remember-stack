@@ -248,6 +248,13 @@ class _TimedOutReadPool:
         raise SQLAlchemyTimeoutError("test retrieval admission expired")
         yield cast(Connection, None)  # pragma: no cover - generator typing only
 
+    @contextmanager
+    def snapshot(self, *, deadline: float) -> Iterator[Connection]:
+        """Reject the outer compound snapshot at the same admission boundary."""
+        self.deadlines.append(deadline)
+        raise SQLAlchemyTimeoutError("test retrieval admission expired")
+        yield cast(Connection, None)  # pragma: no cover - generator typing only
+
 
 class _Corpus:
     """Relations and observations with live, stale, and tombstoned evidence."""
@@ -836,6 +843,76 @@ def corpus(database_engine: Engine) -> _Corpus:
     return _Corpus(engine=database_engine)
 
 
+def test_retrieval_snapshot_reuses_one_read_only_mvcc_cut(corpus: _Corpus) -> None:
+    """Nested authority reads cannot see a row committed after operation entry."""
+    predicate = f"other:snapshot-{uuid4()}"
+    try:
+        with corpus.read_pool.snapshot(deadline=monotonic() + 5.0) as snapshot:
+            assert (
+                snapshot.exec_driver_sql("SHOW transaction_isolation").scalar_one()
+                == "repeatable read"
+            )
+            assert (
+                snapshot.exec_driver_sql("SHOW transaction_read_only").scalar_one()
+                == "on"
+            )
+            assert (
+                snapshot.execute(
+                    text(
+                        "SELECT count(*) FROM predicates"
+                        " WHERE deployment_id = :deployment_id AND predicate = :predicate"
+                    ),
+                    {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                ).scalar_one()
+                == 0
+            )
+            with corpus.engine.begin() as writer:
+                writer.execute(
+                    text(
+                        "INSERT INTO predicates ("
+                        "deployment_id, predicate, parent_predicate, description, tier"
+                        ") VALUES ("
+                        ":deployment_id, :predicate, 'related_to',"
+                        " 'snapshot proof', 'other'"
+                        ")"
+                    ),
+                    {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                )
+            with corpus.read_pool.connect(deadline=monotonic() + 5.0) as nested:
+                assert nested is snapshot
+                assert (
+                    nested.execute(
+                        text(
+                            "SELECT count(*) FROM predicates"
+                            " WHERE deployment_id = :deployment_id"
+                            " AND predicate = :predicate"
+                        ),
+                        {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                    ).scalar_one()
+                    == 0
+                )
+        with corpus.engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM predicates"
+                        " WHERE deployment_id = :deployment_id AND predicate = :predicate"
+                    ),
+                    {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                ).scalar_one()
+                == 1
+            )
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM predicates"
+                    " WHERE deployment_id = :deployment_id AND predicate = :predicate"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+            )
+
+
 def test_fact_context_returns_both_fact_kinds_with_both_stances(
     corpus: _Corpus,
 ) -> None:
@@ -884,14 +961,17 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
     assert corpus.observation_id not in {node.entity_id for node in answer.nodes}
     assert len(graph.calls) == 1
     assert isinstance(graph.calls[0]["_deadline"], float)
+    assert isinstance(graph.calls[0]["_connection"], Connection)
     assert {
-        key: value for key, value in graph.calls[0].items() if key != "_deadline"
+        key: value
+        for key, value in graph.calls[0].items()
+        if key not in {"_deadline", "_connection"}
     } == {
         "entity_id": corpus.object_id,
         "hops": 1,
         "predicates": (),
-        "valid_at": None,
-        "believed_at": None,
+        "valid_at": _NOW,
+        "believed_at": _NOW,
         "limit": 19,
     }
     assert answer.freshness.pg_live_ts == _NOW
@@ -903,7 +983,7 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
 def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
     corpus: _Corpus,
 ) -> None:
-    """The current recipe leaves both clocks to the production graph facade."""
+    """The current recipe gives the production graph its operation-entry clocks."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = GraphQueries(engine=corpus.engine, deployment_id=_DEPLOYMENT_ID)
 

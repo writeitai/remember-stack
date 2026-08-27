@@ -576,16 +576,26 @@ class SelfHostProfile:
             build_hash_members,
         )
         from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
+            publish_surface_hash,
+        )
+        from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
             seed_shipped_examples,
         )
 
+        manifest_hash = surface_manifest_hash(build_hash_members())
         with self._engine.connect() as sa_connection:
             raw = sa_connection.connection.dbapi_connection
             assert isinstance(raw, psycopg.Connection)
+            publish_surface_hash(
+                connection=raw,
+                deployment_id=self._settings.deployment_id,
+                manifest_hash=manifest_hash,
+                actor="selfhost-setup",
+            )
             seed_shipped_examples(
                 connection=raw,
                 deployment_id=self._settings.deployment_id,
-                manifest_hash=surface_manifest_hash(build_hash_members()),
+                manifest_hash=manifest_hash,
             )
             # Deploy-time only: provision the query-role password so setup-time
             # composition can open as that role later. Never run from api().

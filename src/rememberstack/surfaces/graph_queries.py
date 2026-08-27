@@ -104,6 +104,7 @@ class GraphQueries:
         continuation: str | None = None,
         include_paths: bool = False,
         _deadline: float | None = None,
+        _connection: Connection | None = None,
     ) -> Envelope:
         """Return minimum-hop live neighbors and optionally their paths."""
         _validate_clocks(valid_at=valid_at, believed_at=believed_at)
@@ -122,7 +123,12 @@ class GraphQueries:
                 explanation="the continuation cursor is not a live-graph cursor",
                 workaround="restart the traversal without a continuation cursor",
             )
-        with self._transaction(deadline=_deadline) as connection:
+        transaction = (
+            self._transaction(deadline=_deadline)
+            if _connection is None
+            else self._shared_transaction(connection=_connection, deadline=_deadline)
+        )
+        with transaction as connection:
             evaluation = _evaluation_instant(connection=connection)
             if not _entity_exists(
                 connection=connection,
@@ -394,6 +400,7 @@ class GraphQueries:
                     connection.exec_driver_sql(
                         "SET LOCAL max_parallel_workers_per_gather = 0"
                     )
+                    connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
                     connection.exec_driver_sql(
                         "SET LOCAL search_path = memory_v1, pg_catalog"
                     )
@@ -407,6 +414,57 @@ class GraphQueries:
                         connection.rollback()
             except SQLAlchemyTimeoutError as error:
                 raise GraphBusyError("live graph connection pool timed out") from error
+        finally:
+            self._slots.release()
+
+    @contextmanager
+    def _shared_transaction(
+        self, *, connection: Connection, deadline: float | None
+    ) -> Iterator[Connection]:
+        """Apply graph admission and limits inside a caller-owned MVCC snapshot."""
+        pool_wait_seconds = self._pool_wait_seconds
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("live graph operation deadline expired")
+            pool_wait_seconds = min(pool_wait_seconds, remaining)
+        if not self._slots.acquire(timeout=pool_wait_seconds):
+            raise GraphBusyError("live graph concurrency limit reached")
+        try:
+            isolation = connection.exec_driver_sql(
+                "SHOW transaction_isolation"
+            ).scalar_one()
+            read_only = connection.exec_driver_sql(
+                "SHOW transaction_read_only"
+            ).scalar_one()
+            if isolation != "repeatable read" or read_only != "on":
+                raise RuntimeError(
+                    "shared graph reads require one read-only repeatable-read transaction"
+                )
+            statement_timeout_ms = _deadline_timeout_ms(
+                default_ms=5_000, deadline=deadline
+            )
+            transaction_timeout_ms = _deadline_timeout_ms(
+                default_ms=6_000, deadline=deadline
+            )
+            connection.exec_driver_sql(
+                f"SET LOCAL statement_timeout = '{statement_timeout_ms}ms'"
+            )
+            connection.exec_driver_sql(
+                f"SET LOCAL transaction_timeout = '{transaction_timeout_ms}ms'"
+            )
+            connection.exec_driver_sql("SET LOCAL lock_timeout = '500ms'")
+            connection.exec_driver_sql(
+                "SET LOCAL idle_in_transaction_session_timeout = '5s'"
+            )
+            connection.exec_driver_sql("SET LOCAL temp_file_limit = '65536kB'")
+            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+            connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
+            connection.exec_driver_sql("SET LOCAL enable_nestloop = DEFAULT")
+            connection.exec_driver_sql("SET LOCAL join_collapse_limit = DEFAULT")
+            connection.exec_driver_sql("SET LOCAL from_collapse_limit = DEFAULT")
+            connection.exec_driver_sql(f"SET LOCAL work_mem = '{self._work_mem_kib}kB'")
+            yield connection
         finally:
             self._slots.release()
 

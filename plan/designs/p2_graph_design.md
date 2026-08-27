@@ -568,7 +568,11 @@ expose repeated view expansion even when the anchor has only a few incident
 edges. A separate plan fixture adds at least 1,000 entities and provenance
 documents to an unrelated deployment and proves every materialized
 survivor/provenance authority scan remains at the requested deployment's
-cardinality. Measurements record hardware, cardinality, skew, and p50/p95/p99
+cardinality. The fixed graph executor and recursive graph helper functions
+disable sequential scans locally for their bounded transaction/function call
+so the planner cannot trade that invariant for a cheaper global scan under
+skewed tenant statistics; other query-space statements retain PostgreSQL's
+default. Measurements record hardware, cardinality, skew, and p50/p95/p99
 rather than weakening correctness to a small-fixture promise.
 
 ## 9. PostgreSQL 19 and extension posture

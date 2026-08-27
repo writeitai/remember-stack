@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import BoundedSemaphore
 from time import monotonic
 
@@ -24,12 +25,48 @@ class BoundedPostgresReadPool:
         self._engine = engine
         self._pool_wait_seconds = pool_wait_seconds
         self._slots = BoundedSemaphore(value=max_concurrency)
+        self._snapshot_connection: ContextVar[Connection | None] = ContextVar(
+            "rememberstack_retrieval_snapshot_connection", default=None
+        )
 
     @contextmanager
     def connect(
         self, *, deadline: float | None, isolation_level: str | None = None
     ) -> Iterator[Connection]:
         """Admit and yield one connection without outwaiting the caller budget."""
+        bound = self._snapshot_connection.get()
+        if bound is not None:
+            yield bound
+            return
+        with self._admitted_connection(
+            deadline=deadline, isolation_level=isolation_level
+        ) as connection:
+            yield connection
+
+    @contextmanager
+    def snapshot(self, *, deadline: float) -> Iterator[Connection]:
+        """Hold one bounded read-only MVCC snapshot across nested retrieval reads."""
+        if self._snapshot_connection.get() is not None:
+            raise RuntimeError("retrieval snapshots cannot be nested")
+        with self._admitted_connection(
+            deadline=deadline, isolation_level="REPEATABLE READ"
+        ) as connection:
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            # REPEATABLE READ fixes its MVCC cut at the first query, not at
+            # checkout. Establish it before embedding/provider work or any
+            # nested P1 call can delay the operation's database instant.
+            connection.exec_driver_sql("SELECT 1")
+            token = self._snapshot_connection.set(connection)
+            try:
+                yield connection
+            finally:
+                self._snapshot_connection.reset(token)
+
+    @contextmanager
+    def _admitted_connection(
+        self, *, deadline: float | None, isolation_level: str | None
+    ) -> Iterator[Connection]:
+        """Open a new physical connection under this pool's admission limit."""
         wait_seconds = self._pool_wait_seconds
         if deadline is not None:
             remaining = deadline - monotonic()

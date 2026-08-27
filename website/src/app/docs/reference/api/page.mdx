@@ -217,9 +217,11 @@ An unknown operation is **404**; a missing required argument is **422**.
 
 On self-host upgrades, run the new image's `setup` entrypoint before starting
 API or worker processes. Setup atomically reconciles the four stored canonical
-descriptors, including their implementation-plan hashes. The stock Compose file
-enforces that order by making API and workers wait for the setup service to
-complete successfully.
+descriptors, including their implementation-plan hashes. When the surface
+manifest changes, setup publishes the new hash, suspends customer saved queries
+for explicit revalidation, and reseeds platform `examples.*` against the new
+hash. The stock Compose file enforces that order by making API and workers wait
+for the setup service to complete successfully.
 
 The complete operation catalog is:
 

@@ -26,6 +26,10 @@ def test_selfhost_setup_seeds_shipped_examples() -> None:
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "seed_shipped_examples" in source
     assert "seed_canonical_operations" in source
+    assert "publish_surface_hash" in source
+    assert source.index("publish_surface_hash(") < source.index(
+        "seed_shipped_examples("
+    )
 
 
 def test_selfhost_assured_operations_share_the_live_graph_authority() -> None:

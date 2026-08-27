@@ -155,7 +155,7 @@ only missing answers and judgments.
 
 The following environment variables tune the driver without changing its arguments:
 
-The driver itself freezes the complete non-secret V14 ingest identity before
+The driver itself freezes the complete non-secret V15 ingest identity before
 Compose starts: Luna generation seats, Qwen3-Embedding-8B vector seats, Nebius
 embedding host, unset provider-order fallback, and the protocol's reasoning and
 completion-token settings. Ambient values for those bindings are deliberately

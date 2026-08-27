@@ -13,6 +13,9 @@ from rememberstack.spine.migrations.versions import p9_17_0038_postgres19_live_g
 from rememberstack.spine.migrations.versions import (
     p9_18_0039_graph_entity_provenance_plan,
 )
+from rememberstack.spine.migrations.versions import (
+    p9_19_0040_graph_tenant_planner_settings,
+)
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
@@ -238,4 +241,29 @@ def test_provenance_plan_downgrade_restores_the_fresh_p9_17_shape(
 
     assert executed == [
         p9_18_0039_graph_entity_provenance_plan._MATERIALIZED_ENTITY_VIEW
+    ]
+
+
+def test_graph_helpers_pin_deployment_first_index_plans() -> None:
+    """Recursive helper calls cannot choose cross-tenant sequential scans."""
+    source = p9_19_0040_graph_tenant_planner_settings._GRAPH_HELPER_INDEX_SETTINGS
+
+    assert source.count("SET enable_seqscan = off") == 2
+    assert "memory_v1.graph_neighborhood" in source
+    assert "memory_v1.graph_path" in source
+
+
+def test_graph_helper_plan_downgrade_restores_planner_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Downgrade removes both function-local planner directives."""
+    executed: list[str] = []
+    monkeypatch.setattr(
+        p9_19_0040_graph_tenant_planner_settings.op, "execute", executed.append
+    )
+
+    p9_19_0040_graph_tenant_planner_settings.downgrade()
+
+    assert executed == [
+        p9_19_0040_graph_tenant_planner_settings._GRAPH_HELPER_DEFAULT_SETTINGS
     ]

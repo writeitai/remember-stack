@@ -15,6 +15,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
@@ -22,6 +23,7 @@ from functools import wraps
 from itertools import batched
 import math
 from time import monotonic
+from typing import Any
 from typing import cast
 from typing import Final
 from typing import Literal
@@ -213,6 +215,40 @@ def _with_surface[**P, T](
     return decorator
 
 
+def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envelope]:
+    """Run the default compound recipe in one bounded PostgreSQL snapshot."""
+
+    @wraps(method)
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> Envelope:
+        engine = cast("QueryEngine", args[0])
+        call_kwargs = cast(dict[str, Any], dict(kwargs))
+        evaluation = cast(
+            datetime | None, call_kwargs.get("evaluated_at")
+        ) or datetime.now(UTC)
+        selected_time = (
+            cast(FactTime | None, call_kwargs.get("time")) or CurrentFactTime()
+        )
+        deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+        call_kwargs["evaluated_at"] = evaluation
+        call_kwargs["_database_deadline"] = deadline
+        try:
+            with engine._fact_snapshot(deadline=deadline) as connection:
+                call_kwargs["_snapshot_connection"] = connection
+                return method(*args, **call_kwargs)
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+            return _fact_context_graph_boundary(
+                time=selected_time,
+                evaluated_at=evaluation,
+                explanation=(
+                    "the fact authority could not open one common snapshot inside"
+                    " the operation budget"
+                ),
+                workaround="retry the bounded fact-context operation",
+            )
+
+    return wrapped
+
+
 class QueryEngine:
     """The typed read path over one deployment's spine and P1 indexes."""
 
@@ -275,6 +311,28 @@ class QueryEngine:
         raise SQLAlchemyTimeoutError(
             "bounded fact-context PostgreSQL read admission is not configured"
         )
+
+    @contextmanager
+    def _fact_snapshot(self, *, deadline: float) -> Iterator[Connection]:
+        """Open the common read-only repeatable-read cut for a compound recipe."""
+        if self._fact_read_pool is None:
+            raise SQLAlchemyTimeoutError(
+                "bounded fact-context PostgreSQL read admission is not configured"
+            )
+        snapshot = cast(
+            Callable[..., AbstractContextManager[Connection]] | None,
+            getattr(self._fact_read_pool, "snapshot", None),
+        )
+        if callable(snapshot):
+            with snapshot(deadline=deadline) as connection:
+                yield cast(Connection, connection)
+            return
+        with self._fact_connection(
+            deadline=deadline, isolation_level="REPEATABLE READ"
+        ) as connection:
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            connection.exec_driver_sql("SELECT 1")
+            yield connection
 
     def resolve(
         self,
@@ -834,6 +892,7 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.OPERATION)
+    @_with_fact_snapshot
     def default_fact_context(
         self,
         *,
@@ -847,6 +906,8 @@ class QueryEngine:
         predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        _database_deadline: float | None = None,
+        _snapshot_connection: Connection | None = None,
     ) -> Envelope:
         """Apply D97's default entity-neighborhood then fact-text recipe.
 
@@ -865,7 +926,11 @@ class QueryEngine:
         _validate_default_fact_context_anchor_count(anchors=anchors)
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
-        database_deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+        database_deadline = (
+            _database_deadline
+            if _database_deadline is not None
+            else monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+        )
 
         def confirmed_facts(
             *,
@@ -974,6 +1039,7 @@ class QueryEngine:
                     believed_at=graph_believed_at,
                     limit=anchor_limit,
                     _deadline=database_deadline,
+                    _connection=_snapshot_connection,
                 )
             except (
                 DBAPIError,
@@ -3192,11 +3258,11 @@ def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
 def _fact_context_graph_clocks(
     *, time: FactTime, evaluated_at: datetime
 ) -> tuple[datetime | None, datetime | None]:
-    """Select current or paired historical clocks for live graph traversal."""
+    """Select paired operation-entry clocks for live graph traversal."""
     if isinstance(time, AtFactTime):
         return time.at, evaluated_at
     if isinstance(time, CurrentFactTime):
-        return None, None
+        return evaluated_at, evaluated_at
     raise ValueError("overlap and history fact scopes have no single graph instant")
 
 
